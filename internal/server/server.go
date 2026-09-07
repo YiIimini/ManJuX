@@ -98,6 +98,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("PUT /api/projects/{id}/params", s.putParams)
 	m.HandleFunc("POST /api/projects/{id}/run", s.runProject)
 	m.HandleFunc("POST /api/projects/{id}/stop", s.stopProject)
+	m.HandleFunc("POST /api/projects/{id}/upgrade2k", s.upgrade2K)
 	m.HandleFunc("POST /api/projects/{id}/assets", s.uploadAsset)
 	m.HandleFunc("DELETE /api/projects/{id}/assets/{assetID}", s.deleteAsset)
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
@@ -300,11 +301,15 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 			out["qc"] = qcAny
 		}
 	}
-	// 成片状态
+	// 成片状态(含 2K 定稿)
 	outReady := map[string]any{"ready": false, "final": "output/final.mp4"}
 	if st, err := os.Stat(filepath.Join(s.store.Dir(id), "output", "final.mp4")); err == nil && st.Size() > 0 {
 		outReady["ready"] = true
 		outReady["size"] = st.Size()
+	}
+	outReady["final_2k"] = "output/final_2k.mp4"
+	if st, err := os.Stat(filepath.Join(s.store.Dir(id), "output", "final_2k.mp4")); err == nil && st.Size() > 0 {
+		outReady["ready_2k"] = true
 	}
 	out["output"] = outReady
 	writeJSON(w, 200, out)
@@ -392,18 +397,37 @@ func (s *Server) putParams(w http.ResponseWriter, r *http.Request) {
 func (s *Server) runProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var in struct {
-		Phase string `json:"phase"`
-		Only  []int  `json:"only"`
+		Phase  string `json:"phase"`
+		Only   []int  `json:"only"`
+		Engine string `json:"engine"` // 单次引擎覆盖(auto/comfy/api,空=项目配置)
 	}
 	_ = readBody(r, &in)
 	if in.Phase == "" {
 		in.Phase = pipeline.PhaseAll
 	}
-	if err := s.pipe.Start(id, in.Phase, in.Only); err != nil {
+	if err := s.pipe.Start(id, in.Phase, in.Only, in.Engine); err != nil {
 		writeErr(w, 409, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "phase": in.Phase})
+}
+
+// upgrade2K 云端 2K 定稿:body {shot: N}(0=成片)。
+func (s *Server) upgrade2K(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pipe.Running(id) != nil {
+		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		return
+	}
+	var in struct {
+		Shot int `json:"shot"`
+	}
+	_ = readBody(r, &in)
+	if err := s.pipe.StartUpgrade2K(id, in.Shot); err != nil {
+		writeErr(w, 409, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 func (s *Server) stopProject(w http.ResponseWriter, r *http.Request) {

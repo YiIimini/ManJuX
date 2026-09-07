@@ -45,8 +45,9 @@ export const api = {
   deleteProject: (id) => req('DELETE', `/api/projects/${encodeURIComponent(id)}`),
   saveSource: (id, text) => req('PUT', `/api/projects/${encodeURIComponent(id)}/source`, { text }),
   putParams: (id, params) => req('PUT', `/api/projects/${encodeURIComponent(id)}/params`, params),
-  run: (id, phase, only) => req('POST', `/api/projects/${encodeURIComponent(id)}/run`, { phase, only }),
+  run: (id, phase, only, engine) => req('POST', `/api/projects/${encodeURIComponent(id)}/run`, { phase, only, engine }),
   stop: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/stop`),
+  upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   uploadAsset: (id, kind, assetId, name, file) => {
     const fd = new FormData()
     fd.append('kind', kind); fd.append('asset_id', assetId)

@@ -140,6 +140,9 @@ async function save() {
         <el-form-item label="字幕字号(屏高 %)">
           <el-slider v-model="form.assemble.subtitle_size" :min="3" :max="9" :step="1" show-input />
         </el-form-item>
+        <el-form-item label="云端 2K 定稿(合成后自动 regeneration 升 2K,消耗云额度)">
+          <el-switch v-model="form.assemble.upgrade_2k" />
+        </el-form-item>
       </el-form>
     </div>
 

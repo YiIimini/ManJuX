@@ -1,7 +1,7 @@
 <script setup>
 import { G, api, refreshProject } from '../store'
 import { computed, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
 import ShotCard from '../components/ShotCard.vue'
 
@@ -67,6 +67,18 @@ async function removeAsset(assetId) {
 async function openDir() {
   try { await api.openExplorer('output', pj.value.project.id) }
   catch (e) { ElMessage.error(e.message) }
+}
+
+async function upgrade2K() {
+  try {
+    await ElMessageBox.confirm(
+      '将把 768P 成片送云端 In-context 再生成 2K(按量计费,约数分钟)。继续?', '云端 2K 定稿',
+      { confirmButtonText: '升级', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  try {
+    await api.upgrade2k(pj.value.project.id, 0)
+    ElMessage.success('2K 定稿已提交,进度见底部日志')
+  } catch (e) { ElMessage.error(e.message) }
 }
 
 const totalShots = computed(() => plan.value?.shots?.length || 0)
@@ -198,10 +210,20 @@ const doneShots = computed(() =>
         <el-tab-pane label="成片" name="output">
           <div class="grid gap-4" style="grid-template-columns:minmax(300px,420px) 1fr">
             <div class="panel p-4">
-              <video v-if="pj.output?.ready"
-                     :src="api.fileURL(pj.project.id, pj.output.final) + '?v=' + (pj.project.updated_at||'')"
-                     controls playsinline
-                     class="w-full rounded-lg bg-black" style="aspect-ratio:9/16" />
+              <div v-if="pj.output?.ready_2k || pj.output?.ready">
+                <video v-if="pj.output?.ready_2k"
+                       :src="api.fileURL(pj.project.id, pj.output.final_2k) + '?v=' + (pj.project.updated_at||'')"
+                       controls playsinline
+                       class="w-full rounded-lg bg-black" style="aspect-ratio:9/16" />
+                <video v-else
+                       :src="api.fileURL(pj.project.id, pj.output.final) + '?v=' + (pj.project.updated_at||'')"
+                       controls playsinline
+                       class="w-full rounded-lg bg-black" style="aspect-ratio:9/16" />
+                <div class="mt-2 text-center">
+                  <el-tag v-if="pj.output?.ready_2k" size="small" type="warning" effect="dark">2K 定稿版</el-tag>
+                  <el-tag v-else size="small" effect="plain">768P 标准版</el-tag>
+                </div>
+              </div>
               <div v-else class="text-xs p-10 text-center" style="color:var(--mx-text-2)">
                 渲染完成后,运行「合成成片」阶段即可在此预览与导出
               </div>
@@ -212,12 +234,16 @@ const doneShots = computed(() =>
                 <p class="text-xs mt-2" style="color:var(--mx-text-2)">
                   转场 / 字幕 / 响度可在管线卡片「质检」「合成成片」的 ⚙ 调优入口修改(项目级独立生效)。
                 </p>
-                <div class="flex gap-2 mt-3">
+                <div class="flex gap-2 mt-3 flex-wrap">
                   <el-button type="primary" :disabled="running || !totalShots" @click="runPhase('assemble')">
                     <el-icon class="mr-1"><Film /></el-icon>合成成片
                   </el-button>
                   <el-button :disabled="running || !totalShots" @click="runPhase('qc')">
                     <el-icon class="mr-1"><CircleCheck /></el-icon>质检
+                  </el-button>
+                  <el-button type="warning" plain :disabled="running || !pj.output?.ready" @click="upgrade2K"
+                            title="本地 768P 成片送云端 regeneration 原生重生成 2K(消耗云额度)">
+                    <el-icon class="mr-1"><MagicStick /></el-icon>升级 2K
                   </el-button>
                   <el-button @click="openDir"><el-icon class="mr-1"><FolderOpened /></el-icon>打开目录</el-button>
                 </div>

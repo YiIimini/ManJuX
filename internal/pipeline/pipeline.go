@@ -50,9 +50,10 @@ type Coordinator struct {
 
 // Run 一次运行。
 type Run struct {
-	Cancel    context.CancelFunc
-	Phase     string
-	StartedAt time.Time
+	Cancel        context.CancelFunc
+	Phase         string
+	StartedAt     time.Time
+	EngineOverride string // 本次运行的引擎覆盖(auto/comfy/api,空=用项目配置)
 }
 
 // New 创建协调器。
@@ -74,8 +75,9 @@ func (c *Coordinator) Running(projectID string) *Run {
 	return nil
 }
 
-// Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段)。
-func (c *Coordinator) Start(projectID, phase string, only []int) error {
+// Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段);
+// engineOverride 非空时本次运行覆盖项目引擎(镜头级分派:auto/comfy/api)。
+func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride string) error {
 	if phase == "" {
 		phase = PhaseAll
 	}
@@ -90,11 +92,11 @@ func (c *Coordinator) Start(projectID, phase string, only []int) error {
 		return fmt.Errorf("项目不存在: %s", projectID)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &Run{Cancel: cancel, Phase: phase, StartedAt: time.Now()}
+	run := &Run{Cancel: cancel, Phase: phase, StartedAt: time.Now(), EngineOverride: engineOverride}
 	c.runs[projectID] = run
 	c.mu.Unlock()
 
-	go c.execute(ctx, proj, phase, only)
+	go c.execute(ctx, proj, phase, only, engineOverride)
 	return nil
 }
 
@@ -124,7 +126,7 @@ func (c *Coordinator) emit(projectID, phase string, shotID int, level string, pr
 	})
 }
 
-func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int) {
+func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, engineOverride string) {
 	defer c.finish(proj.ID)
 	stages := []string{phase}
 	if phase == PhaseAll {
@@ -144,7 +146,7 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		case PhaseAssets:
 			err = c.runAssets(ctx, proj)
 		case PhaseRender:
-			err = c.runRender(ctx, proj, only)
+			err = c.runRender(ctx, proj, only, engineOverride)
 		case PhaseQC:
 			err = c.runQC(ctx, proj)
 		case PhaseAssemble:
@@ -272,7 +274,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 
 // ---------- 阶段三:render ----------
 
-func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int) error {
+func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int, engineOverride string) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return fmt.Errorf("尚未生成分镜方案:请先运行「剧本分镜」阶段")
@@ -294,8 +296,11 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 	}
 
-	// 引擎解析
+	// 引擎解析:本次覆盖 > 项目配置(引擎=api 时云端 API Key 必须就绪)
 	engName := rp.Engine
+	if engineOverride == "auto" || engineOverride == "comfy" || engineOverride == "api" {
+		engName = engineOverride
+	}
 	if engName == "auto" {
 		comfyEng, _ := c.reg.Get("comfy")
 		if comfyEng != nil && comfyEng.Available(ctx) == nil {

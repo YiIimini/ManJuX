@@ -141,5 +141,14 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		return err
 	}
 	c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒)", filepath.Base(res.FinalPath), res.Duration)
+
+	// 云端 2K 定稿(可选,消耗云额度)
+	if p.Upgrade2K {
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100, "按配置自动升级 2K…")
+		if err := c.Upgrade2K(ctx, proj.ID, 0); err != nil {
+			// 2K 失败不回滚成片,仅提示
+			c.emit(proj.ID, PhaseAssemble, 0, "warn", 100, "⚠ 自动 2K 定稿失败:%v(768P 成片已保留)", err)
+		}
+	}
 	return nil
 }

@@ -8,10 +8,18 @@ const props = defineProps({ shot: Object, manifestItem: Object })
 const pj = computed(() => G.project)
 const running = computed(() => pj.value?.project?.running)
 
-async function rerender() {
+async function rerender(cmd) {
+  if (cmd === 'api2k') {
+    try {
+      await api.upgrade2k(pj.value.project.id, props.shot.id)
+      ElMessage.success(`镜头 ${props.shot.id} 已提交云端 2K 定稿`)
+      refreshProject()
+    } catch (e) { ElMessage.error(e.message) }
+    return
+  }
   try {
-    await api.run(pj.value.project.id, 'render', [props.shot.id])
-    ElMessage.success(`镜头 ${props.shot.id} 已提交重渲`)
+    await api.run(pj.value.project.id, 'render', [props.shot.id], cmd)
+    ElMessage.success(`镜头 ${props.shot.id} 已提交重渲${cmd ? '(' + (cmd === 'api' ? '云端' : '本地') + ')' : ''}`)
     refreshProject()
   } catch (e) { ElMessage.error(e.message) }
 }
@@ -56,10 +64,20 @@ const dialogues = computed(() => (props.shot.dialogue || []).map(d => `${d.speak
         <el-tooltip content="查看 H3 提示词" placement="top">
           <el-button text size="small" @click="G.promptShot = shot"><el-icon><Document /></el-icon></el-button>
         </el-tooltip>
-        <el-tooltip content="单镜重渲" placement="top">
-          <el-button text size="small" type="primary" :disabled="running" @click="rerender">
-            <el-icon><RefreshRight /></el-icon>
-          </el-button>
+        <el-tooltip content="单镜重渲(可选引擎)" placement="top">
+          <el-dropdown trigger="click" :disabled="running" @command="rerender">
+            <el-button text size="small" type="primary" :disabled="running" @click.stop>
+              <el-icon><RefreshRight /></el-icon>
+            </el-button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="">按项目配置</el-dropdown-item>
+                <el-dropdown-item command="comfy">本地 ComfyUI</el-dropdown-item>
+                <el-dropdown-item command="api">云端 API</el-dropdown-item>
+                <el-dropdown-item divided command="api2k">云端 2K 定稿</el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </el-tooltip>
       </div>
       <div class="text-xs leading-relaxed" style="color:var(--mx-text-2)">

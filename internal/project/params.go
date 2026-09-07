@@ -49,6 +49,7 @@ type AssembleParams struct {
 	Loudness      int     `json:"loudness"`       // 目标响度 LUFS(默认 -16)
 	Peak          float64 `json:"peak"`           // 峰值归一(默认 0.92)
 	SubtitleSize  int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 5)
+	Upgrade2K     bool    `json:"upgrade_2k"`     // 云端 2K 定稿:合成完成后自动 regeneration 升 2K(消耗云额度)
 }
 
 // DefaultStageParams 返回全局默认的阶段参数。
@@ -67,6 +68,7 @@ func DefaultStageParams() StageParams {
 		Assemble: AssembleParams{
 			Transition: "cut", BurnSubtitles: true,
 			Loudness: -16, Peak: 0.92, SubtitleSize: 5,
+			Upgrade2K: false,
 		},
 	}
 }

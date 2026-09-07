@@ -61,33 +61,28 @@ type chatRequest struct {
 
 type chatResponse struct {
 	Choices []struct {
-		Message Message `json:"message"`
+		Message      chatRespMessage `json:"message"`
+		FinishReason string          `json:"finish_reason"`
 	} `json:"choices"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
 }
 
-// Chat 发起一次对话。jsonMode=true 时请求 response_format=json_object。
+type chatRespMessage struct {
+	Role             string `json:"role"`
+	Content          string `json:"content"`
+	ReasoningContent string `json:"reasoning_content"`
+}
+
+// Chat 发起一次对话。jsonMode=true 时请求 response_format=json_object;
+// 思考型模型对 JSON mode 兼容不稳,重试时自动降级普通模式(解析层有容错)。
 func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (string, error) {
 	if !c.Configured() {
 		return "", fmt.Errorf("LLM 未配置:请在工作台「设置」中填写 BaseURL / API Key / Model")
 	}
-	req := chatRequest{
-		Model:       c.model,
-		Messages:    msgs,
-		Temperature: 0.7,
-		MaxTokens:   16384,
-		Stream:      false,
-	}
-	if jsonMode {
-		req.ResponseFormat = &struct {
-			Type string `json:"type"`
-		}{Type: "json_object"}
-	}
-	body, _ := json.Marshal(req)
-
 	var lastErr error
+	useJSON := jsonMode
 	for attempt := 0; attempt < 3; attempt++ {
 		if attempt > 0 {
 			select {
@@ -96,6 +91,19 @@ func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (strin
 			case <-time.After(time.Duration(attempt*3) * time.Second):
 			}
 		}
+		req := chatRequest{
+			Model:       c.model,
+			Messages:    msgs,
+			Temperature: 0.7,
+			MaxTokens:   32768, // 推理模型的思考 token 也计入,须留足余量防正文为空
+			Stream:      false,
+		}
+		if useJSON {
+			req.ResponseFormat = &struct {
+				Type string `json:"type"`
+			}{Type: "json_object"}
+		}
+		body, _ := json.Marshal(req)
 		out, err := c.do(ctx, body)
 		if err == nil {
 			return out, nil
@@ -105,6 +113,7 @@ func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (strin
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
+		useJSON = false
 	}
 	return "", fmt.Errorf("LLM 调用失败(已重试 3 次): %w", lastErr)
 }
@@ -139,9 +148,13 @@ func (c *Client) do(ctx context.Context, body []byte) (string, error) {
 	if len(cr.Choices) == 0 {
 		return "", fmt.Errorf("API 返回空 choices")
 	}
-	content := strings.TrimSpace(cr.Choices[0].Message.Content)
+	msg := cr.Choices[0].Message
+	content := strings.TrimSpace(msg.Content)
 	if content == "" {
-		return "", fmt.Errorf("API 返回空内容")
+		if cr.Choices[0].FinishReason == "length" {
+			return "", fmt.Errorf("输出被 max_tokens 截断(思考模型正文未生成):请在项目参数中减少镜头数,或更换非推理模型")
+		}
+		return "", fmt.Errorf("API 返回空内容(finish=%s)", cr.Choices[0].FinishReason)
 	}
 	return stripReasoning(content), nil
 }
