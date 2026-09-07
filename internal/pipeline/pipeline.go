@@ -106,7 +106,61 @@ func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride 
 	c.runs[projectID] = run
 	c.mu.Unlock()
 
-	go c.execute(ctx, proj, phase, only, engineOverride)
+	go c.execute(ctx, proj, phase, only, nil, engineOverride)
+	return nil
+}
+
+// RegenAsset 单资产重生成(krea2 换 seed 重出图,更新项目与库)。
+func (c *Coordinator) RegenAsset(projectID, assetID string) error {
+	proj, ok := c.store.Get(projectID)
+	if !ok {
+		return fmt.Errorf("项目不存在: %s", projectID)
+	}
+	plan, err := c.store.LoadPlan(projectID)
+	if err != nil {
+		return fmt.Errorf("尚未生成分镜方案")
+	}
+	kind, name, desc, prompt := "", "", "", ""
+	for _, ch := range plan.Characters {
+		if "char:"+ch.ID == assetID { kind, name, desc, prompt = "characters", ch.Name, ch.Description, ch.ImagePrompt }
+	}
+	for _, sc := range plan.Scenes {
+		if "scene:"+sc.ID == assetID { kind, name, desc, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt }
+	}
+	if kind == "" {
+		return fmt.Errorf("资产不存在于方案: %s", assetID)
+	}
+	eng, err := c.reg.Get("comfy")
+	if err != nil { return err }
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok { return fmt.Errorf("本地引擎不可用") }
+	ctx := context.Background()
+	if err := ce.Available(ctx); err != nil {
+		return fmt.Errorf("单资产重生成需要本地 ComfyUI: %w", err)
+	}
+	c.emit(projectID, PhaseAssets, 0, "info", 0, "重新生成:%s「%s」…", kindLabel(kind), name)
+	w, h := 832, 1248
+	if kind == "scenes" && proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
+		w, h = 1248, 832
+	}
+	out := filepath.Join(c.store.Dir(projectID), "assets", kind, director.SanitizeForCache(kind+"_"+strings.TrimPrefix(assetID, kind+":"))+".png")
+	seed := time.Now().UnixNano() & 0x7fffffff
+	path, err := ce.GenerateImage(ctx, prompt, "", seed, w, h, out)
+	if err != nil {
+		return err
+	}
+	assets, _ := c.store.LoadAssets(projectID)
+	rel, _ := filepath.Rel(c.store.Dir(projectID), path)
+	assets[assetID] = project.Asset{
+		ID: assetID, Kind: kind, Name: name,
+		File: filepath.ToSlash(rel), ImagePrompt: prompt,
+		Source: "krea2", Fingerprint: project.FingerprintFile(path),
+	}
+	if err := c.store.SaveAssets(projectID, assets); err != nil { return err }
+	if c.lib != nil {
+		_, _ = c.lib.Put(kind, name, desc, prompt, path, projectID, "krea2")
+	}
+	c.emit(projectID, PhaseAssets, 0, "success", 100, "✔ 已重生成:%s「%s」", kindLabel(kind), name)
 	return nil
 }
 
@@ -136,7 +190,7 @@ func (c *Coordinator) emit(projectID, phase string, shotID int, level string, pr
 	})
 }
 
-func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, engineOverride string) {
+func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string) {
 	defer c.finish(proj.ID)
 	stages := []string{phase}
 	if phase == PhaseAll {
@@ -154,7 +208,7 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		case PhaseScript:
 			err = c.runScript(ctx, proj)
 		case PhaseAssets:
-			err = c.runAssets(ctx, proj)
+			err = c.runAssets(ctx, proj, onlyAssets)
 		case PhaseRender:
 			err = c.runRender(ctx, proj, only, engineOverride)
 		case PhaseQC:
@@ -232,7 +286,7 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 // krea2Negative Krea-2 蒸馏(CFG 1.0)下负面词无引导作用,留空。
 const krea2Negative = ""
 
-func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) error {
+func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, onlyAssets []string) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return fmt.Errorf("尚未生成分镜方案:请先运行「剧本分镜」阶段")
@@ -281,7 +335,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 	missing := 0
 	total := 0
 	reused := 0
+	onlySet := map[string]bool{}
+	for _, id := range onlyAssets { onlySet[id] = true }
 	check := func(kind, id, name, description, imagePrompt string) {
+		if len(onlySet) > 0 && !onlySet[id] { return }
 		total++
 		if a, ok := assets[id]; ok && a.File != "" {
 			full := filepath.Join(c.store.Dir(proj.ID), a.File)

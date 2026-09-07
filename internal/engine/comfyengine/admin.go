@@ -1,0 +1,147 @@
+package comfyengine
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// AdminStatus ComfyUI 管理状态聚合。
+type AdminStatus struct {
+	Alive    bool   `json:"alive"`
+	Version  string `json:"version"`
+	GPU      string `json:"gpu"`
+	Running  int    `json:"queue_running"`
+	Pending  int    `json:"queue_pending"`
+	Owned    bool   `json:"owned"` // 是否为本应用代管启动(可停止)
+	RootDir  string `json:"root_dir"`
+	BaseURL  string `json:"base_url"`
+	Models   []ModelCheck `json:"models"`
+	Nodes    []NodeCheck  `json:"nodes"`
+}
+
+// ModelCheck 模型配置核对。
+type ModelCheck struct {
+	Label string `json:"label"`   // 显示名
+	Key   string `json:"key"`     // 设置键
+	Name  string `json:"name"`    // 配置的文件名
+	OK    bool   `json:"ok"`      // 是否在 ComfyUI 列表中
+	List  []string `json:"list,omitempty"` // 可用清单(未命中时给候选)
+}
+
+// NodeCheck 自定义节点检测。
+type NodeCheck struct {
+	Label string `json:"label"`
+	Class string `json:"class"`
+	OK    bool   `json:"ok"`
+}
+
+// Admin 聚合管理状态(不触发代管启动)。
+func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
+	c := e.cfg()
+	e.cli = NewClient(c.BaseURL)
+	st := &AdminStatus{Alive: false, RootDir: c.RootDir, BaseURL: c.BaseURL, Owned: e.proc != nil}
+	if !e.cli.Alive(ctx) {
+		return st, nil
+	}
+	st.Alive = true
+	if ver, err := e.cli.Version(ctx); err == nil {
+		st.Version = ver
+	}
+	if run, pend, err := e.cli.Queue(ctx); err == nil {
+		st.Running, st.Pending = len(run), len(pend)
+	}
+	// GPU(从 system_stats devices)
+	if raw, err := e.cli.get(ctx, "/system_stats"); err == nil {
+		var out struct {
+			Devices []struct {
+				Name string `json:"name"`
+			} `json:"devices"`
+		}
+		if json.Unmarshal(raw, &out) == nil && len(out.Devices) > 0 {
+			st.GPU = out.Devices[0].Name
+		}
+	}
+	// 模型核对(object_info 列表)
+	checks := []struct{ label, key, node, field string }{
+		{"UNET · Ref2VA", "unet_ref2va", "UNETLoader", "unet_name"},
+		{"UNET · FL2VA", "unet_fl2va", "UNETLoader", "unet_name"},
+		{"Turbo LoRA · Ref2VA", "turbo_lora_ref2va", "LoraLoaderModelOnly", "lora_name"},
+		{"Turbo LoRA · FL2VA", "turbo_lora_fl2va", "LoraLoaderModelOnly", "lora_name"},
+		{"视频 VAE", "video_vae", "VAELoader", "vae_name"},
+		{"音频 VAE", "audio_vae", "VAELoader", "vae_name"},
+		{"CLIP · Qwen3VL", "clip", "CLIPLoader", "clip_name"},
+		{"定妆照 UNet · Krea2", "image_unet", "UNETLoader", "unet_name"},
+		{"定妆照 CLIP", "image_clip", "CLIPLoader", "clip_name"},
+		{"定妆照 VAE", "image_vae", "VAELoader", "vae_name"},
+	}
+	for _, ck := range checks {
+		mc := ModelCheck{Label: ck.label, Key: ck.key}
+		switch ck.key {
+		case "unet_ref2va": mc.Name = c.UNetRef2VA
+		case "unet_fl2va": mc.Name = c.UNetFL2VA
+		case "turbo_lora_ref2va": mc.Name = c.TurboLoRARef2VA
+		case "turbo_lora_fl2va": mc.Name = c.TurboLoRAFL2VA
+		case "video_vae": mc.Name = c.VideoVAE
+		case "audio_vae": mc.Name = c.AudioVAE
+		case "clip": mc.Name = c.CLIP
+		case "image_unet": mc.Name = c.ImageUNet
+		case "image_clip": mc.Name = c.ImageCLIP
+		case "image_vae": mc.Name = c.ImageVAE
+		}
+		if list, ok := e.cli.ComboList(ctx, ck.node, ck.field); ok {
+			if mc.Name != "" {
+				for _, v := range list {
+					if v == mc.Name {
+						mc.OK = true
+						break
+					}
+				}
+			}
+			if !mc.OK && len(list) > 0 && len(list) <= 30 {
+				mc.List = list
+			}
+		}
+		st.Models = append(st.Models, mc)
+	}
+	// H3 关键节点检测
+	for _, ncd := range []struct{ label, class string }{
+		{"条件缓存 · ConditioningCache", "MiniMaxH3CondSave"},
+		{"镜间接缝 · MotionContext", "MiniMaxH3MotionContext"},
+	} {
+		nc := NodeCheck{Label: ncd.label, Class: ncd.class}
+		nc.OK = e.cli.HasNode(ctx, nc.Class)
+		st.Nodes = append(st.Nodes, nc)
+	}
+	return st, nil
+}
+
+// StartAdmin 手动代管启动。
+func (e *Engine) StartAdmin(ctx context.Context) error {
+	if e.cli.Alive(ctx) {
+		return fmt.Errorf("ComfyUI 已在运行")
+	}
+	return e.launch(ctx, e.cfg())
+}
+
+// StopAdmin 停止代管启动的 ComfyUI(外部启动的实例不接管)。
+func (e *Engine) StopAdmin() error {
+	if e.proc == nil {
+		return fmt.Errorf("ComfyUI 非本应用启动,请在其自身窗口/终端关闭")
+	}
+	if err := e.proc.Kill(); err != nil {
+		return err
+	}
+	e.proc = nil
+	return nil
+}
+
+// QueueClear 清空待执行队列。
+func (e *Engine) QueueClear(ctx context.Context) { e.cli.ClearPending(ctx) }
+
+// Interrupt 中断当前执行。
+func (e *Engine) Interrupt(ctx context.Context) { e.cli.Interrupt(ctx) }
+
+// FreeVRAM 释放显存。
+func (e *Engine) FreeVRAM(ctx context.Context) { e.cli.Free(ctx) }
+

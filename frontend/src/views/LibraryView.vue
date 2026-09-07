@@ -59,9 +59,12 @@ async function remove(e) {
 
     <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
       <div v-for="e in list" :key="e.kind + e.name" class="shot-card p-3 flex flex-col gap-2">
-        <div style="aspect-ratio:3/4;background:var(--mx-bg-2);border-radius:8px;overflow:hidden">
+        <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="G.viewer={index:0,items:[{type:'image',src:`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`,title:e.name,meta:(e.source==='krea2'?'Krea-2':'上传')+` · 复用 ${e.used_count} 次`,kindLabel:'LIBRARY'}]}">
           <img :src="`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`"
                style="width:100%;height:100%;object-fit:cover" loading="lazy" />
+          <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:rgba(4,6,10,.4)">
+            <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
+          </div>
         </div>
         <div class="flex items-center gap-2">
           <b class="text-sm truncate flex-1">{{ e.name }}</b>

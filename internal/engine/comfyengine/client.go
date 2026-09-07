@@ -529,3 +529,40 @@ func truncate(s string, n int) string {
 
 // HTTP 暴露内部 http.Client(引擎内探测用)。
 func (c *Client) HTTP() *http.Client { return c.http }
+
+// ComboList 读取节点某 combo 输入的可选值列表。
+func (c *Client) ComboList(ctx context.Context, classType, field string) ([]string, bool) {
+	raw, err := c.get(ctx, "/object_info/"+url.PathEscape(classType))
+	if err != nil {
+		return nil, false
+	}
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, false
+	}
+	nodeRaw, ok := out[classType]
+	if !ok {
+		return nil, false
+	}
+	var node struct {
+		Input struct {
+			Required map[string]json.RawMessage `json:"required"`
+		} `json:"input"`
+	}
+	if err := json.Unmarshal(nodeRaw, &node); err != nil {
+		return nil, false
+	}
+	defRaw, ok := node.Input.Required[field]
+	if !ok {
+		return nil, false
+	}
+	var def []json.RawMessage
+	if err := json.Unmarshal(defRaw, &def); err != nil || len(def) == 0 {
+		return nil, false
+	}
+	var list []string
+	if err := json.Unmarshal(def[0], &list); err != nil {
+		return nil, false
+	}
+	return list, true
+}

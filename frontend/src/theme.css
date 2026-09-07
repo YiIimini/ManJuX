@@ -1,43 +1,40 @@
 /* ===== Element Plus 暗色主题定制(须在 EP css 之后加载)===== */
 html.dark {
-  --el-color-primary: var(--mx-orange);
-  --el-bg-color: var(--mx-bg);
-  --el-bg-color-overlay: var(--mx-panel);
-  --el-bg-color-page: var(--mx-bg);
+  --el-color-primary: var(--mx-amber);
+  --el-bg-color: var(--mx-bg1);
+  --el-bg-color-overlay: var(--mx-bg3);
+  --el-bg-color-page: var(--mx-bg0);
   --el-border-color: var(--mx-line);
   --el-border-color-light: var(--mx-line);
-  --el-border-color-lighter: #1d2433;
-  --el-fill-color-blank: var(--mx-panel);
-  --el-fill-color-light: var(--mx-panel-2);
+  --el-border-color-lighter: #1a2132;
+  --el-fill-color-blank: var(--mx-bg2);
+  --el-fill-color-light: var(--mx-bg3);
   --el-text-color-primary: var(--mx-text);
-  --el-text-color-regular: #c3cad8;
-  --el-text-color-secondary: var(--mx-text-2);
+  --el-text-color-regular: #c6cfe2;
+  --el-text-color-secondary: var(--mx-text2);
   --el-color-success: var(--mx-green);
   --el-color-danger: var(--mx-red);
   --el-color-warning: var(--mx-yellow);
-  --el-color-info: #7c8698;
-  --el-mask-color: rgba(5, 8, 14, .7);
+  --el-color-info: #7b869f;
+  --el-mask-color: rgba(4, 6, 10, .75);
   --el-font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+  --el-border-radius-base: 10px;
 }
 
-/* 按钮主色 */
-.el-button--primary {
-  --el-button-bg-color: var(--mx-orange);
-  --el-button-border-color: var(--mx-orange);
-  --el-button-hover-bg-color: var(--mx-orange-2);
-  --el-button-hover-border-color: var(--mx-orange-2);
-  --el-button-active-bg-color: #f0813c;
-}
-
-/* 输入/选择器深色底 */
+/* 输入/选择深色底 + 发光聚焦 */
 .el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
-  background-color: var(--mx-bg-2);
+  background-color: rgba(10, 13, 22, .85);
+  transition: box-shadow .2s, border-color .2s;
 }
-.el-drawer { background: var(--mx-panel) !important; }
-.el-dialog { background: var(--mx-panel) !important; }
-
-/* 抽屉/弹窗标题 */
-.el-drawer__header, .el-dialog__header { margin-bottom: 12px; color: var(--mx-text); }
+.el-input__wrapper.is-focus, .el-select__wrapper.is-focused {
+  box-shadow: 0 0 0 1px rgba(255, 180, 84, .5) inset !important;
+}
+.el-drawer, .el-dialog {
+  background: linear-gradient(170deg, var(--mx-bg3), var(--mx-bg2)) !important;
+  border: 1px solid var(--mx-line);
+}
+.el-drawer__header, .el-dialog__header { margin-bottom: 14px; color: var(--mx-text); }
+.el-message { border: 1px solid var(--mx-line-hi); background: var(--mx-bg3) !important; }
 
 /* 所有 select 文本居中(全局规矩) */
 .el-select .el-select__wrapper .el-select__selected-item,
@@ -49,12 +46,11 @@ html.dark {
 .el-select__placeholder { margin: 0 auto; }
 
 /* tabs 风格 */
-.el-tabs__item { font-size: 14px; }
-.el-tabs__item.is-active { color: var(--mx-orange); }
-.el-tabs__active-bar { background-color: var(--mx-orange); }
+.el-tabs__item { font-size: 14px; color: var(--mx-text2); transition: color .2s; }
+.el-tabs__item:hover { color: var(--mx-text); }
+.el-tabs__item.is-active { color: var(--mx-amber); }
+.el-tabs__active-bar { background: linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep)); height: 3px; border-radius: 3px; }
+.el-tabs__nav-wrap::after { background: var(--mx-line); }
 
-/* 进度条 */
-.el-progress__text { color: var(--mx-text-2); }
-
-/* 消息框层级 */
-.el-message { border: 1px solid var(--mx-line); }
+/* 消息/通知 */
+.el-message { backdrop-filter: blur(10px); }

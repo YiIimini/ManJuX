@@ -22,6 +22,7 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
@@ -119,6 +120,11 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/library/{kind}/{name}/image", s.libraryImage)
 	m.HandleFunc("DELETE /api/library/{kind}/{name}", s.deleteLibrary)
 	m.HandleFunc("POST /api/projects/{id}/export-pack", s.exportClipPack)
+	m.HandleFunc("POST /api/projects/{id}/assets/regen", s.regenAsset)
+	m.HandleFunc("GET /api/comfy/admin", s.comfyAdmin)
+	m.HandleFunc("POST /api/comfy/{action}", s.comfyAction)
+	m.HandleFunc("GET /api/outputs", s.outputsList)
+	m.HandleFunc("DELETE /api/projects/{id}/output", s.projectOutputDelete)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -800,6 +806,82 @@ func truncateStr(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// comfyAdmin ComfyUI 管理状态。
+func (s *Server) comfyAdmin(w http.ResponseWriter, r *http.Request) {
+	eng, err := s.reg.Get("comfy")
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		writeErr(w, 500, fmt.Errorf("引擎类型错误"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
+	defer cancel()
+	st, err := ce.Admin(ctx)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, st)
+}
+
+// comfyAction ComfyUI 管理操作:start/stop/queue-clear/interrupt/free。
+func (s *Server) comfyAction(w http.ResponseWriter, r *http.Request) {
+	eng, _ := s.reg.Get("comfy")
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		writeErr(w, 500, fmt.Errorf("引擎类型错误"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 6*time.Minute)
+	defer cancel()
+	var err error
+	switch r.PathValue("action") {
+	case "start":
+		err = ce.StartAdmin(ctx)
+	case "stop":
+		err = ce.StopAdmin()
+	case "queue-clear":
+		ce.QueueClear(ctx)
+	case "interrupt":
+		ce.Interrupt(ctx)
+	case "free":
+		ce.FreeVRAM(ctx)
+	default:
+		writeErr(w, 400, fmt.Errorf("未知操作"))
+		return
+	}
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// regenAsset 单资产重生成(Krea-2 换 seed)。
+func (s *Server) regenAsset(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pipe.Running(id) != nil {
+		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		return
+	}
+	var in struct {
+		AssetID string `json:"asset_id"`
+	}
+	if err := readBody(r, &in); err != nil || in.AssetID == "" {
+		writeErr(w, 400, fmt.Errorf("asset_id 不能为空"))
+		return
+	}
+	if err := s.pipe.RegenAsset(id, in.AssetID); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // ---------- 资产库 ----------

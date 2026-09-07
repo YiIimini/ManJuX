@@ -10,7 +10,9 @@ export const G = reactive({
   logs: [],                // SSE 事件
   eventsOpen: false,
   paramsDrawer: null,      // 打开调优的阶段 id
+  stageDetail: null,        // 打开详情管理的阶段 id
   promptShot: null,        // 查看 H3 提示词的镜头
+  viewer: null,             // 全屏媒体预览 {items:[{type,src,title,meta,foot,kindLabel}], index}
   logPanelOpen: true,
 })
 
@@ -48,6 +50,7 @@ export const api = {
   run: (id, phase, only, engine) => req('POST', `/api/projects/${encodeURIComponent(id)}/run`, { phase, only, engine }),
   stop: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/stop`),
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
+  regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),
   uploadAsset: (id, kind, assetId, name, file) => {
     const fd = new FormData()
     fd.append('kind', kind); fd.append('asset_id', assetId)
