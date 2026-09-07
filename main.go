@@ -26,6 +26,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/server"
+	"github.com/YiIimini/ManJuX/internal/tray"
 	"github.com/YiIimini/ManJuX/internal/version"
 	"github.com/YiIimini/ManJuX/internal/winctl"
 )
@@ -118,6 +119,11 @@ func main() {
 		},
 		OnStartup: func(ctx context.Context) {
 			winctl.Default.Bind(ctx)
+			// 系统托盘:后台运行(窗口隐藏)时的常驻入口
+			go tray.RunDesktop(tray.Deps{
+				OnShow: func() { winctl.Default.Show() },
+				OnQuit: func() { winctl.Default.ForceQuit() },
+			})
 			srv.SetQuitFunc(func() {
 				log.Printf("[manjux] 收到退出请求(界面确认)")
 				go runtime.Quit(ctx)
@@ -125,6 +131,10 @@ func main() {
 			log.Printf("[manjux] 桌面窗口就绪")
 		},
 		OnBeforeClose: func(ctx context.Context) bool {
+			// 用户已在界面确认「直接退出」:放行(否则反复拦截表现为退出无反应)
+			if winctl.Default.ForceMode() {
+				return false
+			}
 			// 管线运行中拦截关窗,交前端二次确认(防误关中断渲染)
 			if coord.HasRunning() {
 				log.Printf("[manjux] 拦截关窗:管线运行中,等待用户确认")
@@ -134,6 +144,7 @@ func main() {
 			return false
 		},
 		OnShutdown: func(ctx context.Context) {
+			tray.Quit()
 			log.Printf("[manjux] 退出:停止全部管线并同步退出代管的 ComfyUI")
 			coord.StopAll()
 			if eng, err := reg.Get("comfy"); err == nil {

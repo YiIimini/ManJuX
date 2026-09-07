@@ -3,8 +3,10 @@ package server
 
 import (
 	"errors"
+	"strconv"
 	"net/http"
 
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/sysmon"
 	"github.com/YiIimini/ManJuX/internal/winctl"
 )
@@ -41,4 +43,16 @@ func (s *Server) handleWindowAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+
+// handleLogs 轮询增量日志:GET /api/logs?after=N(桌面 webview 的 SSE 兜底)。
+func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
+	after, _ := strconv.Atoi(r.URL.Query().Get("after"))
+	events, next := s.bus.Recent(after)
+	if events == nil {
+		events = []pipeline.Event{}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"events": events, "next": next})
 }

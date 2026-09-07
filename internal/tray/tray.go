@@ -1,5 +1,6 @@
-// Package tray 系统托盘常驻:打开工作台 / 退出。
-// 桌面(Wails)模式下默认不启用;独立服务/浏览器模式下可选启用。
+// Package tray 系统托盘常驻。
+// 桌面(Wails)模式:显示主窗口 / 退出;后台运行(窗口隐藏)时托盘是唯一入口。
+// 独立服务/浏览器模式:打开工作台浏览器窗口 / 退出。
 package tray
 
 import (
@@ -15,11 +16,37 @@ var iconData []byte
 
 // Deps 托盘行为依赖。
 type Deps struct {
-	WorkbenchURL func() string // 每次点击时取最新 URL(端口可能自动偏移)
-	OnQuit       func()
+	WorkbenchURL func() string // 浏览器模式:每次点击时取最新 URL
+	OnShow       func()        // 桌面模式:唤回主窗口
+	OnQuit       func()        // 退出应用
 }
 
-// Run 启动托盘(阻塞)。全部 UI 操作在 onReady 内执行才生效。
+// RunDesktop 桌面模式托盘:显示主窗口 / 退出(阻塞,需在独立 goroutine 运行)。
+func RunDesktop(d Deps) {
+	systray.Run(
+		func() {
+			systray.SetIcon(iconData)
+			systray.SetTitle("ManJuX")
+			systray.SetTooltip("ManJuX 短视频创作工作台 · 后台运行中")
+			mShow := systray.AddMenuItem("显示主窗口", "唤回 ManJuX 主窗口")
+			systray.AddSeparator()
+			mQuit := systray.AddMenuItem("退出", "退出 ManJuX(停止管线并同步退出 ComfyUI)")
+			mShow.Click(func() {
+				if d.OnShow != nil {
+					d.OnShow()
+				}
+			})
+			mQuit.Click(func() {
+				if d.OnQuit != nil {
+					d.OnQuit()
+				}
+			})
+		},
+		func() { /* onQuit:应用退出由 OnQuit 驱动,这里不额外动作 */ },
+	)
+}
+
+// Run 浏览器模式托盘(打开工作台 / 退出)。
 func Run(d Deps) {
 	systray.Run(
 		func() { // onReady
@@ -32,7 +59,13 @@ func Run(d Deps) {
 			mOpen.Click(func() {
 				_ = browser.OpenAppWindow(d.WorkbenchURL(), 1480, 920)
 			})
-			mQuit.Click(func() { systray.Quit() })
+			mQuit.Click(func() {
+				if d.OnQuit != nil {
+					d.OnQuit()
+				} else {
+					systray.Quit()
+				}
+			})
 		},
 		func() { // onQuit
 			if d.OnQuit != nil {
@@ -42,7 +75,7 @@ func Run(d Deps) {
 	)
 }
 
-// Quit 退出托盘(从外部触发)。
+// Quit 退出托盘(应用关闭时清掉图标)。
 func Quit() {
 	systray.Quit()
 }

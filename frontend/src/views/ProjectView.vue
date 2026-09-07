@@ -91,8 +91,26 @@ async function removeAsset(assetId) {
 }
 
 async function openDir() {
-  try { await api.openExplorer('output', pj.value.project.id) }
+  // 文件级定位:优先选中 2K/标准成片文件,无成片则打开 output 目录
+  const rel = pj.value.output?.final_2k || pj.value.output?.final || 'output'
+  try { await api.openExplorer(rel, pj.value.project.id) }
   catch (e) { ElMessage.error(e.message) }
+}
+
+// 打开资产所在目录(资源管理器选中该文件)
+async function openAssetDir(file) {
+  if (!file) return
+  try { await api.openExplorer(file, pj.value.project.id) }
+  catch (e) { ElMessage.error(e.message) }
+}
+
+// 资产大图预览
+function previewAsset(name, file) {
+  G.viewer = {
+    index: 0,
+    items: [{ type: 'image', src: api.fileURL(pj.value.project.id, file),
+      title: name, meta: '角色定妆照', kindLabel: 'ASSET' }],
+  }
 }
 
 const exporting = ref(false)
@@ -222,6 +240,12 @@ const doneShots = computed(() =>
                     <el-tag v-else-if="c.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="c.asset ? 'ok' : 'warn'"></i>
                     <div class="flex-1"></div>
+                    <el-tooltip v-if="c.asset" content="预览大图" placement="top">
+                      <el-button text size="small" @click="previewAsset(c.name, c.asset.file)"><el-icon><ZoomIn /></el-icon></el-button>
+                    </el-tooltip>
+                    <el-tooltip v-if="c.asset" content="打开所在目录" placement="top">
+                      <el-button text size="small" @click="openAssetDir(c.asset.file)"><el-icon><FolderOpened /></el-icon></el-button>
+                    </el-tooltip>
                     <el-button v-if="c.asset" text size="small" @click="removeAsset('char:'+c.id)"><el-icon><Delete /></el-icon></el-button>
                   </div>
                   <div style="aspect-ratio:3/4;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="flex items-center justify-center cursor-pointer"

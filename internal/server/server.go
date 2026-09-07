@@ -20,7 +20,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/browser"
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -30,7 +29,9 @@ import (
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/version"
+	"github.com/YiIimini/ManJuX/internal/winctl"
 )
 
 //go:embed all:webdist
@@ -128,6 +129,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/outputs", s.outputsList)
 	m.HandleFunc("DELETE /api/projects/{id}/output", s.projectOutputDelete)
 	m.HandleFunc("GET /api/sysmon", s.handleSysmon)
+	m.HandleFunc("GET /api/logs", s.handleLogs)
 	m.HandleFunc("POST /api/library/gacha", s.handleLibraryGacha)
 	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
@@ -165,19 +167,19 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusOut struct {
-	Version   string `json:"version"`
-	BuildInfo string `json:"build_info"`
-	Port      int    `json:"port"`
-	Env       envOut `json:"env"`
+	Version   string                  `json:"version"`
+	BuildInfo string                  `json:"build_info"`
+	Port      int                     `json:"port"`
+	Env       envOut                  `json:"env"`
 	Running   map[string]pipeline.Run `json:"running"`
 }
 
 type envOut struct {
-	FFmpeg    string `json:"ffmpeg"`
-	LLMReady  bool   `json:"llm_ready"`
-	ComfyURL  string `json:"comfy_url"`
-	ComfyLive bool   `json:"comfy_live"`
-	APIReady  bool   `json:"minimax_ready"`
+	FFmpeg    string   `json:"ffmpeg"`
+	LLMReady  bool     `json:"llm_ready"`
+	ComfyURL  string   `json:"comfy_url"`
+	ComfyLive bool     `json:"comfy_live"`
+	APIReady  bool     `json:"minimax_ready"`
 	Engines   []string `json:"engines"`
 }
 
@@ -508,7 +510,7 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	kind := r.FormValue("kind")     // characters / scenes / props
+	kind := r.FormValue("kind")        // characters / scenes / props
 	assetID := r.FormValue("asset_id") // 形如 char:xxx / scene:xxx
 	name := r.FormValue("name")
 	switch kind {
@@ -722,7 +724,8 @@ func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, err)
 		return
 	}
-	cmd := sysexec.Hide(exec.Command("explorer.exe", "/select,", target))
+	// explorer 的 /select 必须与路径连成一个参数,拆开会打开默认文档目录
+	cmd := sysexec.Hide(exec.Command("explorer.exe", "/select,"+target))
 	_ = cmd.Start()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -1031,15 +1034,14 @@ func (s *Server) quitApp(w http.ResponseWriter, r *http.Request) {
 		s.pipe.Stop(p.ID)
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
-	if s.quit != nil {
-		go func() {
-			<-r.Context().Done() // 等响应送达
-			s.quit()
-		}()
-		return
-	}
 	go func() {
-		<-r.Context().Done()
+		<-r.Context().Done() // 等响应送达
+		// 桌面模式走 winctl(置放行标志再 Quit,防 OnBeforeClose 反复拦截)
+		winctl.Default.ForceQuit()
+		if s.quit != nil {
+			s.quit()
+		}
+		time.Sleep(3 * time.Second) // 兜底:Quit 未生效则强杀
 		os.Exit(0)
 	}()
 }

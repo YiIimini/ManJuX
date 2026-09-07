@@ -11,6 +11,7 @@ import (
 
 // Event 一条管线事件。
 type Event struct {
+	Seq       int       `json:"seq"`     // 全局递增序号(轮询增量拉取用)
 	ProjectID string    `json:"project_id"`
 	Phase     string    `json:"phase"`  // script/assets/render/qc/assemble/pipeline
 	ShotID    int       `json:"shot_id"` // 0=非镜头级
@@ -25,6 +26,7 @@ type Bus struct {
 	mu       sync.Mutex
 	subs     map[int]chan Event
 	nextSub  int
+	nextSeq  int
 	history  []Event
 	maxHist  int
 	closed   bool
@@ -45,6 +47,8 @@ func (b *Bus) Publish(ev Event) {
 	if b.closed {
 		return
 	}
+	b.nextSeq++
+	ev.Seq = b.nextSeq
 	b.history = append(b.history, ev)
 	if len(b.history) > b.maxHist {
 		b.history = b.history[len(b.history)-b.maxHist:]
@@ -99,4 +103,18 @@ func (b *Bus) SnapshotJSON() string {
 	defer b.mu.Unlock()
 	raw, _ := json.Marshal(b.history)
 	return string(raw)
+}
+
+
+// Recent 返回 seq 大于 after 的历史事件(轮询增量)与最新 seq。
+func (b *Bus) Recent(after int) ([]Event, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	out := []Event{}
+	for _, ev := range b.history {
+		if ev.Seq > after {
+			out = append(out, ev)
+		}
+	}
+	return out, b.nextSeq
 }

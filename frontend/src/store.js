@@ -15,6 +15,7 @@ export const G = reactive({
   viewer: null,             // 全屏媒体预览 {items:[{type,src,title,meta,foot,kindLabel}], index}
   tuneShot: null,           // 单镜画布微调的镜头对象
   logPanelOpen: false,
+  logSeq: 0,                // 日志轮询游标(seq 去重)
   tick: { library: 0, outputs: 0, comfy: 0, settings: 0 }, // 顶栏「刷新」触发各视图自刷新
 })
 
@@ -69,23 +70,21 @@ export const api = {
   quit: () => req('POST', '/api/quit'),
 }
 
-// ---------- SSE ----------
+// ---------- 实时日志:SSE(浏览器) / 轮询(桌面 webview) ----------
+// Wails webview 的自定义协议对 SSE 流式存在缓冲,桌面内改用 2s 增量轮询
+// (seq 去重),彻底解决「日志不显示」;浏览器访问仍走 SSE。
 export function connectEvents() {
+  if (window.runtime?.EventsOn || window.runtime?.WindowShow) {
+    startLogPolling()
+    return
+  }
   if (G.eventsOpen) return
   const es = new EventSource('/api/events')
   G.eventsOpen = true
   es.addEventListener('log', (e) => {
     try {
       const ev = JSON.parse(e.data)
-      G.logs.push(ev)
-      if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
-      if (ev.project_id && G.project && ev.project_id === G.project.project.id) {
-        // 管线级事件(success/error/warn,如「⏹ 已停止」「✔ 完成」)→ 立即刷新项目状态
-        if (ev.phase === 'pipeline' && ['success', 'error', 'warn'].includes(ev.level)) {
-          refreshProject()
-          refreshStatus()
-        }
-      }
+      pushEvent(ev)
     } catch { /* ignore */ }
   })
   es.onerror = () => {
@@ -94,8 +93,45 @@ export function connectEvents() {
   }
 }
 
+function pushEvent(ev) {
+  if (ev.seq && ev.seq <= G.logSeq) return // 轮询去重
+  if (ev.seq) G.logSeq = ev.seq
+  G.logs.push(ev)
+  if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
+  G.eventsOpen = true
+  if (ev.project_id && G.project && ev.project_id === G.project.project.id) {
+    // 管线级事件(success/error/warn,如「⏹ 已停止」「✔ 完成」)→ 立即刷新项目状态
+    if (ev.phase === 'pipeline' && ['success', 'error', 'warn'].includes(ev.level)) {
+      refreshProject()
+      refreshStatus()
+    }
+  }
+}
+
+let pollTimer = null
+function startLogPolling() {
+  if (pollTimer) return
+  G.eventsOpen = true
+  const poll = async () => {
+    try {
+      const r = await fetch(`/api/logs?after=${G.logSeq || 0}`)
+      if (!r.ok) return
+      const d = await r.json()
+      for (const ev of (d.events || [])) pushEvent(ev)
+    } catch { /* 服务重启中 */ }
+  }
+  poll()
+  pollTimer = setInterval(poll, 2000)
+}
+
 export async function refreshStatus() {
-  try { G.status = await api.status() } catch { /* 服务重启中 */ }
+  try { G.status = await api.status() }
+  catch {
+    // 瞬时失败(隐藏/唤回/服务预热):2.5s 后补拉一次,避免底栏版本/环境灯长时间空白
+    setTimeout(async () => {
+      try { G.status = await api.status() } catch { /* 服务重启中 */ }
+    }, 2500)
+  }
 }
 export async function refreshProjects() {
   try { G.projects = await api.projects() } catch { }
