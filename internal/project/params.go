@@ -12,9 +12,11 @@ type StageParams struct {
 
 // ScriptParams 剧本/分镜阶段(script)参数。
 type ScriptParams struct {
-	MaxShots     int    `json:"max_shots"`      // 目标镜头数(3-12)
-	TotalSeconds int    `json:"total_seconds"`  // 目标总时长(秒)
-	StyleHint    string `json:"style_hint"`     // 附加风格要求(自由文本)
+	MaxShots     int      `json:"max_shots"`      // 目标镜头数(3-12)
+	TotalSeconds int      `json:"total_seconds"`  // 目标总时长(秒)
+	Styles       []string `json:"styles"`         // 渲染风格预设 key(可多选组合)
+	StyleHint    string   `json:"style_hint"`     // 附加风格要求(自由文本)
+	Chibi        bool     `json:"chibi"`          // 定妆时同步生成 Q 版形象(内心活动表达)
 }
 
 // AssetsParams 资产阶段(assets)参数。

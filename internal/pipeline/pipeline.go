@@ -128,8 +128,18 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		if "scene:"+sc.ID == assetID { kind, name, desc, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt }
 	}
 	if kind == "" {
+		// Q 版等派生资产:直接用资产表里存的提示词重生成(不入库)
+		if assets, err := c.store.LoadAssets(projectID); err == nil {
+			if a, ok := assets[assetID]; ok && strings.TrimSpace(a.ImagePrompt) != "" {
+				kind, name, prompt, desc = a.Kind, a.Name, a.ImagePrompt, ""
+			}
+		}
+	}
+	if kind == "" {
 		return fmt.Errorf("资产不存在于方案: %s", assetID)
 	}
+	// Q 版(chibi)方形画幅,其余竖版半身
+	isChibi := strings.HasSuffix(assetID, "_chibi")
 	eng, err := c.reg.Get("comfy")
 	if err != nil { return err }
 	ce, ok := eng.(*comfyengine.Engine)
@@ -140,7 +150,9 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	}
 	c.emit(projectID, PhaseAssets, 0, "info", 0, "重新生成:%s「%s」…", kindLabel(kind), name)
 	w, h := 832, 1248
-	if kind == "scenes" && proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
+	if isChibi {
+		w, h = 1024, 1024
+	} else if kind == "scenes" && proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
 		w, h = 1248, 832
 	}
 	out := filepath.Join(c.store.Dir(projectID), "assets", kind, director.SanitizeForCache(kind+"_"+strings.TrimPrefix(assetID, kind+":"))+".png")
@@ -157,7 +169,8 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		Source: "krea2", Fingerprint: project.FingerprintFile(path),
 	}
 	if err := c.store.SaveAssets(projectID, assets); err != nil { return err }
-	if c.lib != nil {
+	if c.lib != nil && !isChibi {
+		// Q 版是项目内派生素材,不沉淀进跨项目资产库
 		_, _ = c.lib.Put(kind, name, desc, prompt, path, projectID, "krea2")
 	}
 	c.emit(projectID, PhaseAssets, 0, "success", 100, "✔ 已重生成:%s「%s」", kindLabel(kind), name)
@@ -269,7 +282,8 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	p := proj.Config.Params.Script
 	c.emit(proj.ID, PhaseScript, 0, "info", 15, "LLM 直出分镜(%s,%d 镜约 %d 秒)…", g.LLM.Model, p.MaxShots, p.TotalSeconds)
 	plan, err := director.Generate(ctx, client, text, director.Options{
-		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds, ExtraHint: p.StyleHint,
+		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
+		ExtraHint: composeStyleHint(p.Styles, p.StyleHint), Chibi: p.Chibi,
 	})
 	if err != nil {
 		return err
@@ -410,6 +424,38 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
 	}
+
+	// Q 版形象(chibi):主定妆照就绪的角色同步生成 Q 版,内心活动镜头的表达素材。
+	// 独立资产 ID(char:<id>_chibi),渲染 ref 不携带,仅作画面内容/花絮素材。
+	if proj.Config.Params.Script.Chibi && comfyGen != nil {
+		for _, ch := range plan.Characters {
+			chibiID := "char:" + ch.ID + "_chibi"
+			if a, ok := assets[chibiID]; ok && a.File != "" {
+				if _, err := os.Stat(filepath.Join(c.store.Dir(proj.ID), a.File)); err == nil {
+					continue
+				}
+			}
+			// 复用同 seed 机制,保证同角色 Q 版稳定
+			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
+			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
+			chibiPrompt := "cute chibi SD figure of the same character, big head, tiny body, full body, simple pastel background, " +
+				"expressive face, figure product photography, " + ch.ImagePrompt
+			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
+			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
+			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
+				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
+				assets[chibiID] = project.Asset{
+					ID: chibiID, Kind: "characters", Name: ch.Name + " · Q版",
+					File: filepath.ToSlash(rel), ImagePrompt: chibiPrompt,
+					Source: "krea2-chibi", Fingerprint: project.FingerprintFile(path),
+				}
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ Q 版就绪:「%s」(内心活动素材)", ch.Name)
+			} else {
+				c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "Q 版生成失败(不影响主流程):%v", err)
+			}
+		}
+	}
+
 	if err := c.store.SaveAssets(proj.ID, assets); err != nil {
 		return err
 	}
@@ -676,4 +722,37 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
 		head += "\n【全片视觉风格】" + strings.TrimSpace(plan.Style)
 	}
 	return head + "\n\n" + shot.H3Prompt
+}
+
+// StylePresets 渲染风格预设(可多选组合):key → (显示名, 英文风格提示)。
+// 提示词进 LLM 全局风格段,决定全片视觉基调。
+var StylePresets = map[string]struct{ Name, Prompt string }{
+	"urban_xianxia": {"都市仙侠霓虹", "CHINESE URBAN-XIANXIA, NEON-NOIR WET-STREET LIGHTING, CINEMATIC ANIMATION, GOD RAYS THROUGH SKYSCRAPERS"},
+	"guoman_2d":     {"国漫二维动画", "CHINESE 2D ANIME STYLE, CLEAN LINEWORK, VIBRANT CEL SHADING, DONGHUA QUALITY"},
+	"live_action":   {"真人实拍质感", "PHOTOREALISTIC LIVE-ACTION CINEMATOGRAPHY, 35MM FILM, SHALLOW DEPTH OF FIELD, NATURAL SKIN TEXTURE"},
+	"pixar_3d":      {"3D 皮克斯", "PIXAR-STYLE 3D RENDER, SOFT GLOBAL ILLUMINATION, EXPRESSIVE STYLIZED CHARACTERS, SUBSURFACE SCATTERING"},
+	"ink_wash":      {"水墨国风", "CHINESE INK WASH PAINTING STYLE, BRUSH TEXTURE, NEGATIVE SPACE, MISTY MOUNTAINS, TRADITIONAL AESTHETIC"},
+	"cyberpunk":     {"赛博朋克", "CYBERPUNK, RAIN-SOAKED STREETS, HOLOGRAPHIC ADS, CHROME AND NEON, BLADE RUNNER MOOD"},
+	"ghibli":        {"吉卜力手绘", "GHIBLI-INSPIRED HAND-PAINTED, WARM WATERCOLOR BACKGROUNDS, SOFT WIND AND LIGHT, WHIMSICAL SERENITY"},
+	"film_noir":     {"黑色电影", "FILM NOIR, HIGH CONTRAST BLACK AND WHITE WITH ONE ACCENT COLOR, VENETIAN BLIND SHADOWS, SMOKEY"},
+	"hongkong":      {"港片胶片", "HONG KONG CINEMA 1990s, SATURATED NEON, TEAL-ORANGE GRADE, ANAMORPHIC FLARES"},
+	"claymation":    {"黏土定格", "CLAYMATION STOP-MOTION STYLE, FINGERPRINT TEXTURE, TACTILE HANDMADE CHARM"},
+}
+
+// composeStyleHint 风格预设(可组合)拼接 + 用户自由文本。
+func composeStyleHint(styles []string, freeHint string) string {
+	var parts []string
+	for _, k := range styles {
+		if p, ok := StylePresets[k]; ok {
+			parts = append(parts, p.Prompt)
+		}
+	}
+	out := strings.Join(parts, " + ")
+	if strings.TrimSpace(freeHint) != "" {
+		if out != "" {
+			out += "; "
+		}
+		out += strings.TrimSpace(freeHint)
+	}
+	return out
 }

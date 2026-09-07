@@ -38,7 +38,6 @@ function stageState(id) {
   return ''
 }
 
-// 阶段计数与进度(卡面数据,一眼看清产线状态)
 function countOf(id) {
   const pj = G.project
   if (!pj) return { label: '—', pct: 0 }
@@ -49,7 +48,7 @@ function countOf(id) {
       if (!pj.plan) return { label: '待定妆', pct: 0 }
       if (pj.project.params?.assets?.source === 'skip') return { label: '已跳过', pct: 100 }
       const total = pj.plan.characters.length + pj.plan.scenes.length
-      const have = Object.keys(pj.assets || {}).length
+      const have = Object.keys(pj.assets || {}).filter(k => !k.includes('_chibi')).length
       return { label: have + '/' + total + ' 定妆', pct: total ? Math.min(100, Math.round(have * 100 / total)) : 0 }
     }
     case 'render': {
@@ -86,62 +85,50 @@ async function runAll() { await runStage('all') }
 </script>
 
 <template>
-  <div class="stage-grid">
-    <div v-for="(s, i) in PHASES" :key="s.id" class="stage-card stage-v3" :class="stageState(s.id)">
-      <div class="stage-v3-head">
-        <div class="stage-ico" :class="stageState(s.id)">
-          <el-icon :size="18"><component :is="s.icon" /></el-icon>
+  <div class="pipe-rail">
+    <div class="pipe-rail-title">
+      <span class="rec-dot" v-if="project?.running"></span>
+      <span>产线 PIPELINE</span>
+    </div>
+
+    <div v-for="(s, i) in PHASES" :key="s.id" class="stage-card stage-rail" :class="stageState(s.id)">
+      <div class="rail-head">
+        <div class="stage-ico sm" :class="stageState(s.id)">
+          <el-icon :size="15"><component :is="s.icon" /></el-icon>
         </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
-            <span class="stage-num">0{{ i + 1 }}</span>
-            <b class="text-[14px] cursor-pointer hover:text-[var(--mx-amber)] transition-colors"
-               @click="G.stageDetail = s.id" title="打开详情管理">{{ s.name }}</b>
-            <i class="dot" :class="stageState(s.id) === 'active' ? 'run' : stageState(s.id) === 'done' ? 'ok' : stageState(s.id) === 'bad' ? 'bad' : stageState(s.id) === 'warn' ? 'warn' : ''"></i>
-          </div>
+        <span class="stage-num sm">0{{ i + 1 }}</span>
+        <b class="rail-name" :class="stageState(s.id)" @click="G.stageDetail = s.id" title="打开详情管理">{{ s.name }}</b>
+        <i class="dot" :class="stageState(s.id) === 'active' ? 'run' : stageState(s.id) === 'done' ? 'ok' : stageState(s.id) === 'bad' ? 'bad' : stageState(s.id) === 'warn' ? 'warn' : ''"></i>
+        <!-- 右上角:详情管理 / 参数调优 -->
+        <div class="rail-tools">
+          <button class="rail-tool" title="详情管理" @click="G.stageDetail = s.id"><el-icon :size="12"><View /></el-icon></button>
+          <button class="rail-tool" title="参数调优" :disabled="project?.running" @click="G.paramsDrawer = s.id"><el-icon :size="12"><Operation /></el-icon></button>
         </div>
       </div>
-      <div class="stage-v3-desc">{{ s.desc }}</div>
+      <div class="rail-count">{{ countOf(s.id)?.label }}</div>
       <div class="stage-meter">
         <div class="stage-meter-fill" :style="{ width: (countOf(s.id)?.pct || 0) + '%' }"></div>
       </div>
-      <div class="stage-v3-foot">
-        <span class="timecode" :style="{ color: stageState(s.id) === 'done' ? 'var(--mx-green)' : 'var(--mx-text3)' }">
-          {{ countOf(s.id)?.label }}
-        </span>
-        <div class="flex gap-1">
-          <el-tooltip content="详情管理" placement="top">
-            <button class="seg" @click="G.stageDetail = s.id"><el-icon :size="13"><View /></el-icon></button>
-          </el-tooltip>
-          <el-tooltip content="参数调优" placement="top">
-            <button class="seg" :disabled="project?.running" @click="G.paramsDrawer = s.id"><el-icon :size="13"><Operation /></el-icon></button>
-          </el-tooltip>
-          <button class="seg runbtn" :disabled="project?.running" @click="runStage(s.id)" title="独立运行本阶段">
-            运行<el-icon :size="11" class="ml-0.5"><CaretRight /></el-icon>
-          </button>
-        </div>
-      </div>
+      <button class="rail-run" :disabled="project?.running" @click="runStage(s.id)">
+        运行<el-icon :size="11" class="ml-0.5"><CaretRight /></el-icon>
+      </button>
     </div>
 
-    <!-- 一键全流程(主操作卡) -->
-    <div class="stage-card stage-v3 stage-runall">
-      <div class="stage-v3-head">
-        <div class="stage-ico active" style="color:var(--mx-amber-hi)">
-          <el-icon :size="18"><VideoCameraFilled /></el-icon>
+    <!-- 全流程直通 -->
+    <div class="stage-card stage-rail stage-runall">
+      <div class="rail-head">
+        <div class="stage-ico sm active" style="color:var(--mx-amber-hi)">
+          <el-icon :size="15"><VideoCameraFilled /></el-icon>
         </div>
-        <div class="flex-1">
-          <div class="flex items-center gap-2">
-            <b class="text-[14px]">全流程直通</b>
-          </div>
-        </div>
+        <b class="rail-name">全流程直通</b>
       </div>
-      <div class="stage-v3-desc">文本 → 分镜 → 定妆 → 渲染 → 质检 → 成片,断点续跑</div>
-      <div class="flex flex-col gap-2 mt-auto pt-2.5">
-        <el-button type="primary" :disabled="project?.running" @click="runAll" class="w-full">
-          <el-icon class="mr-1"><CaretRight /></el-icon>一键全流程
+      <div class="rail-count">分镜→定妆→渲染→质检→成片</div>
+      <div class="rail-runall-btns">
+        <el-button type="primary" size="small" class="flex-1" :disabled="project?.running" @click="runAll">
+          <el-icon class="mr-0.5"><CaretRight /></el-icon>一键全流程
         </el-button>
-        <el-button size="small" type="danger" plain :disabled="!project?.running" @click="stopAll" class="w-full">
-          <el-icon class="mr-1"><VideoPause /></el-icon>停止运行
+        <el-button size="small" type="danger" plain :disabled="!project?.running" @click="stopAll" style="flex:none">
+          <el-icon><VideoPause /></el-icon>
         </el-button>
       </div>
     </div>

@@ -1,9 +1,28 @@
 <script setup>
-import { G, api, refreshProjects } from '../store'
+import { G, api, refreshProjects, refreshStatus } from '../store'
 import { ref, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const creating = ref(false)
+
+// ComfyUI 引擎启停(首页快捷控制)
+const comfyBusy = ref(false)
+const comfyLive = computed(() => !!G.status?.env?.comfy_live)
+async function comfyToggle() {
+  if (comfyLive.value) {
+    try { await ElMessageBox.confirm('停止 ComfyUI?运行中的任务将中断。', '确认', { type: 'warning' }) }
+    catch { return }
+  }
+  comfyBusy.value = true
+  try {
+    const act = comfyLive.value ? 'stop' : 'start'
+    const r = await fetch(`/api/comfy/${act}`, { method: 'POST' })
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error)
+    ElMessage.success(act === 'start' ? 'ComfyUI 启动指令已下发,引擎预热中…' : 'ComfyUI 已停止')
+    setTimeout(refreshStatus, act === 'start' ? 12000 : 1500)
+  } catch (e) { ElMessage.error(e.message) } finally { comfyBusy.value = false }
+}
 
 // 新建项目(带文件上传:txt/md 源文本,json 分镜方案)
 const dlg = ref(false)
@@ -115,9 +134,17 @@ function stateChip(p) {
           <div class="text-center"><div class="stat-num">{{ G.projects.length }}</div><div class="stat-label">项目</div></div>
           <div class="text-center"><div class="stat-num">{{ doneShots }}<span style="font-size:15px;color:var(--mx-text3)">/{{ totalShots }}</span></div><div class="stat-label">镜头</div></div>
         </div>
-        <el-button type="primary" size="large" @click="openCreate">
-          <el-icon class="mr-1"><Plus /></el-icon>新建项目
-        </el-button>
+        <div class="flex flex-col gap-2 items-stretch">
+          <div class="flex items-center gap-2 justify-end">
+            <span class="envchip"><i class="dot" :class="comfyLive ? 'ok' : 'warn'"></i>COMFY {{ comfyLive ? '在线' : '离线' }}</span>
+            <el-button size="small" :type="comfyLive ? 'default' : 'primary'" plain :loading="comfyBusy" @click="comfyToggle">
+              <el-icon class="mr-1"><VideoPause v-if="comfyLive" /><VideoPlay v-else /></el-icon>{{ comfyLive ? '停止引擎' : '启动引擎' }}
+            </el-button>
+          </div>
+          <el-button type="primary" size="large" @click="openCreate">
+            <el-icon class="mr-1"><Plus /></el-icon>新建项目
+          </el-button>
+        </div>
       </div>
     </div>
 
@@ -134,8 +161,10 @@ function stateChip(p) {
     <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
       <div v-for="p in G.projects" :key="p.id" class="shot-card proj-card cursor-pointer" @click="openProject(p.id)">
         <div class="proj-cover">
-          <img v-if="p.cover" :src="api.fileURL(p.id, p.cover)" alt=""
-               style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.08)" />
+          <template v-if="p.cover">
+            <img class="cover-fit" :src="api.fileURL(p.id, p.cover)" alt="" aria-hidden="true" />
+            <img class="cover-full" :src="api.fileURL(p.id, p.cover)" alt="" style="filter:saturate(1.06)" />
+          </template>
           <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <el-icon :size="30" color="var(--mx-text3)"><Film /></el-icon>
             <span class="timecode">{{ p.has_plan ? p.shots_total + ' 镜' : 'NEW' }}</span>

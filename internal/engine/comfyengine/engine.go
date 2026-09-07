@@ -72,6 +72,9 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	}
 	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1"))
 	cmd.Dir = filepath.Dir(main)
+	// 无控制台(CREATE_NO_WINDOW)下 Python 管道 IO 默认按系统 locale(GBK)编码,
+	// ComfyUI 启动横幅的 emoji(🎉)会触发 UnicodeEncodeError 直接崩溃 —— 强制 UTF-8。
+	cmd.Env = append(os.Environ(), "PYTHONUTF8=1", "PYTHONIOENCODING=utf-8", "PYTHONLEGACYWINDOWSSTDIO=0")
 	if logF != nil {
 		cmd.Stdout = logF
 		cmd.Stderr = logF

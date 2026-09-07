@@ -8,6 +8,7 @@ import ShotCard from '../components/ShotCard.vue'
 const tab = ref('script')
 const sourceText = ref('')
 const sourceLoaded = ref(false)
+const importInput = ref(null)
 
 const pj = computed(() => G.project)
 const plan = computed(() => pj.value?.plan || null)
@@ -31,6 +32,23 @@ async function saveSource() {
     await api.saveSource(pj.value.project.id, sourceText.value)
     ElMessage.success('源文本已保存')
   } catch (e) { ElMessage.error(e.message) }
+}
+
+// 导入 txt/md:读入文件文本填入源文本
+function onImportFile(ev) {
+  const f = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!f) return
+  if (f.size > 8 << 20) { ElMessage.error('文件过大(>8MB)'); return }
+  const reader = new FileReader()
+  reader.onload = async () => {
+    sourceText.value = String(reader.result || '')
+    try {
+      await api.saveSource(pj.value.project.id, sourceText.value)
+      ElMessage.success(`已导入「${f.name}」(${sourceText.value.length} 字)并保存`)
+    } catch (e) { ElMessage.success(`已导入「${f.name}」(记得点保存)`) }
+  }
+  reader.readAsText(f, 'utf-8')
 }
 
 async function runPhase(phase) {
@@ -99,25 +117,25 @@ const doneShots = computed(() =>
 </script>
 
 <template>
-  <div class="h-full overflow-y-auto">
-    <!-- 项目头 + 管线 -->
-    <div class="p-4 pb-0">
-      <div class="flex items-center gap-3 mb-3">
-        <el-button text size="small" @click="G.view='home'; G.project=null">
-          <el-icon><ArrowLeft /></el-icon>项目
-        </el-button>
-        <h2 class="text-base font-bold m-0">{{ pj.project.name }}</h2>
-        <el-tag v-if="plan" size="small" effect="plain">《{{ plan.title }}》</el-tag>
-        <span v-if="running" class="flex items-center gap-1.5 text-xs" style="color:var(--mx-orange)">
-          <i class="dot run"></i>{{ pj.project.phase }} 阶段运行中
-        </span>
-        <div class="flex-1"></div>
-        <span class="timecode" v-if="totalShots">镜头 {{ doneShots }}/{{ totalShots }}</span>
-        <el-progress v-if="totalShots" type="circle" :width="34" :stroke-width="4"
-                     :percentage="Math.round(doneShots*100/totalShots)" />
+  <div class="flex h-full min-h-0">
+    <!-- 左:项目主体 -->
+    <div class="flex-1 min-w-0 overflow-y-auto">
+      <div class="p-4 pb-0">
+        <div class="flex items-center gap-3 mb-3">
+          <el-button text size="small" @click="G.view='home'; G.project=null">
+            <el-icon><ArrowLeft /></el-icon>项目
+          </el-button>
+          <h2 class="text-base font-bold m-0">{{ pj.project.name }}</h2>
+          <el-tag v-if="plan" size="small" effect="plain">《{{ plan.title }}》</el-tag>
+          <span v-if="running" class="flex items-center gap-1.5 text-xs" style="color:var(--mx-orange)">
+            <i class="dot run"></i>{{ pj.project.phase }} 阶段运行中
+          </span>
+          <div class="flex-1"></div>
+          <span class="timecode" v-if="totalShots">镜头 {{ doneShots }}/{{ totalShots }}</span>
+          <el-progress v-if="totalShots" type="circle" :width="34" :stroke-width="4"
+                       :percentage="Math.round(doneShots*100/totalShots)" />
+        </div>
       </div>
-      <PipelineBar :phase="pj.project.phase || ''" />
-    </div>
 
     <!-- Tabs -->
     <div class="p-4">
@@ -129,6 +147,10 @@ const doneShots = computed(() =>
               <div class="flex items-center gap-2 mb-2">
                 <b>源文本</b><span class="text-xs" style="color:var(--mx-text-2)">故事 / 创意 / 剧本大纲(中文)</span>
                 <div class="flex-1"></div>
+                <input ref="importInput" type="file" accept=".txt,.md" hidden @change="onImportFile" />
+                <el-button size="small" @click="importInput?.click()">
+                  <el-icon class="mr-1"><Upload /></el-icon>导入 txt / md
+                </el-button>
                 <el-button size="small" @click="saveSource">保存</el-button>
               </div>
               <el-input v-model="sourceText" type="textarea" :rows="16" resize="none"
@@ -283,5 +305,11 @@ const doneShots = computed(() =>
         </el-tab-pane>
       </el-tabs>
     </div>
+    </div>
+
+    <!-- 右:悬浮产线(管线节点竖排) -->
+    <aside class="pipe-rail-wrap">
+      <PipelineBar :phase="pj.project.phase || ''" />
+    </aside>
   </div>
 </template>

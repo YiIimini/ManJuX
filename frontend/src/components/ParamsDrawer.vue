@@ -26,6 +26,27 @@ const titles = {
   assemble: '合成成片 · 调优',
 }
 
+// 渲染风格预设(与后端 pipeline.StylePresets 对齐;可多选组合)
+const STYLE_PRESETS = [
+  { key: 'urban_xianxia', name: '都市仙侠霓虹', sw: ['#f97a1f', '#53d8ff'] },
+  { key: 'guoman_2d',     name: '国漫二维动画', sw: ['#ff6b6b', '#ffd166'] },
+  { key: 'live_action',   name: '真人实拍质感', sw: ['#93a0bd', '#edf1fa'] },
+  { key: 'pixar_3d',      name: '3D 皮克斯',   sw: ['#3ddc84', '#53d8ff'] },
+  { key: 'ink_wash',      name: '水墨国风',    sw: ['#c9d4e8', '#5a6580'] },
+  { key: 'cyberpunk',     name: '赛博朋克',    sw: ['#b28bff', '#ff2e88'] },
+  { key: 'ghibli',        name: '吉卜力手绘',  sw: ['#8affc1', '#ffd166'] },
+  { key: 'hongkong',      name: '港片胶片',    sw: ['#ffb454', '#12b886'] },
+  { key: 'film_noir',     name: '黑色电影',    sw: ['#f2f4f8', '#33333c'] },
+  { key: 'claymation',    name: '黏土定格',    sw: ['#ff9ecf', '#ffd166'] },
+]
+const hasStyle = (k) => (form.script.styles || []).includes(k)
+function toggleStyle(k) {
+  if (!Array.isArray(form.script.styles)) form.script.styles = []
+  const i = form.script.styles.indexOf(k)
+  if (i >= 0) form.script.styles.splice(i, 1)
+  else form.script.styles.push(k)
+}
+
 async function save() {
   try {
     const saved = await api.putParams(pj.value.project.id, form)
@@ -47,9 +68,26 @@ async function save() {
         <el-form-item label="目标总时长(秒)">
           <el-input-number v-model="form.script.total_seconds" :min="12" :max="180" :step="6" style="width:100%" />
         </el-form-item>
-        <el-form-item label="风格附加要求(可空)">
+      </el-form>
+      <div>
+        <div class="text-xs mb-2">
+          <b>渲染视频风格</b>
+          <span style="color:var(--mx-text3)">(可多选组合,决定全片视觉基调;已选 {{ (form.script.styles || []).length }} 项)</span>
+        </div>
+        <div class="style-chip-grid">
+          <button v-for="st in STYLE_PRESETS" :key="st.key" class="style-chip" :class="{ on: hasStyle(st.key) }" @click="toggleStyle(st.key)">
+            <span class="sw"><i :style="{ background: st.sw[0] }"></i><i :style="{ background: st.sw[1] }"></i></span>
+            {{ st.name }}
+          </button>
+        </div>
+      </div>
+      <el-form label-position="top">
+        <el-form-item label="风格附加要求(自由文本,与上方预设叠加)">
           <el-input v-model="form.script.style_hint" type="textarea" :rows="3"
-            placeholder="例如:国风仙侠、赛博朋克霓虹、治愈日系动画…" />
+            placeholder="例如:偏冷色调、雨夜氛围、手持镜头感…" />
+        </el-form-item>
+        <el-form-item label="Q 版形象(定妆时同步生成角色 Q 版;内心活动镜头的表达素材)">
+          <el-switch v-model="form.script.chibi" />
         </el-form-item>
       </el-form>
     </div>

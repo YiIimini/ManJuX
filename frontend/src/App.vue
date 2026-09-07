@@ -17,7 +17,7 @@ import StageDetailDrawer from './components/StageDetailDrawer.vue'
 
 let timer = null
 let sysTimer = null
-const sysmon = reactive({ cpu: 0, ramPct: 0, ramUsed: 0, ramTotal: 0, gpu: null, coreN: 0 })
+const sysmon = reactive({ cpu: 0, cores: [], ramPct: 0, ramUsed: 0, ramTotal: 0, ramAvail: 0, gpu: null, coreN: 0 })
 const maxed = ref(false)
 const collapse = ref(localStorage.getItem('mx-side') === '1')
 
@@ -76,6 +76,8 @@ const verLabel = computed(() => {
 })
 // 占用分级:60/85 双阈值 → 绿/琥珀/红
 const loadCls = (v) => v > 85 ? 'hot' : (v > 60 ? 'warm' : 'cool')
+// 传感器无数据([N/A])统一显示 —
+const na = (s) => (s || '—').replaceAll('[N/A]', '—')
 
 onMounted(() => {
   applyTheme() // 主题与玻璃偏好(启动即恢复)
@@ -86,8 +88,8 @@ onMounted(() => {
   sysTimer = setInterval(async () => {
     try {
       const s = await api.sysmon()
-      sysmon.cpu = s.cpu; sysmon.ramPct = s.ramPct
-      sysmon.ramUsed = s.ramUsed; sysmon.ramTotal = s.ramTotal
+      sysmon.cpu = s.cpu; sysmon.cores = s.cores || []; sysmon.ramPct = s.ramPct
+      sysmon.ramUsed = s.ramUsed; sysmon.ramTotal = s.ramTotal; sysmon.ramAvail = s.ramAvail
       sysmon.gpu = s.gpu || null; sysmon.coreN = s.coreN || 0
     } catch { /* 服务重启中 */ }
   }, 2000)
@@ -160,24 +162,55 @@ const env = computed(() => G.status?.env)
       <header class="topbar2" style="--wails-draggable:drag">
         <div class="topbar-left"></div>
         <div class="sysbar" v-if="sysmon.ramTotal">
-          <div class="sys-mod" :class="loadCls(sysmon.cpu)" :title="`CPU ${sysmon.coreN} 逻辑核心`">
-            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><rect x="6" y="6" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <span class="sys-v">{{ sysmon.cpu.toFixed(0) }}<i>%</i></span>
-            <span class="sys-bar"><b :style="{ width: sysmon.cpu + '%' }"></b></span>
-          </div>
-          <div class="sys-mod" :class="loadCls(sysmon.ramPct)" :title="`内存 ${gb(sysmon.ramUsed)}/${gb(sysmon.ramTotal)} GB`">
-            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><rect x="4" y="7" width="16" height="10" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 7v4M12 7v4M16 7v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <span class="sys-v">{{ sysmon.ramPct.toFixed(0) }}<i>%</i></span>
-            <span class="sys-bar"><b :style="{ width: sysmon.ramPct + '%' }"></b></span>
-            <span class="sys-sub">{{ gb(sysmon.ramUsed) }}/{{ gb(sysmon.ramTotal) }}G</span>
-          </div>
-          <div class="sys-mod" v-if="sysmon.gpu" :class="loadCls(sysmon.gpu.util)" :title="sysmon.gpu.name || 'GPU'">
-            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h11A2.5 2.5 0 0 1 19 8.5V15a3 3 0 0 1-3 3h-6.5A3.5 3.5 0 0 1 6 14.5V13H4.5A1.5 1.5 0 0 1 3 11.5v-3Z" stroke="currentColor" stroke-width="1.8"/><circle cx="13.5" cy="11" r="2.4" stroke="currentColor" stroke-width="1.8"/><path d="M19 9h2M19 12h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
-            <span class="sys-v">{{ sysmon.gpu.util.toFixed(0) }}<i>%</i></span>
-            <span class="sys-bar"><b :style="{ width: sysmon.gpu.util + '%' }"></b></span>
-            <span class="sys-sub">{{ (sysmon.gpu.vramU / 1024).toFixed(1) }}/{{ (sysmon.gpu.vramT / 1024).toFixed(0) }}G</span>
-            <span class="sys-temp" :class="{ hot: sysmon.gpu.temp > 85 }">{{ sysmon.gpu.temp.toFixed(0) }}°</span>
-          </div>
+          <el-tooltip placement="bottom" :show-after="200">
+            <template #content>
+              <div class="sys-tip">
+                <b>CPU {{ sysmon.cpu.toFixed(1) }}%</b> · {{ sysmon.coreN }} 逻辑核心
+                <div class="core-grid">
+                  <i v-for="(c, i) in sysmon.cores" :key="i" :style="{ height: Math.max(8, c) + '%' }"
+                     :class="c > 85 ? 'h' : (c > 60 ? 'w' : '')" :title="'核心' + (i + 1) + ' ' + c + '%'"></i>
+                </div>
+                <span class="dim">每核占用实时(悬停单格看数值)</span>
+              </div>
+            </template>
+            <div class="sys-mod" :class="loadCls(sysmon.cpu)">
+              <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><rect x="6" y="6" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span class="sys-v">{{ sysmon.cpu.toFixed(0) }}<i>%</i></span>
+              <span class="sys-bar"><b :style="{ width: sysmon.cpu + '%' }"></b></span>
+            </div>
+          </el-tooltip>
+          <el-tooltip placement="bottom" :show-after="200">
+            <template #content>
+              <div class="sys-tip">
+                <b>内存 {{ sysmon.ramPct.toFixed(1) }}%</b>
+                <span>已用 {{ gb(sysmon.ramUsed) }} GB / 总量 {{ gb(sysmon.ramTotal) }} GB</span>
+                <span>可用 {{ gb(sysmon.ramAvail) }} GB</span>
+              </div>
+            </template>
+            <div class="sys-mod" :class="loadCls(sysmon.ramPct)">
+              <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><rect x="4" y="7" width="16" height="10" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 7v4M12 7v4M16 7v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span class="sys-v">{{ sysmon.ramPct.toFixed(0) }}<i>%</i></span>
+              <span class="sys-bar"><b :style="{ width: sysmon.ramPct + '%' }"></b></span>
+              <span class="sys-sub">{{ gb(sysmon.ramUsed) }}/{{ gb(sysmon.ramTotal) }}G</span>
+            </div>
+          </el-tooltip>
+          <el-tooltip v-if="sysmon.gpu" placement="bottom" :show-after="200">
+            <template #content>
+              <div class="sys-tip">
+                <b>{{ sysmon.gpu.name || 'GPU' }}</b>
+                <span>计算占用 {{ sysmon.gpu.util.toFixed(0) }}% · 显存带宽 {{ sysmon.gpu.memUtil.toFixed(0) }}%</span>
+                <span>显存 {{ (sysmon.gpu.vramU / 1024).toFixed(2) }} / {{ (sysmon.gpu.vramT / 1024).toFixed(1) }} GB({{ (sysmon.gpu.vramU * 100 / Math.max(1, sysmon.gpu.vramT)).toFixed(0) }}%)</span>
+                <span>温度 {{ sysmon.gpu.temp.toFixed(0) }}℃ · 功耗 {{ na(sysmon.gpu.power) }} · 风扇 {{ na(sysmon.gpu.fan) }}</span>
+              </div>
+            </template>
+            <div class="sys-mod" :class="loadCls(sysmon.gpu.util)">
+              <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h11A2.5 2.5 0 0 1 19 8.5V15a3 3 0 0 1-3 3h-6.5A3.5 3.5 0 0 1 6 14.5V13H4.5A1.5 1.5 0 0 1 3 11.5v-3Z" stroke="currentColor" stroke-width="1.8"/><circle cx="13.5" cy="11" r="2.4" stroke="currentColor" stroke-width="1.8"/><path d="M19 9h2M19 12h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+              <span class="sys-v">{{ sysmon.gpu.util.toFixed(0) }}<i>%</i></span>
+              <span class="sys-bar"><b :style="{ width: sysmon.gpu.util + '%' }"></b></span>
+              <span class="sys-sub">{{ (sysmon.gpu.vramU / 1024).toFixed(1) }}/{{ (sysmon.gpu.vramT / 1024).toFixed(0) }}G</span>
+              <span class="sys-temp" :class="{ hot: sysmon.gpu.temp > 85 }">{{ sysmon.gpu.temp.toFixed(0) }}°</span>
+            </div>
+          </el-tooltip>
           <div class="sys-mod dim" v-else title="未检测到 NVIDIA GPU">
             <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h11A2.5 2.5 0 0 1 19 8.5V15a3 3 0 0 1-3 3h-6.5A3.5 3.5 0 0 1 6 14.5V13H4.5A1.5 1.5 0 0 1 3 11.5v-3Z" stroke="currentColor" stroke-width="1.8"/></svg>
             <span class="sys-v sys-na">GPU<i>—</i></span>

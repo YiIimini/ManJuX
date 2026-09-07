@@ -19,22 +19,27 @@ import (
 
 // Snapshot 一次采样结果。
 type Snapshot struct {
-	CPU      float64        `json:"cpu"`                // 百分比 0-100
+	CPU      float64        `json:"cpu"`                // 总占用 0-100
+	Cores    []float64      `json:"cores"`              // 每逻辑核心占用(悬停详情)
 	RAMUsed  uint64         `json:"ramUsed"`            // 字节
 	RAMTotal uint64         `json:"ramTotal"`           // 字节
+	RAMAvail uint64         `json:"ramAvail"`           // 字节
 	RAMPct   float64        `json:"ramPct"`             // 百分比
 	GPU      *GPUSnapshot   `json:"gpu,omitempty"`      // 无 N 卡时 nil
 	CoreN    int            `json:"coreN"`              // 逻辑核心数
 	TS       int64          `json:"ts"`                 // 采样时刻 unix 秒
 }
 
-// GPUSnapshot GPU 利用率与显存。
+// GPUSnapshot GPU 利用率与显存(悬停气泡展示完整明细)。
 type GPUSnapshot struct {
-	Name  string  `json:"name"`
-	Util  float64 `json:"util"`  // 百分比
-	VramU uint64  `json:"vramU"` // MiB
-	VramT uint64  `json:"vramT"` // MiB
-	Temp  float64 `json:"temp"`  // ℃
+	Name    string  `json:"name"`
+	Util    float64 `json:"util"`    // 计算占用 %
+	MemUtil float64 `json:"memUtil"` // 显存带宽占用 %
+	VramU   uint64  `json:"vramU"`   // MiB
+	VramT   uint64  `json:"vramT"`   // MiB
+	Temp    float64 `json:"temp"`    // ℃
+	Power   string  `json:"power"`   // "85.4 / 175.0 W"
+	Fan     string  `json:"fan"`     // "62 %"
 }
 
 type Monitor struct {
@@ -68,8 +73,15 @@ func (m *Monitor) Sample() *Snapshot {
 	if err == nil && len(pct) > 0 {
 		s.CPU = round1(pct[0])
 	}
+	// 每核占用(增量采样,与总占用同窗口)
+	if cores, cerr := cpu.Percent(0, true); cerr == nil {
+		for i := range cores {
+			cores[i] = round1(cores[i])
+		}
+		s.Cores = cores
+	}
 	if vm, err := mem.VirtualMemory(); err == nil {
-		s.RAMUsed, s.RAMTotal = vm.Used, vm.Total
+		s.RAMUsed, s.RAMTotal, s.RAMAvail = vm.Used, vm.Total, vm.Available
 		s.RAMPct = round1(vm.UsedPercent)
 	}
 	s.GPU = m.sampleGPU()
@@ -85,11 +97,11 @@ func (m *Monitor) sampleGPU() *GPUSnapshot {
 		return nil
 	}
 	args := []string{
-		"--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu,name",
+		"--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed,name",
 		"--format=csv,noheader,nounits",
 	}
 	if cachedName != "" && time.Since(probeAt) < 10*time.Minute {
-		args[0] = "--query-gpu=utilization.gpu,memory.used,memory.total,temperature.gpu"
+		args[0] = "--query-gpu=utilization.gpu,utilization.memory,memory.used,memory.total,temperature.gpu,power.draw,power.limit,fan.speed"
 	}
 	out, err := sysexec.Hide(exec.Command("nvidia-smi", args...)).Output()
 	if err != nil {
@@ -103,17 +115,22 @@ func (m *Monitor) sampleGPU() *GPUSnapshot {
 		return nil
 	}
 	fields := strings.Split(strings.TrimSpace(string(out)), ", ")
-	if len(fields) < 4 {
+	if len(fields) < 5 {
 		return nil
 	}
 	g := &GPUSnapshot{
-		Util:  parseF(fields[0]),
-		VramU: parseU(fields[1]),
-		VramT: parseU(fields[2]),
-		Temp:  parseF(fields[3]),
+		Util:    parseF(fields[0]),
+		MemUtil: parseF(fields[1]),
+		VramU:   parseU(fields[2]),
+		VramT:   parseU(fields[3]),
+		Temp:    parseF(fields[4]),
 	}
-	if len(fields) >= 5 {
-		g.Name = strings.TrimSpace(fields[4])
+	if len(fields) >= 8 {
+		g.Power = strings.TrimSpace(fields[5]) + " / " + strings.TrimSpace(fields[6]) + " W"
+		g.Fan = strings.TrimSpace(fields[7]) + " %"
+	}
+	if len(fields) >= 9 {
+		g.Name = strings.TrimSpace(fields[8])
 		m.mu.Lock()
 		m.gpuName, m.probeAt = g.Name, time.Now()
 		m.mu.Unlock()

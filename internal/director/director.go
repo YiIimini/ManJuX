@@ -117,6 +117,7 @@ type Options struct {
 	MaxShots     int    // 期望镜头数(3-12)
 	TotalSeconds int    // 期望总时长
 	ExtraHint    string // 用户附加要求(风格/题材)
+	Chibi        bool   // 生成 Q 版形象(内心活动用;分镜提示词指引 Q 版 cameo)
 }
 
 // Generate 调用 LLM 直出分镜方案并做结构校验与修复。
@@ -130,6 +131,12 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 	hint := ""
 	if strings.TrimSpace(opt.ExtraHint) != "" {
 		hint = "- User style note: " + strings.TrimSpace(opt.ExtraHint)
+	}
+	// Q 版形象开启时,分镜中角色内心活动可用 Q 版形象插入画面(chibi cameo)
+	if opt.Chibi {
+		hint += "\n- Each main character has a chibi (Q-version) avatar generated alongside its portrait. " +
+			"When a shot depicts a character's INNER monologue / mental reaction, you may describe a chibi cameo " +
+			"of that character popping up in frame (cute miniature version, expressive) to visualize the inner activity."
 	}
 	user := fmt.Sprintf(UserPromptFmt, sourceText, opt.TotalSeconds, opt.MaxShots, hint)
 

@@ -128,6 +128,8 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/outputs", s.outputsList)
 	m.HandleFunc("DELETE /api/projects/{id}/output", s.projectOutputDelete)
 	m.HandleFunc("GET /api/sysmon", s.handleSysmon)
+	m.HandleFunc("POST /api/library/gacha", s.handleLibraryGacha)
+	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
 	m.HandleFunc("POST /api/comfy/open-web", s.comfyOpenWeb)
 	m.HandleFunc("POST /api/projects/{id}/import-plan", s.importPlan)

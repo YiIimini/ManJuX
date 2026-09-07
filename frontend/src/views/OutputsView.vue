@@ -77,8 +77,10 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
       <div v-for="it in list" :key="it.project" class="shot-card proj-card">
         <!-- 封面:项目定妆照;点击播放标准版 -->
         <div class="proj-cover cursor-pointer" @click="it.final && play(it, 'std')">
-          <img v-if="it.cover" :src="api.fileURL(it.project, it.cover)" alt=""
-               style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.08)" />
+          <template v-if="it.cover">
+            <img class="cover-fit" :src="api.fileURL(it.project, it.cover)" alt="" aria-hidden="true" />
+            <img class="cover-full" :src="api.fileURL(it.project, it.cover)" alt="" style="filter:saturate(1.06)" />
+          </template>
           <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2" style="pointer-events:none">
             <el-icon :size="34" color="var(--mx-text3)"><Film /></el-icon>
             <span class="timecode">{{ it.shots ? it.shots + ' 镜' : 'NEW' }}</span>
