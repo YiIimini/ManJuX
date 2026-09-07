@@ -1,0 +1,36 @@
+# ===== ManJuX .gitignore =====
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+
+# 本地 ComfyUI 完整环境(134G,含模型权重与 Python 环境,不入库)
+comfyui/
+
+# 运行数据(项目产物/设置/日志,不入库)
+data/
+*.log
+comfyui_copy.log
+
+# 构建产物
+*.exe
+*.exe.manifest
+builds/
+dist/
+
+# Go
+*.test
+*.out
+vendor/
+
+# IDE / 系统
+.idea/
+.vscode/
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# 临时文件
+*.tmp
+*.bak
+~$*

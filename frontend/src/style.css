@@ -1,0 +1,223 @@
+/* ===== ManJuX 制片厂控制台 · 深色影院主题 ===== */
+:root {
+  --mx-bg: #0b0e14;
+  --mx-bg-2: #10141d;
+  --mx-panel: #151a26;
+  --mx-panel-2: #1a2030;
+  --mx-line: #232a3b;
+  --mx-orange: #ff9554;
+  --mx-orange-2: #ffb37e;
+  --mx-cyan: #40cdff;
+  --mx-green: #4ade80;
+  --mx-red: #f87171;
+  --mx-yellow: #fbbf24;
+  --mx-text: #e7ebf3;
+  --mx-text-2: #8b95a9;
+  --mx-mono: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+}
+
+html, body, #app {
+  height: 100%;
+  margin: 0;
+  background: var(--mx-bg);
+  color: var(--mx-text);
+  font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+/* Element Plus 暗色变量定制 */
+html.dark {
+  --el-color-primary: var(--mx-orange);
+  --el-bg-color: var(--mx-bg);
+  --el-bg-color-overlay: var(--mx-panel);
+  --el-bg-color-page: var(--mx-bg);
+  --el-border-color: var(--mx-line);
+  --el-border-color-light: var(--mx-line);
+  --el-border-color-lighter: #1d2433;
+  --el-fill-color-blank: var(--mx-panel);
+  --el-fill-color-light: var(--mx-panel-2);
+  --el-text-color-primary: var(--mx-text);
+  --el-text-color-regular: #c3cad8;
+  --el-text-color-secondary: var(--mx-text-2);
+  --el-color-success: var(--mx-green);
+  --el-color-danger: var(--mx-red);
+  --el-color-warning: var(--mx-yellow);
+  --el-color-info: #7c8698;
+}
+
+/* 所有 select 文本居中(全局规矩) */
+.el-select .el-select__wrapper .el-select__selected-item,
+.el-select-dropdown__item {
+  text-align: center;
+  justify-content: center;
+}
+.el-select__wrapper { text-align: center; }
+.el-select__placeholder { margin: 0 auto; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3348; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #38445f; }
+
+/* ===== 胶片打孔装饰 ===== */
+.film-strip {
+  height: 14px;
+  background:
+    repeating-linear-gradient(90deg,
+      transparent 0 6px,
+      var(--mx-bg) 6px 18px,
+      transparent 18px 24px),
+    var(--mx-panel-2);
+  position: relative;
+}
+.film-strip::before,
+.film-strip::after {
+  content: '';
+  position: absolute;
+  left: 0; right: 0;
+  height: 4px;
+  background-image: radial-gradient(circle at 6px 2px, #0b0e14 1.6px, transparent 2px);
+  background-size: 12px 4px;
+}
+.film-strip::before { top: 1px; }
+.film-strip::after { bottom: 1px; }
+
+/* ===== 状态灯 ===== */
+.dot {
+  display: inline-block;
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: #3a4358;
+  flex: none;
+}
+.dot.ok { background: var(--mx-green); box-shadow: 0 0 8px rgba(74, 222, 128, .5); }
+.dot.warn { background: var(--mx-yellow); }
+.dot.bad { background: var(--mx-red); }
+.dot.run {
+  background: var(--mx-orange);
+  animation: breathe 1.4s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { box-shadow: 0 0 2px rgba(255, 149, 84, .4); opacity: 1; }
+  50% { box-shadow: 0 0 14px rgba(255, 149, 84, .95); opacity: .55; }
+}
+
+/* ===== 时间码 ===== */
+.timecode {
+  font-family: var(--mx-mono);
+  font-size: 11px;
+  letter-spacing: .5px;
+  color: var(--mx-text-2);
+}
+
+/* ===== 管线站点 ===== */
+.stage-card {
+  position: relative;
+  background: linear-gradient(160deg, var(--mx-panel-2), var(--mx-panel));
+  border: 1px solid var(--mx-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  transition: border-color .25s, transform .15s, box-shadow .25s;
+  overflow: hidden;
+}
+.stage-card:hover { border-color: #35405c; transform: translateY(-2px); }
+.stage-card.active {
+  border-color: var(--mx-orange);
+  box-shadow: 0 0 0 1px rgba(255, 149, 84, .25), 0 6px 24px rgba(255, 149, 84, .08);
+}
+.stage-card.active::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 40%, rgba(255, 149, 84, .06) 50%, transparent 60%);
+  background-size: 260% 100%;
+  animation: sweep 2.2s linear infinite;
+  pointer-events: none;
+}
+@keyframes sweep {
+  from { background-position: 160% 0; }
+  to { background-position: -60% 0; }
+}
+.stage-card.done { border-color: rgba(74, 222, 128, .45); }
+
+/* 管线连接箭头 */
+.stage-link {
+  width: 26px;
+  height: 2px;
+  background: var(--mx-line);
+  position: relative;
+  flex: none;
+  align-self: center;
+  margin-top: -20px;
+}
+.stage-link::after {
+  content: '';
+  position: absolute;
+  right: -1px; top: -3px;
+  border: 4px solid transparent;
+  border-left-color: var(--mx-line);
+}
+
+/* ===== 镜头卡 ===== */
+.shot-card {
+  background: var(--mx-panel);
+  border: 1px solid var(--mx-line);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color .2s, transform .12s;
+}
+.shot-card:hover { border-color: #3b4763; transform: translateY(-1px); }
+.shot-card .badge-mode {
+  font-family: var(--mx-mono);
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--mx-line);
+  color: var(--mx-cyan);
+}
+.shot-card .badge-mode.t2va { color: var(--mx-yellow); }
+
+/* ===== 日志控制台 ===== */
+.log-console {
+  background: #0a0d12;
+  border-top: 1px solid var(--mx-line);
+  font-family: var(--mx-mono);
+  font-size: 12px;
+  line-height: 1.75;
+}
+.log-line { padding: 0 14px; white-space: pre-wrap; word-break: break-all; }
+.log-line .t { color: #57617a; margin-right: 8px; }
+.log-line .ph { color: #6c7ba0; margin-right: 8px; }
+.log-line.info .m { color: #aab6cc; }
+.log-line.success .m { color: var(--mx-green); }
+.log-line.warn .m { color: var(--mx-yellow); }
+.log-line.error .m { color: var(--mx-red); }
+
+/* ===== 通用 ===== */
+.panel {
+  background: var(--mx-panel);
+  border: 1px solid var(--mx-line);
+  border-radius: 12px;
+}
+.tag-mono { font-family: var(--mx-mono); }
+.hover-link { cursor: pointer; color: var(--mx-cyan); }
+.hover-link:hover { text-decoration: underline; }
+
+/* 顶部标题栏 */
+.topbar {
+  background: linear-gradient(180deg, #10141f, #0d1119);
+  border-bottom: 1px solid var(--mx-line);
+}
+.brand {
+  font-weight: 800;
+  font-size: 17px;
+  letter-spacing: 1px;
+  background: linear-gradient(90deg, var(--mx-orange), var(--mx-cyan));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 按钮微调 */
+.el-button--primary { --el-button-bg-color: var(--mx-orange); --el-button-border-color: var(--mx-orange); }
+.el-button--primary:hover { --el-button-hover-bg-color: var(--mx-orange-2); --el-button-hover-border-color: var(--mx-orange-2); }
