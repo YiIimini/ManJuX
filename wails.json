@@ -1,0 +1,15 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "ManJuX",
+  "outputfilename": "ManJuX",
+  "frontend:install": "pnpm install",
+  "frontend:build": "pnpm run build",
+  "frontend:dir": "frontend",
+  "wailsjsdir": "./frontend/src",
+  "info": {
+    "productName": "ManJuX",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright © 2026",
+    "comments": "ManJuX 短视频创作工作台"
+  }
+}

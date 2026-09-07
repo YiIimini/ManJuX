@@ -50,7 +50,7 @@ func New(cfg *config.Manager, store *project.Store, reg *engine.Registry,
 	return s
 }
 
-// Start 启动(端口占用自动 +1 重试)。
+// Start 启动独立 HTTP 服务(浏览器/App 窗口模式,端口占用自动 +1)。
 func (s *Server) Start(basePort int) (int, error) {
 	port := basePort
 	for i := 0; i < 20; i++ {
@@ -64,8 +64,26 @@ func (s *Server) Start(basePort int) (int, error) {
 	return 0, fmt.Errorf("端口 %d~%d 均被占用", basePort, port-1)
 }
 
+// APIHandler 返回纯 API 路由(Wails 桌面模式的 AssetServer Handler)。
+func (s *Server) APIHandler() http.Handler {
+	m := http.NewServeMux()
+	s.registerAPI(m)
+	return m
+}
+
+// WebAssets 返回前端静态资源(Wails 桌面模式)。
+func WebAssets() fs.FS {
+	sub, _ := fs.Sub(webFS, "webdist")
+	return sub
+}
+
 func (s *Server) routes() {
-	m := s.mux
+	s.registerAPI(s.mux)
+	// 前端静态(SPA fallback → index.html)
+	s.mux.HandleFunc("/", s.serveWeb)
+}
+
+func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/health", s.health)
 	m.HandleFunc("GET /api/status", s.status)
 	m.HandleFunc("GET /api/settings", s.getSettings)
@@ -85,8 +103,6 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("POST /api/open", s.openInExplorer)
-	// 前端静态(SPA fallback → index.html)
-	m.HandleFunc("/", s.serveWeb)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -315,6 +331,10 @@ func (s *Server) getSource(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putSource(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	if _, ok := s.store.Get(id); !ok {
+		writeErr(w, 404, fmt.Errorf("项目不存在"))
+		return
+	}
 	var in struct {
 		Text string `json:"text"`
 	}

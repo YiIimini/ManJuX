@@ -1,0 +1,60 @@
+/* ===== Element Plus 暗色主题定制(须在 EP css 之后加载)===== */
+html.dark {
+  --el-color-primary: var(--mx-orange);
+  --el-bg-color: var(--mx-bg);
+  --el-bg-color-overlay: var(--mx-panel);
+  --el-bg-color-page: var(--mx-bg);
+  --el-border-color: var(--mx-line);
+  --el-border-color-light: var(--mx-line);
+  --el-border-color-lighter: #1d2433;
+  --el-fill-color-blank: var(--mx-panel);
+  --el-fill-color-light: var(--mx-panel-2);
+  --el-text-color-primary: var(--mx-text);
+  --el-text-color-regular: #c3cad8;
+  --el-text-color-secondary: var(--mx-text-2);
+  --el-color-success: var(--mx-green);
+  --el-color-danger: var(--mx-red);
+  --el-color-warning: var(--mx-yellow);
+  --el-color-info: #7c8698;
+  --el-mask-color: rgba(5, 8, 14, .7);
+  --el-font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
+}
+
+/* 按钮主色 */
+.el-button--primary {
+  --el-button-bg-color: var(--mx-orange);
+  --el-button-border-color: var(--mx-orange);
+  --el-button-hover-bg-color: var(--mx-orange-2);
+  --el-button-hover-border-color: var(--mx-orange-2);
+  --el-button-active-bg-color: #f0813c;
+}
+
+/* 输入/选择器深色底 */
+.el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
+  background-color: var(--mx-bg-2);
+}
+.el-drawer { background: var(--mx-panel) !important; }
+.el-dialog { background: var(--mx-panel) !important; }
+
+/* 抽屉/弹窗标题 */
+.el-drawer__header, .el-dialog__header { margin-bottom: 12px; color: var(--mx-text); }
+
+/* 所有 select 文本居中(全局规矩) */
+.el-select .el-select__wrapper .el-select__selected-item,
+.el-select-dropdown__item {
+  text-align: center;
+  justify-content: center;
+}
+.el-select__wrapper { text-align: center; }
+.el-select__placeholder { margin: 0 auto; }
+
+/* tabs 风格 */
+.el-tabs__item { font-size: 14px; }
+.el-tabs__item.is-active { color: var(--mx-orange); }
+.el-tabs__active-bar { background-color: var(--mx-orange); }
+
+/* 进度条 */
+.el-progress__text { color: var(--mx-text-2); }
+
+/* 消息框层级 */
+.el-message { border: 1px solid var(--mx-line); }

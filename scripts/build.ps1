@@ -1,11 +1,12 @@
-# ManJuX 构建脚本
+﻿# ManJuX 构建脚本(Wails v2 桌面应用)
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-# 产出: ManJuX.exe(项目根,单文件、无控制台窗口)
+# 产出: build\bin\ManJuX.exe(单文件桌面应用,原生窗口)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
+# 版本号:git tag > short hash > dev
 $ver = $null
 try {
   $ErrorActionPreference = "Continue"
@@ -13,12 +14,11 @@ try {
   $ErrorActionPreference = "Stop"
 } catch { $ErrorActionPreference = "Stop" }
 if (-not $ver) { $ver = "dev" }
-$ver = $ver.TrimStart("v")
 Write-Host "==> ManJuX 构建版本: v$ver" -ForegroundColor Cyan
 
-# 1) 前端(如源码存在且 node 可用)
+# 1) 前端(Vue3 + Vite + Element Plus + Tailwind)
 if (Test-Path "$root\frontend\src") {
-  Write-Host "==> 构建前端 (Vue3 + Vite + Element Plus)" -ForegroundColor Cyan
+  Write-Host "==> 构建前端" -ForegroundColor Cyan
   Push-Location "$root\frontend"
   if (-not (Test-Path "node_modules")) { pnpm install }
   pnpm run build
@@ -26,11 +26,14 @@ if (Test-Path "$root\frontend\src") {
   Pop-Location
 }
 
-# 2) 后端单 exe
-Write-Host "==> 构建 Go 后端 (-H windowsgui -s -w)" -ForegroundColor Cyan
-$ldflags = "-s -w -X github.com/YiIimini/ManJuX/internal/version.Version=v$ver"
-go build -ldflags $ldflags -trimpath -o "$root\ManJuX.exe" .\cmd\manjux
-if ($LASTEXITCODE -ne 0) { throw "Go 构建失败" }
+# 2) Wails 桌面构建(-s 跳过 wails 自带前端钩子,前端已构建)
+$wails = Join-Path $env:GOPATH "bin\wails.exe"
+if (-not (Test-Path $wails)) { throw "未找到 wails CLI,请先: go install github.com/wailsapp/wails/v2/cmd/wails@latest" }
+Write-Host "==> Wails 桌面构建" -ForegroundColor Cyan
+& $wails build -s -ldflags "-X github.com/YiIimini/ManJuX/internal/version.Version=v$ver"
+if ($LASTEXITCODE -ne 0) { throw "Wails 构建失败" }
 
+# 3) 交付副本(项目根,双击即用)
+Copy-Item "$root\build\bin\ManJuX.exe" "$root\ManJuX.exe" -Force
 Write-Host "==> 完成: $root\ManJuX.exe" -ForegroundColor Green
 Get-Item "$root\ManJuX.exe" | Select-Object Name, @{n='SizeMB';e={[math]::Round($_.Length/1MB,1)}}, LastWriteTime

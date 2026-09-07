@@ -1,4 +1,6 @@
-/* ===== ManJuX 制片厂控制台 · 深色影院主题 ===== */
+@import "tailwindcss";
+
+/* ===== ManJuX 制片厂控制台 · 自定义组件样式 ===== */
 :root {
   --mx-bg: #0b0e14;
   --mx-bg-2: #10141d;
@@ -24,35 +26,6 @@ html, body, #app {
   font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
 }
 
-/* Element Plus 暗色变量定制 */
-html.dark {
-  --el-color-primary: var(--mx-orange);
-  --el-bg-color: var(--mx-bg);
-  --el-bg-color-overlay: var(--mx-panel);
-  --el-bg-color-page: var(--mx-bg);
-  --el-border-color: var(--mx-line);
-  --el-border-color-light: var(--mx-line);
-  --el-border-color-lighter: #1d2433;
-  --el-fill-color-blank: var(--mx-panel);
-  --el-fill-color-light: var(--mx-panel-2);
-  --el-text-color-primary: var(--mx-text);
-  --el-text-color-regular: #c3cad8;
-  --el-text-color-secondary: var(--mx-text-2);
-  --el-color-success: var(--mx-green);
-  --el-color-danger: var(--mx-red);
-  --el-color-warning: var(--mx-yellow);
-  --el-color-info: #7c8698;
-}
-
-/* 所有 select 文本居中(全局规矩) */
-.el-select .el-select__wrapper .el-select__selected-item,
-.el-select-dropdown__item {
-  text-align: center;
-  justify-content: center;
-}
-.el-select__wrapper { text-align: center; }
-.el-select__placeholder { margin: 0 auto; }
-
 /* 滚动条 */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -62,12 +35,7 @@ html.dark {
 /* ===== 胶片打孔装饰 ===== */
 .film-strip {
   height: 14px;
-  background:
-    repeating-linear-gradient(90deg,
-      transparent 0 6px,
-      var(--mx-bg) 6px 18px,
-      transparent 18px 24px),
-    var(--mx-panel-2);
+  background: var(--mx-panel-2);
   position: relative;
 }
 .film-strip::before,
@@ -174,6 +142,7 @@ html.dark {
   border-radius: 4px;
   border: 1px solid var(--mx-line);
   color: var(--mx-cyan);
+  background: rgba(0, 0, 0, .25);
 }
 .shot-card .badge-mode.t2va { color: var(--mx-yellow); }
 
@@ -217,7 +186,3 @@ html.dark {
   background-clip: text;
   color: transparent;
 }
-
-/* 按钮微调 */
-.el-button--primary { --el-button-bg-color: var(--mx-orange); --el-button-border-color: var(--mx-orange); }
-.el-button--primary:hover { --el-button-hover-bg-color: var(--mx-orange-2); --el-button-hover-border-color: var(--mx-orange-2); }

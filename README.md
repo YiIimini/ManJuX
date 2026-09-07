@@ -1,0 +1,75 @@
+# ManJuX · 短视频创作工作台
+
+> 从一段文字,到一部成片 —— 桌面级 AI 短视频生产线。
+> 技术栈:Go(Wails v2 桌面框架)+ Vue 3 + Element Plus + Tailwind。
+
+![ManJuX](build/appicon.png)
+
+## 它能做什么
+
+输入故事/创意文本 → **LLM 直出分镜与 H3 提示词** → 参考图资产 → **双引擎渲染**(本地 ComfyUI H3-Base / MiniMax H3 云端 API,音画一体直出)→ **机械质检**(黑屏防线)→ **合成成片**(字幕/响度/faststart)。
+
+五阶段管线,每阶段可**独立运行、独立调参**(项目级参数快照),支持断点续跑、单镜重渲。
+
+| 阶段 | 能力 |
+|---|---|
+| 剧本分镜 | LLM 直出角色卡/场景卡/分镜表 + 每镜完整 H3 提示词(Ref2VA 六段式/T2VA 三段式,对白原生配音) |
+| 资产定妆 | 角色定妆照/场景参考图上传与盘点;缺失自动降级纯文生 |
+| 渲染出片 | 本地 ComfyUI(768p、Turbo LoRA 加速、两阶段条件缓存)/ 云端 MiniMax-H3 API(768P/2K);auto 模式本地优先自动切换 |
+| 质检 | 时长/音轨/分辨率探测 + 抽帧亮度统计(暗像素黑屏防线),报告落盘 |
+| 合成成片 | 重编码拼接(硬切/闪黑/叠化 xfade)+ ASS 字幕烧录(台词金色/旁白白色)+ loudnorm 响度归一 + faststart |
+
+## 快速开始
+
+1. **双击 `ManJuX.exe`** —— 弹出桌面工作台窗口(单实例,重复启动自动唤起已有窗口)。
+2. **设置**(右上角):填写 LLM(OpenAI 兼容,推荐 DeepSeek)与 MiniMax API Key;本地 ComfyUI 路径默认已适配本仓库 `comfyui/` 目录。
+3. **新建项目** → 剧本页粘贴故事文本 → 「一键全流程」或逐阶段运行。
+4. 渲染与合成进度在底部 **RUNTIME LOG** 实时滚动;分镜故事板逐镜点亮;成片页预览/导出。
+
+## 目录规范(严谨,不乱放)
+
+```
+D:\Ai\ManJuX\
+├── ManJuX.exe              # 交付桌面应用(构建产物副本)
+├── comfyui\                # 本地 ComfyUI 完整环境(134G:模型+Python,不入库)
+├── data\                   # 运行数据(不入库)
+│   ├── settings.json       # 全局设置(API Key 等)
+│   ├── logs\               # 应用日志 manjux.log / comfyui.log
+│   ├── cond_cache\         # H3 条件缓存记账
+│   └── projects\<项目>\
+│       ├── project.json    # 项目元数据 + 阶段参数(独立调优)
+│       ├── source.txt      # 源文本
+│       ├── plan\plan.json  # LLM 直出分镜方案
+│       ├── assets\         # characters/scenes/props + asset_map.json
+│       ├── clips\          # 镜头产物 NN.mp4 + manifest.json(断点/时效)
+│       └── output\         # final.mp4 / final.srt / qc_report.json
+├── main.go                 # Wails 桌面入口
+├── internal\               # Go 模块(见 docs/架构.md)
+├── frontend\               # Vue3 前端源码
+├── build\                  # wails 图标/构建产物
+├── scripts\                # build.ps1 / release.ps1
+└── docs\                   # 文档
+```
+
+## 构建与发布
+
+```powershell
+# 日常构建(前端+桌面 exe)
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1
+
+# 发布(自动构建 → commit → tag → 推送 GitHub 私有仓)
+powershell -ExecutionPolicy Bypass -File scripts\release.ps1 -Note "说明"
+```
+
+依赖:Go 1.25+、Wails CLI(`go install github.com/wailsapp/wails/v2/cmd/wails@latest`)、Node+pnpm、ffmpeg(PATH)。
+
+## 环境要求
+
+- 本地渲染:ComfyUI(本仓库 `comfyui/` 即完整环境,含 MiniMax-H3 int8 模型);应用可代管启动。
+- 云端渲染:MiniMax 开放平台 API Key([platform.minimaxi.com](https://platform.minimaxi.com))。
+- 剧本生成:任意 OpenAI 兼容 LLM(DeepSeek/GLM/Qwen/Kimi/本地 vLLM 均可)。
+
+## 更多文档
+
+- [docs/架构.md](docs/架构.md) —— 模块划分、引擎抽象、管线编排
+- [docs/使用手册.md](docs/使用手册.md) —— 界面操作、阶段调优、常见问题
