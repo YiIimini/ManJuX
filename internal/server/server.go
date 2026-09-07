@@ -256,6 +256,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := project.ProjectConfig{Params: project.DefaultStageParams()}
+	// 全局设置的默认引擎优先(auto=本地优先自动降级;api=纯云端;comfy=纯本地)
+	if e := s.cfg.Get().Render.DefaultEngine; e == "auto" || e == "comfy" || e == "api" {
+		cfg.Params.Render.Engine = e
+	}
 	p, err := s.store.Create(in.Name, cfg)
 	if err != nil {
 		writeErr(w, 400, err)

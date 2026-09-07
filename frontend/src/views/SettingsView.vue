@@ -114,6 +114,24 @@ function testLLM() {
 
       <div class="panel p-5">
         <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
+          <el-icon><VideoPlay /></el-icon>渲染引擎
+        </h3>
+        <el-form label-position="top" class="grid gap-x-6" style="grid-template-columns:1fr 1fr">
+          <el-form-item label="新项目默认引擎">
+            <el-select v-model="form.render.default_engine">
+              <el-option value="auto" label="自动(本地优先,不可用自动切云端,省额度)" />
+              <el-option value="comfy" label="本地 ComfyUI(免费,768p)" />
+              <el-option value="api" label="MiniMax 云端 API(纯云端,按量计费)" />
+            </el-select>
+          </el-form-item>
+          <div class="text-xs flex items-end pb-2" style="color:var(--mx-text-2)">
+            已有项目的引擎不受影响,可在项目内「渲染出片 ⚙」单独调整。
+          </div>
+        </el-form>
+      </div>
+
+      <div class="panel p-5">
+        <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
           <el-icon><Monitor /></el-icon>应用
         </h3>
         <el-form label-position="top" class="grid gap-x-6" style="grid-template-columns:1fr 1fr">
