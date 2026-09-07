@@ -80,8 +80,10 @@ export function connectEvents() {
       G.logs.push(ev)
       if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
       if (ev.project_id && G.project && ev.project_id === G.project.project.id) {
-        if ((ev.level === 'success' && ev.phase === 'pipeline') || ev.level === 'error') {
+        // 管线级事件(success/error/warn,如「⏹ 已停止」「✔ 完成」)→ 立即刷新项目状态
+        if (ev.phase === 'pipeline' && ['success', 'error', 'warn'].includes(ev.level)) {
           refreshProject()
+          refreshStatus()
         }
       }
     } catch { /* ignore */ }

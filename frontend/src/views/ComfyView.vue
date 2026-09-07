@@ -225,9 +225,13 @@ function verCellCls(row, which) {
             <span class="font-mono text-xs" :class="verCellCls(row, 'local')">{{ row.local || '—' }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="remote" label="在线最新" width="130">
+        <el-table-column prop="remote" label="在线最新" width="140">
           <template #default="{ row }">
-            <span class="font-mono text-xs" :class="verCellCls(row, 'remote')">{{ row.remote || '—' }}</span>
+            <div class="flex flex-col">
+              <span class="font-mono text-xs" :class="verCellCls(row, 'remote')">{{ row.remote || '—' }}</span>
+              <span v-if="row.remoteCommit" class="font-mono" style="font-size:10px;color:var(--mx-text3)"
+                    :title="`远端 HEAD ${row.remoteCommit} 与本地 commit 精确比对`">@{{ row.remoteCommit }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">

@@ -273,8 +273,9 @@ const env = computed(() => G.status?.env)
         <!-- 运行日志 ticker:最新一条,点击展开/收起日志面板 -->
         <button class="logticker" :class="{ open: G.logPanelOpen }" @click="G.logPanelOpen = !G.logPanelOpen"
           title="运行日志(点击展开)">
-          <span class="rec-dot" v-if="lastLog"></span>
-          <span class="tick-text" v-if="lastLog" :class="lastLog.level">{{ lastLog.message }}</span>
+          <span class="rec-dot" v-if="lastLog && G.eventsOpen"></span>
+          <span class="tick-text" v-if="!G.eventsOpen" style="color:var(--mx-yellow)">日志连接中断,重连中…</span>
+          <span class="tick-text" v-else-if="lastLog" :class="lastLog.level">{{ lastLog.message }}</span>
           <span class="tick-text" v-else style="color:#46536f">运行日志待命…</span>
           <el-icon :size="12"><ArrowUp v-if="G.logPanelOpen" /><ArrowDown v-else /></el-icon>
         </button>

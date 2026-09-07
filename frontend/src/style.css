@@ -164,8 +164,11 @@ html, body, #app {
 
 /* ============ 通用面板 ============ */
 .panel {
-  background: linear-gradient(165deg, rgba(22, 27, 43, .55), rgba(16, 20, 31, .9));
-  border: 1px solid var(--mx-line);
+  background:
+    linear-gradient(165deg, rgba(255, 255, 255, .022), rgba(0, 0, 0, .1)),
+    var(--mx-panel-bg, linear-gradient(165deg, rgba(22, 27, 43, .55), rgba(16, 20, 31, .9)));
+  backdrop-filter: var(--mx-bd-filter, none);
+  border: 1px solid var(--mx-bd-border, var(--mx-line));
   border-radius: 14px;
   position: relative;
 }

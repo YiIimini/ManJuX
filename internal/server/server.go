@@ -190,16 +190,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		APIReady: g.MiniMax.APIKey != "",
 		Engines:  s.reg.Names(),
 	}
-	// ComfyUI 存活探测(只 ping,不触发代管启动)
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
-		strings.TrimRight(g.Comfy.BaseURL, "/")+"/system_stats", nil)
-	if resp, err := http.DefaultClient.Do(req); err == nil {
-		io.Copy(io.Discard, resp.Body)
-		resp.Body.Close()
-		env.ComfyLive = resp.StatusCode == http.StatusOK
-	}
+	env.ComfyLive = s.probeComfy(g.Comfy.BaseURL)
 	running := map[string]pipeline.Run{}
 	for _, p := range s.store.List() {
 		if run := s.pipe.Running(p.ID); run != nil {
@@ -497,10 +488,12 @@ func (s *Server) upgrade2K(w http.ResponseWriter, r *http.Request) {
 func (s *Server) stopProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if !s.pipe.Stop(id) {
-		writeErr(w, 404, fmt.Errorf("项目未在运行"))
+		// 后端已结束而前端状态未同步(常见于刚跑完就点停止):不报错,
+		// 返回 stopped=false 让前端立即刷新状态即可。
+		writeJSON(w, 200, map[string]any{"ok": true, "stopped": false})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "stopped": true})
 }
 
 // ---------- 资产上传 ----------

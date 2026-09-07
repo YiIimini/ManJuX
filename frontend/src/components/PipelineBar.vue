@@ -78,8 +78,15 @@ async function runStage(id) {
   } catch (e) { ElMessage.error(e.message) }
 }
 async function stopAll() {
-  try { await api.stop(project.value.id); ElMessage.info('已请求停止,正在收尾…') }
-  catch (e) { ElMessage.error(e.message) }
+  try {
+    const r = await api.stop(project.value.id)
+    if (r && r.stopped === false) {
+      ElMessage.info('管线已在此前结束,状态已同步')
+      refreshProject()
+    } else {
+      ElMessage.info('已请求停止,正在收尾…')
+    }
+  } catch (e) { ElMessage.error(e.message) }
 }
 async function runAll() { await runStage('all') }
 </script>

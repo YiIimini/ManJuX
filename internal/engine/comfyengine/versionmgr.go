@@ -24,14 +24,16 @@ import (
 
 // VersionItem 版本管理器一行。
 type VersionItem struct {
-	Kind      string `json:"kind"`      // core / node / model
-	Name      string `json:"name"`      // 显示名
-	Local     string `json:"local"`     // 本地版本(commit/tag/版本号/文件时间)
-	Remote    string `json:"remote"`    // 在线最新(空=无源)
-	Repo      string `json:"repo"`      // owner/repo
-	Status    string `json:"status"`    // latest / behind / unknown / local / norepo
-	Detail    string `json:"detail"`    // 附加信息(模型大小等)
-	CheckedAt int64  `json:"checkedAt"` // 在线检查时刻(0=未检查)
+	Kind         string `json:"kind"`                   // core / node / model
+	Name         string `json:"name"`                   // 显示名
+	Local        string `json:"local"`                  // 本地版本(commit/tag/版本号/文件时间)
+	LocalCommit  string `json:"localCommit,omitempty"`  // 本地 HEAD 短 commit(VS 主依据)
+	Remote       string `json:"remote"`                 // 在线最新(tag / commit)
+	RemoteCommit string `json:"remoteCommit,omitempty"` // 远端默认分支 HEAD 短 commit
+	Repo         string `json:"repo"`                   // owner/repo
+	Status       string `json:"status"`                 // latest / behind / unknown / local / norepo
+	Detail       string `json:"detail"`                 // 附加信息(模型大小等)
+	CheckedAt    int64  `json:"checkedAt"`              // 在线检查时刻(0=未检查)
 }
 
 // VersionReport 版本管理器全量报告。
@@ -41,16 +43,11 @@ type VersionReport struct {
 	Model []VersionItem `json:"model"`
 }
 
-// githubLatest Release/Tag 在线查询(带进程级缓存与单飞)。
+// ghLatest 在线版本查询缓存(10 分钟;进程级)。
 var ghLatest = struct {
 	sync.Mutex
-	cache map[string]cachedVer
-}{cache: map[string]cachedVer{}}
-
-type cachedVer struct {
-	tag string
-	at  time.Time
-}
+	cache map[string]remoteVer
+}{cache: map[string]remoteVer{}}
 
 var repoRe = regexp.MustCompile(`github\.com[/:]([^/]+/[^/.]+)(?:\.git)?$`)
 
@@ -65,6 +62,7 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 	// ---- 本体 ----
 	core := VersionItem{Kind: "core", Name: "ComfyUI 本体", Local: readCoreVersion(root), Repo: "comfyanonymous/ComfyUI"}
 	if c := gitShort(root); c != "" {
+		core.LocalCommit = c
 		core.Detail = "commit " + c
 	}
 	rep.Core = []VersionItem{core}
@@ -79,6 +77,7 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 		dir := filepath.Join(cnDir, en.Name())
 		it := VersionItem{Kind: "node", Name: en.Name()}
 		if c := gitShort(dir); c != "" {
+			it.LocalCommit = c
 			it.Local = gitDescribe(dir)
 			if it.Local == "" {
 				it.Local = c
@@ -105,16 +104,16 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 	if online {
 		var wg sync.WaitGroup
 		type res struct {
-			tag string
-			ts  int64
+			tag, commit string
+			ts          int64
 		}
 		mu := sync.Mutex{}
 		results := map[string]res{}
 		query := func(repo string) {
 			defer wg.Done()
-			tag, ts := fetchLatest(ctx, repo)
+			tag, commit, ts := fetchLatest(ctx, repo)
 			mu.Lock()
-			results[repo] = res{tag, ts}
+			results[repo] = res{tag, commit, ts}
 			mu.Unlock()
 		}
 		if core.Repo != "" && core.Local != "" {
@@ -128,15 +127,16 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 			}
 		}
 		wg.Wait()
-		apply := func(repo string) (string, int64) {
+		apply := func(repo string) res {
 			if r, ok := results[repo]; ok {
-				return r.tag, r.ts
+				return r
 			}
-			return "", 0
+			return res{}
 		}
 		if core.Repo != "" && core.Local != "" {
-			core.Remote, core.CheckedAt = apply(core.Repo)
-			core.Status = cmpStatus(core.Local, core.Remote)
+			r := apply(core.Repo)
+			core.Remote, core.RemoteCommit, core.CheckedAt = r.tag, r.commit, r.ts
+			core.Status = cmpStatus(core.LocalCommit, r.commit, core.Local, r.tag)
 		} else {
 			core.Status = "unknown"
 		}
@@ -146,8 +146,18 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 				rep.Nodes[i].Status = "norepo"
 				continue
 			}
-			rep.Nodes[i].Remote, rep.Nodes[i].CheckedAt = apply(rep.Nodes[i].Repo)
-			rep.Nodes[i].Status = cmpStatus(rep.Nodes[i].Local, rep.Nodes[i].Remote)
+			r := apply(rep.Nodes[i].Repo)
+			if r.tag != "" && r.commit != "" {
+				// tag(版本号)+ commit 双显示
+				rep.Nodes[i].Remote = r.tag
+			} else if r.commit != "" {
+				rep.Nodes[i].Remote = r.commit
+			} else {
+				rep.Nodes[i].Remote = r.tag
+			}
+			rep.Nodes[i].RemoteCommit = r.commit
+			rep.Nodes[i].CheckedAt = r.ts
+			rep.Nodes[i].Status = cmpStatus(rep.Nodes[i].LocalCommit, r.commit, rep.Nodes[i].Local, r.tag)
 		}
 	} else {
 		core.Status = "unknown"
@@ -213,18 +223,27 @@ func gitRemote(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// fetchLatest 查 GitHub 最新 Release(无 release 退回最新 tag);空串=查询失败。
-// 并行查全部仓库;GitHub API 走直连(系统代理常为本机中转,挂掉时会拖死全部请求)。
-func fetchLatest(ctx context.Context, repo string) (string, int64) {
+// remoteVer 在线版本:commit(默认分支 HEAD,VS 主依据)+ tag(佐证显示)。
+type remoteVer struct {
+	tag    string
+	commit string
+	at     time.Time
+}
+
+// fetchLatest 查 GitHub 默认分支最新 commit(版本 VS 主依据)与最新 Release/Tag(佐证)。
+// GitHub API 走直连(系统代理常为本机中转,挂掉时会拖死全部请求)。
+func fetchLatest(ctx context.Context, repo string) (string, string, int64) {
 	ghLatest.Lock()
 	if c, ok := ghLatest.cache[repo]; ok && time.Since(c.at) < 10*time.Minute {
 		ghLatest.Unlock()
-		return c.tag, c.at.Unix()
+		return c.tag, c.commit, c.at.Unix()
 	}
 	ghLatest.Unlock()
 
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
+	// commits/HEAD = 默认分支最新提交
+	commit := ghGetCommit(ctx, fmt.Sprintf("https://api.github.com/repos/%s/commits/HEAD", repo))
 	tag := ghGetRelease(ctx, fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo))
 	if tag == "" {
 		// 无正式 release:取最新 tag(第一项即最新推的)
@@ -232,9 +251,32 @@ func fetchLatest(ctx context.Context, repo string) (string, int64) {
 	}
 	now := time.Now()
 	ghLatest.Lock()
-	ghLatest.cache[repo] = cachedVer{tag: tag, at: now}
+	ghLatest.cache[repo] = remoteVer{tag: tag, commit: commit, at: now}
 	ghLatest.Unlock()
-	return tag, now.Unix()
+	return tag, commit, now.Unix()
+}
+
+func ghGetCommit(ctx context.Context, url string) string {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return ""
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := ghClient.Do(req)
+	if err != nil || resp.StatusCode != 200 {
+		return ""
+	}
+	defer resp.Body.Close()
+	var m struct {
+		SHA string `json:"sha"`
+	}
+	if json.NewDecoder(resp.Body).Decode(&m) != nil {
+		return ""
+	}
+	if len(m.SHA) > 7 {
+		return m.SHA[:7]
+	}
+	return m.SHA
 }
 
 // ghClient GitHub API 直连客户端(绕过系统代理;代理失效时直连反而通)。
@@ -280,13 +322,23 @@ func ghGetFirstTag(ctx context.Context, url string) string {
 	return v
 }
 
-// cmpStatus 比较本地/在线版本(v 开头前缀归一)。
-func cmpStatus(local, remote string) string {
-	if remote == "" {
+// cmpStatus 版本 VS:commit 匹配为主(本地 HEAD == 远端默认分支 HEAD → 最新),
+// tag 字符串比对为辅(commit 查询失败时兜底)。
+func cmpStatus(localCommit, remoteCommit, localTag, remoteTag string) string {
+	if remoteCommit != "" {
+		if localCommit != "" {
+			if localCommit == remoteCommit {
+				return "latest"
+			}
+			return "behind" // commit 不同即落后(可能 ahead,但对分发副本按落后提示更新)
+		}
+		return "unknown"
+	}
+	if remoteTag == "" {
 		return "unknown"
 	}
 	norm := func(s string) string { return strings.TrimPrefix(strings.TrimSpace(s), "v") }
-	if norm(local) == norm(remote) || strings.Contains(local, norm(remote)) {
+	if norm(localTag) == norm(remoteTag) || strings.Contains(localTag, norm(remoteTag)) {
 		return "latest"
 	}
 	return "behind"
