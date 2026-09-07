@@ -36,10 +36,16 @@ if ($hasChange) {
 
 # 4) tag + 推送
 git tag $Version
+$ErrorActionPreference = "Continue"
 $remote = (& git remote get-url origin 2>$null | Select-Object -First 1)
+$ErrorActionPreference = "Stop"
 if (-not $remote) {
   git remote add origin https://github.com/YiIimini/ManJuX.git
 }
 git push -u origin main --tags
-if ($LASTEXITCODE -ne 0) { throw "推送失败" }
+if ($LASTEXITCODE -ne 0) {
+  Write-Host "==> 常规推送失败,尝试禁用代理直连重试…" -ForegroundColor Yellow
+  git -c http.proxy= -c https.proxy= push -u origin main --tags
+  if ($LASTEXITCODE -ne 0) { throw "推送失败(请检查网络/代理后手动 git push)" }
+}
 Write-Host "==> 已发布 $Version 并推送 GitHub" -ForegroundColor Green
