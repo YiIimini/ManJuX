@@ -1,6 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, computed } from 'vue'
 import { G, api, connectEvents, refreshStatus, refreshProjects } from './store'
+import { ElMessageBox } from 'element-plus'
 import HomeView from './views/HomeView.vue'
 import ProjectView from './views/ProjectView.vue'
 import SettingsView from './views/SettingsView.vue'
@@ -14,6 +15,18 @@ onMounted(() => {
   refreshStatus()
   refreshProjects()
   timer = setInterval(() => { refreshStatus(); refreshProjects() }, 15000)
+  // 桌面模式:管线运行中拦截关窗 → 此处二次确认
+  if (window.runtime?.EventsOn) {
+    window.runtime.EventsOn('confirm-quit', async () => {
+      try {
+        await ElMessageBox.confirm(
+          '有项目管线正在运行,退出将中止渲染。确定退出吗?',
+          '确认退出 ManJuX',
+          { confirmButtonText: '仍要退出', cancelButtonText: '继续运行', type: 'warning' })
+        await fetch('/api/quit', { method: 'POST' })
+      } catch { /* 取消=继续运行 */ }
+    })
+  }
 })
 onUnmounted(() => clearInterval(timer))
 

@@ -31,6 +31,10 @@ type ComfySettings struct {
 	AudioVAE       string `json:"audio_vae"`   // 缺失=黑屏,必填
 	CLIP           string `json:"clip"`        // Qwen3-VL 文本编码器(CLIPLoader type=minimax)
 	CondCache      bool   `json:"cond_cache"`  // 两阶段渲染(条件缓存 .pt)
+	// 定妆照/场景图自动生成(Krea-2 Turbo,8 步蒸馏)
+	ImageUNet string `json:"image_unet"` // 默认 krea2_turbo_fp8_scaled.safetensors
+	ImageCLIP string `json:"image_clip"` // 默认 qwen3vl_4b_fp8_scaled.safetensors(type=krea2)
+	ImageVAE  string `json:"image_vae"`  // 默认 qwen_image_vae.safetensors
 }
 
 // MiniMaxSettings MiniMax H3 云端 API 设置。
@@ -95,6 +99,9 @@ func Default() *Settings {
 			AudioVAE:        "minimax_h3_audio_vae_fp32.safetensors",
 			CLIP:            "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
 			CondCache:       true,
+			ImageUNet:       "krea2_turbo_fp8_scaled.safetensors",
+			ImageCLIP:       "qwen3vl_4b_fp8_scaled.safetensors",
+			ImageVAE:        "qwen_image_vae.safetensors",
 		},
 		MiniMax: MiniMaxSettings{
 			BaseURL:    "https://api.minimax.cn",

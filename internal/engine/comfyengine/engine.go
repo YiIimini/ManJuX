@@ -241,9 +241,12 @@ func addConditionNode(g map[string]any, job engine.Job, uploaded []string, w, h,
 		inputs := copyMap(base)
 		inputs["audio_vae"] = link("3", 0)
 		inputs["ref_image_size"] = "match"
+		// autogrow 输入的 API 提交格式:聚合键 ref_images = [节点引用…](不是 ref_image_N)
+		refs := make([]any, 0, len(uploaded))
 		for i, name := range uploaded {
-			inputs["ref_image_"+strconv.Itoa(i)] = link(loadImageNode(g, i, name), 0)
+			refs = append(refs, link(loadImageNode(g, i, name), 0))
 		}
+		inputs["ref_images"] = refs
 		g["20"] = nd("MiniMaxH3ReferenceToVideo", inputs)
 		return "20", "20"
 	}
@@ -290,12 +293,14 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	g := loaders(c)
 
 	var condNode, latentNode string
+	latentSlot := 1 // R2V/I2V 双输出:cond=0 / latent=1
 	if condRef != "" {
 		g["24"] = nd("MiniMaxH3CondLoad", map[string]any{
 			"cache_name": condRef[len("cache:"):],
 		})
 		g["25"] = nd("EmptyMiniMaxH3LatentAV", map[string]any{"width": w, "height": h, "length": length})
 		condNode, latentNode = "24", "25"
+		latentSlot = 0 // EmptyLatentAV 单输出
 	} else {
 		condNode, latentNode = addConditionNode(g, job, uploaded, w, h, length)
 	}
@@ -338,9 +343,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 		"denoise":  1.0,
 	})
 	g["43"] = nd("BasicGuider", map[string]any{
-		"model":       model,
-		"sampler":     link("41", 0),
-		"sigmas":      link("42", 0),
+		"model":        model,
 		"conditioning": link(condNode, 0),
 	})
 	g["44"] = nd("SamplerCustomAdvanced", map[string]any{
@@ -348,7 +351,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 		"guider":       link("43", 0),
 		"sampler":      link("41", 0),
 		"sigmas":       link("42", 0),
-		"latent_image": link(latentNode, 1),
+		"latent_image": link(latentNode, latentSlot),
 	})
 	g["50"] = nd("VAEDecode", map[string]any{"samples": link("44", 0), "vae": link("2", 0)})
 	g["51"] = nd("VAEDecodeAudio", map[string]any{"samples": link("44", 0), "vae": link("3", 0)})

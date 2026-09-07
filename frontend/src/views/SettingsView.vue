@@ -86,6 +86,15 @@ function testLLM() {
           <el-form-item label="音频 VAE(缺失=黑屏)">
             <el-input v-model="form.comfy.audio_vae" />
           </el-form-item>
+          <el-form-item label="定妆照模型(Krea-2 UNet)">
+            <el-input v-model="form.comfy.image_unet" />
+          </el-form-item>
+          <el-form-item label="定妆照编码器(CLIPLoader type=krea2)">
+            <el-input v-model="form.comfy.image_clip" />
+          </el-form-item>
+          <el-form-item label="定妆照 VAE">
+            <el-input v-model="form.comfy.image_vae" />
+          </el-form-item>
         </el-form>
       </div>
 

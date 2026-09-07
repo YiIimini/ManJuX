@@ -40,6 +40,12 @@ type Server struct {
 	ff    *ff.FF
 	bus   *pipeline.Bus
 	mux   *http.ServeMux
+	quit  func() // 桌面模式注入的优雅退出
+}
+
+// SetQuitFunc 注入桌面模式的退出函数(Wails runtime.Quit)。
+func (s *Server) SetQuitFunc(f func()) {
+	s.quit = f
 }
 
 // New 创建服务。
@@ -104,6 +110,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("POST /api/open", s.openInExplorer)
+	m.HandleFunc("POST /api/quit", s.quitApp)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -209,11 +216,33 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(in.MiniMax.APIKey, "****") {
 		in.MiniMax.APIKey = cur.MiniMax.APIKey
 	}
+	// 模型文件名类字段传空 = 未改动,保留现值(防部分提交把模型名清空导致 400)
+	keepStr(&in.Comfy.UNetRef2VA, cur.Comfy.UNetRef2VA)
+	keepStr(&in.Comfy.UNetFL2VA, cur.Comfy.UNetFL2VA)
+	keepStr(&in.Comfy.TurboLoRARef2VA, cur.Comfy.TurboLoRARef2VA)
+	keepStr(&in.Comfy.TurboLoRAFL2VA, cur.Comfy.TurboLoRAFL2VA)
+	keepStr(&in.Comfy.VideoVAE, cur.Comfy.VideoVAE)
+	keepStr(&in.Comfy.AudioVAE, cur.Comfy.AudioVAE)
+	keepStr(&in.Comfy.CLIP, cur.Comfy.CLIP)
+	keepStr(&in.Comfy.ImageUNet, cur.Comfy.ImageUNet)
+	keepStr(&in.Comfy.ImageCLIP, cur.Comfy.ImageCLIP)
+	keepStr(&in.Comfy.ImageVAE, cur.Comfy.ImageVAE)
+	keepStr(&in.Comfy.BaseURL, cur.Comfy.BaseURL)
+	keepStr(&in.MiniMax.Model, cur.MiniMax.Model)
+	keepStr(&in.LLM.Model, cur.LLM.Model)
+	keepStr(&in.LLM.BaseURL, cur.LLM.BaseURL)
 	if err := s.cfg.Update(in); err != nil {
 		writeErr(w, 500, err)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// keepStr 空-string 字段回填现值。
+func keepStr(dst *string, cur string) {
+	if strings.TrimSpace(*dst) == "" {
+		*dst = cur
+	}
 }
 
 // ---------- 项目 ----------
@@ -351,6 +380,10 @@ func (s *Server) putSource(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	if strings.ContainsRune(in.Text, '\uFFFD') {
+		writeErr(w, 400, fmt.Errorf("文本含乱码字符(U+FFFD):请通过工作台界面提交,确保 UTF-8 编码"))
+		return
+	}
 	if err := s.store.SaveSource(id, in.Text); err != nil {
 		writeErr(w, 500, err)
 		return
@@ -383,6 +416,11 @@ func (s *Server) putParams(w http.ResponseWriter, r *http.Request) {
 	var in project.StageParams
 	if err := readBody(r, &in); err != nil {
 		writeErr(w, 400, err)
+		return
+	}
+	// 拒绝含 U+FFFD 的输入(GBK 直传等编码事故),防脏数据入库
+	if strings.ContainsRune(fmt.Sprint(in), '\uFFFD') {
+		writeErr(w, 400, fmt.Errorf("参数含乱码字符(U+FFFD):请通过工作台界面提交,确保 UTF-8 编码"))
 		return
 	}
 	in.Sanitize()
@@ -644,6 +682,25 @@ func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("explorer.exe", "/select,", target)
 	_ = cmd.Start()
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// quitApp 界面确认后的强制退出(停管线 → 优雅关窗)。
+func (s *Server) quitApp(w http.ResponseWriter, r *http.Request) {
+	for _, p := range s.store.List() {
+		s.pipe.Stop(p.ID)
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+	if s.quit != nil {
+		go func() {
+			<-r.Context().Done() // 等响应送达
+			s.quit()
+		}()
+		return
+	}
+	go func() {
+		<-r.Context().Done()
+		os.Exit(0)
+	}()
 }
 
 // ---------- 静态前端 ----------

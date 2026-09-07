@@ -226,11 +226,25 @@ type OutputFile struct {
 }
 
 // ExtractFiles 遍历 outputs 收集全部文件对象(SaveVideo/SaveImage 等)。
+// 注意:新版 SaveVideo 的 animated 标志是与 images 平级的独立键([true]),
+// 而非文件项内字段;两者都要兼容。
 func (h *HistoryEntry) ExtractFiles() []OutputFile {
 	var files []OutputFile
 	for _, nodeOut := range h.Outputs {
+		// 平级 animated 标志(新版 SaveVideo)
+		nodeAnimated := false
+		if raw, ok := nodeOut["animated"]; ok {
+			var flags []bool
+			if json.Unmarshal(raw, &flags) == nil {
+				for _, f := range flags {
+					if f {
+						nodeAnimated = true
+					}
+				}
+			}
+		}
 		for key, arrRaw := range nodeOut {
-			if key == "ui" {
+			if key == "ui" || key == "animated" {
 				continue
 			}
 			var arr []struct {
@@ -247,7 +261,7 @@ func (h *HistoryEntry) ExtractFiles() []OutputFile {
 				if it.Filename == "" {
 					continue
 				}
-				animated := it.Animated || strings.Contains(it.Format, "video")
+				animated := it.Animated || nodeAnimated || strings.Contains(it.Format, "video")
 				files = append(files, OutputFile{it.Filename, it.Subfolder, it.Type, animated})
 			}
 		}

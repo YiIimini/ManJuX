@@ -106,12 +106,12 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	args := []string{"-y", "-i", master}
 	if p.BurnSubtitles && plan != nil {
 		ass := filepath.Join(outDir, "final.ass")
-		if err := os.WriteFile(ass, []byte(BuildASS(plan, durations, p.SubtitleSize)), 0o644); err != nil {
+		if err := os.WriteFile(ass, []byte(BuildASS(plan, durations, p.SubtitleSize, p.Width, p.Height)), 0o644); err != nil {
 			return nil, err
 		}
-		// 相对文件名 + 工作目录,规避 Windows 盘符转义
+		// 相对文件名 + 工作目录,规避 Windows 盘符转义;libass 不接受带引号的文件名
 		if err := runIn(ctx, f.Ffmpeg, outDir, append(args,
-			"-vf", fmt.Sprintf("subtitles=filename=%q", "final.ass"),
+			"-vf", "subtitles=filename=final.ass",
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 			"-af", fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness),
 			"-c:a", "aac", "-b:a", "192k", "-ac", "2",
@@ -270,27 +270,33 @@ func srtTime(sec float64) string {
 }
 
 // BuildASS 生成 ASS 字幕(中文字体+描边;台词金色/旁白白色)。
-func BuildASS(plan *project.Plan, durations []float64, sizePct int) string {
+// playW/playH 为成片画幅,字幕网格与字号随画幅缩放。
+func BuildASS(plan *project.Plan, durations []float64, sizePct int, playW, playH int) string {
 	if sizePct <= 0 {
 		sizePct = 5
 	}
-	fontSize := 1920 * sizePct / 100
+	if playW < 32 || playH < 32 {
+		playW, playH = 1080, 1920
+	}
+	fontSize := playH * sizePct / 100
+	marginV := playH * 8 / 100
+	marginLR := playW * 5 / 100
 	var sb strings.Builder
 	fmt.Fprintf(&sb, `[Script Info]
 ScriptType: v4.00+
-PlayResX: 1080
-PlayResY: 1920
+PlayResX: %d
+PlayResY: %d
 WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Dialogue,Microsoft YaHei,%d,&H0020D9FF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,80,80,150,1
-Style: Narration,Microsoft YaHei,%d,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,80,80,150,1
+Style: Dialogue,Microsoft YaHei,%d,&H0020D9FF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,%d,%d,%d,1
+Style: Narration,Microsoft YaHei,%d,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,%d,%d,%d,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`, fontSize, fontSize)
+`, playW, playH, fontSize, marginLR, marginLR, marginV, fontSize, marginLR, marginLR, marginV)
 
 	var t float64
 	for i, shot := range plan.Shots {

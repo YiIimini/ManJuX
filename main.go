@@ -15,6 +15,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -105,7 +106,20 @@ func main() {
 			DisableWindowIcon:    false,
 		},
 		OnStartup: func(ctx context.Context) {
+			srv.SetQuitFunc(func() {
+				log.Printf("[manjux] 收到退出请求(界面确认)")
+				go runtime.Quit(ctx)
+			})
 			log.Printf("[manjux] 桌面窗口就绪")
+		},
+		OnBeforeClose: func(ctx context.Context) bool {
+			// 管线运行中拦截关窗,交前端二次确认(防误关中断渲染)
+			if coord.HasRunning() {
+				log.Printf("[manjux] 拦截关窗:管线运行中,等待用户确认")
+				runtime.EventsEmit(ctx, "confirm-quit")
+				return true
+			}
+			return false
 		},
 		OnShutdown: func(ctx context.Context) {
 			log.Printf("[manjux] 退出")

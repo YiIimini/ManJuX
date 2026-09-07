@@ -78,9 +78,8 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		"content":    content,
 		"duration":   clampDuration(job.Length / 24),
 		"resolution": orDefault(c.Resolution, "768P"),
-	}
-	if job.Mode != "ref2va" || len(job.RefImages) == 0 {
-		body["ratio"] = ratioFor(job.Width, job.Height)
+		// ratio 始终显式传:ref2va 下云端不按参考图自动取竖横,缺省会落 16:9
+		"ratio": ratioFor(job.Width, job.Height),
 	}
 
 	taskID, err := e.create(ctx, c, body)

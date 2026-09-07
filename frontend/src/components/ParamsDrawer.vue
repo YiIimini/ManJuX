@@ -58,13 +58,14 @@ async function save() {
       <el-form label-position="top">
         <el-form-item label="参考图来源">
           <el-select v-model="form.assets.source">
-            <el-option value="upload" label="手动上传(推荐,锁脸最稳)" />
+            <el-option value="krea2" label="Krea-2 自动生成(推荐,需本地 ComfyUI)" />
+            <el-option value="upload" label="手动上传(锁脸最稳)" />
             <el-option value="skip" label="跳过(全部镜头纯文生 t2va)" />
           </el-select>
         </el-form-item>
       </el-form>
       <el-alert type="info" :closable="false"
-        title="定妆照建议:半身正脸、素背景、单人单图;场景图建议:全景空镜。" />
+        title="Krea-2 生成:角色半身竖幅 832×1248 / 场景按项目画幅;已有资产自动复用,可上传替换。" />
     </div>
 
     <div v-else-if="stageId === 'render'" class="flex flex-col gap-4">

@@ -19,7 +19,7 @@ type ScriptParams struct {
 
 // AssetsParams 资产阶段(assets)参数。
 type AssetsParams struct {
-	Source string `json:"source"` // upload(手动上传)/ skip(纯文生 t2va)
+	Source string `json:"source"` // upload(手动上传)/ krea2(Krea-2 自动生成)/ skip(纯文生 t2va)
 }
 
 // RenderParams 渲染阶段(render)参数。
@@ -84,7 +84,7 @@ func (p *StageParams) Sanitize() {
 	if p.Script.TotalSeconds < p.Script.MaxShots*4 {
 		p.Script.TotalSeconds = p.Script.MaxShots * 7
 	}
-	if p.Assets.Source != "upload" && p.Assets.Source != "skip" {
+	if p.Assets.Source != "upload" && p.Assets.Source != "krea2" && p.Assets.Source != "skip" {
 		p.Assets.Source = "upload"
 	}
 	r := &p.Render

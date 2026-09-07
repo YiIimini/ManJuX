@@ -13,6 +13,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -73,6 +74,13 @@ func (c *Coordinator) Running(projectID string) *Run {
 		return &cp
 	}
 	return nil
+}
+
+// HasRunning 是否有任一项目在运行(关窗保护用)。
+func (c *Coordinator) HasRunning() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.runs) > 0
 }
 
 // Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段);
@@ -214,6 +222,9 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 
 // ---------- 阶段二:assets ----------
 
+// krea2Negative Krea-2 蒸馏(CFG 1.0)下负面词无引导作用,留空。
+const krea2Negative = ""
+
 func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
@@ -224,35 +235,81 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 		return err
 	}
 	p := proj.Config.Params.Assets
+
+	// Krea-2 自动生成缺失参考图(角色竖幅半身 832×1248;场景按项目画幅方向)
+	var comfyGen *comfyengine.Engine
+	if p.Source == "krea2" {
+		eng, err := c.reg.Get("comfy")
+		if err != nil {
+			return err
+		}
+		ce, ok := eng.(*comfyengine.Engine)
+		if !ok {
+			return fmt.Errorf("本地引擎不支持图像生成")
+		}
+		if err := ce.Available(ctx); err != nil {
+			return fmt.Errorf("Krea-2 定妆照需要本地 ComfyUI: %w", err)
+		}
+		comfyGen = ce
+	}
+
+	genAsset := func(kind, id, name, imagePrompt string) (string, error) {
+		w, h := 832, 1248 // 角色半身竖幅
+		if kind == "scenes" {
+			if proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
+				w, h = 1248, 832
+			}
+		}
+		safe := director.SanitizeForCache(kind + "_" + id)
+		out := filepath.Join(c.store.Dir(proj.ID), "assets", kind, safe+".png")
+		seed := int64(len(id)*1000 + len(name)*7)
+		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:%s「%s」(%d×%d)…", kindLabel(kind), name, w, h)
+		path, err := comfyGen.GenerateImage(ctx, imagePrompt, krea2Negative, seed, w, h, out)
+		if err != nil {
+			return "", err
+		}
+		return path, nil
+	}
+
 	missing := 0
 	total := 0
-	check := func(kind, id, name string) {
+	check := func(kind, id, name, imagePrompt string) {
 		total++
-		a, ok := assets[id]
-		if !ok || a.File == "" {
-			missing++
-			if p.Source == "upload" {
-				c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "缺少参考图:%s「%s」(可上传,缺失镜头将降级纯文生)", map[string]string{"characters": "角色", "scenes": "场景", "props": "道具"}[kind], name)
+		if a, ok := assets[id]; ok && a.File != "" {
+			full := filepath.Join(c.store.Dir(proj.ID), a.File)
+			if _, err := os.Stat(full); err == nil {
+				if fp := project.FingerprintFile(full); fp != a.Fingerprint {
+					a.Fingerprint = fp
+					assets[id] = a
+				}
+				return
 			}
-			return
 		}
-		full := filepath.Join(c.store.Dir(proj.ID), a.File)
-		if _, err := os.Stat(full); err != nil {
-			missing++
-			delete(assets, id)
-			return
+		// 缺失:krea2 生成 / 提示上传
+		if comfyGen != nil && strings.TrimSpace(imagePrompt) != "" {
+			if path, err := genAsset(kind, id, name, imagePrompt); err == nil {
+				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
+				assets[id] = project.Asset{
+					ID: id, Kind: kind, Name: name,
+					File: filepath.ToSlash(rel), ImagePrompt: imagePrompt,
+					Source: "krea2", Fingerprint: project.FingerprintFile(path),
+				}
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」", kindLabel(kind), name)
+				return
+			} else {
+				c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "生成失败:%s「%s」:%v", kindLabel(kind), name, err)
+			}
 		}
-		// 文件变更 → 更新指纹(供渲染时效判断)
-		if fp := project.FingerprintFile(full); fp != a.Fingerprint {
-			a.Fingerprint = fp
-			assets[id] = a
+		missing++
+		if p.Source == "upload" {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "缺少参考图:%s「%s」(可上传,缺失镜头将降级纯文生)", kindLabel(kind), name)
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name)
+		check("characters", "char:"+ch.ID, ch.Name, ch.ImagePrompt)
 	}
 	for _, sc := range plan.Scenes {
-		check("scenes", "scene:"+sc.ID, sc.Name)
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.ImagePrompt)
 	}
 	if err := c.store.SaveAssets(proj.ID, assets); err != nil {
 		return err
@@ -265,11 +322,23 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 		c.emit(proj.ID, PhaseAssets, 0, "success", 100, "✔ 资产策略=跳过(全部镜头纯文生 t2va)")
 		return nil
 	}
-	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产盘点完成:%d/%d 就绪", total-missing, total)
+	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产就绪:%d/%d", total-missing, total)
 	if missing > 0 {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", pct, "提示:缺 %d 张参考图,对应镜头将以 t2va 纯文生渲染", missing)
 	}
 	return nil
+}
+
+func kindLabel(kind string) string {
+	switch kind {
+	case "characters":
+		return "角色"
+	case "scenes":
+		return "场景"
+	case "props":
+		return "道具"
+	}
+	return kind
 }
 
 // ---------- 阶段三:render ----------
