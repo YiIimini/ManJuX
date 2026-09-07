@@ -34,10 +34,14 @@ func main() {
 	exeDir := mustExeDir()
 
 	// 1) 单实例(Wails 内建锁:第二实例自动唤起已有窗口后退出)
-	// 2) 日志(文件 + 控制台)
+	// 2) 日志(文件 + 控制台);超 10MB 归档轮转
 	logDir := filepath.Join(exeDir, "data", "logs")
 	_ = os.MkdirAll(logDir, 0o755)
-	logFile, err := os.OpenFile(filepath.Join(logDir, "manjux.log"),
+	logPath := filepath.Join(logDir, "manjux.log")
+	if st, err := os.Stat(logPath); err == nil && st.Size() > 10<<20 {
+		_ = os.Rename(logPath, logPath+".old")
+	}
+	logFile, err := os.OpenFile(logPath,
 		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err == nil {
 		log.SetOutput(newTee(logFile, os.Stdout))

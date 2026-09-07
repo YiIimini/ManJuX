@@ -43,7 +43,14 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(work)
+	failed := true
+	defer func() {
+		if !failed {
+			os.RemoveAll(work)
+		} else {
+			os.Rename(work, work+"-failed") // 保留排查现场
+		}
+	}()
 
 	// ---- 步骤一:逐镜规范化(重编码,统一分辨率/fps/采样)----
 	if onProgress != nil {
@@ -114,7 +121,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 			"-vf", "subtitles=filename=final.ass",
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 			"-af", fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness),
-			"-c:a", "aac", "-b:a", "192k", "-ac", "2",
+			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 			"-movflags", "+faststart", finalPath)...); err != nil {
 			return nil, fmt.Errorf("终混失败: %w", err)
 		}
@@ -122,7 +129,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		if _, err := f.Run(ctx, append(args,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 			"-af", fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness),
-			"-c:a", "aac", "-b:a", "192k", "-ac", "2",
+			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 			"-movflags", "+faststart", finalPath)...); err != nil {
 			return nil, fmt.Errorf("终混失败: %w", err)
 		}
@@ -130,6 +137,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	if onProgress != nil {
 		onProgress(100, "合成完成")
 	}
+	failed = false // 成功:清理中间目录;失败保留 compose-*-failed 现场供排查
 	return &Result{FinalPath: finalPath, SRTPath: srtPath, Duration: total}, nil
 }
 

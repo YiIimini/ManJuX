@@ -43,7 +43,7 @@ const dialogues = computed(() => (props.shot.dialogue || []).map(d => `${d.speak
     <!-- 视频 / 占位 -->
     <div class="relative" style="aspect-ratio:9/16;background:var(--mx-bg-2)">
       <video v-if="manifestItem?.status === 'done' && manifestItem?.file"
-             :src="api.fileURL(pj.project.id, manifestItem.file)"
+             :src="api.fileURL(pj.project.id, manifestItem.file) + '?v=' + (manifestItem.updated_at || '')"
              controls preload="metadata" playsinline
              style="width:100%;height:100%;object-fit:contain;background:#000" />
       <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2" style="color:var(--mx-text-2)">

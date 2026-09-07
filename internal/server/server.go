@@ -23,6 +23,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/ff"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/version"
@@ -111,6 +112,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("POST /api/open", s.openInExplorer)
 	m.HandleFunc("POST /api/quit", s.quitApp)
+	m.HandleFunc("POST /api/test", s.testConn)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -682,6 +684,76 @@ func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 	cmd := exec.Command("explorer.exe", "/select,", target)
 	_ = cmd.Start()
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// testConn 连通性测试:body {target: "llm"|"comfy"|"minimax"}。
+func (s *Server) testConn(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Target string `json:"target"`
+	}
+	_ = readBody(r, &in)
+	g := s.cfg.Get()
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+
+	switch in.Target {
+	case "llm":
+		client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, 60)
+		out, err := client.Chat(ctx, []llm.Message{{Role: "user", Content: "回复两个字:连通"}}, false)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "message": "LLM 应答:" + truncateStr(out, 40)})
+	case "comfy":
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+			strings.TrimRight(g.Comfy.BaseURL, "/")+"/system_stats", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeErr(w, 400, fmt.Errorf("ComfyUI 不可达(%s):%v", g.Comfy.BaseURL, err))
+			return
+		}
+		defer resp.Body.Close()
+		io.Copy(io.Discard, resp.Body)
+		if resp.StatusCode != http.StatusOK {
+			writeErr(w, 400, fmt.Errorf("ComfyUI HTTP %d", resp.StatusCode))
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "message": "ComfyUI 在线"})
+	case "minimax":
+		if g.MiniMax.APIKey == "" {
+			writeErr(w, 400, fmt.Errorf("MiniMax API Key 未填写"))
+			return
+		}
+		// 探测策略:查询一个不存在的任务 id —— 鉴权失败返回 401(login fail);
+		// 通过鉴权则返回业务错误(record not found),即可证明 Key 有效
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet,
+			strings.TrimRight(g.MiniMax.BaseURL, "/")+"/v2/query/video_generation/manjux-probe-000", nil)
+		req.Header.Set("Authorization", "Bearer "+g.MiniMax.APIKey)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			writeErr(w, 400, fmt.Errorf("MiniMax API 不可达:%v", err))
+			return
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		body := string(raw)
+		if resp.StatusCode == http.StatusUnauthorized || strings.Contains(body, "authorized_error") || strings.Contains(body, "login fail") {
+			writeErr(w, 400, fmt.Errorf("API Key 无效(401 鉴权失败)"))
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "message": "MiniMax API Key 有效"})
+	default:
+		writeErr(w, 400, fmt.Errorf("未知 target: %s", in.Target))
+	}
+}
+
+func truncateStr(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // quitApp 界面确认后的强制退出(停管线 → 优雅关窗)。

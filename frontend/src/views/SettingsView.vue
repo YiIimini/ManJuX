@@ -1,12 +1,13 @@
 <script setup>
 import { G, api, refreshStatus } from '../store'
-import { reactive, onMounted } from 'vue'
+import { reactive, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const form = reactive({
   server_port: 8790, data_dir: '', auto_open_ui: true,
   llm: {}, comfy: {}, minimax: {}, ff: {}, render: {},
 })
+const testing = ref('')
 
 onMounted(async () => {
   try {
@@ -23,8 +24,17 @@ async function save() {
   } catch (e) { ElMessage.error(e.message) }
 }
 
-function testLLM() {
-  ElMessage.info('LLM 连通性将在下次「剧本分镜」运行时验证;也可在此直接保存后运行任意项目。')
+async function testConn(target) {
+  testing.value = target
+  try {
+    const r = await fetch('/api/test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ target })
+    })
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    ElMessage.success(d.message || '连接正常')
+  } catch (e) { ElMessage.error(e.message) } finally { testing.value = '' }
 }
 </script>
 
@@ -43,7 +53,10 @@ function testLLM() {
             <el-input v-model="form.llm.model" placeholder="deepseek-chat" />
           </el-form-item>
           <el-form-item label="API Key" class="col-span-2">
-            <el-input v-model="form.llm.api_key" show-password placeholder="sk-…(本地存储于 data/settings.json)" />
+            <div class="flex gap-2 w-full">
+              <el-input v-model="form.llm.api_key" show-password placeholder="sk-…(本地存储于 data/settings.json)" style="flex:1" />
+              <el-button :loading="testing==='llm'" @click="testConn('llm')">测试</el-button>
+            </div>
           </el-form-item>
         </el-form>
       </div>
@@ -95,6 +108,10 @@ function testLLM() {
           <el-form-item label="定妆照 VAE">
             <el-input v-model="form.comfy.image_vae" />
           </el-form-item>
+          <el-form-item label="连通性" class="col-span-2">
+            <el-button :loading="testing==='comfy'" @click="testConn('comfy')">测试 ComfyUI 连接</el-button>
+            <span class="text-xs ml-2" style="color:var(--mx-text-2)">未运行时渲染阶段会自动代管启动</span>
+          </el-form-item>
         </el-form>
       </div>
 
@@ -116,7 +133,10 @@ function testLLM() {
             </el-select>
           </el-form-item>
           <el-form-item label="API Key" class="col-span-2">
-            <el-input v-model="form.minimax.api_key" show-password placeholder="eyJ…(platform.minimaxi.com 创建)" />
+            <div class="flex gap-2 w-full">
+              <el-input v-model="form.minimax.api_key" show-password placeholder="eyJ…(platform.minimaxi.com 创建)" style="flex:1" />
+              <el-button :loading="testing==='minimax'" @click="testConn('minimax')">测试</el-button>
+            </div>
           </el-form-item>
         </el-form>
       </div>

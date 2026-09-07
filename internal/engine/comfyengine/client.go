@@ -334,6 +334,33 @@ func (c *Client) Interrupt(ctx context.Context) {
 	}
 }
 
+// Queue 返回 (运行中ids, 排队ids)。
+func (c *Client) Queue(ctx context.Context) (running, pending []string, err error) {
+	raw, err := c.get(ctx, "/queue")
+	if err != nil {
+		return nil, nil, err
+	}
+	var out struct {
+		QueueRunning [][2]any `json:"queue_running"`
+		QueuePending [][2]any `json:"queue_pending"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, nil, err
+	}
+	extract := func(items [][2]any) []string {
+		var ids []string
+		for _, it := range items {
+			if len(it) > 0 {
+				if s, ok := it[0].(string); ok {
+					ids = append(ids, s)
+				}
+			}
+		}
+		return ids
+	}
+	return extract(out.QueueRunning), extract(out.QueuePending), nil
+}
+
 // WaitForDone 轮询直到完成/出错。onProgress 收到 0-100 进度。
 func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress func(pct int, note string)) (*HistoryEntry, error) {
 	ticker := time.NewTicker(3 * time.Second)
@@ -353,7 +380,19 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 			}
 			if h == nil {
 				if onProgress != nil {
-					onProgress(2, "排队中")
+					// /queue 区分排队/执行(history 未生成且队列无此 id = 正在执行)
+					if runIDs, pendIDs, qerr := c.Queue(ctx); qerr == nil {
+						if containsID(pendIDs, promptID) {
+							onProgress(2, "排队中")
+						} else if containsID(runIDs, promptID) {
+							pct := progressFromQueuePos(runIDs, promptID)
+							onProgress(pct, fmt.Sprintf("执行中(第 %d 位)", pct))
+						} else {
+							onProgress(50, "执行中")
+						}
+					} else {
+						onProgress(2, "排队中")
+					}
 				}
 				continue
 			}
@@ -369,6 +408,23 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 			}
 		}
 	}
+}
+
+// progressFromQueuePos 队列首位=执行主体,给 20% 基础进度。
+func progressFromQueuePos(runIDs []string, promptID string) int {
+	if len(runIDs) > 0 && runIDs[0] == promptID {
+		return 20
+	}
+	return 3
+}
+
+func containsID(ids []string, id string) bool {
+	for _, v := range ids {
+		if v == id {
+			return true
+		}
+	}
+	return false
 }
 
 // progressFromMessages 从 status.messages 提取采样进度。

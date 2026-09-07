@@ -48,12 +48,9 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		return nil, err
 	}
 	_ = os.MkdirAll(job.OutputDir, 0o755)
-
-	// 已有同任务产物直接复用(断点续跑)
+	// 注:产物复用/断点续跑由管线层按输入指纹(manifest)权威判定,
+	// 引擎层不做本地缓存,避免绕过指纹校验复用旧文件
 	final := filepath.Join(job.OutputDir, job.OutputName+".mp4")
-	if st, err := os.Stat(final); err == nil && st.Size() > 0 {
-		return &engine.Result{VideoPath: final, Engine: e.Name(), Cached: true}, nil
-	}
 
 	content := []map[string]any{
 		{"type": "text", "text": job.Prompt},
@@ -117,8 +114,19 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 			if job.OnProgress != nil {
 				job.OnProgress(90, "下载成片")
 			}
-			if err := download(ctx, url, final); err != nil {
-				return nil, err
+			var dlErr error
+			for attempt := 0; attempt < 2; attempt++ {
+				if dlErr = download(ctx, url, final); dlErr == nil {
+					break
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(3 * time.Second):
+				}
+			}
+			if dlErr != nil {
+				return nil, fmt.Errorf("下载成片失败(已重试): %w", dlErr)
 			}
 			return &engine.Result{VideoPath: final, TaskID: taskID, Engine: e.Name()}, nil
 		case "failed", "cancelled":

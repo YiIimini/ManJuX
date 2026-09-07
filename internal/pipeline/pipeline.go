@@ -157,6 +157,11 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 			err = c.runRender(ctx, proj, only, engineOverride)
 		case PhaseQC:
 			err = c.runQC(ctx, proj)
+			// 全流程中质检不通过不中止:带瑕疵继续合成,用户按报告单镜重渲
+			if err != nil && phase == PhaseAll && ctx.Err() == nil {
+				c.emit(proj.ID, PhaseQC, 0, "warn", 100, "⚠ %v(全流程继续,请稍后按报告单镜重渲)", err)
+				err = nil
+			}
 		case PhaseAssemble:
 			err = c.runAssemble(ctx, proj)
 		}
@@ -410,7 +415,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 
 	clipsDir := filepath.Join(c.store.Dir(proj.ID), "clips")
 	_ = os.MkdirAll(clipsDir, 0o755)
-	done, skipped := 0, 0
+	done, skipped, failed := 0, 0, 0
+	var failures []string
 	for i, shot := range shots {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -475,11 +481,12 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
+			// 单镜失败不中止:记录后继续后续镜头,阶段末汇总
+			failed++
+			failures = append(failures, fmt.Sprintf("镜%d:%v", shot.ID, err))
 			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, err.Error())
-			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败:%v", shot.ID, err)
-			// 保存清单后返回错误(单镜失败即中止,便于定点重跑)
-			c.store.SaveManifest(proj.ID, manifest)
-			return fmt.Errorf("镜头 %d 渲染失败: %w", shot.ID, err)
+			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(继续下一镜):%v", shot.ID, err)
+			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
 		c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "")
@@ -493,6 +500,14 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return err
 	}
 	_ = g
+	if failed > 0 {
+		// 有失败:报告但不抛错(qc/assemble 自行处理缺失);全失败才视为阶段失败
+		if done+skipped == 0 {
+			return fmt.Errorf("全部 %d 镜渲染失败:%s", failed, strings.Join(failures, ";"))
+		}
+		c.emit(proj.ID, PhaseRender, 0, "warn", 100, "⚠ 渲染结束:成功 %d,跳过 %d,失败 %d(%s)", done, skipped, failed, strings.Join(failures, ";"))
+		return nil
+	}
 	c.emit(proj.ID, PhaseRender, 0, "success", 100, "✔ 渲染完成:新出 %d 镜,跳过 %d 镜", done, skipped)
 	return nil
 }

@@ -129,7 +129,12 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	condRef := "" // ""=单图直跑内联编码;"cache:<name>"=两阶段加载缓存
 
 	if c.CondCache && e.cli.HasNode(ctx, "MiniMaxH3CondSave") {
-		cacheName := condCacheName(job.ProjectID, job.ShotID, job.Prompt, uploaded, w, h, length)
+		// 缓存键含参考图内容指纹:换定妆照(同名覆盖)后自动失效,防旧条件隐性复用
+		var refFPs []string
+		for _, ref := range job.RefImages {
+			refFPs = append(refFPs, ref.Path+":"+fileFingerprint(ref.Path))
+		}
+		cacheName := condCacheName(job.ProjectID, job.ShotID, job.Prompt, refFPs, w, h, length)
 		if e.condExists(c, cacheName) {
 			condRef = "cache:" + cacheName
 		} else {
@@ -213,9 +218,22 @@ func markCondReady(c config.ComfySettings, cacheName string) {
 		[]byte(time.Now().Format(time.RFC3339)), 0o644)
 }
 
-func condCacheName(projectID string, shotID int, prompt string, refs []string, w, h, length int) string {
-	sum := md5.Sum([]byte(fmt.Sprint(projectID, shotID, prompt, refs, w, h, length)))
+func condCacheName(projectID string, shotID int, prompt string, refFPs []string, w, h, length int) string {
+	sum := md5.Sum([]byte(fmt.Sprint(projectID, shotID, prompt, refFPs, w, h, length)))
 	return "manjux_" + projectID + "_s" + strconv.Itoa(shotID) + "_" + hex.EncodeToString(sum[:])[:8]
+}
+
+// fileFingerprint 文件内容指纹(md5 前 16 位);读失败退化为 mtime,保证键变化。
+func fileFingerprint(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if st, serr := os.Stat(path); serr == nil {
+			return "t" + st.ModTime().Format("150405.000000000")
+		}
+		return "missing"
+	}
+	sum := md5.Sum(raw)
+	return hex.EncodeToString(sum[:])[:16]
 }
 
 // ---------- 工作流组装(API prompt 格式) ----------
