@@ -1,6 +1,7 @@
 <script setup>
 import { G, api, refreshStatus } from '../store'
-import { reactive, onMounted, ref } from 'vue'
+import { THEMES, loadPrefs, applyTheme } from '../themes'
+import { reactive, onMounted, ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const form = reactive({
@@ -8,6 +9,26 @@ const form = reactive({
   llm: {}, comfy: {}, minimax: {}, ff: {}, render: {},
 })
 const testing = ref('')
+
+// 个性化:主题与玻璃拟态(纯前端偏好,即时生效即时保存)
+const appear = reactive({ theme: 'midnight-amber', glass: false, glassAlpha: 0.72 })
+onMounted(() => {
+  const p = loadPrefs()
+  appear.theme = p.theme || 'midnight-amber'
+  appear.glass = !!p.glass
+  appear.glassAlpha = p.glassAlpha || 0.72
+})
+const curTheme = computed(() => THEMES.find(t => t.id === appear.theme))
+function pickTheme(id) {
+  appear.theme = id
+  applyTheme({ themeId: id })
+}
+function onGlass(v) {
+  applyTheme({ glass: v })
+}
+function onAlpha(v) {
+  applyTheme({ glassAlpha: v })
+}
 
 onMounted(async () => {
   try {
@@ -41,6 +62,41 @@ async function testConn(target) {
 <template>
   <div class="h-full overflow-y-auto p-6">
     <div class="max-w-[860px] mx-auto flex flex-col gap-5">
+      <div class="panel p-5">
+        <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
+          <el-icon color="var(--mx-amber)"><Brush /></el-icon>个性化外观
+        </h3>
+        <div class="theme-grid mb-4">
+          <div v-for="t in THEMES" :key="t.id" class="theme-card" :class="{ on: appear.theme === t.id }" @click="pickTheme(t.id)">
+            <div class="theme-swatch">
+              <i v-for="c in t.swatch" :key="c" :style="{ background: `linear-gradient(135deg, ${c}, ${c}cc)` }"></i>
+            </div>
+            <div class="theme-name">{{ t.name }}</div>
+            <div class="theme-desc">{{ t.desc }}</div>
+            <el-icon v-if="appear.theme === t.id" class="theme-check"><CircleCheckFilled /></el-icon>
+          </div>
+        </div>
+        <el-form label-position="top">
+          <div class="grid gap-x-8" style="grid-template-columns: 1fr 1.6fr">
+            <el-form-item label="流体玻璃效果(卡片/弹层/侧栏半透明毛玻璃)">
+              <el-switch v-model="appear.glass" @change="onGlass" />
+            </el-form-item>
+            <el-form-item label="玻璃不透明度(越低越通透)">
+              <div class="flex items-center gap-4 w-full">
+                <el-slider v-model="appear.glassAlpha" :min="0.3" :max="0.98" :step="0.02"
+                  :disabled="!appear.glass" :format-tooltip="v => (v * 100).toFixed(0) + '%'"
+                  style="flex:1" @change="onAlpha" />
+                <span class="font-mono text-xs" style="color:var(--mx-text2); width:40px">{{ (appear.glassAlpha * 100).toFixed(0) }}%</span>
+              </div>
+            </el-form-item>
+          </div>
+        </el-form>
+        <div class="glass-preview" v-if="appear.glass">
+          <span>FLUID GLASS PREVIEW</span>
+          <i v-for="c in (curTheme?.swatch || [])" :key="c" :style="{ background: c, width: '18px', height: '18px', borderRadius: '6px' }"></i>
+        </div>
+      </div>
+
       <div class="panel p-5">
         <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
           <el-icon color="var(--mx-cyan)"><ChatDotRound /></el-icon>文本大模型(LLM · OpenAI 兼容)

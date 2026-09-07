@@ -27,6 +27,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/server"
 	"github.com/YiIimini/ManJuX/internal/version"
+	"github.com/YiIimini/ManJuX/internal/winctl"
 )
 
 func main() {
@@ -90,13 +91,14 @@ func main() {
 		log.Printf("[manjux] 浏览器入口(可选): http://127.0.0.1:%d/", port)
 	}
 
-	// 5) Wails 原生桌面窗口
+	// 5) Wails 原生桌面窗口(无边框,标题栏由前端自绘:拖动区+窗口控制按钮)
 	err = wails.Run(&options.App{
 		Title:            "ManJuX · 短视频创作工作台",
 		Width:            1480,
 		Height:           920,
 		MinWidth:         1160,
 		MinHeight:        720,
+		Frameless:        true,
 		BackgroundColour: &options.RGBA{R: 11, G: 14, B: 20, A: 255},
 		AssetServer: &assetserver.Options{
 			Assets:  server.WebAssets(),
@@ -114,6 +116,7 @@ func main() {
 			DisableWindowIcon:    false,
 		},
 		OnStartup: func(ctx context.Context) {
+			winctl.Default.Bind(ctx)
 			srv.SetQuitFunc(func() {
 				log.Printf("[manjux] 收到退出请求(界面确认)")
 				go runtime.Quit(ctx)

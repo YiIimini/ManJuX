@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -210,7 +211,7 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 
 // runIn 在指定工作目录执行(字幕相对路径方案)。
 func runIn(ctx context.Context, bin, dir string, args ...string) error {
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := sysexec.Hide(exec.CommandContext(ctx, bin, args...))
 	cmd.Dir = dir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -312,18 +313,29 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 		if i < len(durations) {
 			d = durations[i]
 		}
+		// 逐条拆分显示:旁白/每段对白各占一条,按镜头时长均分;
+		// 整镜堆一条会三四个段落同时压屏,小画幅下叠到画面中央不可读。
+		parts := director.ShotSubtitleParts(shot)
+		if len(parts) == 0 {
+			t += d
+			continue
+		}
 		style := "Dialogue"
 		if strings.TrimSpace(shot.Narration) != "" && len(shot.Dialogue) == 0 {
 			style = "Narration"
 		}
-		text := director.ShotSubtitle(shot)
-		text = strings.ReplaceAll(text, "\n", `\N`)
-		if strings.TrimSpace(text) == "" {
-			t += d
-			continue
+		span := d * 0.8                     // 字幕显示窗口:镜头头尾各留 10%
+		seg := span / float64(len(parts))   // 每条均分
+		start := t + d*0.1
+		for _, p := range parts {
+			p = strings.ReplaceAll(strings.TrimSpace(p), "\n", `\N`)
+			if p == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "Dialogue: 0,%s,%s,%s,,0,0,0,,%s\n",
+				assTime(start), assTime(start+seg), style, p)
+			start += seg
 		}
-		fmt.Fprintf(&sb, "Dialogue: 0,%s,%s,%s,,0,0,0,,%s\n",
-			assTime(t+d*0.08), assTime(t+d*0.88), style, text)
 		t += d
 	}
 	return sb.String()

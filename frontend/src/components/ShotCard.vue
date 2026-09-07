@@ -52,6 +52,19 @@ const statusTag = computed(() => {
   }
 })
 const dialogues = computed(() => (props.shot.dialogue || []).map(d => `${d.speaker}:${d.text}`).join('\n'))
+
+// 出场角色/场景名(分镜卡标注:id → 名称)
+const castNames = computed(() => {
+  const plan = pj.value?.plan
+  if (!plan?.characters) return []
+  return (props.shot.characters || [])
+    .map(cid => plan.characters.find(c => c.id === cid)?.name)
+    .filter(Boolean)
+})
+const sceneName = computed(() => {
+  const plan = pj.value?.plan
+  return plan?.scenes?.find(s => s.id === props.shot.scene)?.name || ''
+})
 </script>
 
 <template>
@@ -100,6 +113,14 @@ const dialogues = computed(() => (props.shot.dialogue || []).map(d => `${d.speak
         </el-dropdown>
       </div>
       <div class="text-xs leading-relaxed" style="color:var(--mx-text2)">
+        <div class="flex items-center gap-1.5 flex-wrap mb-1.5">
+          <el-tooltip v-for="n in castNames" :key="n" :content="`出场角色:${n}`" placement="top">
+            <span class="cast-chip"><el-icon :size="10"><User /></el-icon>{{ n }}</span>
+          </el-tooltip>
+          <el-tooltip v-if="sceneName" :content="`场景:${sceneName}`" placement="top">
+            <span class="cast-chip scene"><el-icon :size="10"><Location /></el-icon>{{ sceneName }}</span>
+          </el-tooltip>
+        </div>
         <div><b style="color:var(--mx-cyan)">{{ shot.shot_size }}</b> · {{ shot.camera }}</div>
         <div class="mt-1">{{ shot.action }}</div>
         <div v-if="dialogues" class="mt-1" style="color:var(--mx-amber-hi);white-space:pre-line">{{ dialogues }}</div>

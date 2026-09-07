@@ -20,6 +20,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/sysexec"
+	"github.com/YiIimini/ManJuX/internal/browser"
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
@@ -125,6 +127,11 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/comfy/{action}", s.comfyAction)
 	m.HandleFunc("GET /api/outputs", s.outputsList)
 	m.HandleFunc("DELETE /api/projects/{id}/output", s.projectOutputDelete)
+	m.HandleFunc("GET /api/sysmon", s.handleSysmon)
+	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
+	m.HandleFunc("POST /api/comfy/open-web", s.comfyOpenWeb)
+	m.HandleFunc("POST /api/projects/{id}/import-plan", s.importPlan)
+	m.HandleFunc("POST /api/window/{action}", s.handleWindowAction)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -717,7 +724,7 @@ func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, err)
 		return
 	}
-	cmd := exec.Command("explorer.exe", "/select,", target)
+	cmd := sysexec.Hide(exec.Command("explorer.exe", "/select,", target))
 	_ = cmd.Start()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -861,6 +868,61 @@ func (s *Server) comfyAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// importPlan 导入既有分镜方案(JSON,新建项目时上传)。
+func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pipe.Running(id) != nil {
+		writeErr(w, 409, fmt.Errorf("项目运行中"))
+		return
+	}
+	var in struct {
+		Plan *project.Plan `json:"plan"`
+	}
+	if err := readBody(r, &in); err != nil || in.Plan == nil || len(in.Plan.Shots) == 0 {
+		writeErr(w, 400, fmt.Errorf("无效的分镜方案(需含 shots 数组)"))
+		return
+	}
+	if err := s.store.SavePlan(id, in.Plan); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "shots": len(in.Plan.Shots)})
+}
+
+// comfyVersions ComfyUI 版本管理器报告(online=1 联网对比,较慢)。
+func (s *Server) comfyVersions(w http.ResponseWriter, r *http.Request) {
+	eng, _ := s.reg.Get("comfy")
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		writeErr(w, 500, fmt.Errorf("引擎类型错误"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	rep, err := ce.Versions(ctx, r.URL.Query().Get("online") == "1")
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, rep)
+}
+
+// comfyOpenWeb 用系统默认浏览器打开 ComfyUI WEB 界面。
+func (s *Server) comfyOpenWeb(w http.ResponseWriter, r *http.Request) {
+	eng, _ := s.reg.Get("comfy")
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		writeErr(w, 500, fmt.Errorf("引擎类型错误"))
+		return
+	}
+	url := ce.Cfg().BaseURL + "/"
+	if err := browser.Open(url); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "url": url})
 }
 
 // regenAsset 单资产重生成(Krea-2 换 seed)。

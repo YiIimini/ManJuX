@@ -10,7 +10,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-)
+
+	"github.com/YiIimini/ManJuX/internal/sysexec")
 
 // OpenAppWindow 以桌面应用窗口形态打开 URL(优先 Edge App 模式)。
 func OpenAppWindow(url string, width, height int) error {
@@ -29,16 +30,15 @@ func OpenAppWindow(url string, width, height int) error {
 		if _, err := os.Stat(exe); err != nil {
 			continue
 		}
-		cmd := exec.Command(exe,
+		cmd := sysexec.Hide(exec.Command(exe,
 			"--app="+url,
 			"--window-size="+size,
 			"--user-data-dir="+appProfileDir(),
-		)
-		// SysProcAttr 隐藏可能闪现的控制台(windowsgui 下无影响,保险起见)
+		))
 		return cmd.Start()
 	}
 	// 回退:系统默认浏览器
-	return exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+	return sysexec.Hide(exec.Command("rundll32", "url.dll,FileProtocolHandler", url)).Start()
 }
 
 // Open 用系统默认浏览器打开(回退用)。

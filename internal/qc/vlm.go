@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/llm"
 )
 
@@ -40,8 +41,8 @@ func VLMJudge(ctx context.Context, client *llm.Client, ffmpeg, videoPath string,
 	var imgs []string
 	for i, pos := range []string{"1", "3"} {
 		out := filepath.Join(tmp, fmt.Sprintf("f%d.png", i))
-		cmd := exec.CommandContext(ctx, ffmpeg, "-y", "-ss", pos, "-i", videoPath,
-			"-frames:v", "1", "-vf", "scale=540:-2", out)
+		cmd := sysexec.Hide(exec.CommandContext(ctx, ffmpeg, "-y", "-ss", pos, "-i", videoPath,
+			"-frames:v", "1", "-vf", "scale=540:-2", out))
 		if b, err := cmd.CombinedOutput(); err != nil {
 			_ = b
 			continue

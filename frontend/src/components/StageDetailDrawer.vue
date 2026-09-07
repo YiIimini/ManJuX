@@ -79,6 +79,12 @@ async function exportPack() {
   } catch (e) { ElMessage.error(e.message) }
 }
 const stLabel = { pending: '待渲', rendering: '渲染中', done: '完成', failed: '失败', stale: '过期' }
+
+// 出场角色名(渲染列表标注)
+function castOf(sh) {
+  const chars = plan.value?.characters || []
+  return (sh.characters || []).map(cid => chars.find(c => c.id === cid)?.name).filter(Boolean)
+}
 </script>
 
 <template>
@@ -157,6 +163,7 @@ const stLabel = { pending: '待渲', rendering: '渲染中', done: '完成', fai
             <span class="badge-mode" :class="sh.mode">{{ sh.mode?.toUpperCase() }}</span>
             <span class="timecode">{{ sh.duration }}s · {{ sh.shot_size }}</span>
             <span v-if="manifest[String(sh.id)]?.engine" class="timecode" style="color:var(--mx-cyan)">{{ manifest[String(sh.id)].engine==='comfy'?'本地':'云端' }}</span>
+            <span v-for="n in castOf(sh)" :key="n" class="cast-chip"><el-icon :size="10"><User /></el-icon>{{ n }}</span>
           </div>
           <div v-if="manifest[String(sh.id)]?.error" class="text-xs mt-1" style="color:var(--mx-red)">{{ manifest[String(sh.id)].error }}</div>
         </div>

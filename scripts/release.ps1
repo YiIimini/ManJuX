@@ -22,9 +22,14 @@ if (-not $Version) {
   } else { $Version = "v1.0.0" }
 }
 
-# 2) 构建
-& "$PSScriptRoot\build.ps1"
-if ($LASTEXITCODE -ne 0) { throw "构建失败" }
+# 2) 构建(注入本次发布版本号,避免 git describe 带旧 tag 后缀)
+$env:MANJUX_VERSION = $Version
+try {
+  & "$PSScriptRoot\build.ps1"
+  if ($LASTEXITCODE -ne 0) { throw "构建失败" }
+} finally {
+  Remove-Item Env:MANJUX_VERSION -ErrorAction SilentlyContinue
+}
 
 # 3) 提交(前端构建产物 webdist 入库,便于无 Node 环境直接构建)
 git add -A

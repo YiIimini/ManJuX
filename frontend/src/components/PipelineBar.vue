@@ -38,6 +38,38 @@ function stageState(id) {
   return ''
 }
 
+// 阶段计数徽标与进度(卡面数据,一眼看清产线状态)
+function countOf(id) {
+  const pj = G.project
+  if (!pj) return null
+  switch (id) {
+    case 'script':
+      return pj.plan ? { label: `${pj.plan.shots.length} 镜方案`, pct: 100 } : { label: '待生成', pct: 0 }
+    case 'assets': {
+      if (!pj.plan) return { label: '待定妆', pct: 0 }
+      if (pj.project.params?.assets?.source === 'skip') return { label: '已跳过', pct: 100 }
+      const total = pj.plan.characters.length + pj.plan.scenes.length
+      const have = Object.keys(pj.assets || {}).length
+      return { label: `${have}/${total} 定妆`, pct: total ? Math.min(100, Math.round(have * 100 / total)) : 0 }
+    }
+    case 'render': {
+      if (!pj.plan) return { label: '待渲染', pct: 0 }
+      const total = pj.plan.shots.length
+      const done = Object.values(pj.manifest || {}).filter(m => m.status === 'done').length
+      return { label: `${done}/${total} 镜`, pct: total ? Math.round(done * 100 / total) : 0 }
+    }
+    case 'qc': {
+      if (!pj.qc) return { label: '待质检', pct: 0 }
+      const list = Object.values(pj.qc)
+      const ok = list.filter(r => r.ok).length
+      return { label: `${ok}/${list.length} 通过`, pct: list.length ? Math.round(ok * 100 / list.length) : 0 }
+    }
+    case 'assemble':
+      return pj.output?.ready ? { label: '成片就绪', pct: 100 } : { label: '未合成', pct: 0 }
+  }
+  return null
+}
+
 async function runStage(id) {
   if (!project.value) return
   try {
@@ -57,16 +89,15 @@ async function runAll() { await runStage('all') }
   <div class="flex items-stretch gap-0 overflow-x-auto pb-1">
     <template v-for="(s, i) in PHASES" :key="s.id">
       <div v-if="i" class="stage-link"></div>
-      <div class="stage-card flex-1 min-w-[210px]" :class="stageState(s.id)" :title="s.desc">
+      <div class="stage-card-v2 stage-card flex-1 min-w-[228px]" :class="stageState(s.id)">
         <div class="flex items-start gap-3">
-          <span class="stage-num">0{{ i + 1 }}</span>
+          <div class="stage-ico" :class="stageState(s.id)">
+            <el-icon :size="19"><component :is="s.icon" /></el-icon>
+          </div>
           <div class="flex-1 min-w-0">
             <div class="flex items-center gap-2">
-              <el-icon :size="17" :color="stageState(s.id) === 'active' ? 'var(--mx-amber)' : stageState(s.id) === 'done' ? 'var(--mx-green)' : 'var(--mx-text3)'">
-                <component :is="s.icon" />
-              </el-icon>
+              <span class="stage-num">0{{ i + 1 }}</span>
               <b class="text-[15px] cursor-pointer hover:text-[var(--mx-amber)] transition-colors" @click="G.stageDetail = s.id" title="打开详情管理">{{ s.name }}</b>
-              <i class="dot" :class="stageState(s.id) === 'active' ? 'run' : stageState(s.id) === 'done' ? 'ok' : stageState(s.id) === 'bad' ? 'bad' : stageState(s.id) === 'warn' ? 'warn' : ''"></i>
               <div class="flex-1"></div>
               <el-tooltip content="详情管理" placement="top">
                 <button class="seg" style="padding:4px 7px" @click="G.stageDetail = s.id">
@@ -78,11 +109,19 @@ async function runAll() { await runStage('all') }
                   <el-icon :size="13"><Operation /></el-icon>
                 </button>
               </el-tooltip>
-              <button class="seg" style="padding:4px 10px" :disabled="project?.running" @click="runStage(s.id)">
+              <button class="seg runbtn" :disabled="project?.running" @click="runStage(s.id)">
                 运行<el-icon class="ml-0.5" :size="11"><CaretRight /></el-icon>
               </button>
             </div>
             <div class="text-xs mt-1.5 truncate" style="color:var(--mx-text3)">{{ s.desc }}</div>
+            <div class="stage-meter mt-2.5">
+              <div class="stage-meter-fill" :style="{ width: (countOf(s.id)?.pct || 0) + '%' }"></div>
+            </div>
+            <div class="flex items-center gap-2 mt-1.5">
+              <span class="timecode" :style="{ color: stageState(s.id) === 'done' ? 'var(--mx-green)' : 'var(--mx-text3)' }">
+                {{ countOf(s.id)?.label }}
+              </span>
+            </div>
           </div>
         </div>
       </div>

@@ -9,7 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-)
+
+	"github.com/YiIimini/ManJuX/internal/sysexec")
 
 // FF ffmpeg/ffprobe 执行器。
 type FF struct {
@@ -48,7 +49,7 @@ func resolve(path, name string) (string, error) {
 func (f *FF) Run(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, f.Ffmpeg, args...)
+	cmd := sysexec.Hide(exec.CommandContext(ctx, f.Ffmpeg, args...))
 	var errBuf strings.Builder
 	cmd.Stderr = &errBuf
 	cmd.Stdout = nil
@@ -89,9 +90,9 @@ type probeOut struct {
 func (f *FF) Probe(path string) (*ProbeInfo, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, f.Ffprobe,
+	out, err := sysexec.Hide(exec.CommandContext(ctx, f.Ffprobe,
 		"-v", "error", "-print_format", "json",
-		"-show_format", "-show_streams", path).Output()
+		"-show_format", "-show_streams", path)).Output()
 	if err != nil {
 		return nil, fmt.Errorf("ffprobe 失败: %v", err)
 	}

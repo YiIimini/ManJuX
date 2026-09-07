@@ -1,25 +1,29 @@
 ﻿# ManJuX 构建脚本(Wails v2 桌面应用)
-# 用法: powershell -ExecutionPolicy Bypass -File scripts\build.ps1
-# 产出: build\bin\ManJuX.exe(单文件桌面应用,原生窗口)
+# 用法: powershell -ExecutionPolicy Bypass -File scripts/build.ps1
+# 产出: build/bin/ManJuX.exe(单文件桌面应用,原生窗口)
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# 版本号:git tag > short hash > dev
-$ver = $null
-try {
-  $ErrorActionPreference = "Continue"
-  $ver = (& git describe --tags --always 2>$null | Select-Object -First 1)
-  $ErrorActionPreference = "Stop"
-} catch { $ErrorActionPreference = "Stop" }
+# 版本号:release 注入(MANJUX_VERSION)> git tag > short hash > dev
+$ver = $env:MANJUX_VERSION
+if (-not $ver) {
+  try {
+    $ErrorActionPreference = "Continue"
+    $ver = (& git describe --tags --always 2>$null | Select-Object -First 1)
+    $ErrorActionPreference = "Stop"
+  } catch { $ErrorActionPreference = "Stop" }
+}
 if (-not $ver) { $ver = "dev" }
-Write-Host "==> ManJuX 构建版本: v$ver" -ForegroundColor Cyan
+# git describe 本身带 v 前缀;防双 v(vv1.5.0)
+if ($ver -notmatch '^v') { $ver = "v$ver" }
+Write-Host "==> ManJuX 构建版本: $ver" -ForegroundColor Cyan
 
 # 1) 前端(Vue3 + Vite + Element Plus + Tailwind)
-if (Test-Path "$root\frontend\src") {
+if (Test-Path "$root/frontend/src") {
   Write-Host "==> 构建前端" -ForegroundColor Cyan
-  Push-Location "$root\frontend"
+  Push-Location "$root/frontend"
   if (-not (Test-Path "node_modules")) { pnpm install }
   pnpm run build
   if ($LASTEXITCODE -ne 0) { Pop-Location; throw "前端构建失败" }
@@ -27,13 +31,13 @@ if (Test-Path "$root\frontend\src") {
 }
 
 # 2) Wails 桌面构建(-s 跳过 wails 自带前端钩子,前端已构建)
-$wails = Join-Path $env:GOPATH "bin\wails.exe"
+$wails = Join-Path $env:GOPATH "bin/wails.exe"
 if (-not (Test-Path $wails)) { throw "未找到 wails CLI,请先: go install github.com/wailsapp/wails/v2/cmd/wails@latest" }
 Write-Host "==> Wails 桌面构建" -ForegroundColor Cyan
-& $wails build -s -ldflags "-X github.com/YiIimini/ManJuX/internal/version.Version=v$ver"
+& $wails build -s -ldflags "-X github.com/YiIimini/ManJuX/internal/version.Version=$ver"
 if ($LASTEXITCODE -ne 0) { throw "Wails 构建失败" }
 
 # 3) 交付副本(项目根,双击即用)
-Copy-Item "$root\build\bin\ManJuX.exe" "$root\ManJuX.exe" -Force
-Write-Host "==> 完成: $root\ManJuX.exe" -ForegroundColor Green
-Get-Item "$root\ManJuX.exe" | Select-Object Name, @{n='SizeMB';e={[math]::Round($_.Length/1MB,1)}}, LastWriteTime
+Copy-Item "$root/build/bin/ManJuX.exe" "$root/ManJuX.exe" -Force
+Write-Host "==> 完成: $root/ManJuX.exe" -ForegroundColor Green
+Get-Item "$root/ManJuX.exe" | Select-Object Name, @{n='SizeMB';e={[math]::Round($_.Length/1MB,1)}}, LastWriteTime

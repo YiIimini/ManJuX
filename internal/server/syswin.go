@@ -1,0 +1,39 @@
+// syswin.go 顶栏系统监控与无边框窗口控制路由。
+package server
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/YiIimini/ManJuX/internal/sysmon"
+	"github.com/YiIimini/ManJuX/internal/winctl"
+)
+
+// handleSysmon 顶栏 CPU/RAM/GPU 快照(2s 轮询)。
+func (s *Server) handleSysmon(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, sysmon.Default.Sample())
+}
+
+// handleWindowAction 无边框窗口控制:POST /api/window/{action}
+// action = minimise | maximise | close | force-close
+func (s *Server) handleWindowAction(w http.ResponseWriter, r *http.Request) {
+	action := r.PathValue("action")
+	switch action {
+	case "minimise":
+		winctl.Default.Minimise()
+	case "maximise":
+		max := winctl.Default.ToggleMaximise()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "maximised": max})
+		return
+	case "close":
+		// 走确认链:弹前端确认框(管线运行中必须人工确认)
+		winctl.Default.RequestQuit()
+	case "force-close":
+		winctl.Default.ForceQuit()
+	default:
+		writeErr(w, http.StatusBadRequest, errors.New("未知窗口操作: "+action))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

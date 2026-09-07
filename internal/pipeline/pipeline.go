@@ -544,7 +544,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		if seed == 0 {
 			seed = time.Now().UnixNano()&0x7fffffff + int64(shot.ID)*101
 		}
-		inputFP := renderFingerprint(shot.H3Prompt, refs, rp, mode, seed)
+		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
+		prompt := anchorPrompt(plan, &shot)
+		inputFP := renderFingerprint(prompt, refs, rp, mode, seed)
 		outName := fmt.Sprintf("shot_%03d", shot.ID)
 
 		// 断点续跑:同输入指纹且文件存在 → 跳过
@@ -562,7 +564,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 
 		res, err := eng.Render(ctx, engine.Job{
 			ProjectID: proj.ID, ShotID: shot.ID,
-			Prompt: shot.H3Prompt, Mode: mode, RefImages: refs,
+			Prompt: prompt, Mode: mode, RefImages: refs,
 			Width: rp.Width, Height: rp.Height,
 			Length: shot.Duration * 24, Seed: seed, Steps: rp.Steps,
 			OutputDir: clipsDir, OutputName: outName,
@@ -646,4 +648,32 @@ func (c *Coordinator) setShotStatus(projectID string, manifest map[string]projec
 	m.UpdatedAt = time.Now()
 	manifest[key] = m
 	c.store.SaveManifest(projectID, manifest) // 每次落盘,崩溃可恢复
+}
+
+// anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格
+// 强制前置到镜头提示词。H3 是 VLM 输入,中文锚定段与六段式正文并存无碍;
+// 跨镜同角色描述逐字一致,配合定妆照 ref 双通道压住 LLM 逐镜漂移。
+func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
+	var anchors []string
+	for _, cid := range shot.Characters {
+		for _, ch := range plan.Characters {
+			if ch.ID == cid && strings.TrimSpace(ch.Description) != "" {
+				anchors = append(anchors, fmt.Sprintf("%s(全程同一个人,外貌严格一致):%s", ch.Name, strings.TrimSpace(ch.Description)))
+			}
+		}
+	}
+	for _, sc := range plan.Scenes {
+		if sc.ID == shot.Scene && strings.TrimSpace(sc.Description) != "" {
+			anchors = append(anchors, fmt.Sprintf("场景「%s」(同一地点):%s", sc.Name, strings.TrimSpace(sc.Description)))
+		}
+	}
+	if len(anchors) == 0 {
+		return shot.H3Prompt
+	}
+	head := "【角色/场景一致性锚定(全片统一,以下外貌描述优先级最高,任何画面细节与之冲突时以此为准)】\n" +
+		strings.Join(anchors, "\n")
+	if strings.TrimSpace(plan.Style) != "" {
+		head += "\n【全片视觉风格】" + strings.TrimSpace(plan.Style)
+	}
+	return head + "\n\n" + shot.H3Prompt
 }

@@ -5,22 +5,71 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 const creating = ref(false)
 
+// 新建项目(带文件上传:txt/md 源文本,json 分镜方案)
+const dlg = ref(false)
+const newName = ref('')
+const pickedFile = ref(null)   // {name, text, kind: 'text'|'plan', plan?, preview}
+const fileInput = ref(null)
+const busy = ref(false)
+
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
 
-async function createProject() {
-  const { value } = await ElMessageBox.prompt('项目名(中文/字母/数字/_-)', '新建短视频项目', {
-    confirmButtonText: '创建', cancelButtonText: '取消',
-    inputPattern: /^[\u4e00-\u9fa5A-Za-z0-9_-]{1,40}$/,
-    inputErrorMessage: '仅允许中文、字母、数字、下划线、连字符(≤40 字符)',
-  }).catch(() => ({ value: '' }))
-  if (!value) return
+function openCreate() {
+  newName.value = ''
+  pickedFile.value = null
+  dlg.value = true
+}
+
+function onDropFile(ev) {
+  const dt = ev.dataTransfer
+  if (!dt) return
+  const files = dt.files
+  if (files?.length) onPickFile({ target: { files, value: '' } })
+}
+
+function onPickFile(ev) {
+  const f = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!f) return
+  if (f.size > 8 << 20) { ElMessage.error('文件过大(>8MB)'); return }
+  const reader = new FileReader()
+  reader.onload = () => {
+    const text = String(reader.result || '')
+    const ext = (f.name.split('.').pop() || '').toLowerCase()
+    if (ext === 'json') {
+      try {
+        const j = JSON.parse(text)
+        const plan = j.plan && Array.isArray(j.plan.shots) ? j.plan : (Array.isArray(j.shots) ? j : null)
+        if (plan) {
+          pickedFile.value = { name: f.name, text, kind: 'plan', plan,
+            preview: `《${plan.title || '未命名'}》${plan.shots.length} 镜 / ${(plan.characters || []).length} 角色 / ${(plan.scenes || []).length} 场景` }
+          return
+        }
+      } catch { /* 非 JSON 或结构不完整 → 当源文本 */ }
+    }
+    pickedFile.value = { name: f.name, text, kind: 'text',
+      preview: text.replace(/\s+/g, ' ').slice(0, 120) + (text.length > 120 ? '…' : '') }
+  }
+  reader.readAsText(f, 'utf-8')
+}
+
+async function doCreate() {
+  if (!newName.value.trim()) { ElMessage.warning('请输入项目名'); return }
+  busy.value = true
   try {
-    await api.createProject(value)
-    ElMessage.success(`项目「${value}」已创建`)
+    await api.createProject(newName.value.trim())
+    const id = newName.value.trim()
+    if (pickedFile.value?.kind === 'plan') {
+      await api.importPlan(id, pickedFile.value.plan)
+    } else if (pickedFile.value?.text) {
+      await api.saveSource(id, pickedFile.value.text)
+    }
+    ElMessage.success(`项目「${id}」已创建${pickedFile.value ? (pickedFile.value.kind === 'plan' ? '(分镜已导入)' : '(源文本已载入)') : ''}`)
+    dlg.value = false
     await refreshProjects()
-    await openProject(value)
-  } catch (e) { ElMessage.error(e.message) }
+    await openProject(id)
+  } catch (e) { ElMessage.error(e.message) } finally { busy.value = false }
 }
 
 async function openProject(id) {
@@ -66,7 +115,7 @@ function stateChip(p) {
           <div class="text-center"><div class="stat-num">{{ G.projects.length }}</div><div class="stat-label">项目</div></div>
           <div class="text-center"><div class="stat-num">{{ doneShots }}<span style="font-size:15px;color:var(--mx-text3)">/{{ totalShots }}</span></div><div class="stat-label">镜头</div></div>
         </div>
-        <el-button type="primary" size="large" @click="createProject">
+        <el-button type="primary" size="large" @click="openCreate">
           <el-icon class="mr-1"><Plus /></el-icon>新建项目
         </el-button>
       </div>
@@ -105,5 +154,42 @@ function stateChip(p) {
         </div>
       </div>
     </div>
+
+    <!-- 新建项目:可选上传 txt / md / json -->
+    <el-dialog v-model="dlg" title="新建短视频项目" width="560px">
+      <el-form label-position="top">
+        <el-form-item label="项目名(中文 / 字母 / 数字 / _-)">
+          <el-input v-model="newName" maxlength="40" placeholder="如:天庭外卖员-第二集" @keyup.enter="doCreate" />
+        </el-form-item>
+        <el-form-item label="导入文件(可选)">
+          <div v-if="!pickedFile" class="upload-zone" @click="fileInput?.click()" @dragover.prevent @drop.prevent="onDropFile">
+            <el-icon :size="26" color="var(--mx-text3)"><UploadFilled /></el-icon>
+            <div class="text-xs mt-1" style="color:var(--mx-text2)">点击或拖入 <b>.txt / .md / .json</b></div>
+            <div class="text-xs" style="color:var(--mx-text3)">txt/md 作为剧本源文本;json 识别为分镜方案直接导入</div>
+          </div>
+          <div v-else class="upload-zone picked">
+            <div class="flex items-center gap-2 w-full">
+              <el-icon :size="18" :color="pickedFile.kind === 'plan' ? 'var(--mx-green)' : 'var(--mx-cyan)'">
+                <Tickets v-if="pickedFile.kind === 'plan'" /><Document v-else />
+              </el-icon>
+              <div class="flex-1 min-w-0">
+                <div class="text-xs font-bold">{{ pickedFile.name }}
+                  <el-tag size="small" :type="pickedFile.kind === 'plan' ? 'success' : 'info'" class="ml-1">
+                    {{ pickedFile.kind === 'plan' ? '分镜方案' : '源文本' }}
+                  </el-tag>
+                </div>
+                <div class="text-xs truncate" style="color:var(--mx-text3)">{{ pickedFile.preview }}</div>
+              </div>
+              <el-button text size="small" @click="pickedFile = null"><el-icon><Close /></el-icon></el-button>
+            </div>
+          </div>
+          <input ref="fileInput" type="file" accept=".txt,.md,.json" hidden @change="onPickFile" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dlg = false">取消</el-button>
+        <el-button type="primary" :loading="busy" :disabled="!newName.trim()" @click="doCreate">创建项目</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

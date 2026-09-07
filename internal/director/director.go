@@ -235,21 +235,63 @@ func validate(p *project.Plan) error {
 
 // ShotSubtitle 生成的镜头字幕文本(用于 SRT)。
 func ShotSubtitle(sh project.Shot) string {
+	return strings.Join(ShotSubtitleParts(sh), "\n")
+}
+
+// ShotSubtitleParts 镜头字幕逐条拆分(用于 ASS 分时显示):
+// 旁白一段、每段对白一段;单段超长按句读再切,保证单条两行内可读。
+func ShotSubtitleParts(sh project.Shot) []string {
 	var parts []string
+	push := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		if len([]rune(s)) > 42 {
+			parts = append(parts, splitLong(s)...)
+			return
+		}
+		parts = append(parts, s)
+	}
 	if strings.TrimSpace(sh.Narration) != "" {
-		parts = append(parts, strings.TrimSpace(sh.Narration))
+		push(sh.Narration)
 	}
 	for _, d := range sh.Dialogue {
 		if strings.TrimSpace(d.Text) == "" {
 			continue
 		}
 		if strings.TrimSpace(d.Speaker) != "" && d.Speaker != "旁白" {
-			parts = append(parts, d.Speaker+":"+d.Text)
+			push(d.Speaker + ":" + d.Text)
 		} else {
-			parts = append(parts, d.Text)
+			push(d.Text)
 		}
 	}
-	return strings.Join(parts, "\n")
+	return parts
+}
+
+// splitLong 超长段落按句读切到 ~40 字的条。
+func splitLong(s string) []string {
+	runes := []rune(s)
+	var out []string
+	var cur []rune
+	for _, r := range runes {
+		cur = append(cur, r)
+		switch r {
+		case '。', '!', '?', ';', '~', '…':
+			if len(cur) >= 18 {
+				out = append(out, string(cur))
+				cur = nil
+			}
+		}
+		if len(cur) >= 40 {
+			out = append(out, string(cur))
+			cur = nil
+		}
+	}
+	if len(cur) > 0 {
+		out = append(out, string(cur))
+	}
+	return out
 }
 
 // SanitizeForCache 清洗缓存键(保中文/字母/数字/下划线/连字符)。

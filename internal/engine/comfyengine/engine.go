@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 )
@@ -32,6 +33,9 @@ func New(cfg func() config.ComfySettings) *Engine {
 
 // Name 引擎名。
 func (e *Engine) Name() string { return "comfy" }
+
+// Cfg 返回 ComfyUI 设置快照(WEB 界面地址等对外暴露用)。
+func (e *Engine) Cfg() config.ComfySettings { return e.cfg() }
 
 // Available 探测:不可达时按设置尝试代管启动。
 func (e *Engine) Available(ctx context.Context) error {
@@ -66,7 +70,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	if err != nil {
 		logF = nil
 	}
-	cmd := exec.Command(py, main, "--port", port, "--listen", "127.0.0.1")
+	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1"))
 	cmd.Dir = filepath.Dir(main)
 	if logF != nil {
 		cmd.Stdout = logF

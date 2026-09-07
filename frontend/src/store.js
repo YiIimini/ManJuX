@@ -13,7 +13,7 @@ export const G = reactive({
   stageDetail: null,        // 打开详情管理的阶段 id
   promptShot: null,        // 查看 H3 提示词的镜头
   viewer: null,             // 全屏媒体预览 {items:[{type,src,title,meta,foot,kindLabel}], index}
-  logPanelOpen: true,
+  logPanelOpen: false,
 })
 
 export const PHASES = [
@@ -51,6 +51,7 @@ export const api = {
   stop: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/stop`),
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),
+  importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
   uploadAsset: (id, kind, assetId, name, file) => {
     const fd = new FormData()
     fd.append('kind', kind); fd.append('asset_id', assetId)
@@ -61,6 +62,9 @@ export const api = {
   deleteAsset: (id, assetId) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}`),
   openExplorer: (path, project) => req('POST', '/api/open', { path, project }),
   fileURL: (id, rel) => `/api/projects/${encodeURIComponent(id)}/files/${rel}`,
+  sysmon: () => req('GET', '/api/sysmon'),
+  window: (action) => req('POST', `/api/window/${encodeURIComponent(action)}`),
+  quit: () => req('POST', '/api/quit'),
 }
 
 // ---------- SSE ----------
