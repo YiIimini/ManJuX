@@ -56,6 +56,27 @@ func (c *Controller) RequestQuit() {
 	}
 }
 
+// Hide 隐藏窗口(后台运行;再点应用图标经单实例锁自动唤回)。
+func (c *Controller) Hide() {
+	c.mu.Lock()
+	ctx := c.ctx
+	c.mu.Unlock()
+	if ctx != nil {
+		runtime.WindowHide(ctx)
+	}
+}
+
+// Show 显示并前置窗口(单实例二次启动时唤回后台实例)。
+func (c *Controller) Show() {
+	c.mu.Lock()
+	ctx := c.ctx
+	c.mu.Unlock()
+	if ctx != nil {
+		runtime.WindowShow(ctx)
+		runtime.WindowUnminimise(ctx)
+	}
+}
+
 // ForceQuit 真正退出(前端确认后调用)。
 func (c *Controller) ForceQuit() {
 	c.mu.Lock()

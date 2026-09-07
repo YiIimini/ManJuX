@@ -190,6 +190,15 @@ func (c *Coordinator) Stop(projectID string) bool {
 	return true
 }
 
+// StopAll 停止全部运行中的管线(应用退出时调用;不等待收尾,管线 goroutine 自行感知取消)。
+func (c *Coordinator) StopAll() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, r := range c.runs {
+		r.Cancel()
+	}
+}
+
 func (c *Coordinator) finish(projectID string) {
 	c.mu.Lock()
 	delete(c.runs, projectID)

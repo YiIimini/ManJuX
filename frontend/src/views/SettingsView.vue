@@ -134,8 +134,21 @@ async function testConn(target) {
           <el-form-item label="Base URL">
             <el-input v-model="form.llm.base_url" placeholder="https://api.deepseek.com/v1" />
           </el-form-item>
-          <el-form-item label="模型">
-            <el-input v-model="form.llm.model" placeholder="deepseek-chat" />
+          <el-form-item label="模型(可选推荐或输入自定义模型 ID)">
+            <el-select v-model="form.llm.model" filterable allow-create default-first-option
+              placeholder="选择或输入模型 ID" style="width:100%">
+              <el-option-group label="DeepSeek(当前接入)">
+                <el-option value="deepseek-chat" label="deepseek-chat · 非推理,分镜直出约 30-60 秒(推荐)" />
+                <el-option value="deepseek-reasoner" label="deepseek-reasoner · 深度推理,质量高但需 2-6 分钟" />
+                <el-option value="deepseek-v4-flash" label="deepseek-v4-flash · 深度推理(当前),需 2-6 分钟" />
+              </el-option-group>
+              <el-option-group label="其它(需对应平台 Base URL)">
+                <el-option value="glm-4.6" label="glm-4.6 · 智谱" />
+                <el-option value="glm-4.5-air" label="glm-4.5-air · 智谱" />
+                <el-option value="qwen-plus" label="qwen-plus · 阿里" />
+                <el-option value="gpt-4o-mini" label="gpt-4o-mini · OpenAI" />
+              </el-option-group>
+            </el-select>
           </el-form-item>
           <el-form-item label="API Key" class="col-span-2">
             <div class="flex gap-2 w-full">

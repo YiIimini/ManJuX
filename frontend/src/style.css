@@ -1238,3 +1238,23 @@ html, body, #app {
   background: #000;
   display: flex;
 }
+
+/* 关闭方式选择卡 */
+.close-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 20px 14px 16px;
+  border-radius: 13px;
+  border: 1px solid var(--mx-line);
+  background: rgba(255, 255, 255, .015);
+  color: var(--mx-text);
+  cursor: pointer;
+  transition: all .16s;
+  text-align: center;
+}
+.close-opt b { font-size: 14px; }
+.close-opt span { font-size: 11px; color: var(--mx-text3); line-height: 1.6; }
+.close-opt:hover { border-color: rgba(83, 216, 255, .5); background: rgba(83, 216, 255, .05); transform: translateY(-2px); }
+.close-opt.danger:hover { border-color: rgba(255, 107, 107, .5); background: rgba(255, 107, 107, .06); }

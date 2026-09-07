@@ -29,6 +29,11 @@ func (s *Server) handleWindowAction(w http.ResponseWriter, r *http.Request) {
 	case "close":
 		// 走确认链:弹前端确认框(管线运行中必须人工确认)
 		winctl.Default.RequestQuit()
+	case "hide":
+		// 最小化后台运行(再点应用图标自动唤回)
+		winctl.Default.Hide()
+	case "show":
+		winctl.Default.Show()
 	case "force-close":
 		winctl.Default.ForceQuit()
 	default:

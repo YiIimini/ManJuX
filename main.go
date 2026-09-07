@@ -107,7 +107,8 @@ func main() {
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "ManJuX_SingleInstance_6f1c2a",
 			OnSecondInstanceLaunch: func(data options.SecondInstanceData) {
-				log.Printf("[manjux] 检测到第二实例启动,已忽略")
+				log.Printf("[manjux] 检测到第二实例启动:唤回已有窗口")
+				winctl.Default.Show()
 			},
 		},
 		Windows: &windows.Options{
@@ -133,7 +134,13 @@ func main() {
 			return false
 		},
 		OnShutdown: func(ctx context.Context) {
-			log.Printf("[manjux] 退出")
+			log.Printf("[manjux] 退出:停止全部管线并同步退出代管的 ComfyUI")
+			coord.StopAll()
+			if eng, err := reg.Get("comfy"); err == nil {
+				if ce, ok := eng.(*comfyengine.Engine); ok {
+					_ = ce.StopAdmin() // 仅本应用代管启动的实例;外部启动的不动
+				}
+			}
 			bus.Close()
 		},
 		Bind: []interface{}{},

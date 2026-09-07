@@ -55,19 +55,24 @@ function refreshCurrent() {
 const win = async (action) => {
   try {
     if (action === 'close') {
-      const running = G.status?.running && Object.keys(G.status.running).length > 0
-      if (running) {
-        await ElMessageBox.confirm(
-          '有项目管线正在运行,退出将中止渲染。确定退出吗?',
-          '确认退出 ManJuX',
-          { confirmButtonText: '仍要退出', cancelButtonText: '继续运行', type: 'warning' })
-      }
-      await api.quit()
+      closeDlg.value = true
       return
     }
     const r = await api.window(action)
     if (action === 'maximise') maxed.value = !!r.maximised
   } catch { /* 取消或服务未就绪 */ }
+}
+
+// 关闭确认:后台运行 / 直接退出
+const closeDlg = ref(false)
+const runningCount = computed(() => G.status?.running ? Object.keys(G.status.running).length : 0)
+async function hideToTray() {
+  closeDlg.value = false
+  try { await api.window('hide') } catch { /* ignore */ }
+}
+async function quitNow() {
+  closeDlg.value = false
+  try { await api.quit() } catch { /* ignore */ }
 }
 const gb = (b) => (b / 1024 ** 3).toFixed(1)
 const lastLog = computed(() => G.logs.length ? G.logs[G.logs.length - 1] : null)
@@ -294,5 +299,28 @@ const env = computed(() => G.status?.env)
     <StageDetailDrawer />
     <ShotTuneDialog />
     <MediaViewer />
+
+    <!-- 关闭确认:后台运行 / 直接退出 -->
+    <el-dialog v-model="closeDlg" title="关闭 ManJuX" width="480px" append-to-body>
+      <div v-if="runningCount > 0" class="text-xs p-3 mb-4 rounded-lg"
+           style="background:rgba(255,180,84,.08);border:1px solid rgba(255,180,84,.35);color:var(--mx-amber-hi)">
+        ⚠ 有 {{ runningCount }} 个项目管线正在运行,直接退出将中止渲染任务。
+      </div>
+      <div class="grid gap-3" style="grid-template-columns:1fr 1fr">
+        <button class="close-opt" @click="hideToTray">
+          <el-icon :size="26" color="var(--mx-cyan)"><Moon /></el-icon>
+          <b>最小化后台运行</b>
+          <span>窗口隐藏,管线继续跑;再点应用图标自动唤回</span>
+        </button>
+        <button class="close-opt danger" @click="quitNow">
+          <el-icon :size="26" color="var(--mx-red)"><SwitchButton /></el-icon>
+          <b>直接退出</b>
+          <span>停止全部管线,ComfyUI 引擎同步退出</span>
+        </button>
+      </div>
+      <template #footer>
+        <el-button @click="closeDlg = false">取消</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
