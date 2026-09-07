@@ -315,6 +315,9 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	plan, err := director.Generate(ctx, client, text, director.Options{
 		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
 		ExtraHint: composeStyleHint(p.Styles, p.StyleHint), Chibi: p.Chibi,
+		OnBatch: func(batch, total, fromShot, toShot int) {
+			c.emit(proj.ID, PhaseScript, 0, "info", 15, "▸ 分批分镜 %d/%d:镜 %d-%d 生成中…", batch, total, fromShot, toShot)
+		},
 	})
 	hbStop()
 	<-hbDone
