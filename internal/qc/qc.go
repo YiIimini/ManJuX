@@ -15,16 +15,17 @@ import (
 
 // Report 单镜质检报告。
 type Report struct {
-	ShotID    int     `json:"shot_id"`
-	File      string  `json:"file"`
-	OK        bool    `json:"ok"`
+	ShotID    int      `json:"shot_id"`
+	File      string   `json:"file"`
+	OK        bool     `json:"ok"`
 	Problems  []string `json:"problems"`
 	Warnings  []string `json:"warnings"`
-	Duration  float64 `json:"duration"`
-	Width     int     `json:"width"`
-	Height    int     `json:"height"`
-	HasAudio  bool    `json:"has_audio"`
-	DarkRatio float64 `json:"dark_ratio"` // 暗像素占比(0-1)
+	Duration  float64  `json:"duration"`
+	Width     int      `json:"width"`
+	Height    int      `json:"height"`
+	HasAudio  bool     `json:"has_audio"`
+	DarkRatio float64  `json:"dark_ratio"` // 暗像素占比(0-1)
+	VLM       *VLMReport `json:"vlm,omitempty"` // 智能审片(可选)
 }
 
 // Params 质检阈值。

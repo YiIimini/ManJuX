@@ -100,6 +100,9 @@ async function save() {
         <el-form-item label="两阶段渲染(条件缓存,换 seed 不重编码)">
           <el-switch v-model="form.render.cond_cache" />
         </el-form-item>
+        <el-form-item label="镜间连续接缝(MotionContext 22帧;仅本地引擎;同场景镜头更连贯)">
+          <el-switch v-model="form.render.seam" />
+        </el-form-item>
       </el-form>
     </div>
 
@@ -107,6 +110,9 @@ async function save() {
       <el-form label-position="top">
         <el-form-item label="启用质检">
           <el-switch v-model="form.qc.enabled" />
+        </el-form-item>
+        <el-form-item label="VLM 智能审片(抽帧判分+重渲建议,需视觉模型)">
+          <el-switch v-model="form.qc.enable_vlm" />
         </el-form-item>
         <el-form-item label="暗像素失败阈值(0-1)">
           <el-slider v-model="form.qc.dark_ratio_fail" :min="0.3" :max="0.95" :step="0.05" show-input />

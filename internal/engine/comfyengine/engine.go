@@ -5,6 +5,9 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,8 +116,14 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	if err := e.Available(ctx); err != nil {
 		return nil, err
 	}
+	// 防重复渲染:清掉上次异常退出遗留的待执行任务(运行中任务不受影响)
+	e.cli.ClearPending(ctx)
 	length := engine.AlignLength(job.Length)
 	w, h := engine.SnapCanvas(job.Width, job.Height)
+	// 接缝模式补偿:pinned 头(22 帧)会被 Trim 裁掉,渲染长度须加回,保证成片时长不缩水
+	if job.Seam && job.PrevShot > 0 {
+		length = engine.AlignLength(job.Length + 22)
+	}
 
 	// 参考图上传(ComfyUI input 目录)
 	uploaded := make([]string, 0, len(job.RefImages))
@@ -152,6 +161,15 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 
 	if job.OnProgress != nil {
 		job.OnProgress(16, "采样渲染")
+	}
+	// 接缝前置探测:上一镜 AV latent 存档不存在(云端产物/旧渲染)则降级普通渲染
+	if job.Seam && job.PrevShot > 0 {
+		if !e.seamPrevExists(ctx, job.ProjectID, job.PrevShot) {
+			if job.OnProgress != nil {
+				job.OnProgress(15, "上一镜无接缝存档(云端产物或旧渲染),本镜普通渲染")
+			}
+			job.PrevShot = 0
+		}
 	}
 	graph := buildRenderGraph(job, c, condRef, uploaded, w, h, length)
 	hist, err := e.submitAndWait(ctx, graph, func(p int, note string) {
@@ -352,6 +370,36 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	if steps <= 0 {
 		steps = 8
 	}
+
+	// 镜间连续(MotionContext 接缝):加载上一镜 AV latent 钉入条件;
+	// 产物由 Trim 裁掉 pinned 头(音画同裁,match_tail 对齐时长)。
+	useSeam := job.Seam && job.PrevShot > 0
+	guiderCond := link(condNode, 0)
+	if useSeam {
+		seamDir := "manjux/" + sanitizePrefix(job.ProjectID) + "_seam"
+		g["70"] = nd("MiniMaxH3MotionContextLoadLatent", map[string]any{
+			"latent_path": seamDir, // 目录 + clip_index 取固定槽,项目间隔离
+			"clip_index":  job.PrevShot,
+		})
+		g["71"] = nd("MiniMaxH3MotionContext", map[string]any{
+			"conditioning":        guiderCond,
+			"vae":                 link("2", 0),
+			"latent":              link(latentNode, latentSlot),
+			"context_length":      "22",
+			"audio_context_length": 24,
+			"context_latent":      link("70", 0),
+		})
+		guiderCond = link("71", 0)
+	}
+	// 本镜采样输出落盘为下一镜的接缝上下文(固定槽,重渲自动覆盖)
+	if job.Seam {
+		g["72"] = nd("MiniMaxH3MotionContextSaveLatent", map[string]any{
+			"latent":          link("44", 0),
+			"filename_prefix": "manjux/" + sanitizePrefix(job.ProjectID) + "_seam/clip",
+			"clip_index":      job.ShotID,
+		})
+	}
+
 	g["40"] = nd("RandomNoise", map[string]any{"noise_seed": job.Seed})
 	g["41"] = nd("KSamplerSelect", map[string]any{"sampler_name": "res_multistep"})
 	g["42"] = nd("BasicScheduler", map[string]any{
@@ -362,7 +410,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	})
 	g["43"] = nd("BasicGuider", map[string]any{
 		"model":        model,
-		"conditioning": link(condNode, 0),
+		"conditioning": guiderCond,
 	})
 	g["44"] = nd("SamplerCustomAdvanced", map[string]any{
 		"noise":        link("40", 0),
@@ -373,11 +421,26 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	})
 	g["50"] = nd("VAEDecode", map[string]any{"samples": link("44", 0), "vae": link("2", 0)})
 	g["51"] = nd("VAEDecodeAudio", map[string]any{"samples": link("44", 0), "vae": link("3", 0)})
-	g["52"] = nd("CreateVideo", map[string]any{
-		"images": link("50", 0),
-		"fps":    24.0,
-		"audio":  link("51", 0),
-	})
+	if useSeam {
+		// 裁掉 pinned 头:images+audio 同裁,match_tail 保证音画等长
+		g["73"] = nd("MiniMaxH3MotionContextTrim", map[string]any{
+			"images":       link("50", 0),
+			"trim_frames":  link("71", 1),
+			"audio":        link("51", 0),
+			"match_tail":   true,
+		})
+		g["52"] = nd("CreateVideo", map[string]any{
+			"images": link("73", 0),
+			"fps":    24.0,
+			"audio":  link("73", 1),
+		})
+	} else {
+		g["52"] = nd("CreateVideo", map[string]any{
+			"images": link("50", 0),
+			"fps":    24.0,
+			"audio":  link("51", 0),
+		})
+	}
 	g["53"] = nd("SaveVideo", map[string]any{
 		"video":           link("52", 0),
 		"filename_prefix": "manjux/shot_" + strconv.Itoa(job.ShotID),
@@ -391,4 +454,36 @@ func unetFor(job engine.Job, c config.ComfySettings) string {
 		return c.UNetRef2VA
 	}
 	return c.UNetFL2VA
+}
+
+// sanitizePrefix 清洗接缝 latent 前缀(项目名可能含中文,保安全字符)。
+func sanitizePrefix(s string) string {
+	var b []rune
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r >= 0x4e00 && r <= 0x9fff, r == '_', r == '-':
+			b = append(b, r)
+		default:
+			b = append(b, '_')
+		}
+	}
+	return string(b)
+}
+
+// seamPrevExists 探测上一镜接缝 latent 是否已存盘(SaveLatent 固定槽)。
+func (e *Engine) seamPrevExists(ctx context.Context, projectID string, prevShot int) bool {
+	name := fmt.Sprintf("clip_%05d.safetensors", prevShot)
+	sub := fmt.Sprintf("manjux/%s_seam", sanitizePrefix(projectID))
+	q := fmt.Sprintf("/view?filename=%s&subfolder=%s&type=output", url.QueryEscape(name), url.QueryEscape(sub))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.cli.BaseURL+q, nil)
+	if err != nil {
+		return false
+	}
+	resp, err := e.cli.HTTP().Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode == http.StatusOK
 }

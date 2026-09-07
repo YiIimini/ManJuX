@@ -23,6 +23,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/ff"
+	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -40,6 +41,7 @@ type Server struct {
 	pipe  *pipeline.Coordinator
 	ff    *ff.FF
 	bus   *pipeline.Bus
+	lib   *library.Library
 	mux   *http.ServeMux
 	quit  func() // 桌面模式注入的优雅退出
 }
@@ -51,8 +53,8 @@ func (s *Server) SetQuitFunc(f func()) {
 
 // New 创建服务。
 func New(cfg *config.Manager, store *project.Store, reg *engine.Registry,
-	pipe *pipeline.Coordinator, f *ff.FF, bus *pipeline.Bus) *Server {
-	s := &Server{cfg: cfg, store: store, reg: reg, pipe: pipe, ff: f, bus: bus, mux: http.NewServeMux()}
+	pipe *pipeline.Coordinator, f *ff.FF, bus *pipeline.Bus, lib *library.Library) *Server {
+	s := &Server{cfg: cfg, store: store, reg: reg, pipe: pipe, ff: f, bus: bus, lib: lib, mux: http.NewServeMux()}
 	s.routes()
 	return s
 }
@@ -113,6 +115,10 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/open", s.openInExplorer)
 	m.HandleFunc("POST /api/quit", s.quitApp)
 	m.HandleFunc("POST /api/test", s.testConn)
+	m.HandleFunc("GET /api/library", s.listLibrary)
+	m.HandleFunc("GET /api/library/{kind}/{name}/image", s.libraryImage)
+	m.HandleFunc("DELETE /api/library/{kind}/{name}", s.deleteLibrary)
+	m.HandleFunc("POST /api/projects/{id}/export-pack", s.exportClipPack)
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -549,6 +555,30 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	// 上传即入库:后续项目同名角色/场景自动复用
+	if s.lib != nil {
+		desc := r.FormValue("description")
+		prompt := r.FormValue("image_prompt")
+		plan, _ := s.store.LoadPlan(id)
+		if plan != nil {
+			if kind == "characters" {
+				for _, c := range plan.Characters {
+					if "char:"+c.ID == assetID {
+						desc, prompt = c.Description, c.ImagePrompt
+					}
+				}
+			} else if kind == "scenes" {
+				for _, sc := range plan.Scenes {
+					if "scene:"+sc.ID == assetID {
+						desc, prompt = sc.Description, sc.ImagePrompt
+					}
+				}
+			}
+		}
+		if _, err := s.lib.Put(kind, name, desc, prompt, dest, id, "upload"); err == nil {
+			// 入库成功仅记录日志,不阻塞响应
+		}
+	}
 	writeJSON(w, 200, assets[assetID])
 }
 
@@ -743,8 +773,24 @@ func (s *Server) testConn(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, 200, map[string]any{"ok": true, "message": "MiniMax API Key 有效"})
+	case "vlm":
+		if g.VLM.BaseURL == "" || g.VLM.APIKey == "" || g.VLM.Model == "" {
+			writeErr(w, 400, fmt.Errorf("视觉模型未配置"))
+			return
+		}
+		client := llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 60)
+		// 1×1 红色 PNG 的 data URI,验证多模态通路
+		red1x1 := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=="
+		out, err := client.ChatVision(ctx, "You reply in Chinese.", []llm.VisionContent{
+			{Role: "user", Text: "What color is this image? Just one Chinese word.", Images: []string{red1x1}},
+		}, false)
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true, "message": "Vision model response: " + truncateStr(out, 30)})
 	default:
-		writeErr(w, 400, fmt.Errorf("未知 target: %s", in.Target))
+		writeErr(w, 400, fmt.Errorf("unknown target: %s", in.Target))
 	}
 }
 
@@ -754,6 +800,42 @@ func truncateStr(s string, n int) string {
 		return s
 	}
 	return string(r[:n]) + "…"
+}
+
+// ---------- 资产库 ----------
+
+func (s *Server) listLibrary(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	writeJSON(w, 200, s.lib.List())
+}
+
+func (s *Server) libraryImage(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		http.Error(w, "library disabled", 500)
+		return
+	}
+	img, err := s.lib.ImagePath(r.PathValue("kind"), r.PathValue("name"))
+	if err != nil {
+		http.Error(w, "not found", 404)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-cache")
+	http.ServeFile(w, r, img)
+}
+
+func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	if err := s.lib.Delete(r.PathValue("kind"), r.PathValue("name")); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
 // quitApp 界面确认后的强制退出(停管线 → 优雅关窗)。

@@ -334,6 +334,20 @@ func (c *Client) Interrupt(ctx context.Context) {
 	}
 }
 
+// ClearPending 清空待执行队列(不影响运行中任务);用于管线起渲前清掉
+// 上次异常退出遗留的提交,防止同一镜头重复渲染堆积。
+func (c *Client) ClearPending(ctx context.Context) {
+	body := bytes.NewReader([]byte(`{"clear":true}`))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/queue", body)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if resp, err := c.http.Do(req); err == nil {
+		resp.Body.Close()
+	}
+}
+
 // Queue 返回 (运行中ids, 排队ids)。
 func (c *Client) Queue(ctx context.Context) (running, pending []string, err error) {
 	raw, err := c.get(ctx, "/queue")
@@ -366,6 +380,7 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	deadline := time.Now().Add(45 * time.Minute) // 单镜兜底上限
+	missCount := 0                               // 连续不在队列且无 history 的次数
 	for {
 		select {
 		case <-ctx.Done():
@@ -379,9 +394,17 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 				continue // 网络抖动容忍
 			}
 			if h == nil {
+				runIDs, pendIDs, qerr := c.Queue(ctx)
+				if qerr == nil && !containsID(runIDs, promptID) && !containsID(pendIDs, promptID) {
+					missCount++
+					if missCount >= 6 { // 约 18 秒无踪迹:任务被清队/中断,重试而非干等
+						return nil, fmt.Errorf("任务已从队列消失且无执行记录(可能被清理),请重试本镜")
+					}
+				} else {
+					missCount = 0
+				}
 				if onProgress != nil {
-					// /queue 区分排队/执行(history 未生成且队列无此 id = 正在执行)
-					if runIDs, pendIDs, qerr := c.Queue(ctx); qerr == nil {
+					if qerr == nil {
 						if containsID(pendIDs, promptID) {
 							onProgress(2, "排队中")
 						} else if containsID(runIDs, promptID) {
@@ -503,3 +526,6 @@ func truncate(s string, n int) string {
 	}
 	return string(r[:n]) + "…"
 }
+
+// HTTP 暴露内部 http.Client(引擎内探测用)。
+func (c *Client) HTTP() *http.Client { return c.http }

@@ -5,6 +5,7 @@ import { ElMessageBox } from 'element-plus'
 import HomeView from './views/HomeView.vue'
 import ProjectView from './views/ProjectView.vue'
 import SettingsView from './views/SettingsView.vue'
+import LibraryView from './views/LibraryView.vue'
 import LogConsole from './components/LogConsole.vue'
 import ParamsDrawer from './components/ParamsDrawer.vue'
 import PromptDrawer from './components/PromptDrawer.vue'
@@ -49,6 +50,9 @@ const env = computed(() => G.status?.env)
         <el-button text :disabled="!G.project" :class="{ 'nav-active': G.view === 'project' }" @click="G.view = 'project'">
           <el-icon><Film /></el-icon><span class="ml-1">工作台</span>
         </el-button>
+        <el-button text :class="{ 'nav-active': G.view === 'library' }" @click="G.view = 'library'">
+          <el-icon><Collection /></el-icon><span class="ml-1">资产库</span>
+        </el-button>
         <el-button text :class="{ 'nav-active': G.view === 'settings' }" @click="G.view = 'settings'">
           <el-icon><Setting /></el-icon><span class="ml-1">设置</span>
         </el-button>
@@ -87,6 +91,7 @@ const env = computed(() => G.status?.env)
     <main class="flex-1 overflow-hidden">
       <HomeView v-if="G.view === 'home'" />
       <ProjectView v-else-if="G.view === 'project' && G.project" />
+      <LibraryView v-else-if="G.view === 'library'" />
       <SettingsView v-else-if="G.view === 'settings'" />
     </main>
 

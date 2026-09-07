@@ -51,6 +51,13 @@ type FFSettings struct {
 	FFprobePath string `json:"ffprobe_path"`
 }
 
+// VLMSettings 视觉大模型(OpenAI 兼容多模态;审片判分用,智谱 glm-4.6v-flash 免费)。
+type VLMSettings struct {
+	BaseURL string `json:"base_url"`
+	APIKey  string `json:"api_key"`
+	Model   string `json:"model"`
+}
+
 // RenderSettings 渲染默认参数(项目级可覆盖)。
 type RenderSettings struct {
 	DefaultEngine string `json:"default_engine"` // auto / comfy / api
@@ -71,8 +78,9 @@ type Settings struct {
 	LLM        LLMSettings    `json:"llm"`
 	Comfy      ComfySettings  `json:"comfy"`
 	MiniMax    MiniMaxSettings `json:"minimax"`
-	FF         FFSettings     `json:"ff"`
-	Render     RenderSettings `json:"render"`
+	FF         FFSettings      `json:"ff"`
+	VLM        VLMSettings     `json:"vlm"`
+	Render     RenderSettings  `json:"render"`
 }
 
 // Default 返回带默认值的设置。
@@ -108,6 +116,11 @@ func Default() *Settings {
 			APIKey:     "",
 			Model:      "MiniMax-H3",
 			Resolution: "768P",
+		},
+		VLM: VLMSettings{
+			BaseURL: "https://open.bigmodel.cn/api/paas/v4",
+			APIKey:  "",
+			Model:   "glm-4.6v-flash",
 		},
 		Render: RenderSettings{
 			DefaultEngine: "auto",

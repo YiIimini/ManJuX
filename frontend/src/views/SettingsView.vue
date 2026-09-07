@@ -143,6 +143,26 @@ async function testConn(target) {
 
       <div class="panel p-5">
         <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
+          <el-icon color="var(--mx-green)"><View /></el-icon>视觉大模型(VLM 智能审片)
+        </h3>
+        <el-form label-position="top" class="grid gap-x-6" style="grid-template-columns:1fr 1fr">
+          <el-form-item label="Base URL">
+            <el-input v-model="form.vlm.base_url" placeholder="https://open.bigmodel.cn/api/paas/v4" />
+          </el-form-item>
+          <el-form-item label="模型">
+            <el-input v-model="form.vlm.model" placeholder="glm-4.6v-flash(智谱免费)" />
+          </el-form-item>
+          <el-form-item label="API Key" class="col-span-2">
+            <div class="flex gap-2 w-full">
+              <el-input v-model="form.vlm.api_key" show-password placeholder="智谱 BigModel Key" style="flex:1" />
+              <el-button :loading="testing==='vlm'" @click="testConn('vlm')">测试</el-button>
+            </div>
+          </el-form-item>
+        </el-form>
+      </div>
+
+      <div class="panel p-5">
+        <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
           <el-icon><VideoPlay /></el-icon>渲染引擎
         </h3>
         <el-form label-position="top" class="grid gap-x-6" style="grid-template-columns:1fr 1fr">

@@ -69,6 +69,18 @@ async function openDir() {
   catch (e) { ElMessage.error(e.message) }
 }
 
+const exporting = ref(false)
+async function exportPack() {
+  exporting.value = true
+  try {
+    const r = await fetch(`/api/projects/${encodeURIComponent(pj.value.project.id)}/export-pack`, { method: 'POST' })
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error)
+    ElMessage.success(`素材包已生成(${d.size_mb?.toFixed(1) || '?'}MB),见项目 output 目录`)
+    openDir()
+  } catch (e) { ElMessage.error(e.message) } finally { exporting.value = false }
+}
+
 async function upgrade2K() {
   try {
     await ElMessageBox.confirm(
@@ -162,6 +174,8 @@ const doneShots = computed(() =>
                 <div v-for="c in charsWithAsset" :key="c.id" class="shot-card p-3 flex flex-col gap-2">
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ c.name }}</b>
+                    <el-tag v-if="c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
+                    <el-tag v-else-if="c.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="c.asset ? 'ok' : 'warn'"></i>
                     <div class="flex-1"></div>
                     <el-button v-if="c.asset" text size="small" @click="removeAsset('char:'+c.id)"><el-icon><Delete /></el-icon></el-button>
@@ -187,6 +201,8 @@ const doneShots = computed(() =>
                 <div v-for="s in scenesWithAsset" :key="s.id" class="shot-card p-3 flex flex-col gap-2">
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ s.name }}</b>
+                    <el-tag v-if="s.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
+                    <el-tag v-else-if="s.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="s.asset ? 'ok' : 'warn'"></i>
                     <div class="flex-1"></div>
                     <el-button v-if="s.asset" text size="small" @click="removeAsset('scene:'+s.id)"><el-icon><Delete /></el-icon></el-button>
@@ -244,6 +260,9 @@ const doneShots = computed(() =>
                   <el-button type="warning" plain :disabled="running || !pj.output?.ready" @click="upgrade2K"
                             title="本地 768P 成片送云端 regeneration 原生重生成 2K(消耗云额度)">
                     <el-icon class="mr-1"><MagicStick /></el-icon>升级 2K
+                  </el-button>
+                  <el-button :disabled="!totalShots" :loading="exporting" @click="exportPack">
+                    <el-icon class="mr-1"><Suitcase /></el-icon>导出剪辑素材包
                   </el-button>
                   <el-button @click="openDir"><el-icon class="mr-1"><FolderOpened /></el-icon>打开目录</el-button>
                 </div>

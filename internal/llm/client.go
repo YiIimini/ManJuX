@@ -167,6 +167,91 @@ func stripReasoning(s string) string {
 	return strings.TrimSpace(s)
 }
 
+// ---------- 视觉多模态 ----------
+
+// VisionContent 一段多模态消息。
+type VisionContent struct {
+	Role   string   `json:"role"`
+	Text   string   `json:"text"`
+	Images []string `json:"images"` // data URI(data:image/png;base64,…)
+}
+
+// ChatVision 多模态对话(OpenAI 兼容 image_url 协议)。
+func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionContent, jsonMode bool) (string, error) {
+	if !c.Configured() {
+		return "", fmt.Errorf("视觉模型未配置:请在设置中填写 VLM BaseURL / API Key / Model")
+	}
+	msgs := []map[string]any{}
+	if system != "" {
+		msgs = append(msgs, map[string]any{"role": "system", "content": system})
+	}
+	for _, t := range turns {
+		content := []map[string]any{}
+		if t.Text != "" {
+			content = append(content, map[string]any{"type": "text", "text": t.Text})
+		}
+		for _, img := range t.Images {
+			content = append(content, map[string]any{
+				"type": "image_url", "image_url": map[string]any{"url": img},
+			})
+		}
+		msgs = append(msgs, map[string]any{"role": t.Role, "content": content})
+	}
+	body := map[string]any{
+		"model":       c.model,
+		"messages":    msgs,
+		"max_tokens":  2048,
+		"temperature": 0.2,
+	}
+	if jsonMode {
+		body["response_format"] = map[string]string{"type": "json_object"}
+	}
+	raw, _ := json.Marshal(body)
+	var out []byte
+	var resp *http.Response
+	for attempt := 0; attempt < 3; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
+		if err != nil {
+			return "", err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		resp, err = c.http.Do(req)
+		if err != nil {
+			return "", err
+		}
+		out, _ = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		if resp.StatusCode == http.StatusOK {
+			break
+		}
+		// 免费档限流(429)退避重试
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < 2 {
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt+1) * 6 * time.Second):
+			}
+			continue
+		}
+		defer resp.Body.Close()
+		return "", fmt.Errorf("VLM HTTP %d: %s", resp.StatusCode, truncate(string(out), 300))
+	}
+	defer resp.Body.Close()
+	var cr chatResponse
+	if err := json.Unmarshal(out, &cr); err != nil {
+		return "", err
+	}
+	if len(cr.Choices) == 0 {
+		return "", fmt.Errorf("VLM 返回空 choices")
+	}
+	content := strings.TrimSpace(cr.Choices[0].Message.Content)
+	if content == "" {
+		return "", fmt.Errorf("VLM 返回空内容(finish=%s)", cr.Choices[0].FinishReason)
+	}
+	return stripReasoning(content), nil
+}
+
 func truncate(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {

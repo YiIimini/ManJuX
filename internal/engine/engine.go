@@ -31,6 +31,11 @@ type Job struct {
 	OutputDir   string // 产物落盘目录(项目 clips/)
 	OutputName  string // 产物文件名主干(如 shot_001)
 	OnProgress  func(percent int, note string)
+
+	// 镜间连续(MotionContext 接缝):Seam=true 且 PrevShot>0 时,
+	// 加载上一镜保存的 AV latent 钉入条件,产物自动裁掉 pinned 头。
+	Seam     bool
+	PrevShot int
 }
 
 // Result 渲染结果。

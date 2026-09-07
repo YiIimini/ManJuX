@@ -15,6 +15,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/ff"
+	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
@@ -40,13 +41,14 @@ var PhaseNames = []struct{ ID, Name, Icon string }{
 
 // Coordinator 管线协调器:每项目最多一个运行实例,阶段可单跑。
 type Coordinator struct {
-	mu    sync.Mutex
-	runs  map[string]*Run
-	store *project.Store
-	cfg   *config.Manager
-	reg   *engine.Registry
-	ff    *ff.FF
-	bus   *Bus
+	mu      sync.Mutex
+	runs    map[string]*Run
+	store   *project.Store
+	cfg     *config.Manager
+	reg     *engine.Registry
+	ff      *ff.FF
+	bus     *Bus
+	lib     *library.Library // 跨项目资产库(可为 nil=禁用)
 }
 
 // Run 一次运行。
@@ -58,10 +60,10 @@ type Run struct {
 }
 
 // New 创建协调器。
-func New(store *project.Store, cfg *config.Manager, reg *engine.Registry, f *ff.FF, bus *Bus) *Coordinator {
+func New(store *project.Store, cfg *config.Manager, reg *engine.Registry, f *ff.FF, bus *Bus, lib *library.Library) *Coordinator {
 	return &Coordinator{
 		runs:  map[string]*Run{},
-		store: store, cfg: cfg, reg: reg, ff: f, bus: bus,
+		store: store, cfg: cfg, reg: reg, ff: f, bus: bus, lib: lib,
 	}
 }
 
@@ -278,7 +280,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 
 	missing := 0
 	total := 0
-	check := func(kind, id, name, imagePrompt string) {
+	reused := 0
+	check := func(kind, id, name, description, imagePrompt string) {
 		total++
 		if a, ok := assets[id]; ok && a.File != "" {
 			full := filepath.Join(c.store.Dir(proj.ID), a.File)
@@ -287,10 +290,39 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 					a.Fingerprint = fp
 					assets[id] = a
 				}
+				// 存量回填:项目已有资产若库中无同名条目,自动沉淀入库
+				if c.lib != nil {
+					if _, _, ok := c.lib.Match(kind, name); !ok {
+						if _, err := c.lib.Put(kind, name, description, imagePrompt, full, proj.ID, a.Source); err == nil {
+							c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(存量回填)", kindLabel(kind), name)
+						}
+					}
+				}
 				return
 			}
 		}
-		// 缺失:krea2 生成 / 提示上传
+		// ① 资产库复用(名称精确匹配):跨项目同一角色/场景直接复用,不重复生成
+		if c.lib != nil {
+			if _, img, ok := c.lib.Match(kind, name); ok {
+				destDir := filepath.Join(c.store.Dir(proj.ID), "assets", kind)
+				_ = os.MkdirAll(destDir, 0o755)
+				dest := filepath.Join(destDir, director.SanitizeForCache(kind+"_"+id)+filepath.Ext(img))
+				if raw, err := os.ReadFile(img); err == nil {
+					_ = os.WriteFile(dest, raw, 0o644)
+					rel, _ := filepath.Rel(c.store.Dir(proj.ID), dest)
+					assets[id] = project.Asset{
+						ID: id, Kind: kind, Name: name,
+						File: filepath.ToSlash(rel), ImagePrompt: imagePrompt,
+						Source: "library", Fingerprint: project.FingerprintFile(dest),
+					}
+					c.lib.BumpUsed(kind, name)
+					reused++
+					c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」(跨项目共享,免生成)", kindLabel(kind), name)
+					return
+				}
+			}
+		}
+		// ② Krea-2 生成缺失参考图;成功后自动入库供后续项目复用
 		if comfyGen != nil && strings.TrimSpace(imagePrompt) != "" {
 			if path, err := genAsset(kind, id, name, imagePrompt); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
@@ -300,6 +332,11 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 					Source: "krea2", Fingerprint: project.FingerprintFile(path),
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」", kindLabel(kind), name)
+				if c.lib != nil {
+					if _, err := c.lib.Put(kind, name, description, imagePrompt, path, proj.ID, "krea2"); err == nil {
+						c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(后续项目自动复用)", kindLabel(kind), name)
+					}
+				}
 				return
 			} else {
 				c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "生成失败:%s「%s」:%v", kindLabel(kind), name, err)
@@ -311,10 +348,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.ImagePrompt)
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt)
 	}
 	for _, sc := range plan.Scenes {
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.ImagePrompt)
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
 	}
 	if err := c.store.SaveAssets(proj.ID, assets); err != nil {
 		return err
@@ -327,7 +364,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project) erro
 		c.emit(proj.ID, PhaseAssets, 0, "success", 100, "✔ 资产策略=跳过(全部镜头纯文生 t2va)")
 		return nil
 	}
-	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产就绪:%d/%d", total-missing, total)
+	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产就绪:%d/%d(库复用 %d)", total-missing, total, reused)
 	if missing > 0 {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", pct, "提示:缺 %d 张参考图,对应镜头将以 t2va 纯文生渲染", missing)
 	}
@@ -394,6 +431,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return err
 	}
 	c.emit(proj.ID, PhaseRender, 0, "info", 0, "引擎=%s(%s)", engName, engineLabel(engName))
+	if rp.Seam && engName == "comfy" {
+		c.emit(proj.ID, PhaseRender, 0, "info", 0, "镜间连续接缝已开启:每镜尾部 22 帧钉入下一镜(仅本地引擎;重渲某镜后建议后续镜头一并重渲保持链一致)")
+	}
 
 	shots := plan.Shots
 	if len(only) > 0 {
@@ -469,6 +509,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			Width: rp.Width, Height: rp.Height,
 			Length: shot.Duration * 24, Seed: seed, Steps: rp.Steps,
 			OutputDir: clipsDir, OutputName: outName,
+			Seam:     rp.Seam && engName == "comfy",
+			PrevShot: shot.ID - 1,
 			OnProgress: func(p int, note string) {
 				total := base + p/len(shots)
 				if total > 100 {
@@ -532,7 +574,7 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	for _, r := range refs {
 		files = append(files, r.Path+":"+project.FingerprintFile(r.Path))
 	}
-	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed), strings.Join(files, ","))
+	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam), strings.Join(files, ","))
 }
 
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {

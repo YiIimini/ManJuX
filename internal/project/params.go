@@ -31,6 +31,7 @@ type RenderParams struct {
 	Seed      int64  `json:"seed"`       // 0=每镜随机;非 0=全项目固定
 	Turbo     bool   `json:"turbo"`      // 是否挂加速 LoRA(全局 Comfy 设置提供文件名)
 	CondCache bool   `json:"cond_cache"` // 两阶段渲染(条件缓存)
+	Seam      bool   `json:"seam"`       // 镜间连续接缝(MotionContext;仅本地 ComfyUI;相邻镜同分辨率)
 }
 
 // QCParams 质检阶段(qc)参数。
@@ -40,6 +41,7 @@ type QCParams struct {
 	DarkRatioWarn float64 `json:"dark_ratio_warn"` // 暗像素占比 ≥ 此值警告(默认 0.45)
 	MinDuration   float64 `json:"min_duration"`    // 单镜最短时长(秒)
 	MaxDuration   float64 `json:"max_duration"`    // 单镜最长时长(秒)
+	EnableVLM     bool    `json:"enable_vlm"`      // VLM 智能审片(抽帧判分+重渲建议,需视觉模型)
 }
 
 // AssembleParams 合成阶段(assemble)参数。
@@ -59,7 +61,7 @@ func DefaultStageParams() StageParams {
 		Assets: AssetsParams{Source: "upload"},
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
-			Steps: 8, Seed: 0, Turbo: true, CondCache: true,
+			Steps: 8, Seed: 0, Turbo: true, CondCache: true, Seam: false,
 		},
 		QC: QCParams{
 			Enabled: true, DarkRatioFail: 0.60, DarkRatioWarn: 0.45,

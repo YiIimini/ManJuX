@@ -22,6 +22,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/engine/h3api"
 	"github.com/YiIimini/ManJuX/internal/ff"
+	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/server"
@@ -75,8 +76,11 @@ func main() {
 			log.Printf("[事件][%s][%s][%s] %s", ev.ProjectID, ev.Phase, ev.Level, ev.Message)
 		}
 	}()
-	coord := pipeline.New(store, cfgMgr, reg, f, bus)
-	srv := server.New(cfgMgr, store, reg, coord, f, bus)
+	// 跨项目资产库(角色/场景一次定妆全局复用)
+	lib, err := library.New(filepath.Join(g.DataDir, "assets_library"))
+	fatalIf(err, "初始化资产库失败")
+	coord := pipeline.New(store, cfgMgr, reg, f, bus, lib)
+	srv := server.New(cfgMgr, store, reg, coord, f, bus, lib)
 
 	// 4) 独立 HTTP 服务(浏览器访问/排障;桌面窗口不依赖它)
 	port, err := srv.Start(g.ServerPort)

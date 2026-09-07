@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 
+	"strings"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/compose"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
@@ -32,6 +34,18 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	reports := map[string]qc.Report{}
 	failed := 0
 	checked := 0
+
+	// VLM 智能审片(可选):抽帧判分 + 重渲建议
+	var vlmClient *llm.Client
+	if p.EnableVLM {
+		g := c.cfg.Get()
+		if g.VLM.BaseURL != "" && g.VLM.APIKey != "" && g.VLM.Model != "" {
+			vlmClient = llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 120)
+		} else {
+			c.emit(proj.ID, PhaseQC, 0, "warn", 0, "VLM 审片已开启但视觉模型未配置(设置页填写),跳过智能判分")
+		}
+	}
+
 	for _, shot := range plan.Shots {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -50,11 +64,27 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			DarkRatioFail: p.DarkRatioFail, DarkRatioWarn: p.DarkRatioWarn,
 			MinDuration: p.MinDuration, MaxDuration: p.MaxDuration,
 		})
+		if vlmClient != nil && r.OK {
+			brief := fmt.Sprintf("%s/%s/角色:%v", shot.ShotSize, shot.Camera, shot.Characters)
+			if vr, verr := qc.VLMJudge(ctx, vlmClient, c.ff.Ffmpeg, full, brief); verr == nil {
+				r.VLM = vr
+				if !vr.Pass {
+					c.emit(proj.ID, PhaseQC, shot.ID, "warn", checked*100/max(1, len(plan.Shots)),
+						"镜头 %d VLM 判分 %d(%s)建议:%s", shot.ID, vr.Score, strings.Join(vr.Issues, ";"), vr.Advice)
+				}
+			} else {
+				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0, "镜头 %d VLM 审片失败:%v(不影响机械质检)", shot.ID, verr)
+			}
+		}
 		reports[key] = *r
 		pct := checked * 100 / max(1, len(plan.Shots))
 		if r.OK {
-			c.emit(proj.ID, PhaseQC, shot.ID, "info", pct, "镜头 %d 通过(暗像素 %.0f%%,%.1fs,音轨%v)",
-				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio))
+			score := ""
+			if r.VLM != nil {
+				score = fmt.Sprintf(",VLM %d 分", r.VLM.Score)
+			}
+			c.emit(proj.ID, PhaseQC, shot.ID, "info", pct, "镜头 %d 通过(暗像素 %.0f%%,%.1fs,音轨%v%s)",
+				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio), score)
 		} else {
 			failed++
 			c.emit(proj.ID, PhaseQC, shot.ID, "error", pct, "✕ 镜头 %d 不合格:%s", shot.ID, joinStrings(r.Problems, ";"))
