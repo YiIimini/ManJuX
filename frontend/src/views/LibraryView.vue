@@ -10,8 +10,11 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    lib.value = await fetch('/api/library').then(r => r.json())
-  } catch (e) { ElMessage.error(e.message) }
+    const r = await fetch('/api/library')
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(d.error || `服务响应 ${r.status}`)
+    lib.value = d.characters || d.scenes ? d : { characters: [], scenes: [] }
+  } catch (e) { ElMessage.error('资产库读取失败:' + e.message) }
   loading.value = false
 }
 onMounted(refresh)
@@ -145,7 +148,9 @@ async function remove(e) {
       <div v-for="e in list" :key="e.kind + e.name" class="shot-card p-3 flex flex-col gap-2">
         <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="G.viewer={index:0,items:[{type:'image',src:`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`,title:e.name,meta:(e.source==='krea2'?'Krea-2':'上传')+` · 复用 ${e.used_count} 次`,kindLabel:'LIBRARY'}]}">
           <img :src="`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`"
-               style="width:100%;height:100%;object-fit:cover" loading="lazy" />
+               style="width:100%;height:100%;object-fit:cover" loading="lazy"
+               @error="$event.target.style.display='none'"
+               @load="$event.target.style.display=''" />
           <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:rgba(4,6,10,.4)">
             <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
           </div>

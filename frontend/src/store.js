@@ -13,6 +13,7 @@ export const G = reactive({
   stageDetail: null,        // 打开详情管理的阶段 id
   promptShot: null,        // 查看 H3 提示词的镜头
   viewer: null,             // 全屏媒体预览 {items:[{type,src,title,meta,foot,kindLabel}], index}
+  tuneShot: null,           // 单镜画布微调的镜头对象
   logPanelOpen: false,
   tick: { library: 0, outputs: 0, comfy: 0, settings: 0 }, // 顶栏「刷新」触发各视图自刷新
 })
@@ -48,7 +49,7 @@ export const api = {
   deleteProject: (id) => req('DELETE', `/api/projects/${encodeURIComponent(id)}`),
   saveSource: (id, text) => req('PUT', `/api/projects/${encodeURIComponent(id)}/source`, { text }),
   putParams: (id, params) => req('PUT', `/api/projects/${encodeURIComponent(id)}/params`, params),
-  run: (id, phase, only, engine) => req('POST', `/api/projects/${encodeURIComponent(id)}/run`, { phase, only, engine }),
+  run: (id, phase, only, engine, seed) => req('POST', `/api/projects/${encodeURIComponent(id)}/run`, { phase, only, engine, seed }),
   stop: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/stop`),
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),

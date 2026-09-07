@@ -98,6 +98,11 @@ const sceneName = computed(() => {
         <el-tooltip content="查看 H3 提示词" placement="top">
           <el-button text size="small" @click="G.promptShot = shot"><el-icon><Document /></el-icon></el-button>
         </el-tooltip>
+        <el-tooltip content="画布微调(提示词/时长/seed/引擎)" placement="top">
+          <el-button text size="small" @click="G.tuneShot = shot" :disabled="running">
+            <el-icon><Brush /></el-icon>
+          </el-button>
+        </el-tooltip>
         <el-dropdown trigger="click" :disabled="running" @command="rerender">
           <el-button text size="small" type="primary" :disabled="running" @click.stop>
             <el-icon><RefreshRight /></el-icon>

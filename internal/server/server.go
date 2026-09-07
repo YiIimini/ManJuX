@@ -131,6 +131,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/gacha", s.handleLibraryGacha)
 	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
+	m.HandleFunc("PUT /api/projects/{id}/shot", s.putShot)
 	m.HandleFunc("POST /api/comfy/open-web", s.comfyOpenWeb)
 	m.HandleFunc("POST /api/projects/{id}/import-plan", s.importPlan)
 	m.HandleFunc("POST /api/window/{action}", s.handleWindowAction)
@@ -462,12 +463,13 @@ func (s *Server) runProject(w http.ResponseWriter, r *http.Request) {
 		Phase  string `json:"phase"`
 		Only   []int  `json:"only"`
 		Engine string `json:"engine"` // 单次引擎覆盖(auto/comfy/api,空=项目配置)
+		Seed   int64  `json:"seed"`   // 单镜微调种子(>0 生效:seed+N*101)
 	}
 	_ = readBody(r, &in)
 	if in.Phase == "" {
 		in.Phase = pipeline.PhaseAll
 	}
-	if err := s.pipe.Start(id, in.Phase, in.Only, in.Engine); err != nil {
+	if err := s.pipe.Start(id, in.Phase, in.Only, in.Engine, in.Seed); err != nil {
 		writeErr(w, 409, err)
 		return
 	}
@@ -873,6 +875,51 @@ func (s *Server) comfyAction(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// putShot 单镜微调:更新分镜提示词/时长/模式(指纹变化将触发该镜重渲)。
+func (s *Server) putShot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pipe.Running(id) != nil {
+		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		return
+	}
+	var in struct {
+		ShotID   int    `json:"shot_id"`
+		H3Prompt string `json:"h3_prompt"`
+		Duration int    `json:"duration"`
+		Mode     string `json:"mode"`
+	}
+	if err := readBody(r, &in); err != nil || in.ShotID <= 0 {
+		writeErr(w, 400, fmt.Errorf("参数错误(shot_id 必填)"))
+		return
+	}
+	plan, err := s.store.LoadPlan(id)
+	if err != nil {
+		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
+		return
+	}
+	for i := range plan.Shots {
+		if plan.Shots[i].ID != in.ShotID {
+			continue
+		}
+		if strings.TrimSpace(in.H3Prompt) != "" {
+			plan.Shots[i].H3Prompt = in.H3Prompt
+		}
+		if in.Duration >= 4 && in.Duration <= 10 {
+			plan.Shots[i].Duration = in.Duration
+		}
+		if in.Mode == "ref2va" || in.Mode == "t2va" {
+			plan.Shots[i].Mode = in.Mode
+		}
+		if err := s.store.SavePlan(id, plan); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
+	}
+	writeErr(w, 404, fmt.Errorf("镜头不存在: %d", in.ShotID))
+}
+
 // importPlan 导入既有分镜方案(JSON,新建项目时上传)。
 func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -921,7 +968,7 @@ func (s *Server) comfyOpenWeb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	url := ce.Cfg().BaseURL + "/"
-	if err := browser.Open(url); err != nil {
+	if err := browser.OpenDefault(url); err != nil {
 		writeErr(w, 500, err)
 		return
 	}

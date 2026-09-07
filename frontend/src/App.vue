@@ -14,6 +14,7 @@ import OutputsView from './views/OutputsView.vue'
 import ComfyView from './views/ComfyView.vue'
 import MediaViewer from './components/MediaViewer.vue'
 import StageDetailDrawer from './components/StageDetailDrawer.vue'
+import ShotTuneDialog from './components/ShotTuneDialog.vue'
 
 let timer = null
 let sysTimer = null
@@ -268,8 +269,6 @@ const env = computed(() => G.status?.env)
             <i class="dot" :class="env.ffmpeg ? 'ok' : 'bad'"></i>FFMPEG
           </span>
         </div>
-        <div class="vdiv"></div>
-        <span class="timecode">{{ verLabel }}</span>
         <div class="flex-1"></div>
         <!-- 运行日志 ticker:最新一条,点击展开/收起日志面板 -->
         <button class="logticker" :class="{ open: G.logPanelOpen }" @click="G.logPanelOpen = !G.logPanelOpen"
@@ -279,6 +278,8 @@ const env = computed(() => G.status?.env)
           <span class="tick-text" v-else style="color:#46536f">运行日志待命…</span>
           <el-icon :size="12"><ArrowUp v-if="G.logPanelOpen" /><ArrowDown v-else /></el-icon>
         </button>
+        <div class="vdiv"></div>
+        <span class="timecode verchip">{{ verLabel }}</span>
       </footer>
 
       <!-- 悬浮日志面板(底部状态栏上方弹出,随侧栏收起/展开自适应) -->
@@ -290,6 +291,7 @@ const env = computed(() => G.status?.env)
     <ParamsDrawer />
     <PromptDrawer />
     <StageDetailDrawer />
+    <ShotTuneDialog />
     <MediaViewer />
   </div>
 </template>

@@ -73,6 +73,12 @@ const STATUS_META = {
   norepo:  { label: '非 Git 安装', cls: '' },
   missing: { label: '未命中', cls: 'bad' },
 }
+// 单元格着色:一致→双绿;落后→本地红 / 在线绿;未检查→灰
+function verCellCls(row, which) {
+  if (row.status === 'latest') return 'vc-green'
+  if (row.status === 'behind') return which === 'local' ? 'vc-red' : 'vc-green'
+  return 'vc-dim'
+}
 </script>
 
 <template>
@@ -189,12 +195,16 @@ const STATUS_META = {
     <div class="panel p-5 mt-5" v-if="vers">
       <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2 flex-wrap">
         <el-icon color="var(--mx-purple)"><Stamp /></el-icon>版本管理器
-        <span class="text-xs font-normal" style="color:var(--mx-text3)">本地版本 VS 在线最新(GitHub;联网检查较慢请稍候)</span>
+        <span class="text-xs font-normal" style="color:var(--mx-text3)">本地版本 VS 在线最新(GitHub);版本一致双绿,落后时本地红 / 在线绿</span>
         <div class="flex-1"></div>
-        <el-button size="small" :loading="verLoading" circle @click="refreshVersions(false)"><el-icon><Refresh /></el-icon></el-button>
-        <el-button size="small" type="primary" plain :loading="checking" @click="refreshVersions(true)">
-          <el-icon class="mr-1"><Cloudy /></el-icon>检查更新
-        </el-button>
+        <el-tooltip content="重新读取本地版本(git tag / commit 与文件状态,不联网,秒出)" placement="top">
+          <el-button size="small" :loading="verLoading" circle @click="refreshVersions(false)"><el-icon><Refresh /></el-icon></el-button>
+        </el-tooltip>
+        <el-tooltip content="联网对比 GitHub 上游仓库最新 Release / Tag(数秒;受网络影响个别仓库可能查询失败显示「未检查」)" placement="top">
+          <el-button size="small" type="primary" plain :loading="checking" @click="refreshVersions(true)">
+            <el-icon class="mr-1"><Cloudy /></el-icon>检查更新
+          </el-button>
+        </el-tooltip>
       </h3>
 
       <el-table :data="[{ ...vers.core?.[0], _kind: '本体' }, ...(vers.nodes||[]).map(n => ({ ...n, _kind: '插件' }))]"
@@ -212,12 +222,12 @@ const STATUS_META = {
         </el-table-column>
         <el-table-column prop="local" label="本地版本" width="130">
           <template #default="{ row }">
-            <span class="font-mono text-xs">{{ row.local || '—' }}</span>
+            <span class="font-mono text-xs" :class="verCellCls(row, 'local')">{{ row.local || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="remote" label="在线最新" width="130">
           <template #default="{ row }">
-            <span class="font-mono text-xs" :style="{ color: row.status === 'behind' ? 'var(--mx-amber)' : 'var(--mx-text2)' }">{{ row.remote || '—' }}</span>
+            <span class="font-mono text-xs" :class="verCellCls(row, 'remote')">{{ row.remote || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="110">

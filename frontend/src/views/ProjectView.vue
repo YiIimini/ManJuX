@@ -27,6 +27,14 @@ const charsWithAsset = computed(() =>
 const scenesWithAsset = computed(() =>
   (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
 
+// 进度环
+const ringPct = computed(() => totalShots.value ? Math.round(doneShots.value * 100 / totalShots.value) : 0)
+const ringDash = computed(() => {
+  const C = 2 * Math.PI * 21
+  const p = ringPct.value / 100
+  return `${(C * p).toFixed(1)} ${C.toFixed(1)}`
+})
+
 async function saveSource() {
   try {
     await api.saveSource(pj.value.project.id, sourceText.value)
@@ -131,9 +139,23 @@ const doneShots = computed(() =>
             <i class="dot run"></i>{{ pj.project.phase }} 阶段运行中
           </span>
           <div class="flex-1"></div>
-          <span class="timecode" v-if="totalShots">镜头 {{ doneShots }}/{{ totalShots }}</span>
-          <el-progress v-if="totalShots" type="circle" :width="34" :stroke-width="4"
-                       :percentage="Math.round(doneShots*100/totalShots)" />
+          <!-- 产线进度环:渐变描边 + 中心百分比 -->
+          <div v-if="totalShots" class="ring-wrap" :title="`镜头完成 ${doneShots}/${totalShots}`">
+            <svg width="52" height="52" viewBox="0 0 52 52" class="ring-svg">
+              <defs>
+                <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
+                  <stop offset="0%" stop-color="var(--mx-amber-hi)" />
+                  <stop offset="100%" stop-color="var(--mx-amber-deep)" />
+                </linearGradient>
+              </defs>
+              <circle cx="26" cy="26" r="21" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="4.5" />
+              <circle cx="26" cy="26" r="21" fill="none" stroke="url(#ringGrad)" stroke-width="4.5"
+                      stroke-linecap="round" :stroke-dasharray="ringDash" transform="rotate(-90 26 26)"
+                      style="transition: stroke-dasharray .6s ease; filter: drop-shadow(0 0 4px rgba(255,180,84,.45))" />
+              <text x="26" y="30" text-anchor="middle" class="ring-pct">{{ ringPct }}</text>
+            </svg>
+            <span class="ring-label">{{ doneShots }}/{{ totalShots }} 镜</span>
+          </div>
         </div>
       </div>
 

@@ -1186,3 +1186,52 @@ html, body, #app {
 }
 .style-chip .sw { display: flex; gap: 3px; flex: none; }
 .style-chip .sw i { width: 11px; height: 11px; border-radius: 4px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.2); }
+
+/* 项目页进度环 */
+.ring-wrap { display: flex; align-items: center; gap: 9px; flex: none; }
+.ring-svg { display: block; }
+.ring-pct {
+  font-family: var(--mx-mono);
+  font-size: 13px;
+  font-weight: 700;
+  fill: var(--mx-text);
+}
+.ring-label { font-family: var(--mx-mono); font-size: 11px; color: var(--mx-text3); }
+
+/* 版本管理器单元格着色 */
+.vc-green { color: var(--mx-green) !important; font-weight: 600; }
+.vc-red { color: var(--mx-red) !important; font-weight: 600; }
+.vc-dim { color: var(--mx-text2) !important; }
+
+/* 作品卡封面右上删除钮 */
+.cover-del {
+  position: absolute;
+  top: 8px; right: 8px;
+  width: 27px; height: 27px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 8px;
+  background: rgba(6, 8, 14, .55);
+  backdrop-filter: blur(4px);
+  color: var(--mx-text2);
+  cursor: pointer;
+  opacity: 0;
+  transition: all .15s;
+}
+.proj-card:hover .cover-del { opacity: 1; }
+.cover-del:hover:not(:disabled) { background: rgba(232, 17, 35, .85); color: #fff; }
+.cover-del:disabled { opacity: 0 !important; cursor: not-allowed; }
+
+/* 单镜画布微调 */
+.tune-canvas {
+  aspect-ratio: 9/16;
+  max-height: 56vh;
+  margin: 0 auto;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--mx-line);
+  background: #000;
+  display: flex;
+}

@@ -73,7 +73,7 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
       还没有成片 —— 完成任意项目的「合成成片」后,作品会出现在这里
     </div>
 
-    <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">
+    <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(286px,1fr))">
       <div v-for="it in list" :key="it.project" class="shot-card proj-card">
         <!-- 封面:项目定妆照;点击播放标准版 -->
         <div class="proj-cover cursor-pointer" @click="it.final && play(it, 'std')">
@@ -96,12 +96,17 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
             <span v-if="it.final_2k" class="badge-mode">2K</span>
             <span v-if="it.final" class="badge-mode t2va">768P</span>
           </div>
+          <!-- 删除:封面右上角 -->
+          <button class="cover-del" @click.stop="removeOut(it,'all','全部成片产物')"
+                  :disabled="!it.final && !it.final_2k" title="删除成片产物">
+            <el-icon :size="13"><Delete /></el-icon>
+          </button>
           <div v-if="it.final" class="absolute bottom-3 right-3 timecode px-2 py-0.5 rounded"
                style="background:rgba(6,8,14,.7)">{{ fmtDur(it.duration) }}</div>
         </div>
-        <div class="p-4 flex flex-col gap-2.5">
+        <div class="px-3.5 py-3 flex flex-col gap-2">
           <div class="flex items-center gap-2">
-            <b class="truncate flex-1">《{{ it.title }}》</b>
+            <b class="truncate flex-1 text-sm">《{{ it.title }}》</b>
             <span class="timecode">{{ it.shots_done }}/{{ it.shots }} 镜</span>
           </div>
           <div class="text-xs" style="color:var(--mx-text3)">
@@ -110,14 +115,11 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
             <template v-if="it.final_2k"> · 2K {{ it.size_2k_mb.toFixed(1) }}MB</template>
             <template v-if="it.pack"> · 素材包✓</template>
           </div>
-          <div class="flex gap-2 flex-wrap pt-1">
+          <div class="flex gap-2 flex-wrap">
             <el-button size="small" type="primary" :disabled="!it.final" @click="play(it,'std')"><el-icon class="mr-1"><VideoPlay /></el-icon>播放</el-button>
             <el-button size="small" :disabled="!it.final_2k" @click="play(it,'2k')"><el-icon class="mr-1"><MagicStick /></el-icon>2K</el-button>
             <el-button size="small" @click="enter(it)"><el-icon class="mr-1"><EditPen /></el-icon>进入项目</el-button>
             <el-button size="small" @click="openDir(it)"><el-icon class="mr-1"><FolderOpened /></el-icon>目录</el-button>
-            <el-button size="small" type="danger" plain :disabled="!it.final && !it.final_2k" @click="removeOut(it,'all','全部成片产物')">
-              <el-icon><Delete /></el-icon>
-            </el-button>
           </div>
         </div>
       </div>

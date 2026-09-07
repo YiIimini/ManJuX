@@ -168,6 +168,7 @@ function castOf(sh) {
           <div v-if="manifest[String(sh.id)]?.error" class="text-xs mt-1" style="color:var(--mx-red)">{{ manifest[String(sh.id)].error }}</div>
         </div>
         <el-button v-if="manifest[String(sh.id)]?.status==='done'" size="small" text @click="viewShot(sh)" title="全屏预览"><el-icon><View /></el-icon></el-button>
+        <el-button size="small" text @click="G.tuneShot = sh" title="画布微调" :disabled="pj.project.running"><el-icon><Brush /></el-icon></el-button>
         <el-dropdown trigger="click" @command="(cmd)=>cmd==='2k'?api.upgrade2k(pj.project.id, sh.id).then(()=>ElMessage.success('2K 定稿已提交')).catch(e=>ElMessage.error(e.message)):rerender(sh.id, cmd)">
           <el-button size="small" text type="primary" :disabled="pj.project.running"><el-icon><RefreshRight /></el-icon></el-button>
           <template #dropdown>

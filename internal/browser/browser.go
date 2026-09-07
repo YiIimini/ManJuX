@@ -41,10 +41,18 @@ func OpenAppWindow(url string, width, height int) error {
 	return sysexec.Hide(exec.Command("rundll32", "url.dll,FileProtocolHandler", url)).Start()
 }
 
-// Open 用系统默认浏览器打开(回退用)。
-func Open(url string) error {
-	return OpenAppWindow(url, 0, 0)
+// Open 用系统默认浏览器打开(严格遵循用户系统默认浏览器设置,
+// rundll32 FileProtocolHandler 即 ShellExecute 默认处理器,不指定任何浏览器)。
+func OpenDefault(url string) error {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil
+	}
+	return sysexec.Hide(exec.Command("rundll32", "url.dll,FileProtocolHandler", url)).Start()
 }
+
+// Open 兼容旧名:App 窗口形态。
+func Open(url string) error { return OpenAppWindow(url, 0, 0) }
 
 // edgeCandidates 返回 Edge/Chrome 可执行文件候选路径。
 func edgeCandidates() []string {

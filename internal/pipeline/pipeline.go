@@ -57,6 +57,7 @@ type Run struct {
 	Phase         string
 	StartedAt     time.Time
 	EngineOverride string // 本次运行的引擎覆盖(auto/comfy/api,空=用项目配置)
+	SeedOverride int64
 }
 
 // New 创建协调器。
@@ -87,7 +88,7 @@ func (c *Coordinator) HasRunning() bool {
 
 // Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段);
 // engineOverride 非空时本次运行覆盖项目引擎(镜头级分派:auto/comfy/api)。
-func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride string) error {
+func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride string, seedOverride int64) error {
 	if phase == "" {
 		phase = PhaseAll
 	}
@@ -102,11 +103,11 @@ func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride 
 		return fmt.Errorf("项目不存在: %s", projectID)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	run := &Run{Cancel: cancel, Phase: phase, StartedAt: time.Now(), EngineOverride: engineOverride}
+	run := &Run{Cancel: cancel, Phase: phase, StartedAt: time.Now(), EngineOverride: engineOverride, SeedOverride: seedOverride}
 	c.runs[projectID] = run
 	c.mu.Unlock()
 
-	go c.execute(ctx, proj, phase, only, nil, engineOverride)
+	go c.execute(ctx, proj, phase, only, nil, engineOverride, seedOverride)
 	return nil
 }
 
@@ -203,7 +204,7 @@ func (c *Coordinator) emit(projectID, phase string, shotID int, level string, pr
 	})
 }
 
-func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string) {
+func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string, seedOverride int64) {
 	defer c.finish(proj.ID)
 	stages := []string{phase}
 	if phase == PhaseAll {
@@ -223,7 +224,7 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		case PhaseAssets:
 			err = c.runAssets(ctx, proj, onlyAssets)
 		case PhaseRender:
-			err = c.runRender(ctx, proj, only, engineOverride)
+			err = c.runRender(ctx, proj, only, engineOverride, seedOverride)
 		case PhaseQC:
 			err = c.runQC(ctx, proj)
 			// 全流程中质检不通过不中止:带瑕疵继续合成,用户按报告单镜重渲
@@ -488,7 +489,7 @@ func kindLabel(kind string) string {
 
 // ---------- 阶段三:render ----------
 
-func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int, engineOverride string) error {
+func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return fmt.Errorf("尚未生成分镜方案:请先运行「剧本分镜」阶段")
@@ -587,7 +588,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 
 		seed := rp.Seed
-		if seed == 0 {
+		if seedOverride > 0 {
+			seed = seedOverride + int64(shot.ID)*101 // 单镜微调种子:同值同镜稳定复现
+		} else if seed == 0 {
 			seed = time.Now().UnixNano()&0x7fffffff + int64(shot.ID)*101
 		}
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
