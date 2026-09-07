@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { G, api, refreshProjects } from '../store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -13,6 +13,7 @@ async function refresh() {
   loading.value = false
 }
 onMounted(refresh)
+watch(() => G.tick.outputs, refresh)
 
 function play(item, which) {
   const src = which === '2k' ? item.final_2k : item.final
@@ -74,14 +75,20 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
 
     <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(360px,1fr))">
       <div v-for="it in list" :key="it.project" class="shot-card proj-card">
-        <!-- 封面:点击播放标准版 -->
+        <!-- 封面:项目定妆照;点击播放标准版 -->
         <div class="proj-cover cursor-pointer" @click="it.final && play(it, 'std')">
+          <img v-if="it.cover" :src="api.fileURL(it.project, it.cover)" alt=""
+               style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.08)" />
+          <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2" style="pointer-events:none">
+            <el-icon :size="34" color="var(--mx-text3)"><Film /></el-icon>
+            <span class="timecode">{{ it.shots ? it.shots + ' 镜' : 'NEW' }}</span>
+          </div>
           <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
             <div v-if="it.final || it.final_2k" class="w-14 h-14 rounded-full flex items-center justify-center"
                  style="background:rgba(6,8,14,.55);border:1px solid rgba(255,180,84,.5);backdrop-filter:blur(4px)">
               <el-icon :size="22" color="var(--mx-amber-hi)"><VideoPlay /></el-icon>
             </div>
-            <span v-else class="timecode">未合成</span>
+            <span v-else-if="it.cover" class="timecode">未合成</span>
           </div>
           <div class="absolute top-3 left-3 flex gap-1.5">
             <span v-if="it.final_2k" class="badge-mode">2K</span>

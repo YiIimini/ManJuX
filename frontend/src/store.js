@@ -14,6 +14,7 @@ export const G = reactive({
   promptShot: null,        // 查看 H3 提示词的镜头
   viewer: null,             // 全屏媒体预览 {items:[{type,src,title,meta,foot,kindLabel}], index}
   logPanelOpen: false,
+  tick: { library: 0, outputs: 0, comfy: 0, settings: 0 }, // 顶栏「刷新」触发各视图自刷新
 })
 
 export const PHASES = [

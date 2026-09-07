@@ -6,13 +6,39 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 )
+
+// projectCover 项目封面:首个角色定妆照 > 首个场景图(无资产返回空,前端用占位)。
+func (s *Server) projectCover(id string) string {
+	for _, sub := range []string{"characters", "scenes"} {
+		dir := filepath.Join(s.store.Dir(id), "assets", sub)
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			continue
+		}
+		for _, e := range ents {
+			if e.IsDir() {
+				continue
+			}
+			n := strings.ToLower(e.Name())
+			for _, ext := range []string{".png", ".jpg", ".jpeg", ".webp"} {
+				if strings.HasSuffix(n, ext) {
+					rel, _ := filepath.Rel(s.store.Dir(id), filepath.Join(dir, e.Name()))
+					return filepath.ToSlash(rel)
+				}
+			}
+		}
+	}
+	return ""
+}
 
 // outputsList 作品库:聚合全部项目的成片(含 2K 版本/素材包状态)。
 func (s *Server) outputsList(w http.ResponseWriter, r *http.Request) {
 	type OutputItem struct {
 		Project   string `json:"project"`
 		Title     string `json:"title"`
+		Cover     string `json:"cover"`      // 项目封面(角色定妆照/场景图相对路径)
 		Final     string `json:"final"`      // 相对路径 output/final.mp4(可能空)
 		Final2K   string `json:"final_2k"`   // 相对路径(可能空)
 		SRT       bool   `json:"srt"`
@@ -26,7 +52,7 @@ func (s *Server) outputsList(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []OutputItem{}
 	for _, p := range s.store.List() {
-		item := OutputItem{Project: p.ID, Title: p.Name, UpdatedAt: p.UpdatedAt.Format("2006-01-02 15:04")}
+		item := OutputItem{Project: p.ID, Title: p.Name, Cover: s.projectCover(p.ID), UpdatedAt: p.UpdatedAt.Format("2006-01-02 15:04")}
 		if plan, err := s.store.LoadPlan(p.ID); err == nil {
 			item.Shots = len(plan.Shots)
 			item.Title = plan.Title

@@ -1,7 +1,7 @@
 <script setup>
 import { G, api, refreshStatus } from '../store'
 import { THEMES, loadPrefs, applyTheme } from '../themes'
-import { reactive, onMounted, ref, computed } from 'vue'
+import { reactive, onMounted, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const form = reactive({
@@ -9,6 +9,13 @@ const form = reactive({
   llm: {}, comfy: {}, minimax: {}, ff: {}, render: {},
 })
 const testing = ref('')
+async function loadSettings() {
+  try {
+    const s = await api.getSettings()
+    Object.assign(form, s)
+  } catch (e) { ElMessage.error(e.message) }
+}
+watch(() => G.tick.settings, loadSettings)
 
 // 个性化:主题与玻璃拟态(纯前端偏好,即时生效即时保存)
 const appear = reactive({ theme: 'midnight-amber', glass: false, glassAlpha: 0.72 })
@@ -43,6 +50,28 @@ async function save() {
     ElMessage.success('设置已保存')
     refreshStatus()
   } catch (e) { ElMessage.error(e.message) }
+}
+
+// 悬浮条:一键测试全部依赖
+const testingAll = ref(false)
+async function testAll() {
+  testingAll.value = true
+  let fail = 0
+  for (const t of ['llm', 'comfy', 'minimax', 'vlm']) {
+    testing.value = t
+    try {
+      const r = await fetch('/api/test', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ target: t })
+      })
+      const d = await r.json()
+      if (!r.ok) { fail++; ElMessage.error(d.error || `HTTP ${r.status}`) }
+    } catch { fail++ }
+  }
+  testing.value = ''
+  if (!fail) ElMessage.success('全部依赖连接正常 ✓')
+  else ElMessage.warning(`${fail} 项连接异常,详见消息`)
+  testingAll.value = false
 }
 
 async function testConn(target) {
@@ -259,11 +288,25 @@ async function testConn(target) {
       </div>
 
       <div class="flex justify-end gap-2">
-        <el-button @click="testLLM">测试</el-button>
+        <el-button @click="testAll" :loading="testingAll">测试全部</el-button>
         <el-button type="primary" @click="save">
           <el-icon class="mr-1"><Check /></el-icon>保存设置
         </el-button>
       </div>
+    </div>
+
+    <!-- 悬浮操作条:右侧跟随滚动 -->
+    <div class="float-actions">
+      <el-tooltip content="依次测试 LLM / ComfyUI / MiniMax / VLM 连通性" placement="left">
+        <button class="fa-btn" :disabled="testingAll || !!testing" @click="testAll">
+          <el-icon :size="18"><Connection /></el-icon>测试
+        </button>
+      </el-tooltip>
+      <el-tooltip content="保存全部设置" placement="left">
+        <button class="fa-btn primary" @click="save">
+          <el-icon :size="18"><Check /></el-icon>保存
+        </button>
+      </el-tooltip>
     </div>
   </div>
 </template>

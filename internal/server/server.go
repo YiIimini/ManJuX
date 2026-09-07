@@ -271,13 +271,14 @@ func keepStr(dst *string, cur string) {
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		*project.Project
-		HasPlan bool `json:"has_plan"`
-		Done    int  `json:"shots_done"`
-		Total   int  `json:"shots_total"`
+		HasPlan bool   `json:"has_plan"`
+		Done    int    `json:"shots_done"`
+		Total   int    `json:"shots_total"`
+		Cover   string `json:"cover"` // 项目封面(角色定妆照/场景图)
 	}
 	out := []item{}
 	for _, p := range s.store.List() {
-		it := item{Project: p}
+		it := item{Project: p, Cover: s.projectCover(p.ID)}
 		if plan, err := s.store.LoadPlan(p.ID); err == nil {
 			it.HasPlan = true
 			it.Total = len(plan.Shots)

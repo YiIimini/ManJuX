@@ -131,25 +131,27 @@ function stateChip(p) {
       还没有项目 —— 点击「新建项目」开始第一条短视频
     </div>
 
-    <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(300px,1fr))">
+    <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
       <div v-for="p in G.projects" :key="p.id" class="shot-card proj-card cursor-pointer" @click="openProject(p.id)">
         <div class="proj-cover">
-          <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <el-icon :size="34" color="var(--mx-text3)"><Film /></el-icon>
+          <img v-if="p.cover" :src="api.fileURL(p.id, p.cover)" alt=""
+               style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;filter:saturate(1.08)" />
+          <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <el-icon :size="30" color="var(--mx-text3)"><Film /></el-icon>
             <span class="timecode">{{ p.has_plan ? p.shots_total + ' 镜' : 'NEW' }}</span>
           </div>
-          <div class="absolute top-3 right-3">
+          <div class="absolute top-2.5 right-2.5">
             <i class="dot" :class="stateChip(p).c"></i>
           </div>
         </div>
-        <div class="p-4 flex flex-col gap-2.5">
+        <div class="px-3.5 py-3 flex flex-col gap-2">
           <div class="flex items-center gap-2">
-            <b class="truncate flex-1 text-[15px]">{{ p.name }}</b>
-            <span class="timecode">{{ stateChip(p).t }}</span>
-            <el-button text size="small" @click.stop="removeProject(p)"><el-icon><Delete /></el-icon></el-button>
+            <b class="truncate flex-1 text-sm">{{ p.name }}</b>
+            <span class="timecode" style="font-size:10px">{{ stateChip(p).t }}</span>
+            <el-button text size="small" @click.stop="removeProject(p)"><el-icon :size="13"><Delete /></el-icon></el-button>
           </div>
           <el-progress v-if="p.shots_total" :percentage="Math.round(p.shots_done * 100 / p.shots_total)"
-                       :stroke-width="6" :show-text="false"
+                       :stroke-width="5" :show-text="false"
                        :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
         </div>
       </div>

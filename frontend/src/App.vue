@@ -1,8 +1,8 @@
 <script setup>
 import { onMounted, onUnmounted, computed, ref, reactive } from 'vue'
-import { G, api, connectEvents, refreshStatus, refreshProjects } from './store'
-import { applyTheme } from './themes'
+import { G, api, connectEvents, refreshStatus, refreshProjects, refreshProject } from './store'
 import { ElMessageBox } from 'element-plus'
+import { applyTheme } from './themes'
 import HomeView from './views/HomeView.vue'
 import ProjectView from './views/ProjectView.vue'
 import SettingsView from './views/SettingsView.vue'
@@ -27,7 +27,6 @@ const NAV = [
   { id: 'library',  label: '资产库', icon: 'Collection' },
   { id: 'outputs',  label: '作品库', icon: 'VideoCamera' },
   { id: 'comfy',    label: 'ComfyUI', icon: 'Cpu' },
-  { id: 'settings', label: '设置',   icon: 'Setting' },
 ]
 
 const nav = (v) => {
@@ -38,6 +37,20 @@ const toggleSide = () => {
   collapse.value = !collapse.value
   localStorage.setItem('mx-side', collapse.value ? '1' : '0')
 }
+
+// 刷新当前视图内容(非整页 reload):home 拉项目表,project 拉详情,其余视图 tick 自刷新
+function refreshCurrent() {
+  refreshStatus()
+  switch (G.view) {
+    case 'home': refreshProjects(); break
+    case 'project': refreshProject(); break
+    case 'library': G.tick.library++; break
+    case 'outputs': G.tick.outputs++; break
+    case 'comfy': G.tick.comfy++; break
+    case 'settings': G.tick.settings++; break
+  }
+}
+
 const win = async (action) => {
   try {
     if (action === 'close') {
@@ -61,6 +74,8 @@ const verLabel = computed(() => {
   const v = (G.status?.version || '').replace(/^v+/i, '')
   return v ? 'V' + v : 'V…'
 })
+// 占用分级:60/85 双阈值 → 绿/琥珀/红
+const loadCls = (v) => v > 85 ? 'hot' : (v > 60 ? 'warm' : 'cool')
 
 onMounted(() => {
   applyTheme() // 主题与玻璃偏好(启动即恢复)
@@ -124,64 +139,74 @@ const env = computed(() => G.status?.env)
 
       <div class="flex-1"></div>
 
-      <!-- 工具区:刷新 / 设置 -->
       <div class="side-tools">
-        <el-tooltip content="刷新界面" :disabled="!collapse" placement="right">
-          <button class="side-tool" @click="location.reload()">
-            <el-icon :size="16"><RefreshRight /></el-icon>
-            <span class="side-label" v-if="!collapse">刷新</span>
-          </button>
-        </el-tooltip>
-        <el-tooltip content="设置" :disabled="!collapse" placement="right">
-          <button class="side-tool" :class="{ on: G.view === 'settings' }" @click="nav('settings')">
-            <el-icon :size="16"><Setting /></el-icon>
-            <span class="side-label" v-if="!collapse">设置</span>
-          </button>
-        </el-tooltip>
-        <el-tooltip :content="collapse ? '展开导航' : '收起导航'" placement="right">
+        <el-tooltip content="收起导航" v-if="!collapse" placement="right">
           <button class="side-tool" @click="toggleSide">
-            <el-icon :size="16"><component :is="collapse ? 'Expand' : 'Fold'" /></el-icon>
+            <el-icon :size="16"><Fold /></el-icon>
+            <span class="side-label">收起</span>
           </button>
         </el-tooltip>
-      </div>
-
-      <!-- 窗口控制(无边框自绘) -->
-      <div class="side-winctl">
-        <button class="winbtn" title="最小化" @click="win('minimise')">
-          <svg width="11" height="11" viewBox="0 0 11 11"><rect x="1" y="5" width="9" height="1.2" fill="currentColor"/></svg>
-        </button>
-        <button class="winbtn" :title="maxed ? '还原' : '最大化'" @click="win('maximise')">
-          <svg width="11" height="11" viewBox="0 0 11 11"><rect x="1.5" y="1.5" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-        </button>
-        <button class="winbtn close" title="关闭" @click="win('close')">
-          <svg width="11" height="11" viewBox="0 0 11 11"><path d="M1.5 1.5l8 8M9.5 1.5l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
-        </button>
+        <el-tooltip content="展开导航" v-else placement="right">
+          <button class="side-tool" @click="toggleSide">
+            <el-icon :size="16"><Expand /></el-icon>
+          </button>
+        </el-tooltip>
       </div>
     </aside>
 
     <!-- ▎右侧主列 -->
     <div class="maincol">
-      <!-- 顶栏:中央系统状态;空白区为窗口拖动区 -->
-      <header class="topbar2" style="--wails-draggable:drag" @dblclick.self="win('maximise')">
+      <!-- 顶栏:中央系统硬件状态;空白区为窗口拖动区;右上窗口控制 -->
+      <header class="topbar2" style="--wails-draggable:drag">
+        <div class="topbar-left"></div>
         <div class="sysbar" v-if="sysmon.ramTotal">
-          <span class="sys-chip" :title="`${sysmon.coreN} 逻辑核心`">
-            <i class="dot" :class="sysmon.cpu > 85 ? 'bad' : 'ok'"></i>CPU
-            <b :class="{ hot: sysmon.cpu > 85 }">{{ sysmon.cpu.toFixed(0) }}%</b>
-          </span>
-          <span class="sys-chip" title="内存占用">
-            <i class="dot" :class="sysmon.ramPct > 90 ? 'bad' : 'ok'"></i>RAM
-            <b :class="{ hot: sysmon.ramPct > 90 }">{{ sysmon.ramPct.toFixed(0) }}%</b>
-            <em>{{ gb(sysmon.ramUsed) }}/{{ gb(sysmon.ramTotal) }}G</em>
-          </span>
-          <span class="sys-chip" v-if="sysmon.gpu" :title="sysmon.gpu.name">
-            <i class="dot" :class="sysmon.gpu.util > 95 ? 'bad' : 'ok'"></i>GPU
-            <b :class="{ hot: sysmon.gpu.util > 95 }">{{ sysmon.gpu.util.toFixed(0) }}%</b>
-            <em>{{ (sysmon.gpu.vramU / 1024).toFixed(1) }}/{{ (sysmon.gpu.vramT / 1024).toFixed(0) }}G</em>
-            <em :class="{ hot: sysmon.gpu.temp > 85 }">{{ sysmon.gpu.temp.toFixed(0) }}℃</em>
-          </span>
-          <span class="sys-chip dim" v-else title="未检测到 NVIDIA GPU">
-            <i class="dot warn"></i>GPU <em>—</em>
-          </span>
+          <div class="sys-mod" :class="loadCls(sysmon.cpu)" :title="`CPU ${sysmon.coreN} 逻辑核心`">
+            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><rect x="6" y="6" width="12" height="12" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M10 3v2M14 3v2M10 19v2M14 19v2M3 10h2M3 14h2M19 10h2M19 14h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="sys-v">{{ sysmon.cpu.toFixed(0) }}<i>%</i></span>
+            <span class="sys-bar"><b :style="{ width: sysmon.cpu + '%' }"></b></span>
+          </div>
+          <div class="sys-mod" :class="loadCls(sysmon.ramPct)" :title="`内存 ${gb(sysmon.ramUsed)}/${gb(sysmon.ramTotal)} GB`">
+            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><rect x="4" y="7" width="16" height="10" rx="2.5" stroke="currentColor" stroke-width="1.8"/><path d="M8 7v4M12 7v4M16 7v4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="sys-v">{{ sysmon.ramPct.toFixed(0) }}<i>%</i></span>
+            <span class="sys-bar"><b :style="{ width: sysmon.ramPct + '%' }"></b></span>
+            <span class="sys-sub">{{ gb(sysmon.ramUsed) }}/{{ gb(sysmon.ramTotal) }}G</span>
+          </div>
+          <div class="sys-mod" v-if="sysmon.gpu" :class="loadCls(sysmon.gpu.util)" :title="sysmon.gpu.name || 'GPU'">
+            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h11A2.5 2.5 0 0 1 19 8.5V15a3 3 0 0 1-3 3h-6.5A3.5 3.5 0 0 1 6 14.5V13H4.5A1.5 1.5 0 0 1 3 11.5v-3Z" stroke="currentColor" stroke-width="1.8"/><circle cx="13.5" cy="11" r="2.4" stroke="currentColor" stroke-width="1.8"/><path d="M19 9h2M19 12h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+            <span class="sys-v">{{ sysmon.gpu.util.toFixed(0) }}<i>%</i></span>
+            <span class="sys-bar"><b :style="{ width: sysmon.gpu.util + '%' }"></b></span>
+            <span class="sys-sub">{{ (sysmon.gpu.vramU / 1024).toFixed(1) }}/{{ (sysmon.gpu.vramT / 1024).toFixed(0) }}G</span>
+            <span class="sys-temp" :class="{ hot: sysmon.gpu.temp > 85 }">{{ sysmon.gpu.temp.toFixed(0) }}°</span>
+          </div>
+          <div class="sys-mod dim" v-else title="未检测到 NVIDIA GPU">
+            <svg class="sys-ico" viewBox="0 0 24 24" fill="none"><path d="M3 8.5A2.5 2.5 0 0 1 5.5 6h11A2.5 2.5 0 0 1 19 8.5V15a3 3 0 0 1-3 3h-6.5A3.5 3.5 0 0 1 6 14.5V13H4.5A1.5 1.5 0 0 1 3 11.5v-3Z" stroke="currentColor" stroke-width="1.8"/></svg>
+            <span class="sys-v sys-na">GPU<i>—</i></span>
+          </div>
+        </div>
+
+        <!-- 右上:刷新 / 设置 / 最小化 / 最大化 / 关闭 -->
+        <div class="topctl">
+          <el-tooltip content="刷新当前页面内容" placement="bottom">
+            <button class="topbtn" @click="refreshCurrent">
+              <el-icon :size="15"><RefreshRight /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip content="设置" placement="bottom">
+            <button class="topbtn" :class="{ on: G.view === 'settings' }" @click="nav('settings')">
+              <el-icon :size="15"><Setting /></el-icon>
+            </button>
+          </el-tooltip>
+          <span class="topctl-sep"></span>
+          <button class="topbtn" title="最小化" @click="win('minimise')">
+            <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="5.5" width="9" height="1.2" fill="currentColor"/></svg>
+          </button>
+          <button class="topbtn" :title="maxed ? '还原' : '最大化'" @click="win('maximise')">
+            <svg v-if="!maxed" width="12" height="12" viewBox="0 0 12 12"><rect x="1.8" y="1.8" width="8.4" height="8.4" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+            <svg v-else width="12" height="12" viewBox="0 0 12 12"><rect x="1.5" y="3.5" width="7" height="7" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/><path d="M3.6 3.6V2.4A.9.9 0 0 1 4.5 1.5h5.1A.9.9 0 0 1 10.5 2.4v5.1a.9.9 0 0 1-.9.9H8.4" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          </button>
+          <button class="topbtn close" title="关闭" @click="win('close')">
+            <svg width="12" height="12" viewBox="0 0 12 12"><path d="M2 2l8 8M10 2l-8 8" stroke="currentColor" stroke-width="1.3"/></svg>
+          </button>
         </div>
       </header>
 

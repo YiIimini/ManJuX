@@ -826,3 +826,178 @@ html, body, #app {
   color: var(--mx-amber-hi) !important;
   border-color: rgba(255, 180, 84, .4) !important;
 }
+
+/* ============================================================
+   顶栏 v2(2026-09-07 二次打磨):硬件模块化 + 右上窗口控制
+   ============================================================ */
+.topbar-left { flex: 1; min-width: 0; height: 100%; }
+
+/* 硬件状态模块:图标+数值+迷你条,占用分级配色 */
+.sys-mod {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 10px 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--mx-line);
+  background: rgba(255, 255, 255, .022);
+  transition: border-color .2s;
+  white-space: nowrap;
+}
+.sys-ico { width: 15px; height: 15px; color: var(--mx-text3); flex: none; }
+.sys-mod.cool .sys-ico { color: var(--mx-green); }
+.sys-mod.warm .sys-ico { color: var(--mx-yellow); }
+.sys-mod.hot .sys-ico { color: var(--mx-red); }
+.sys-v {
+  font-family: var(--mx-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--mx-text);
+  letter-spacing: .3px;
+}
+.sys-v i { font-style: normal; font-size: 9px; color: var(--mx-text3); margin-left: 1px; }
+.sys-sub, .sys-temp {
+  font-family: var(--mx-mono);
+  font-size: 10px;
+  color: var(--mx-text3);
+}
+.sys-temp.hot { color: var(--mx-red); }
+.sys-na { color: var(--mx-text3); }
+.sys-bar {
+  width: 34px;
+  height: 3.5px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, .07);
+  overflow: hidden;
+  flex: none;
+}
+.sys-bar b {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--mx-green);
+  transition: width .6s ease;
+}
+.sys-mod.warm .sys-bar b { background: var(--mx-yellow); }
+.sys-mod.hot .sys-bar b { background: var(--mx-red); }
+.sys-mod.dim { opacity: .55; }
+
+/* 右上窗口控制组 */
+.topctl {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  padding-right: 6px;
+  height: 100%;
+}
+.topbtn {
+  width: 34px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--mx-text2);
+  cursor: pointer;
+  transition: all .14s;
+}
+.topbtn:hover { background: rgba(45, 55, 82, .32); color: var(--mx-text); }
+.topbtn.on { color: var(--mx-amber); }
+.topbtn.close:hover { background: #e81123; color: #fff; }
+.topctl-sep {
+  width: 1px;
+  height: 13px;
+  background: var(--mx-line-hi);
+  margin: 0 4px;
+}
+
+/* ============ 管线产线网格 v3(防横向挤压)============ */
+.stage-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(252px, 1fr));
+  gap: 13px;
+}
+.stage-v3 {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 13px 14px 12px;
+  min-height: 128px;
+}
+.stage-v3-head { display: flex; align-items: center; gap: 10px; }
+.stage-v3-desc {
+  font-size: 11.5px;
+  color: var(--mx-text3);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.stage-v3-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+}
+.stage-runall {
+  border-style: dashed;
+  border-color: rgba(255, 180, 84, .35);
+  background:
+    linear-gradient(175deg, rgba(255, 180, 84, .05), rgba(0, 0, 0, .1)),
+    var(--mx-panel-bg, #10141f);
+}
+
+/* ============ Tip 气泡(高对比可读)============ */
+.el-popper.is-dark {
+  background: #1b2233 !important;
+  border: 1px solid var(--mx-line-hi) !important;
+  color: var(--mx-text) !important;
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .5);
+  max-width: 320px;
+}
+.el-popper.is-dark .el-popper__arrow::before {
+  background: #1b2233 !important;
+  border-color: var(--mx-line-hi) !important;
+}
+
+/* ============ 设置页悬浮操作条(跟随滚动)============ */
+.float-actions {
+  position: fixed;
+  right: 22px;
+  top: 46%;
+  transform: translateY(-50%);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.fa-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 180, 84, .35);
+  background:
+    linear-gradient(175deg, rgba(255, 255, 255, .04), rgba(0, 0, 0, .14)),
+    var(--mx-panel-bg, #10141f);
+  backdrop-filter: var(--mx-bd-filter, none);
+  color: var(--mx-amber-hi);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all .16s;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .35);
+}
+.fa-btn:hover { transform: translateX(-2px); border-color: rgba(255, 180, 84, .6); }
+.fa-btn.primary { background: linear-gradient(160deg, var(--mx-amber-hi), var(--mx-amber-deep)); color: #20150a; border: none; }
+.fa-btn.primary:hover { filter: brightness(1.08); }

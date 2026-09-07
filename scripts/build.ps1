@@ -20,6 +20,10 @@ if (-not $ver) { $ver = "dev" }
 if ($ver -notmatch '^v') { $ver = "v$ver" }
 Write-Host "==> ManJuX 构建版本: $ver" -ForegroundColor Cyan
 
+# 0) 静默清理运行中的实例(exe 被锁会导致复制失败;构建过程零弹窗零打扰)
+Get-Process ManJuX -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 600
+
 # 1) 前端(Vue3 + Vite + Element Plus + Tailwind)
 if (Test-Path "$root/frontend/src") {
   Write-Host "==> 构建前端" -ForegroundColor Cyan

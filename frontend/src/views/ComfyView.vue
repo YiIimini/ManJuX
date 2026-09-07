@@ -1,5 +1,6 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, watch } from 'vue'
+import { G } from '../store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const st = ref(null)
@@ -33,6 +34,7 @@ async function refreshVersions(online = false) {
   verLoading.value = false
 }
 onMounted(() => { refresh(); refreshVersions(false) })
+watch(() => G.tick.comfy, () => { refresh(); refreshVersions(false) })
 
 async function act(action, tip) {
   if (tip) {

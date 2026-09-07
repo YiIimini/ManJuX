@@ -15,6 +15,7 @@ async function refresh() {
   loading.value = false
 }
 onMounted(refresh)
+watch(() => G.tick.library, refresh)
 
 const list = computed(() => lib.value[kind.value] || [])
 
