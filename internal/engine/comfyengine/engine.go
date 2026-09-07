@@ -118,13 +118,18 @@ func parsePort(baseURL string) (string, error) {
 }
 
 // Render 执行单镜渲染:encode(条件缓存,可选)→ 采样 → 下载产物。
+// ClearQueue 清空待执行队列(不影响运行中任务)。渲染阶段开始时调用一次,
+// 清掉上次异常退出遗留的任务;不放在每镜 Render 里 —— fail-continue 链会误清
+// 前镜仍在排队的任务(2026-09-08 事故根因之一)。
+func (e *Engine) ClearQueue(ctx context.Context) {
+	e.cli.ClearPending(ctx)
+}
+
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
 	c := e.cfg()
 	if err := e.Available(ctx); err != nil {
 		return nil, err
 	}
-	// 防重复渲染:清掉上次异常退出遗留的待执行任务(运行中任务不受影响)
-	e.cli.ClearPending(ctx)
 	length := engine.AlignLength(job.Length)
 	w, h := engine.SnapCanvas(job.Width, job.Height)
 	// 接缝模式补偿:pinned 头(22 帧)会被 Trim 裁掉,渲染长度须加回,保证成片时长不缩水

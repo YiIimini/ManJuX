@@ -364,9 +364,18 @@ func (c *Client) Queue(ctx context.Context) (running, pending []string, err erro
 	extract := func(items [][2]any) []string {
 		var ids []string
 		for _, it := range items {
-			if len(it) > 0 {
-				if s, ok := it[0].(string); ok {
+			// ComfyUI 0.34 /queue 项为 [序号, "prompt_id", graph]([2]any 截取前两个);
+			// 旧版为 [序号, ["prompt_id", …]];兼容 id 在 it[0]/it[1]/it[1][0] 三种形态。
+			for _, cand := range []any{it[0], it[1]} {
+				if s, ok := cand.(string); ok && s != "" {
 					ids = append(ids, s)
+					break
+				}
+				if arr, ok := cand.([]any); ok && len(arr) > 0 {
+					if s, ok := arr[0].(string); ok && s != "" {
+						ids = append(ids, s)
+						break
+					}
 				}
 			}
 		}
@@ -409,7 +418,7 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 							onProgress(2, "排队中")
 						} else if containsID(runIDs, promptID) {
 							pct := progressFromQueuePos(runIDs, promptID)
-							onProgress(pct, fmt.Sprintf("执行中(第 %d 位)", pct))
+							onProgress(pct, fmt.Sprintf("执行中(%d%%)", pct))
 						} else {
 							onProgress(50, "执行中")
 						}

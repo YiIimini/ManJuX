@@ -28,10 +28,11 @@ type Client struct {
 	http    *http.Client
 }
 
-// New 创建客户端。
+// New 创建客户端。超时默认 600s:深度推理模型(deepseek-v4-flash 等)分镜
+// 直出任务实测思考+输出可长达 4-6 分钟,300s 会误杀。
 func New(baseURL, apiKey, model string, timeoutSec int) *Client {
 	if timeoutSec <= 0 {
-		timeoutSec = 300
+		timeoutSec = 600
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &Client{
@@ -49,11 +50,11 @@ func (c *Client) Configured() bool {
 }
 
 type chatRequest struct {
-	Model           string    `json:"model"`
-	Messages        []Message `json:"messages"`
-	Temperature     float64   `json:"temperature"`
-	MaxTokens       int       `json:"max_tokens,omitempty"`
-	ResponseFormat  *struct {
+	Model          string    `json:"model"`
+	Messages       []Message `json:"messages"`
+	Temperature    float64   `json:"temperature"`
+	MaxTokens      int       `json:"max_tokens,omitempty"`
+	ResponseFormat *struct {
 		Type string `json:"type"`
 	} `json:"response_format,omitempty"`
 	Stream bool `json:"stream"`
@@ -77,13 +78,15 @@ type chatRespMessage struct {
 
 // Chat 发起一次对话。jsonMode=true 时请求 response_format=json_object;
 // 思考型模型对 JSON mode 兼容不稳,重试时自动降级普通模式(解析层有容错)。
+// 深度推理模型单次响应可长达数分钟:仅对可重试错误(网络/429/5xx)重试 1 次,
+// 鉴权/参数类(401/403/404/400)立即失败,避免把用户晾在十几分钟里。
 func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (string, error) {
 	if !c.Configured() {
 		return "", fmt.Errorf("LLM 未配置:请在工作台「设置」中填写 BaseURL / API Key / Model")
 	}
 	var lastErr error
 	useJSON := jsonMode
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt < 2; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
@@ -95,7 +98,7 @@ func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (strin
 			Model:       c.model,
 			Messages:    msgs,
 			Temperature: 0.7,
-			MaxTokens:   32768, // 推理模型的思考 token 也计入,须留足余量防正文为空
+			MaxTokens:   65536, // 推理模型的思考 token 也计入;实测 6 镜方案 completion 可达 3.2 万,留足余量防截断
 			Stream:      false,
 		}
 		if useJSON {
@@ -113,10 +116,30 @@ func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (strin
 		if ctx.Err() != nil {
 			return "", ctx.Err()
 		}
-		useJSON = false
+		// 鉴权/参数/模型名错误:重试无意义,立即失败
+		if isFatalLLMError(err) {
+			return "", fmt.Errorf("LLM 调用失败: %w", err)
+		}
+		useJSON = false // 下一次降级普通模式
 	}
-	return "", fmt.Errorf("LLM 调用失败(已重试 3 次): %w", lastErr)
+	return "", fmt.Errorf("LLM 调用失败(已重试): %w", lastErr)
 }
+
+// isFatalLLMError 鉴权/参数/资源不存在类错误。
+func isFatalLLMError(err error) bool {
+	if se, ok := err.(*statusError); ok {
+		return se.code == 400 || se.code == 401 || se.code == 403 || se.code == 404
+	}
+	return false
+}
+
+// statusError HTTP 非 200 错误(携带状态码,供重试策略分类)。
+type statusError struct {
+	code int
+	body string
+}
+
+func (e *statusError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.code, e.body) }
 
 func (c *Client) do(ctx context.Context, body []byte) (string, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
@@ -136,7 +159,7 @@ func (c *Client) do(ctx context.Context, body []byte) (string, error) {
 		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, truncate(string(raw), 500))
+		return "", &statusError{code: resp.StatusCode, body: truncate(string(raw), 500)}
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(raw, &cr); err != nil {

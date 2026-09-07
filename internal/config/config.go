@@ -93,7 +93,7 @@ func Default() *Settings {
 			BaseURL: "https://api.deepseek.com/v1",
 			APIKey:  "",
 			Model:   "deepseek-chat",
-			Timeout: 300,
+			Timeout: 600,
 		},
 		Comfy: ComfySettings{
 			BaseURL:         "http://127.0.0.1:8190",

@@ -143,6 +143,9 @@ async function testConn(target) {
               <el-button :loading="testing==='llm'" @click="testConn('llm')">测试</el-button>
             </div>
           </el-form-item>
+          <el-form-item label="超时(秒;推理模型分镜直出建议 ≥600)" class="col-span-2">
+            <el-input-number v-model="form.llm.timeout" :min="60" :max="1800" :step="60" style="width:100%" />
+          </el-form-item>
         </el-form>
       </div>
 

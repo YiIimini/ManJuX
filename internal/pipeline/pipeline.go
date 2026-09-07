@@ -282,10 +282,33 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 	p := proj.Config.Params.Script
 	c.emit(proj.ID, PhaseScript, 0, "info", 15, "LLM 直出分镜(%s,%d 镜约 %d 秒)…", g.LLM.Model, p.MaxShots, p.TotalSeconds)
+	c.emit(proj.ID, PhaseScript, 0, "info", 15, "深度推理模型单次可思考数分钟属正常,期间每 30 秒报一次心跳,请勿提前停止")
+
+	// 心跳:LLM 推理期间持续可见进度,避免「看起来卡死」被误停
+	hbCtx, hbStop := context.WithCancel(ctx)
+	defer hbStop()
+	hbDone := make(chan struct{})
+	go func() {
+		defer close(hbDone)
+		start := time.Now()
+		tick := time.NewTicker(30 * time.Second)
+		defer tick.Stop()
+		for {
+			select {
+			case <-hbCtx.Done():
+				return
+			case <-tick.C:
+				c.emit(proj.ID, PhaseScript, 0, "info", 15, "⏳ LLM 仍在推理…已等待 %d 秒(推理模型深度思考,通常 2-6 分钟)", int(time.Since(start).Seconds()))
+			}
+		}
+	}()
+
 	plan, err := director.Generate(ctx, client, text, director.Options{
 		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
 		ExtraHint: composeStyleHint(p.Styles, p.StyleHint), Chibi: p.Chibi,
 	})
+	hbStop()
+	<-hbDone
 	if err != nil {
 		return err
 	}
@@ -559,6 +582,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 
 	clipsDir := filepath.Join(c.store.Dir(proj.ID), "clips")
 	_ = os.MkdirAll(clipsDir, 0o755)
+	// 阶段起点清一次遗留队列(仅本地引擎;绝不在逐镜循环内清,防误杀排队任务)
+	if ce, ok := eng.(*comfyengine.Engine); ok && engName == "comfy" {
+		ce.ClearQueue(ctx)
+	}
 	done, skipped, failed := 0, 0, 0
 	var failures []string
 	for i, shot := range shots {
