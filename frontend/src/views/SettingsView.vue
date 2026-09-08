@@ -176,6 +176,9 @@ async function testConn(target) {
           <el-form-item label="未运行时自动代管启动">
             <el-switch v-model="form.comfy.auto_start" />
           </el-form-item>
+          <el-form-item label="空闲自动退出(分钟;管线结束后无任务自动停引擎释放显存,0=常驻)">
+            <el-input-number v-model="form.comfy.idle_stop_min" :min="0" :max="240" :step="5" style="width:100%" />
+          </el-form-item>
           <el-form-item label="两阶段渲染(条件缓存 .pt)">
             <el-switch v-model="form.comfy.cond_cache" />
           </el-form-item>

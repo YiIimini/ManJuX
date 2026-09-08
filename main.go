@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -67,7 +68,8 @@ func main() {
 	}
 
 	reg := engine.NewRegistry()
-	reg.Register(comfyengine.New(func() config.ComfySettings { return cfgMgr.Get().Comfy }))
+	comfyEng := comfyengine.New(func() config.ComfySettings { return cfgMgr.Get().Comfy })
+	reg.Register(comfyEng)
 	reg.Register(h3api.New(func() config.MiniMaxSettings { return cfgMgr.Get().MiniMax }))
 
 	bus := pipeline.NewBus()
@@ -81,6 +83,14 @@ func main() {
 	// 跨项目资产库(角色/场景一次定妆全局复用)
 	lib, err := library.New(filepath.Join(g.DataDir, "assets_library"))
 	fatalIf(err, "初始化资产库失败")
+	// ComfyUI 空闲自动退出通知 → 全局事件流(用户可见)
+	comfyengine.SetIdleNotice(func(mins int) {
+		bus.Publish(pipeline.Event{
+			Phase: "comfy", Level: "info",
+			Message: "ComfyUI 已空闲 " + itoa(mins) + " 分钟无任务,自动退出释放资源(下次渲染将自动重新启动)",
+		})
+	})
+	comfyEng.RunIdleWatcher()
 	coord := pipeline.New(store, cfgMgr, reg, f, bus, lib)
 	srv := server.New(cfgMgr, store, reg, coord, f, bus, lib)
 
@@ -158,6 +168,8 @@ func main() {
 	})
 	fatalIf(err, "桌面窗口启动失败")
 }
+
+func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 func mustExeDir() string {
 	exe, err := os.Executable()

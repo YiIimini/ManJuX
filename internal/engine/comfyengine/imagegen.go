@@ -12,6 +12,7 @@ import (
 // 误用 qwen_image 会报 "Krea2 expects conditioning with 12x2560=30720 features")。
 // 返回下载到本地的图片绝对路径。
 func (e *Engine) GenerateImage(ctx context.Context, prompt string, neg string, seed int64, w, h int, outPath string) (string, error) {
+	touchBusy()
 	c := e.cfg()
 	if err := e.Available(ctx); err != nil {
 		return "", err

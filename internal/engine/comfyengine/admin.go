@@ -118,6 +118,7 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 
 // StartAdmin 手动代管启动。
 func (e *Engine) StartAdmin(ctx context.Context) error {
+	touchBusy()
 	if e.cli.Alive(ctx) {
 		return fmt.Errorf("ComfyUI 已在运行")
 	}

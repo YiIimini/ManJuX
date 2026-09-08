@@ -86,6 +86,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 		return fmt.Errorf("启动 ComfyUI 失败: %w", err)
 	}
 	e.proc = cmd.Process
+	touchBusy()
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
 		select {
@@ -126,6 +127,7 @@ func (e *Engine) ClearQueue(ctx context.Context) {
 }
 
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
+	touchBusy()
 	c := e.cfg()
 	if err := e.Available(ctx); err != nil {
 		return nil, err
