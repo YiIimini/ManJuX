@@ -9,8 +9,19 @@ import (
 	"strings"
 )
 
-// projectCover 项目封面:首个角色定妆照 > 首个场景图(无资产返回空,前端用占位)。
+// projectCover 项目封面:自定义封面(assets/cover.*) > 首个角色定妆照 > 首个场景图。
 func (s *Server) projectCover(id string) string {
+	if ents, err := os.ReadDir(filepath.Join(s.store.Dir(id), "assets")); err == nil {
+		for _, e := range ents {
+			n := strings.ToLower(e.Name())
+			if strings.HasPrefix(n, "cover.") {
+				switch strings.TrimPrefix(n, "cover.") {
+				case "png", "jpg", "jpeg", "webp":
+					return "assets/" + e.Name()
+				}
+			}
+		}
+	}
 	for _, sub := range []string{"characters", "scenes"} {
 		dir := filepath.Join(s.store.Dir(id), "assets", sub)
 		ents, err := os.ReadDir(dir)

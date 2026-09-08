@@ -39,6 +39,10 @@ const novelMode = ref(false)
 const novelText = ref('')
 const splitting = ref(false)
 const novelInput = ref(null)
+const novelDirInput = ref(null)
+const novelCover = ref(null)   // File:系列封面(目录「封面」文件夹自动识别 或 手动选择)
+const novelCoverInput = ref(null)
+const novelCoverURL = computed(() => novelCover.value ? URL.createObjectURL(novelCover.value) : '')
 function onPickNovel(ev) {
   const f = ev.target.files?.[0]
   ev.target.value = ''
@@ -48,14 +52,58 @@ function onPickNovel(ev) {
   rd.onload = () => { novelText.value = String(rd.result || '') }
   rd.readAsText(f, 'utf-8')
 }
+// 目录导入:合并目录内 txt/md 章节(按路径排序);
+// 路径含「封面」目录的图片自动识别为系列封面(选包含小说与封面文件夹的上层目录即可)。
+function onPickNovelDir(ev) {
+  const files = Array.from(ev.target.files || [])
+  ev.target.value = ''
+  if (!files.length) return
+  const chapters = files.filter(f => /\.(txt|md)$/i.test(f.name) && !f.webkitRelativePath.includes('封面'))
+  const cover = files.find(f => /\.(png|jpe?g|webp)$/i.test(f.name) && (f.webkitRelativePath || '').includes('封面'))
+  if (!chapters.length) { ElMessage.warning('所选目录中没有 txt/md 章节文件'); return }
+  chapters.sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, 'zh'))
+  if (cover) novelCover.value = cover
+  let done = 0
+  let text = ''
+  for (const ch of chapters) {
+    const rd = new FileReader()
+    rd.onload = () => {
+      text += (text ? '\n\n' : '') + String(rd.result || '')
+      if (++done === chapters.length) novelText.value = text
+    }
+    rd.readAsText(ch, 'utf-8')
+  }
+  ElMessage.info(`已读入 ${chapters.length} 个章节文件` + (cover ? ',并识别到封面' : ''))
+}
+function onPickNovelCover(ev) {
+  const f = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!f) return
+  if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { ElMessage.error('仅支持 png/jpg/webp'); return }
+  novelCover.value = f
+}
 async function doNovelSplit() {
   if (novelText.value.trim().length < 200) { ElMessage.warning('小说正文太短(至少 200 字)'); return }
   splitting.value = true
   try {
     // 书名留空 → 后端用 LLM 从小说内容自动识别
     const r = await api.novelSplit(newName.value.trim() || '', novelText.value, 0)
-    ElMessage.success(`拆集完成:《${r.book}》共 ${r.episodes.length} 集,点击项目组上的「批量产线」开始逐集生产`)
+    // 封面:上传到每集项目(系列卡取第一集封面,单集卡也各自显示)
+    if (novelCover.value) {
+      let okc = 0
+      for (const e of r.episodes) {
+        try {
+          const fd = new FormData()
+          fd.append('file', novelCover.value)
+          const cr = await fetch(`/api/projects/${encodeURIComponent(e.project)}/cover`, { method: 'POST', body: fd })
+          if (cr.ok) okc++
+        } catch { /* 单集失败不阻塞 */ }
+      }
+      if (okc) ElMessage.success(`封面已应用到 ${okc} 集`)
+    }
+    ElMessage.success(`拆集完成:《${r.book}》共 ${r.episodes.length} 集,点击「剧集合集」卡片管理并批量生产`)
     novelText.value = ''
+    novelCover.value = null
     dlg.value = false
     await refreshProjects()
   } catch (e) { ElMessage.error(e.message) } finally { splitting.value = false }
@@ -425,11 +473,24 @@ function stateChip(p) {
                   style="flex:1" />
                 <div class="flex flex-col gap-2">
                   <input ref="novelInput" type="file" accept=".txt,.md" hidden @change="onPickNovel" />
+                  <input ref="novelDirInput" type="file" webkitdirectory hidden @change="onPickNovelDir" />
+                  <input ref="novelCoverInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="onPickNovelCover" />
                   <el-button size="small" @click="novelInput?.click()"><el-icon class="mr-1"><Upload /></el-icon>导入 txt / md</el-button>
+                  <el-button size="small" @click="novelDirInput?.click()"><el-icon class="mr-1"><FolderOpened /></el-icon>导入目录</el-button>
                   <span class="text-xs" style="color:var(--mx-text3)">{{ novelText.length ? novelText.length + ' 字' : '' }}</span>
                 </div>
               </div>
-              <div class="text-xs" style="color:var(--mx-text3)">支持 txt / md;拆集需通读全文(2-6 分钟,日志有实时心跳);书名留空时 AI 自动识别;完成后在项目组上点「批量产线」</div>
+              <div class="flex items-center gap-3">
+                <div v-if="novelCover" class="flex items-center gap-2 p-1.5 rounded-lg" style="border:1px solid var(--mx-line-hi)">
+                  <img :src="novelCoverURL" style="width:34px;height:46px;object-fit:cover;border-radius:5px" />
+                  <el-button text size="small" @click="novelCover = null"><el-icon><Close /></el-icon></el-button>
+                </div>
+                <el-button v-else size="small" plain @click="novelCoverInput?.click()">
+                  <el-icon class="mr-1"><Picture /></el-icon>选择封面(可选)
+                </el-button>
+                <span class="text-xs" style="color:var(--mx-text3)">封面应用为每集项目封面</span>
+              </div>
+              <div class="text-xs" style="color:var(--mx-text3)">「导入目录」合并章节;若所选目录(或其上层)含「封面」文件夹,其中的图片自动识别为系列封面;书名留空 AI 自动识别;拆集 2-6 分钟(日志有实时心跳)</div>
             </template>
           </div>
         </el-form-item>

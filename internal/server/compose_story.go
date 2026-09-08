@@ -4,6 +4,8 @@ package server
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"fmt"
 	"net/http"
 	"strings"
@@ -99,4 +101,54 @@ func (s *Server) handleComposeStory(w http.ResponseWriter, r *http.Request) {
 		Message: fmt.Sprintf("✔ AI 创作完成:%d 字,已写入「剧本」,可直接生成分镜", n),
 	})
 	writeJSON(w, 200, map[string]any{"ok": true, "chars": n})
+}
+
+
+// uploadCover 项目自定义封面:multipart 字段 file(png/jpg/webp)→ assets/cover.<ext>。
+// 项目封面优先级:自定义封面 > 角色定妆照(整本小说导入时取同级「封面」文件夹的图)。
+func (s *Server) uploadCover(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.store.Get(id); !ok {
+		writeErr(w, 404, fmt.Errorf("项目不存在"))
+		return
+	}
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		writeErr(w, 400, fmt.Errorf("表单解析失败: %v", err))
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, 400, fmt.Errorf("缺少封面文件"))
+		return
+	}
+	defer file.Close()
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(hdr.Filename), "."))
+	switch ext {
+	case "png", "jpg", "jpeg", "webp":
+	default:
+		writeErr(w, 400, fmt.Errorf("仅支持 png/jpg/webp"))
+		return
+	}
+	dir := filepath.Join(s.store.Dir(id), "assets")
+	_ = os.MkdirAll(dir, 0o755)
+	// 清旧扩展,保唯一
+	if old, err := os.ReadDir(dir); err == nil {
+		for _, e := range old {
+			if strings.HasPrefix(strings.ToLower(e.Name()), "cover.") {
+				_ = os.Remove(filepath.Join(dir, e.Name()))
+			}
+		}
+	}
+	dst := filepath.Join(dir, "cover."+ext)
+	out, err := os.Create(dst)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	defer out.Close()
+	if _, err := out.ReadFrom(file); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "cover": "assets/cover." + ext})
 }
