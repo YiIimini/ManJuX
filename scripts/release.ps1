@@ -23,9 +23,12 @@ if (-not $Version) {
 }
 
 # 1.5) 交付体检门禁:FAIL 立即中止,禁止带病发布
+# (外部程序 stderr 在 EAP=Stop 下会被当作错误终止,门禁段内临时放宽)
 $check = "C:/Mi/Ai/WorkBench/tools/deliver_check.py"
 if (Test-Path $check) {
+  $ErrorActionPreference = "Continue"
   $out = (& python $check $root 2>&1 | Out-String)
+  $ErrorActionPreference = "Stop"
   if ($out -match "FAIL") {
     Write-Host $out -ForegroundColor Red
     throw "deliver_check FAIL:修复后重跑,禁止带病交付"

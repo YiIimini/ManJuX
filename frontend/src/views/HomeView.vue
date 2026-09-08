@@ -77,26 +77,32 @@ async function doCreate() {
   if (!newName.value.trim()) { ElMessage.warning('请输入项目名'); return }
   busy.value = true
   try {
-    await api.createProject(newName.value.trim())
     const id = newName.value.trim()
-    if (pickedFile.value?.kind === 'plan') {
-      await api.importPlan(id, pickedFile.value.plan)
-    } else if (pickedFile.value?.text) {
-      await api.saveSource(id, pickedFile.value.text)
-    }
-    if (aiMode.value && aiPrompt.value.trim()) {
-      // AI 现场创作:按需求即时发挥写完整故事(推理模型 1-3 分钟)
-      dlg.value = false
+    await api.createProject(id)
+    const useAI = aiMode.value && aiPrompt.value.trim()
+    if (useAI) {
+      // AI 现场创作:弹窗保持打开、按钮进入 loading(推理模型 1-3 分钟,
+      // 期间日志 ticker 有 30 秒心跳),完成后才关弹窗进项目
+      if (pickedFile.value) pickedFile.value = null // AI 模式不携带文件
       composing.value = true
       try {
         const r = await api.composeStory(id, aiPrompt.value.trim(), '')
         ElMessage.success(`AI 创作完成(${r.chars} 字),已写入「剧本」`)
       } catch (e) {
-        ElMessage.warning(`项目已创建,但 AI 创作失败:${e.message}(可在剧本页重试)`)
+        ElMessage.warning(`项目已创建,但 AI 创作失败:${e.message}(可进入剧本页点「AI 现场创作」重试)`)
       } finally { composing.value = false }
       aiPrompt.value = ''
+      dlg.value = false
+    } else if (pickedFile.value?.kind === 'plan') {
+      await api.importPlan(id, pickedFile.value.plan)
+      ElMessage.success(`项目「${id}」已创建(分镜已导入)`)
+      dlg.value = false
+    } else if (pickedFile.value?.text) {
+      await api.saveSource(id, pickedFile.value.text)
+      ElMessage.success(`项目「${id}」已创建(源文本已载入)`)
+      dlg.value = false
     } else {
-      ElMessage.success(`项目「${id}」已创建${pickedFile.value ? (pickedFile.value.kind === 'plan' ? '(分镜已导入)' : '(源文本已载入)') : ''}`)
+      ElMessage.success(`项目「${id}」已创建`)
       dlg.value = false
     }
     await refreshProjects()
@@ -200,7 +206,9 @@ function stateChip(p) {
     </div>
 
     <!-- 新建项目:可选上传 txt / md / json -->
-    <el-dialog v-model="dlg" title="新建短视频项目" width="560px">
+    <el-dialog v-model="dlg" title="新建短视频项目" width="560px"
+               :close-on-click-modal="!composing" :close-on-press-escape="!composing" :show-close="!composing"
+               v-loading="composing" element-loading-text="AI 创作中(1-3 分钟),日志有实时心跳…">
       <el-form label-position="top">
         <el-form-item label="项目名(中文 / 字母 / 数字 / _-)">
           <el-input v-model="newName" maxlength="40" placeholder="如:天庭外卖员-第二集" @keyup.enter="doCreate" />
