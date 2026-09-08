@@ -147,6 +147,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/novel-batch", s.handleNovelBatch)
 	m.HandleFunc("DELETE /api/novel-batch", s.handleNovelBatch)
 	m.HandleFunc("POST /api/comfy/open-web", s.comfyOpenWeb)
+	m.HandleFunc("POST /api/comfy/open-appwin", s.comfyOpenAppWin)
 	m.HandleFunc("POST /api/projects/{id}/import-plan", s.importPlan)
 	m.HandleFunc("POST /api/window/{action}", s.handleWindowAction)
 }
@@ -984,6 +985,24 @@ func (s *Server) comfyOpenWeb(w http.ResponseWriter, r *http.Request) {
 	}
 	url := ce.Cfg().BaseURL + "/"
 	if err := browser.OpenDefault(url); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "url": url})
+}
+
+// comfyOpenAppWin 用独立 App 窗口打开 ComfyUI WEB(Chrome/Edge --app 模式,
+// 独立任务栏图标无地址栏,观感即桌面窗口;webview 内嵌 iframe 会被
+// 混合内容安全策略拦截,已废弃)。
+func (s *Server) comfyOpenAppWin(w http.ResponseWriter, r *http.Request) {
+	eng, _ := s.reg.Get("comfy")
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		writeErr(w, 500, fmt.Errorf("引擎类型错误"))
+		return
+	}
+	url := ce.Cfg().BaseURL + "/"
+	if err := browser.OpenAppWindow(url, 1560, 940); err != nil {
 		writeErr(w, 500, err)
 		return
 	}

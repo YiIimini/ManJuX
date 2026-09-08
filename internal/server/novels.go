@@ -228,6 +228,7 @@ func (s *Server) handleNovelDetail(w http.ResponseWriter, r *http.Request) {
 			}
 			st, _ := e.Info()
 			rel, _ := filepath.Rel(p, fp)
+			rel = filepath.ToSlash(rel) // 前端按 / 分层建目录树(Windows 反斜杠会整条平铺)
 			chapters = append(chapters, novelChapter{Path: fp, Name: rel, KB: st.Size() / 1024, Chars: int(st.Size() / 3)})
 			return nil
 		})

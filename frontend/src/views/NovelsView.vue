@@ -59,12 +59,12 @@ function buildTree(chapters) {
       path += (path ? '/' : '') + seg
       let node = cur.find(x => x.type === 'dir' && x.name === seg)
       if (!node) {
-        node = { type: 'dir', name: seg, key: path, children: [] }
+        node = { type: 'dir', name: seg, key: path, children: [] } // 存原名保证查找一致
         cur.push(node)
       }
       cur = node.children
     }
-    cur.push({ type: 'file', name: file, ch })
+    cur.push({ type: 'file', name: prettyName(file), ch })
   }
   // 排序:目录在前;同级按自然正序(章节号数值序)
   const sortRec = (arr) => {
@@ -73,7 +73,20 @@ function buildTree(chapters) {
     arr.forEach(x => x.type === 'dir' && sortRec(x.children))
   }
   sortRec(tree)
+  // 唯一顶层目录(如「正文」)自动提升,不显示多余外壳层
+  const onlyDir = tree.length === 1 && tree[0].type === 'dir'
+  if (onlyDir) tree = tree[0].children
+  // 统一美化目录名(查找用原名,显示才替换)
+  const pretty = (arr) => arr.forEach(x => {
+    if (x.type === 'dir') { x.label = x.name.replace(/_/g, ' · '); pretty(x.children) }
+    else { x.label = x.name }
+  })
+  pretty(tree)
   return tree
+}
+// 显示名美化:去文件扩展名;下划线换「 · 」
+function prettyName(n) {
+  return n.replace(/\.(md|txt)$/i, '').replace(/_/g, ' · ')
 }
 async function openDetail(n) {
   try {

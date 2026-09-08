@@ -12,9 +12,6 @@ const vers = ref(null)
 const verLoading = ref(false)
 const checking = ref(false)
 
-// 应用内 WEB 窗口(iframe 全屏弹层)
-const webOpen = ref(false)
-const webURL = ref('')
 
 async function refresh() {
   loading.value = true
@@ -51,10 +48,14 @@ async function act(action, tip) {
   } catch (e) { ElMessage.error(e.message) } finally { acting.value = '' }
 }
 
-// WEB 窗口:应用内弹层 / 系统默认浏览器 两种方式
-function openWebApp() {
-  webURL.value = (st.value?.base_url || 'http://127.0.0.1:8190') + '/'
-  webOpen.value = true
+// WEB 窗口:独立 App 窗口(Chrome/Edge --app 无地址栏桌面观感)/ 系统默认浏览器
+async function openWebApp() {
+  try {
+    const r = await fetch('/api/comfy/open-appwin', { method: 'POST' })
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error)
+    ElMessage.success('已打开 ComfyUI 独立窗口')
+  } catch (e) { ElMessage.error(e.message) }
 }
 async function openWebBrowser() {
   try {
@@ -110,7 +111,7 @@ function verCellCls(row, which) {
             </el-button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="app"><el-icon><FullScreen /></el-icon>应用内弹窗窗口</el-dropdown-item>
+                <el-dropdown-item command="app"><el-icon><FullScreen /></el-icon>独立窗口(推荐,无地址栏)</el-dropdown-item>
                 <el-dropdown-item command="browser"><el-icon><ChromeFilled /></el-icon>系统默认浏览器</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -253,22 +254,5 @@ function verCellCls(row, which) {
         模型文件无统一在线版本源,按本地文件(大小/日期)管理,见上方「模型清单核对」;更新模型请在设置中更换文件。
       </div>
     </div>
-
-    <!-- 应用内 WEB 窗口 -->
-    <el-dialog v-model="webOpen" fullscreen :show-close="false" class="webwin"
-      style="background: var(--mx-bg1)" destroy-on-close>
-      <template #header>
-        <div class="flex items-center gap-3 w-full" style="padding-right: 12px">
-          <el-icon color="var(--mx-amber)"><Platform /></el-icon>
-          <span class="text-sm font-bold">ComfyUI WEB 工作台</span>
-          <span class="timecode">{{ webURL }}</span>
-          <div class="flex-1"></div>
-          <el-button size="small" text @click="openWebBrowser()">在系统浏览器打开</el-button>
-          <el-button size="small" type="primary" @click="webOpen = false">关闭弹窗</el-button>
-        </div>
-      </template>
-      <iframe :src="webURL" style="width:100%; height: calc(100vh - 110px); border: none; background:#111"
-        v-if="webOpen" referrerpolicy="no-referrer"></iframe>
-    </el-dialog>
   </div>
 </template>

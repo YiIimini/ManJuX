@@ -17,7 +17,7 @@ const emit = defineEmits(['read', 'toggle'])
          @click="emit('toggle', node.key)">
       <el-icon :size="11" color="var(--mx-amber)"
                :style="{ transform: expanded.has(node.key) ? 'rotate(90deg)' : '', flex: 'none' }"><CaretRight /></el-icon>
-      <span class="truncate">{{ node.name }}</span>
+      <span class="truncate">{{ node.label }}</span>
       <span class="timecode" style="font-size:9px;margin-left:auto">{{ node.children.length }}</span>
     </div>
     <ChapterTree v-if="node.type === 'dir' && expanded.has(node.key)"
@@ -29,7 +29,7 @@ const emit = defineEmits(['read', 'toggle'])
          :style="{ paddingLeft: (depth * 16 + 24) + 'px' }"
          @click="emit('read', node.ch)">
       <el-icon :size="11" color="var(--mx-text3)" style="flex:none"><Document /></el-icon>
-      <span class="truncate">{{ node.name }}</span>
+      <span class="truncate">{{ node.label }}</span>
       <span class="timecode" style="font-size:9px">{{ node.ch.kb }}KB</span>
     </div>
   </template>
