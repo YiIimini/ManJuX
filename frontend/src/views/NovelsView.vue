@@ -22,17 +22,59 @@ async function refresh() {
 onMounted(refresh)
 watch(() => G.tick.novels, refresh)
 
-// 弹窗:阅读详情
+// 弹窗:阅读详情(正文主区 + 右侧目录树导航栏,均可折叠)
 const dlg = ref(null)       // {novel, chapters}
 const reading = ref(null)   // {name, text, truncated, chars}
 const readBusy = ref(false)
+const navCollapsed = ref(false)          // 右侧目录栏收起
+const expandedDirs = ref(new Set())      // 展开的目录节点 key
+const chapTree = ref([])
+function buildTree(chapters) {
+  const tree = []
+  for (const ch of chapters) {
+    const parts = ch.name.split('/')
+    const file = parts.pop()
+    let cur = tree
+    let path = ''
+    for (const seg of parts) {
+      path += (path ? '/' : '') + seg
+      let node = cur.find(x => x.type === 'dir' && x.name === seg)
+      if (!node) {
+        node = { type: 'dir', name: seg, key: path, children: [] }
+        cur.push(node)
+      }
+      cur = node.children
+    }
+    cur.push({ type: 'file', name: file, ch })
+  }
+  // 排序:目录在前,同级按名
+  const sortRec = (arr) => {
+    arr.sort((a, b) => (a.type === b.type) ? a.name.localeCompare(b.name, 'zh')
+      : (a.type === 'dir' ? -1 : 1))
+    arr.forEach(x => x.type === 'dir' && sortRec(x.children))
+  }
+  sortRec(tree)
+  return tree
+}
 async function openDetail(n) {
   try {
     const r = await fetch('/api/novels/detail?path=' + encodeURIComponent(n.path)).then(x => x.json())
     if (!r.novel) throw new Error(r.error || '读取失败')
     dlg.value = r
     reading.value = null
+    chapTree.value = buildTree(r.chapters || [])
+    // 默认全部目录展开
+    const ex = new Set()
+    const walk = (arr) => arr.forEach(x => { if (x.type === 'dir') { ex.add(x.key); walk(x.children) } })
+    walk(chapTree.value)
+    expandedDirs.value = ex
+    navCollapsed.value = false
   } catch (e) { ElMessage.error(e.message) }
+}
+function toggleDir(key) {
+  if (expandedDirs.value.has(key)) expandedDirs.value.delete(key)
+  else expandedDirs.value.add(key)
+  expandedDirs.value = new Set(expandedDirs.value)
 }
 async function readChapter(ch) {
   readBusy.value = true
@@ -125,20 +167,9 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
           <div class="flex-1"></div>
           <el-tag v-if="dlg.novel.produced" size="small" type="success">已创作(首页剧集合集)</el-tag>
         </div>
-        <div class="grid gap-3" style="grid-template-columns:280px 1fr;min-height:380px">
-          <!-- 左:章节文件 -->
-          <div class="flex flex-col gap-1.5" style="max-height:56vh;overflow-y:auto">
-            <div v-for="c in dlg.chapters" :key="c.path"
-                 class="flex items-center gap-2 px-2.5 py-2 rounded-lg cursor-pointer ep-row"
-                 :class="{ 'sel-on': reading && reading.name === c.name }"
-                 @click="readChapter(c)">
-              <el-icon :size="13" color="var(--mx-text3)"><Document /></el-icon>
-              <span class="text-xs flex-1 truncate">{{ c.name }}</span>
-              <span class="timecode" style="font-size:10px">{{ c.kb }}KB</span>
-            </div>
-          </div>
-          <!-- 右:正文阅读 -->
-          <div class="panel p-4 flex flex-col" style="max-height:56vh">
+        <div class="flex gap-3" style="min-height:400px">
+          <!-- 主区:正文阅读 -->
+          <div class="panel p-4 flex flex-col flex-1" style="max-height:60vh;min-width:0">
             <template v-if="reading">
               <div class="flex items-center gap-2 mb-2">
                 <b class="text-xs truncate">{{ reading.name }}</b>
@@ -149,8 +180,68 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
             </template>
             <div v-else class="flex-1 flex flex-col items-center justify-center gap-2" style="color:var(--mx-text3)">
               <el-icon :size="30"><Reading /></el-icon>
-              <span class="text-xs">点击左侧章节文件阅读正文</span>
+              <span class="text-xs">点击右侧目录中的章节阅读正文</span>
             </div>
+          </div>
+
+          <!-- 右侧独立目录栏(可收起/展开;目录节点可折叠) -->
+          <div v-if="!navCollapsed" class="nav-tree flex flex-col" style="max-height:60vh">
+            <div class="flex items-center gap-2 px-3 py-2 flex-none" style="border-bottom:1px solid var(--mx-line)">
+              <el-icon :size="13" color="var(--mx-amber)"><Folder /></el-icon>
+              <b class="text-xs flex-1">目录</b>
+              <span class="timecode" style="font-size:10px">{{ dlg.chapters.length }}</span>
+              <el-button text size="small" @click="navCollapsed = true" title="收起目录栏">
+                <el-icon :size="13"><ArrowRight /></el-icon>
+              </el-button>
+            </div>
+            <div class="flex-1 overflow-y-auto py-1.5 tree-scroll">
+              <template v-for="node in chapTree" :key="node.key || node.ch?.path">
+                <!-- 目录节点(卷):收起/展开 -->
+                <div v-if="node.type === 'dir'" class="tree-dir" @click="toggleDir(node.key)">
+                  <el-icon :size="11" color="var(--mx-amber)"
+                           :style="{ transform: expandedDirs.has(node.key) ? 'rotate(90deg)' : '' }"><CaretRight /></el-icon>
+                  <span class="truncate">{{ node.name }}</span>
+                  <span class="timecode" style="font-size:9px;margin-left:auto">{{ node.children.length }}</span>
+                </div>
+                <template v-if="node.type === 'dir' && expandedDirs.has(node.key)">
+                  <div v-for="sub in node.children" :key="sub.key || sub.ch?.path">
+                    <div v-if="sub.type === 'dir'" class="tree-dir" style="padding-left:26px" @click="toggleDir(sub.key)">
+                      <el-icon :size="11" color="var(--mx-amber)"
+                               :style="{ transform: expandedDirs.has(sub.key) ? 'rotate(90deg)' : '' }"><CaretRight /></el-icon>
+                      <span class="truncate">{{ sub.name }}</span>
+                    </div>
+                    <div v-if="sub.type === 'dir' && expandedDirs.has(sub.key)"
+                         v-for="lf in sub.children" :key="lf.ch.path"
+                         class="tree-leaf" :class="{ on: reading && reading.name === lf.ch.name }"
+                         @click="readChapter(lf.ch)">
+                      <span class="truncate">{{ lf.name }}</span>
+                      <span class="timecode" style="font-size:9px">{{ lf.ch.kb }}KB</span>
+                    </div>
+                    <div v-else-if="sub.type === 'file'"
+                         class="tree-leaf" :class="{ on: reading && reading.name === sub.ch.name }"
+                         @click="readChapter(sub.ch)">
+                      <span class="truncate">{{ sub.name }}</span>
+                      <span class="timecode" style="font-size:9px">{{ sub.ch.kb }}KB</span>
+                    </div>
+                  </div>
+                </template>
+                <!-- 顶层文件(全本等) -->
+                <div v-else-if="node.type === 'file'"
+                     class="tree-leaf" :class="{ on: reading && reading.name === node.ch.name }"
+                     @click="readChapter(node.ch)">
+                  <el-icon :size="11" color="var(--mx-text3)"><Document /></el-icon>
+                  <span class="truncate">{{ node.name }}</span>
+                  <span class="timecode" style="font-size:9px">{{ node.ch.kb }}KB</span>
+                </div>
+              </template>
+            </div>
+          </div>
+          <!-- 收起态:展开按钮 -->
+          <div v-else class="flex flex-col align-center gap-2" style="width:34px;flex:none">
+            <el-button text size="small" @click="navCollapsed = false" title="展开目录栏">
+              <el-icon :size="14"><ArrowLeft /></el-icon>
+            </el-button>
+            <span class="timecode" style="writing-mode:vertical-rl;font-size:10px">目录 {{ dlg.chapters.length }}</span>
           </div>
         </div>
       </template>
