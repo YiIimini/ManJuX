@@ -42,7 +42,13 @@ const charsWithAsset = computed(() =>
 const scenesWithAsset = computed(() =>
   (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
 
-// 进度环
+// 进度环状态色:运行=琥珀呼吸 / 全完成=绿 / 有失败=红
+const ringColor = computed(() => {
+  const failed = Object.values(pj.value?.manifest || {}).some(m => m.status === 'failed')
+  if (failed) return 'var(--mx-red)'
+  if (ringPct.value >= 100) return 'var(--mx-green)'
+  return 'url(#ringGrad)'
+})
 const ringPct = computed(() => totalShots.value ? Math.round(doneShots.value * 100 / totalShots.value) : 0)
 const ringDash = computed(() => {
   const C = 2 * Math.PI * 21
@@ -182,7 +188,7 @@ const doneShots = computed(() =>
                 </linearGradient>
               </defs>
               <circle cx="26" cy="26" r="21" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="4.5" />
-              <circle cx="26" cy="26" r="21" fill="none" stroke="url(#ringGrad)" stroke-width="4.5"
+              <circle cx="26" cy="26" r="21" fill="none" :stroke="ringColor" stroke-width="4.5"
                       stroke-linecap="round" :stroke-dasharray="ringDash" transform="rotate(-90 26 26)"
                       style="transition: stroke-dasharray .6s ease; filter: drop-shadow(0 0 4px rgba(255,180,84,.45))" />
               <text x="26" y="30" text-anchor="middle" class="ring-pct">{{ ringPct }}</text>

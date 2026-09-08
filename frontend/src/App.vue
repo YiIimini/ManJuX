@@ -306,7 +306,9 @@ const env = computed(() => G.status?.env)
         </div>
       </header>
 
-      <main class="flex-1 overflow-hidden">
+      <div class="flex-1 flex flex-col min-w-0">
+        <main class="flex-1 overflow-hidden">
+
         <HomeView v-if="G.view === 'home'" />
         <ProjectView v-else-if="G.view === 'project' && G.project" />
         <LibraryView v-else-if="G.view === 'library'" />
@@ -314,7 +316,13 @@ const env = computed(() => G.status?.env)
         <OutputsView v-else-if="G.view === 'outputs'" />
         <ComfyView v-else-if="G.view === 'comfy'" />
         <SettingsView v-else-if="G.view === 'settings'" />
-      </main>
+
+        </main>
+        <!-- 日志面板:内容列内嵌(展开压内容,不遮右侧产线栏) -->
+        <Transition name="logslide">
+          <LogConsole v-if="G.logPanelOpen" />
+        </Transition>
+      </div>
 
       <!-- 底部状态栏 -->
       <footer class="statusbar">
@@ -348,10 +356,6 @@ const env = computed(() => G.status?.env)
         <span class="timecode verchip">{{ verLabel }}</span>
       </footer>
 
-      <!-- 悬浮日志面板(底部状态栏上方弹出,随侧栏收起/展开自适应) -->
-      <Transition name="logslide">
-        <LogConsole v-if="G.logPanelOpen" />
-      </Transition>
     </div>
 
     <ParamsDrawer />

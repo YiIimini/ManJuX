@@ -1,5 +1,5 @@
 <script setup>
-import { G, PHASES, api, refreshProject } from '../store'
+import { G, PHASES, api, refreshProject, logDot } from '../store'
 import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
 
@@ -95,7 +95,7 @@ async function runAll() { await runStage('all') }
 <template>
   <div class="pipe-rail">
     <div class="pipe-rail-title">
-      <span class="rec-dot" v-if="project?.running"></span>
+      <span class="tick-dot" :class="logDot" v-if="project?.running"></span>
       <span>产线 PIPELINE</span>
     </div>
 
