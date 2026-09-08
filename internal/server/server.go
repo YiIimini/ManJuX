@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -145,7 +146,11 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.WriteHeader(code)
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
-	enc.Encode(v)
+	// 序列化失败绝不静默空 body(曾致 /api/status 空响应,前端状态灯全灭)
+	if err := enc.Encode(v); err != nil {
+		log.Printf("[server] ⚠ JSON 序列化失败: %v", err)
+		_, _ = w.Write([]byte(`{"error":"` + err.Error() + `"}`))
+	}
 }
 
 func writeErr(w http.ResponseWriter, code int, err error) {
@@ -167,11 +172,11 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusOut struct {
-	Version   string                  `json:"version"`
-	BuildInfo string                  `json:"build_info"`
-	Port      int                     `json:"port"`
-	Env       envOut                  `json:"env"`
-	Running   map[string]pipeline.Run `json:"running"`
+	Version   string                     `json:"version"`
+	BuildInfo string                     `json:"build_info"`
+	Port      int                        `json:"port"`
+	Env       envOut                     `json:"env"`
+	Running   map[string]pipeline.RunOut `json:"running"`
 }
 
 type envOut struct {
@@ -193,10 +198,13 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		Engines:  s.reg.Names(),
 	}
 	env.ComfyLive = s.probeComfy(g.Comfy.BaseURL)
-	running := map[string]pipeline.Run{}
+	running := map[string]pipeline.RunOut{}
 	for _, p := range s.store.List() {
 		if run := s.pipe.Running(p.ID); run != nil {
-			running[p.ID] = *run
+			running[p.ID] = pipeline.RunOut{
+				Phase: run.Phase, StartedAt: run.StartedAt,
+				Engine: run.EngineOverride, Seed: run.SeedOverride,
+			}
 		}
 	}
 	writeJSON(w, 200, statusOut{

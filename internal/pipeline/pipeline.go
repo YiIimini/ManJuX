@@ -41,23 +41,23 @@ var PhaseNames = []struct{ ID, Name, Icon string }{
 
 // Coordinator 管线协调器:每项目最多一个运行实例,阶段可单跑。
 type Coordinator struct {
-	mu      sync.Mutex
-	runs    map[string]*Run
-	store   *project.Store
-	cfg     *config.Manager
-	reg     *engine.Registry
-	ff      *ff.FF
-	bus     *Bus
-	lib     *library.Library // 跨项目资产库(可为 nil=禁用)
+	mu    sync.Mutex
+	runs  map[string]*Run
+	store *project.Store
+	cfg   *config.Manager
+	reg   *engine.Registry
+	ff    *ff.FF
+	bus   *Bus
+	lib   *library.Library // 跨项目资产库(可为 nil=禁用)
 }
 
 // Run 一次运行。
 type Run struct {
-	Cancel        context.CancelFunc
-	Phase         string
-	StartedAt     time.Time
+	Cancel         context.CancelFunc
+	Phase          string
+	StartedAt      time.Time
 	EngineOverride string // 本次运行的引擎覆盖(auto/comfy/api,空=用项目配置)
-	SeedOverride int64
+	SeedOverride   int64
 }
 
 // New 创建协调器。
@@ -123,10 +123,14 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	}
 	kind, name, desc, prompt := "", "", "", ""
 	for _, ch := range plan.Characters {
-		if "char:"+ch.ID == assetID { kind, name, desc, prompt = "characters", ch.Name, ch.Description, ch.ImagePrompt }
+		if "char:"+ch.ID == assetID {
+			kind, name, desc, prompt = "characters", ch.Name, ch.Description, ch.ImagePrompt
+		}
 	}
 	for _, sc := range plan.Scenes {
-		if "scene:"+sc.ID == assetID { kind, name, desc, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt }
+		if "scene:"+sc.ID == assetID {
+			kind, name, desc, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt
+		}
 	}
 	if kind == "" {
 		// Q 版等派生资产:直接用资产表里存的提示词重生成(不入库)
@@ -142,9 +146,13 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	// Q 版(chibi)方形画幅,其余竖版半身
 	isChibi := strings.HasSuffix(assetID, "_chibi")
 	eng, err := c.reg.Get("comfy")
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	ce, ok := eng.(*comfyengine.Engine)
-	if !ok { return fmt.Errorf("本地引擎不可用") }
+	if !ok {
+		return fmt.Errorf("本地引擎不可用")
+	}
 	ctx := context.Background()
 	if err := ce.Available(ctx); err != nil {
 		return fmt.Errorf("单资产重生成需要本地 ComfyUI: %w", err)
@@ -169,7 +177,9 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		File: filepath.ToSlash(rel), ImagePrompt: prompt,
 		Source: "krea2", Fingerprint: project.FingerprintFile(path),
 	}
-	if err := c.store.SaveAssets(projectID, assets); err != nil { return err }
+	if err := c.store.SaveAssets(projectID, assets); err != nil {
+		return err
+	}
 	if c.lib != nil && !isChibi {
 		// Q 版是项目内派生素材,不沉淀进跨项目资产库
 		_, _ = c.lib.Put(kind, name, desc, prompt, path, projectID, "krea2")
@@ -188,6 +198,14 @@ func (c *Coordinator) Stop(projectID string) bool {
 	}
 	r.Cancel()
 	return true
+}
+
+// RunOut Run 的可序列化投影(不含 CancelFunc;/api/status 用)。
+type RunOut struct {
+	Phase     string    `json:"phase"`
+	StartedAt time.Time `json:"started_at"`
+	Engine    string    `json:"engine,omitempty"`
+	Seed      int64     `json:"seed,omitempty"`
 }
 
 // StopAll 停止全部运行中的管线(应用退出时调用;不等待收尾,管线 goroutine 自行感知取消)。
@@ -386,9 +404,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	total := 0
 	reused := 0
 	onlySet := map[string]bool{}
-	for _, id := range onlyAssets { onlySet[id] = true }
+	for _, id := range onlyAssets {
+		onlySet[id] = true
+	}
 	check := func(kind, id, name, description, imagePrompt string) {
-		if len(onlySet) > 0 && !onlySet[id] { return }
+		if len(onlySet) > 0 && !onlySet[id] {
+			return
+		}
 		total++
 		if a, ok := assets[id]; ok && a.File != "" {
 			full := filepath.Join(c.store.Dir(proj.ID), a.File)

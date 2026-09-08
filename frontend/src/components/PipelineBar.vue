@@ -73,7 +73,8 @@ async function runStage(id) {
   if (!project.value) return
   try {
     await api.run(project.value.id, id)
-    ElMessage.success(`「${PHASES.find(p => p.id === id).name}」已启动`)
+    const label = PHASES.find(p => p.id === id)?.name || '全流程'
+    ElMessage.success(`「${label}」已启动`)
     refreshProject()
   } catch (e) { ElMessage.error(e.message) }
 }
