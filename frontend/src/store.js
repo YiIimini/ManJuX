@@ -16,7 +16,7 @@ export const G = reactive({
   tuneShot: null,           // 单镜画布微调的镜头对象
   logPanelOpen: false,
   logSeq: 0,                // 日志轮询游标(seq 去重)
-  tick: { library: 0, outputs: 0, comfy: 0, settings: 0 }, // 顶栏「刷新」触发各视图自刷新
+  tick: { library: 0, outputs: 0, comfy: 0, settings: 0, novels: 0 }, // 顶栏「刷新」触发各视图自刷新
 })
 
 export const PHASES = [
@@ -55,6 +55,7 @@ export const api = {
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),
   importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
+  novelProduce: (path, max) => req('POST', '/api/novels/produce', { path, max_episodes: max }),
   novelSplit: (name, text, max) => req('POST', '/api/novel-split', { name, text, max_episodes: max }),
   novelBatchStart: (prefix) => req('POST', '/api/novel-batch', { prefix }),
   novelBatchStop: () => req('DELETE', '/api/novel-batch'),

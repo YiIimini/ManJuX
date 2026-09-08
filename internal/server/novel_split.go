@@ -195,16 +195,10 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(eps, func(i, j int) bool { return epNo(eps[i]) < epNo(eps[j]) })
 
-	batch.mu.Lock()
-	if batch.running {
-		batch.mu.Unlock()
+	if !s.startBatch(prefix, eps) {
 		writeErr(w, 409, fmt.Errorf("批量产线已在运行(%s 第 %d/%d 集)", batch.prefix, batch.cur, len(batch.projects)))
 		return
 	}
-	batch.prefix, batch.projects, batch.cur, batch.stop, batch.running = prefix, eps, 0, false, true
-	batch.mu.Unlock()
-
-	go s.runNovelBatch(prefix, eps)
 	writeJSON(w, 200, map[string]any{"ok": true, "total": len(eps)})
 }
 

@@ -82,6 +82,7 @@ type Settings struct {
 	FF         FFSettings      `json:"ff"`
 	VLM        VLMSettings     `json:"vlm"`
 	Render     RenderSettings  `json:"render"`
+	NovelDir   string        `json:"novel_dir"` // 小说库目录(小说管理页扫描)
 }
 
 // Default 返回带默认值的设置。
@@ -89,6 +90,7 @@ func Default() *Settings {
 	return &Settings{
 		ServerPort: 8790,
 		DataDir:    "", // 由 Manager 依 exe 位置填充
+		NovelDir:   "", // 由 Manager 默认填 <DataDir>/Novel(存在时)
 		AutoOpenUI: true,
 		LLM: LLMSettings{
 			BaseURL: "https://api.deepseek.com/v1",
@@ -155,6 +157,9 @@ func NewManager(path, exeDir string) (*Manager, error) {
 	if def.Comfy.RootDir == "" {
 		def.Comfy.RootDir = filepath.Join(exeDir, "comfyui")
 	}
+	if def.NovelDir == "" {
+		def.NovelDir = filepath.Join(def.DataDir, "Novel")
+	}
 	raw, err := os.ReadFile(path)
 	if err == nil && len(raw) > 0 {
 		s := Default()
@@ -169,6 +174,9 @@ func NewManager(path, exeDir string) (*Manager, error) {
 		}
 		if s.Comfy.RootDir == "" {
 			s.Comfy.RootDir = def.Comfy.RootDir
+		}
+		if s.NovelDir == "" {
+			s.NovelDir = def.NovelDir
 		}
 		m.settings = s
 	} else {

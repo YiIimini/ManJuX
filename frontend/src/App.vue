@@ -11,6 +11,7 @@ import LogConsole from './components/LogConsole.vue'
 import ParamsDrawer from './components/ParamsDrawer.vue'
 import PromptDrawer from './components/PromptDrawer.vue'
 import OutputsView from './views/OutputsView.vue'
+import NovelsView from './views/NovelsView.vue'
 import ComfyView from './views/ComfyView.vue'
 import MediaViewer from './components/MediaViewer.vue'
 import StageDetailDrawer from './components/StageDetailDrawer.vue'
@@ -24,6 +25,7 @@ const collapse = ref(localStorage.getItem('mx-side') === '1')
 
 const NAV = [
   { id: 'home',     label: '项目',   icon: 'HomeFilled' },
+  { id: 'novels',   label: '小说库', icon: 'Reading' },
   { id: 'project',  label: '工作台', icon: 'Film' },
   { id: 'library',  label: '资产库', icon: 'Collection' },
   { id: 'outputs',  label: '作品库', icon: 'VideoCamera' },
@@ -49,6 +51,7 @@ function refreshCurrent() {
     case 'outputs': G.tick.outputs++; break
     case 'comfy': G.tick.comfy++; break
     case 'settings': G.tick.settings++; break
+    case 'novels': G.tick.novels++; break
   }
 }
 
@@ -257,6 +260,7 @@ const env = computed(() => G.status?.env)
         <HomeView v-if="G.view === 'home'" />
         <ProjectView v-else-if="G.view === 'project' && G.project" />
         <LibraryView v-else-if="G.view === 'library'" />
+        <NovelsView v-else-if="G.view === 'novels'" />
         <OutputsView v-else-if="G.view === 'outputs'" />
         <ComfyView v-else-if="G.view === 'comfy'" />
         <SettingsView v-else-if="G.view === 'settings'" />

@@ -294,6 +294,9 @@ async function testConn(target) {
           <el-form-item label="启动时自动打开工作台">
             <el-switch v-model="form.auto_open_ui" />
           </el-form-item>
+          <el-form-item label="小说库目录(小说库页扫描;书=子文件夹,推荐 全本/封面/正文 结构)" class="col-span-2">
+            <el-input v-model="form.novel_dir" placeholder="D:/Ai/ManJuX/data/Novel" />
+          </el-form-item>
           <el-form-item label="数据目录" class="col-span-2">
             <el-input v-model="form.data_dir" disabled />
           </el-form-item>
