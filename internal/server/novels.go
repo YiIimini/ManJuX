@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/llm"
@@ -349,10 +350,12 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	cover := coverSrc
 	maxEp := in.Max
 	go func() {
+		jobSet(name, "running", 0, "AI 拆集通读中…(提交即注册,首页占位卡立即可见)")
 		series, eps, err := s.splitNovelToProjects(context.Background(), name, text, maxEp)
 		if err != nil {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
 				Message: "《" + name + "》拆集失败:" + err.Error()})
+			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
 			return
 		}
 		if cover != "" {
@@ -369,6 +372,51 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	}()
 	writeJSON(w, 200, map[string]any{"ok": true, "submitted": true,
 		"message": "《" + name + "》已提交后台创作:拆集(2-6 分钟)→分集项目自动出现→自动开始批量产线,全程日志可观测"})
+}
+
+// ---------- 进行中拆集任务注册表(首页占位卡数据源) ----------
+
+type novelJob struct {
+	Series  string `json:"series"`
+	Created int    `json:"created"` // 已建分集数
+	State   string `json:"state"`   // running / done / failed
+	Message string `json:"message"`
+	At      int64  `json:"at"`
+}
+
+var novelJobs = struct {
+	sync.Mutex
+	m map[string]*novelJob
+}{m: map[string]*novelJob{}}
+
+func jobSet(series, state string, created int, msg string) {
+	novelJobs.Lock()
+	defer novelJobs.Unlock()
+	if state == "" { // 终态清理
+		delete(novelJobs.m, series)
+		return
+	}
+	novelJobs.m[series] = &novelJob{Series: series, Created: created, State: state, Message: msg, At: time.Now().Unix()}
+}
+
+// handleNovelJobs GET /api/novel-jobs:进行中/刚完成的拆集任务(失败保留 10 分钟)。
+func (s *Server) handleNovelJobs(w http.ResponseWriter, r *http.Request) {
+	novelJobs.Lock()
+	defer novelJobs.Unlock()
+	now := time.Now().Unix()
+	out := []*novelJob{}
+	for k, j := range novelJobs.m {
+		if j.State == "failed" && now-j.At > 600 {
+			delete(novelJobs.m, k)
+			continue
+		}
+		if j.State == "done" && now-j.At > 120 { // 完成态短留(真卡已就位)
+			delete(novelJobs.m, k)
+			continue
+		}
+		out = append(out, j)
+	}
+	writeJSON(w, 200, map[string]any{"jobs": out})
 }
 
 // startBatch 启动批量产线(供 produce 与手动接口共用)。
@@ -437,6 +485,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	if series == "连载" && strings.TrimSpace(plan.Book) != "" {
 		series = strings.TrimSpace(plan.Book)
 	}
+	jobSet(series, "running", 0, "AI 拆集通读中…")
 	var eps []string
 	for i, ep := range plan.Episodes {
 		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, ep.Title)
@@ -459,9 +508,11 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		// 逐集事件:首页项目列表实时出现分集(不等全部拆完)
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success", ProjectID: epName,
 			Message: fmt.Sprintf("已创建分集 %d/%d:《%s》", i+1, len(plan.Episodes), epName)})
+		jobSet(series, "running", i+1, fmt.Sprintf("已建 %d/%d 集", i+1, len(plan.Episodes)))
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目", series, len(plan.Episodes), len(eps))})
+	jobSet(series, "done", len(eps), fmt.Sprintf("拆集完成:%d 集", len(eps)))
 	return series, eps, nil
 }
 

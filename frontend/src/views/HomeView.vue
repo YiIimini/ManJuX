@@ -1,6 +1,6 @@
 <script setup>
 import { G, api, refreshProjects, refreshStatus } from '../store'
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const creating = ref(false)
@@ -111,6 +111,23 @@ async function doNovelSplit() {
 
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
+
+// 进行中拆集任务(首页占位卡:提交一键创作后书卡立即出现)
+const novelJobs = ref([])
+watch(() => G.logs.length, () => {
+  const last = G.logs[G.logs.length - 1]
+  if (last && last.phase === 'novel') refreshJobs() // 拆集事件即时刷新占位卡
+})
+async function refreshJobs() {
+  try {
+    const r = await fetch('/api/novel-jobs').then(x => x.json())
+    novelJobs.value = r.jobs || []
+  } catch { /* */ }
+}
+onMounted(() => {
+  refreshJobs()
+  setInterval(refreshJobs, 8000)
+})
 
 // 剧集弹窗:点击分组卡打开,逐集管理(含单集独立删除)
 const seriesDlg = ref(null) // {prefix, eps}
@@ -375,6 +392,28 @@ function stateChip(p) {
     </div>
 
     <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
+      <!-- 拆集进行中:书级占位卡(提交即出现,分集陆续填充) -->
+      <div v-for="j in novelJobs.filter(x => x.state === 'running' || x.state === 'failed')"
+           :key="'job-' + j.series" class="shot-card proj-card" style="border-style:dashed">
+        <div class="proj-cover">
+          <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <el-icon :size="30" :color="j.state === 'running' ? 'var(--mx-amber)' : 'var(--mx-red)'">
+              <Loading v-if="j.state === 'running'" class="is-loading" /><CircleCloseFilled v-else />
+            </el-icon>
+            <span class="timecode">{{ j.state === 'running' ? 'AI 拆集中' : '拆集失败' }}</span>
+          </div>
+        </div>
+        <div class="px-3.5 py-3 flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <b class="truncate flex-1 text-sm">《{{ j.series }}》</b>
+            <span class="timecode" style="font-size:10px" :style="j.state === 'failed' ? 'color:var(--mx-red)' : ''">
+              {{ j.state === 'running' ? (j.created ? ('已建 ' + j.created + ' 集') : '通读中…') : '失败' }}
+            </span>
+          </div>
+          <div class="text-xs truncate" :style="{ color: j.state === 'failed' ? 'var(--mx-red)' : 'var(--mx-text3)' }">{{ j.message }}</div>
+        </div>
+      </div>
+
       <!-- 剧集系列卡(点击打开逐集弹窗) -->
       <div v-if="!batch" v-for="(eps, prefix) in seriesGroups.groups" :key="'s-' + prefix"
            class="shot-card proj-card cursor-pointer" @click="openSeries(prefix, eps)">
