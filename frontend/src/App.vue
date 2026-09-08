@@ -23,14 +23,49 @@ const sysmon = reactive({ cpu: 0, cores: [], ramPct: 0, ramUsed: 0, ramTotal: 0,
 const maxed = ref(false)
 const collapse = ref(localStorage.getItem('mx-side') === '1')
 
-const NAV = [
-  { id: 'home',     label: '项目',   icon: 'HomeFilled' },
-  { id: 'novels',   label: '小说库', icon: 'Reading' },
-  { id: 'project',  label: '工作台', icon: 'Film' },
-  { id: 'library',  label: '资产库', icon: 'Collection' },
-  { id: 'outputs',  label: '作品库', icon: 'VideoCamera' },
-  { id: 'comfy',    label: 'ComfyUI', icon: 'Cpu' },
+// 导航基础定义;用户可在「编辑菜单」里自定义名称与顺序(存 localStorage)
+const NAV_BASE = [
+  { id: 'home',    label: '项目',    icon: 'HomeFilled' },
+  { id: 'novels',  label: '小说库',  icon: 'Reading' },
+  { id: 'project', label: '工作台',  icon: 'Film' },
+  { id: 'library', label: '资产库',  icon: 'Collection' },
+  { id: 'outputs', label: '作品库',  icon: 'VideoCamera' },
+  { id: 'comfy',   label: 'ComfyUI', icon: 'Cpu' },
 ]
+const navPrefs = JSON.parse(localStorage.getItem('mx-nav') || 'null')
+const navList = computed(() => {
+  if (!Array.isArray(navPrefs) || !navPrefs.length) return NAV_BASE
+  const map = new Map(NAV_BASE.map(n => [n.id, n]))
+  const out = []
+  for (const p of navPrefs) {
+    const base = map.get(p.id)
+    if (base) { out.push({ ...base, label: (p.label || base.label).trim() || base.label }); map.delete(p.id) }
+  }
+  for (const rest of map.values()) out.push(rest) // 新增项兜底追加
+  return out
+})
+
+// 编辑菜单弹窗
+const navEdit = ref(false)
+const navDraft = ref([]) // [{id, label}]
+function openNavEdit() {
+  navDraft.value = navList.value.map(n => ({ id: n.id, label: n.label }))
+  navEdit.value = true
+}
+function navMove(i, d) {
+  const j = i + d
+  if (j < 0 || j >= navDraft.value.length) return
+  const arr = navDraft.value
+  ;[arr[i], arr[j]] = [arr[j], arr[i]]
+  navDraft.value = [...arr]
+}
+function navReset() {
+  navDraft.value = NAV_BASE.map(n => ({ id: n.id, label: n.label }))
+}
+function navSave() {
+  localStorage.setItem('mx-nav', JSON.stringify(navDraft.value))
+  location.reload() // 简单可靠:重载即生效(偏好已落盘)
+}
 
 const nav = (v) => {
   G.view = v
@@ -144,7 +179,7 @@ const env = computed(() => G.status?.env)
       </div>
 
       <nav class="side-nav">
-        <el-tooltip v-for="n in NAV" :key="n.id" :content="n.label" :disabled="!collapse" placement="right" :show-after="300">
+        <el-tooltip v-for="n in navList" :key="n.id" :content="n.label" :disabled="!collapse" placement="right" :show-after="300">
           <button class="side-item" :class="{ on: G.view === n.id }" :disabled="n.id === 'project' && !G.project" @click="nav(n.id)">
             <el-icon :size="17"><component :is="n.icon" /></el-icon>
             <span class="side-label" v-if="!collapse">{{ n.label }}</span>
@@ -155,6 +190,12 @@ const env = computed(() => G.status?.env)
       <div class="flex-1"></div>
 
       <div class="side-tools">
+        <el-tooltip content="编辑菜单(自定义名称与顺序)" :disabled="collapse" placement="right">
+          <button class="side-tool" @click="openNavEdit">
+            <el-icon :size="16"><Menu /></el-icon>
+            <span class="side-label" v-if="!collapse">编辑菜单</span>
+          </button>
+        </el-tooltip>
         <el-tooltip content="收起导航" v-if="!collapse" placement="right">
           <button class="side-tool" @click="toggleSide">
             <el-icon :size="16"><Fold /></el-icon>
@@ -309,6 +350,24 @@ const env = computed(() => G.status?.env)
     <StageDetailDrawer />
     <ShotTuneDialog />
     <MediaViewer />
+
+    <!-- 编辑左侧导航:自定义名称与顺序 -->
+    <el-dialog v-model="navEdit" title="编辑左侧菜单" width="420px" append-to-body>
+      <div class="flex flex-col gap-2">
+        <div v-for="(n, i) in navDraft" :key="n.id" class="flex items-center gap-2">
+          <span class="timecode" style="width:20px">{{ i + 1 }}</span>
+          <el-input v-model="n.label" maxlength="12" :placeholder="NAV_BASE.find(b => b.id === n.id)?.label" />
+          <el-button text size="small" :disabled="i === 0" @click="navMove(i, -1)"><el-icon><ArrowUp /></el-icon></el-button>
+          <el-button text size="small" :disabled="i === navDraft.length - 1" @click="navMove(i, 1)"><el-icon><ArrowDown /></el-icon></el-button>
+        </div>
+      </div>
+      <div class="text-xs mt-3" style="color:var(--mx-text3)">名称留空则用默认名;设置入口固定在下方工具区,不参与排序。</div>
+      <template #footer>
+        <el-button @click="navReset">恢复默认</el-button>
+        <el-button @click="navEdit = false">取消</el-button>
+        <el-button type="primary" @click="navSave">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 关闭确认:后台运行 / 直接退出 -->
     <el-dialog v-model="closeDlg" title="关闭 ManJuX" width="480px" append-to-body>
