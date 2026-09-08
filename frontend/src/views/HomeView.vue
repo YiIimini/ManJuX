@@ -30,6 +30,10 @@ const newName = ref('')
 const pickedFile = ref(null)   // {name, text, kind: 'text'|'plan', plan?, preview}
 const fileInput = ref(null)
 const busy = ref(false)
+// AI 现场创作模式(曾漏定义三个 ref,致弹窗渲染崩溃/AI 开关失灵)
+const aiMode = ref(false)
+const aiPrompt = ref('')
+const composing = ref(false)
 
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
