@@ -30,19 +30,36 @@ const readBusy = ref(false)
 const navCollapsed = ref(false)          // 右侧目录栏收起
 const expandedDirs = ref(new Set())      // 展开的目录节点 key
 const chapTree = ref([])
-// 自然排序:数字段按数值比(第2章 < 第10章),非数字段中文比
+// 中文数字段→数值(卷二→2,卷二十三→23);非中文数字返回 null
+function cnNumVal(str) {
+  if (!/^[零一两二三四五六七八九十百]+$/.test(str)) return null
+  const D = { 零: 0, 一: 1, 两: 2, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
+  let tot = 0, cur = 0
+  for (const c of str) {
+    if (c in D) { cur = cur * 10 + D[c] }
+    else { tot += (cur || 1) * (c === '十' ? 10 : 100); cur = 0 }
+  }
+  return tot + cur
+}
+// 自然排序:阿拉伯数字段与中文数字段都按数值比
+// (第2章<第10章;卷二<卷十<卷二十三——拼音序会把卷八排卷二前)
 function naturalCmp(a, b) {
-  const sa = String(a).split(/(\d+)/)
-  const sb = String(b).split(/(\d+)/)
+  const RX = /(\d+|[零一两二三四五六七八九十百]+)/g
+  const sa = String(a).split(RX)
+  const sb = String(b).split(RX)
   for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
     const xa = sa[i], xb = sb[i]
     if (xa === undefined) return -1
     if (xb === undefined) return 1
     if (xa === xb) continue
-    if (/^\d+$/.test(xa) && /^\d+$/.test(xb)) {
-      const d = parseInt(xa, 10) - parseInt(xb, 10)
-      if (d) return d
-      continue
+    if (i % 2 === 1) { // 分割捕获段(数字段)
+      const va = /^\d+$/.test(xa) ? parseInt(xa, 10) : cnNumVal(xa)
+      const vb = /^\d+$/.test(xb) ? parseInt(xb, 10) : cnNumVal(xb)
+      if (va !== null && vb !== null) {
+        const d = va - vb
+        if (d) return d
+        continue
+      }
     }
     return xa.localeCompare(xb, 'zh')
   }
