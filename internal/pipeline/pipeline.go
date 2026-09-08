@@ -236,6 +236,14 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 	stages := []string{phase}
 	if phase == PhaseAll {
 		stages = []string{PhaseScript, PhaseAssets, PhaseRender, PhaseQC, PhaseAssemble}
+		// 断点续跑:已有有效方案则跳过「剧本分镜」重新生成 ——
+		// 重新生成会改变每镜提示词 → 指纹全变 → 已渲镜头全部作废(从头开跑的根因)。
+		// 想重新创作方案,请在剧本页点「生成分镜方案」(显式意图)。
+		if plan, err := c.store.LoadPlan(proj.ID); err == nil && len(plan.Shots) > 0 {
+			stages = stages[1:]
+			c.emit(proj.ID, "pipeline", 0, "info", 0,
+				"⏩ 检测到已有分镜方案(%d 镜),跳过重新生成直接续跑(重新创作请到剧本页)", len(plan.Shots))
+		}
 	}
 	started := time.Now()
 	c.emit(proj.ID, "pipeline", 0, "info", 0, "▶ 管线启动:%s", strings.Join(stageLabels(stages), " → "))
@@ -644,7 +652,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
 		prompt := anchorPrompt(plan, &shot)
-		inputFP := renderFingerprint(prompt, refs, rp, mode, seed)
+		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
+		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
+		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。
+		inputFP := renderFingerprint(prompt, refs, rp, mode, rp.Seed)
 		outName := fmt.Sprintf("shot_%03d", shot.ID)
 
 		// 断点续跑:同输入指纹且文件存在 → 跳过
@@ -732,12 +743,14 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	for _, r := range refs {
 		files = append(files, r.Path+":"+project.FingerprintFile(r.Path))
 	}
-	// 知识库工程教训:指纹必须覆盖采样质量配置(VAE/LoRA 档位),否则换档后旧缓存静默命中
-	accel := rp.Accel
-	if accel == "" {
-		accel = "turbo"
+	// 知识库工程教训:指纹必须覆盖采样质量配置(VAE/LoRA 档位),否则换档后旧缓存静默命中。
+	// 兼容:默认档(turbo/空)不附加标记 —— 与旧版指纹串完全一致,存量项目续跑不触发全量重渲;
+	// 显式 quality/express 档才追加(换档=有意重渲)。
+	accelTag := ""
+	if rp.Accel == "quality" || rp.Accel == "express" {
+		accelTag = "accel" + rp.Accel
 	}
-	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, "accel", accel), strings.Join(files, ","))
+	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, accelTag), strings.Join(files, ","))
 }
 
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {
