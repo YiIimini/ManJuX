@@ -190,23 +190,32 @@ const env = computed(() => G.status?.env)
       <div class="flex-1"></div>
 
       <div class="side-tools">
-        <el-tooltip content="编辑菜单(自定义名称与顺序)" :disabled="collapse" placement="right">
-          <button class="side-tool" @click="openNavEdit">
-            <el-icon :size="16"><Menu /></el-icon>
-            <span class="side-label" v-if="!collapse">编辑菜单</span>
-          </button>
-        </el-tooltip>
-        <el-tooltip content="收起导航" v-if="!collapse" placement="right">
-          <button class="side-tool" @click="toggleSide">
-            <el-icon :size="16"><Fold /></el-icon>
-            <span class="side-label">收起</span>
-          </button>
-        </el-tooltip>
-        <el-tooltip content="展开导航" v-else placement="right">
-          <button class="side-tool" @click="toggleSide">
-            <el-icon :size="16"><Expand /></el-icon>
-          </button>
-        </el-tooltip>
+        <!-- 收起/展开保持原样;编辑菜单(纯图标)固定在其右侧,行内右对齐 -->
+        <div v-if="!collapse" class="flex items-center w-full">
+          <el-tooltip content="收起导航" placement="top">
+            <button class="side-tool" style="flex:1" @click="toggleSide">
+              <el-icon :size="16"><Fold /></el-icon>
+              <span class="side-label">收起</span>
+            </button>
+          </el-tooltip>
+          <el-tooltip content="编辑菜单(自定义名称与顺序)" placement="top">
+            <button class="side-tool" style="padding:8px 10px" @click="openNavEdit">
+              <el-icon :size="16"><Menu /></el-icon>
+            </button>
+          </el-tooltip>
+        </div>
+        <div v-else class="flex items-center w-full">
+          <el-tooltip content="展开导航" placement="right">
+            <button class="side-tool" style="flex:1" @click="toggleSide">
+              <el-icon :size="16"><Expand /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip content="编辑菜单(自定义名称与顺序)" placement="right">
+            <button class="side-tool" style="padding:8px 0" @click="openNavEdit">
+              <el-icon :size="16"><Menu /></el-icon>
+            </button>
+          </el-tooltip>
+        </div>
       </div>
     </aside>
 

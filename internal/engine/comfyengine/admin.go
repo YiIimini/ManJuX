@@ -8,24 +8,24 @@ import (
 
 // AdminStatus ComfyUI 管理状态聚合。
 type AdminStatus struct {
-	Alive    bool   `json:"alive"`
-	Version  string `json:"version"`
-	GPU      string `json:"gpu"`
-	Running  int    `json:"queue_running"`
-	Pending  int    `json:"queue_pending"`
-	Owned    bool   `json:"owned"` // 是否为本应用代管启动(可停止)
-	RootDir  string `json:"root_dir"`
-	BaseURL  string `json:"base_url"`
-	Models   []ModelCheck `json:"models"`
-	Nodes    []NodeCheck  `json:"nodes"`
+	Alive   bool         `json:"alive"`
+	Version string       `json:"version"`
+	GPU     string       `json:"gpu"`
+	Running int          `json:"queue_running"`
+	Pending int          `json:"queue_pending"`
+	Owned   bool         `json:"owned"` // 是否为本应用代管启动(可停止)
+	RootDir string       `json:"root_dir"`
+	BaseURL string       `json:"base_url"`
+	Models  []ModelCheck `json:"models"`
+	Nodes   []NodeCheck  `json:"nodes"`
 }
 
 // ModelCheck 模型配置核对。
 type ModelCheck struct {
-	Label string `json:"label"`   // 显示名
-	Key   string `json:"key"`     // 设置键
-	Name  string `json:"name"`    // 配置的文件名
-	OK    bool   `json:"ok"`      // 是否在 ComfyUI 列表中
+	Label string   `json:"label"`          // 显示名
+	Key   string   `json:"key"`            // 设置键
+	Name  string   `json:"name"`           // 配置的文件名
+	OK    bool     `json:"ok"`             // 是否在 ComfyUI 列表中
 	List  []string `json:"list,omitempty"` // 可用清单(未命中时给候选)
 }
 
@@ -42,9 +42,14 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	e.cli = NewClient(c.BaseURL)
 	st := &AdminStatus{Alive: false, RootDir: c.RootDir, BaseURL: c.BaseURL, Owned: e.proc != nil}
 	if !e.cli.Alive(ctx) {
+		clearPidFile(c) // 引擎已死(含托盘/任务管理器手杀):清残留 pid
 		return st, nil
 	}
 	st.Alive = true
+	if e.proc == nil {
+		// 上实例代管启动的引擎:按 pid 文件接管,恢复停止/退出管理权
+		st.Owned = e.adoptFromPidFile()
+	}
 	if ver, err := e.cli.Version(ctx); err == nil {
 		st.Version = ver
 	}
@@ -78,16 +83,26 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	for _, ck := range checks {
 		mc := ModelCheck{Label: ck.label, Key: ck.key}
 		switch ck.key {
-		case "unet_ref2va": mc.Name = c.UNetRef2VA
-		case "unet_fl2va": mc.Name = c.UNetFL2VA
-		case "turbo_lora_ref2va": mc.Name = c.TurboLoRARef2VA
-		case "turbo_lora_fl2va": mc.Name = c.TurboLoRAFL2VA
-		case "video_vae": mc.Name = c.VideoVAE
-		case "audio_vae": mc.Name = c.AudioVAE
-		case "clip": mc.Name = c.CLIP
-		case "image_unet": mc.Name = c.ImageUNet
-		case "image_clip": mc.Name = c.ImageCLIP
-		case "image_vae": mc.Name = c.ImageVAE
+		case "unet_ref2va":
+			mc.Name = c.UNetRef2VA
+		case "unet_fl2va":
+			mc.Name = c.UNetFL2VA
+		case "turbo_lora_ref2va":
+			mc.Name = c.TurboLoRARef2VA
+		case "turbo_lora_fl2va":
+			mc.Name = c.TurboLoRAFL2VA
+		case "video_vae":
+			mc.Name = c.VideoVAE
+		case "audio_vae":
+			mc.Name = c.AudioVAE
+		case "clip":
+			mc.Name = c.CLIP
+		case "image_unet":
+			mc.Name = c.ImageUNet
+		case "image_clip":
+			mc.Name = c.ImageCLIP
+		case "image_vae":
+			mc.Name = c.ImageVAE
 		}
 		if list, ok := e.cli.ComboList(ctx, ck.node, ck.field); ok {
 			if mc.Name != "" {
@@ -125,15 +140,17 @@ func (e *Engine) StartAdmin(ctx context.Context) error {
 	return e.launch(ctx, e.cfg())
 }
 
-// StopAdmin 停止代管启动的 ComfyUI(外部启动的实例不接管)。
+// StopAdmin 停止代管启动的 ComfyUI。外部启动的实例不接管;
+// 但 pid 文件可认领的(本应用上实例启动、应用重启后)会先接管再停。
 func (e *Engine) StopAdmin() error {
-	if e.proc == nil {
+	if e.proc == nil && !e.adoptFromPidFile() {
 		return fmt.Errorf("ComfyUI 非本应用启动,请在其自身窗口/终端关闭")
 	}
-	if err := e.proc.Kill(); err != nil {
+	if err := killProc(e.proc); err != nil {
 		return err
 	}
 	e.proc = nil
+	clearPidFile(e.cfg())
 	return nil
 }
 
@@ -145,4 +162,3 @@ func (e *Engine) Interrupt(ctx context.Context) { e.cli.Interrupt(ctx) }
 
 // FreeVRAM 释放显存。
 func (e *Engine) FreeVRAM(ctx context.Context) { e.cli.Free(ctx) }
-

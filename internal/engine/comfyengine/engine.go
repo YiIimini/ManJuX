@@ -2,7 +2,6 @@ package comfyengine
 
 import (
 	"context"
-	"strings"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -13,11 +12,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
-	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 )
 
 // Engine 本地 ComfyUI 渲染引擎(H3-Base 768p,音视频一体直出)。
@@ -87,6 +87,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 		return fmt.Errorf("启动 ComfyUI 失败: %w", err)
 	}
 	e.proc = cmd.Process
+	writePidFile(c, cmd.Process.Pid) // 代管状态持久化:重启后可接管
 	touchBusy()
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {
@@ -281,12 +282,12 @@ func link(node string, slot int) []any { return []any{node, slot} }
 // 返回 (条件节点id, latent节点id)。
 func addConditionNode(g map[string]any, job engine.Job, uploaded []string, w, h, length int) (string, string) {
 	base := map[string]any{
-		"clip":    link("1", 0),
-		"vae":     link("2", 0),
-		"prompt":  job.Prompt,
-		"width":   w,
-		"height":  h,
-		"length":  length,
+		"clip":   link("1", 0),
+		"vae":    link("2", 0),
+		"prompt": job.Prompt,
+		"width":  w,
+		"height": h,
+		"length": length,
 	}
 	if job.Mode == "ref2va" && len(uploaded) > 0 {
 		inputs := copyMap(base)
@@ -408,21 +409,21 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	}
 	modelLink := link("30", 0)
 	g["30"] = nd("UNETLoader", map[string]any{
-		"unet_name":  unetFor(job, c),
+		"unet_name":    unetFor(job, c),
 		"weight_dtype": "default",
 	})
 	if turbo != "" {
 		g["31"] = nd("LoraLoaderModelOnly", map[string]any{
-			"lora_name":     turbo,
+			"lora_name":      turbo,
 			"strength_model": 1.0,
-			"model":         modelLink,
+			"model":          modelLink,
 		})
 		modelLink = link("31", 0)
 	}
 	g["32"] = nd("MiniMaxH3SigmaShift", map[string]any{
-		"model":        modelLink,
-		"shift_video":  12.0,
-		"shift_audio":  3.0,
+		"model":       modelLink,
+		"shift_video": 12.0,
+		"shift_audio": 3.0,
 	})
 	model := link("32", 0)
 
@@ -452,12 +453,12 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 			"clip_index":  job.PrevShot,
 		})
 		g["71"] = nd("MiniMaxH3MotionContext", map[string]any{
-			"conditioning":        guiderCond,
-			"vae":                 link("2", 0),
-			"latent":              link(latentNode, latentSlot),
-			"context_length":      "22",
+			"conditioning":         guiderCond,
+			"vae":                  link("2", 0),
+			"latent":               link(latentNode, latentSlot),
+			"context_length":       "22",
 			"audio_context_length": 24,
-			"context_latent":      link("70", 0),
+			"context_latent":       link("70", 0),
 		})
 		guiderCond = link("71", 0)
 	}
@@ -473,10 +474,10 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	g["40"] = nd("RandomNoise", map[string]any{"noise_seed": job.Seed})
 	g["41"] = nd("KSamplerSelect", map[string]any{"sampler_name": "res_multistep"})
 	g["42"] = nd("BasicScheduler", map[string]any{
-		"model":    model,
+		"model":     model,
 		"scheduler": "simple",
-		"steps":    steps,
-		"denoise":  1.0,
+		"steps":     steps,
+		"denoise":   1.0,
 	})
 	g["43"] = nd("BasicGuider", map[string]any{
 		"model":        model,
@@ -494,10 +495,10 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	if useSeam {
 		// 裁掉 pinned 头:images+audio 同裁,match_tail 保证音画等长
 		g["73"] = nd("MiniMaxH3MotionContextTrim", map[string]any{
-			"images":       link("50", 0),
-			"trim_frames":  link("71", 1),
-			"audio":        link("51", 0),
-			"match_tail":   true,
+			"images":      link("50", 0),
+			"trim_frames": link("71", 1),
+			"audio":       link("51", 0),
+			"match_tail":  true,
 		})
 		g["52"] = nd("CreateVideo", map[string]any{
 			"images": link("73", 0),

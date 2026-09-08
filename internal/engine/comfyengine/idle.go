@@ -60,7 +60,7 @@ func (e *Engine) RunIdleWatcher() {
 			if err != nil || len(run) > 0 || len(pend) > 0 {
 				continue // 队列有活/探测失败:不动
 			}
-			if !e.cli.Alive(ctx2(3*time.Second)) {
+			if !e.cli.Alive(ctx2(3 * time.Second)) {
 				continue
 			}
 			mins := c.IdleStopMin

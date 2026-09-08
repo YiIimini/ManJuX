@@ -35,8 +35,8 @@ func (e *Engine) GenerateImage(ctx context.Context, prompt string, neg string, s
 			"latent_image": link("6", 0), "seed": seed,
 			"steps": 8, "cfg": 1.0, "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0,
 		}),
-		"8":  nd("VAEDecode", map[string]any{"samples": link("7", 0), "vae": link("3", 0)}),
-		"9":  nd("SaveImage", map[string]any{"images": link("8", 0), "filename_prefix": "manjux/asset_" + baseName(outPath)}),
+		"8": nd("VAEDecode", map[string]any{"samples": link("7", 0), "vae": link("3", 0)}),
+		"9": nd("SaveImage", map[string]any{"images": link("8", 0), "filename_prefix": "manjux/asset_" + baseName(outPath)}),
 	}
 
 	hist, err := e.submitAndWait(ctx, g, nil)

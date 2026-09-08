@@ -59,7 +59,7 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 			OS             string `json:"os"`
 		} `json:"system"`
 		Devices []struct {
-			Name  string `json:"name"`
+			Name      string  `json:"name"`
 			VRAMTotal float64 `json:"vram_total"`
 		} `json:"devices"`
 	}
@@ -121,9 +121,9 @@ func (c *Client) UploadImage(ctx context.Context, localPath string) (name string
 		return "", fmt.Errorf("上传失败 HTTP %d: %s", resp.StatusCode, string(raw))
 	}
 	var out struct {
-		Name     string `json:"name"`
+		Name      string `json:"name"`
 		Subfolder string `json:"subfolder"`
-		Type     string `json:"type"`
+		Type      string `json:"type"`
 	}
 	if err := json.Unmarshal(raw, &out); err != nil {
 		return "", err
@@ -164,7 +164,7 @@ func (c *Client) Submit(ctx context.Context, graph map[string]any) (string, erro
 // extractNodeErrors 从 /prompt 422 响应中提取节点校验错误。
 func extractNodeErrors(body string) string {
 	var out struct {
-		Error  map[string]any `json:"error"`
+		Error      map[string]any `json:"error"`
 		NodeErrors map[string]struct {
 			Errors []struct {
 				Message string `json:"message"`
@@ -193,9 +193,9 @@ func extractNodeErrors(body string) string {
 // HistoryEntry 一次执行的产物与状态。
 type HistoryEntry struct {
 	Status struct {
-		Completed  bool   `json:"completed"`
-		StatusStr  string `json:"status_str"`
-		Messages   []json.RawMessage `json:"messages"`
+		Completed bool              `json:"completed"`
+		StatusStr string            `json:"status_str"`
+		Messages  []json.RawMessage `json:"messages"`
 	} `json:"status"`
 	Outputs map[string]map[string]json.RawMessage `json:"outputs"`
 }
@@ -506,9 +506,9 @@ func execError(h *HistoryEntry) string {
 			continue
 		}
 		var data struct {
-			NodeMessage string `json:"node_message"`
+			NodeMessage      string `json:"node_message"`
 			ExceptionMessage string `json:"exception_message"`
-			NodeType    string `json:"node_type"`
+			NodeType         string `json:"node_type"`
 		}
 		if err := json.Unmarshal(m[1], &data); err == nil {
 			msg := data.ExceptionMessage

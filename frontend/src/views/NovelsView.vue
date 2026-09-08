@@ -3,6 +3,7 @@
 import { G, api, refreshProjects } from '../store'
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import ChapterTree from '../components/ChapterTree.vue'
 
 const root = ref('')
 const hint = ref('')
@@ -29,6 +30,24 @@ const readBusy = ref(false)
 const navCollapsed = ref(false)          // 右侧目录栏收起
 const expandedDirs = ref(new Set())      // 展开的目录节点 key
 const chapTree = ref([])
+// 自然排序:数字段按数值比(第2章 < 第10章),非数字段中文比
+function naturalCmp(a, b) {
+  const sa = String(a).split(/(\d+)/)
+  const sb = String(b).split(/(\d+)/)
+  for (let i = 0; i < Math.max(sa.length, sb.length); i++) {
+    const xa = sa[i], xb = sb[i]
+    if (xa === undefined) return -1
+    if (xb === undefined) return 1
+    if (xa === xb) continue
+    if (/^\d+$/.test(xa) && /^\d+$/.test(xb)) {
+      const d = parseInt(xa, 10) - parseInt(xb, 10)
+      if (d) return d
+      continue
+    }
+    return xa.localeCompare(xb, 'zh')
+  }
+  return 0
+}
 function buildTree(chapters) {
   const tree = []
   for (const ch of chapters) {
@@ -47,9 +66,9 @@ function buildTree(chapters) {
     }
     cur.push({ type: 'file', name: file, ch })
   }
-  // 排序:目录在前,同级按名
+  // 排序:目录在前;同级按自然正序(章节号数值序)
   const sortRec = (arr) => {
-    arr.sort((a, b) => (a.type === b.type) ? a.name.localeCompare(b.name, 'zh')
+    arr.sort((a, b) => (a.type === b.type) ? naturalCmp(a.name, b.name)
       : (a.type === 'dir' ? -1 : 1))
     arr.forEach(x => x.type === 'dir' && sortRec(x.children))
   }
@@ -195,45 +214,8 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
               </el-button>
             </div>
             <div class="flex-1 overflow-y-auto py-1.5 tree-scroll">
-              <template v-for="node in chapTree" :key="node.key || node.ch?.path">
-                <!-- 目录节点(卷):收起/展开 -->
-                <div v-if="node.type === 'dir'" class="tree-dir" @click="toggleDir(node.key)">
-                  <el-icon :size="11" color="var(--mx-amber)"
-                           :style="{ transform: expandedDirs.has(node.key) ? 'rotate(90deg)' : '' }"><CaretRight /></el-icon>
-                  <span class="truncate">{{ node.name }}</span>
-                  <span class="timecode" style="font-size:9px;margin-left:auto">{{ node.children.length }}</span>
-                </div>
-                <template v-if="node.type === 'dir' && expandedDirs.has(node.key)">
-                  <div v-for="sub in node.children" :key="sub.key || sub.ch?.path">
-                    <div v-if="sub.type === 'dir'" class="tree-dir" style="padding-left:26px" @click="toggleDir(sub.key)">
-                      <el-icon :size="11" color="var(--mx-amber)"
-                               :style="{ transform: expandedDirs.has(sub.key) ? 'rotate(90deg)' : '' }"><CaretRight /></el-icon>
-                      <span class="truncate">{{ sub.name }}</span>
-                    </div>
-                    <div v-if="sub.type === 'dir' && expandedDirs.has(sub.key)"
-                         v-for="lf in sub.children" :key="lf.ch.path"
-                         class="tree-leaf" :class="{ on: reading && reading.name === lf.ch.name }"
-                         @click="readChapter(lf.ch)">
-                      <span class="truncate">{{ lf.name }}</span>
-                      <span class="timecode" style="font-size:9px">{{ lf.ch.kb }}KB</span>
-                    </div>
-                    <div v-else-if="sub.type === 'file'"
-                         class="tree-leaf" :class="{ on: reading && reading.name === sub.ch.name }"
-                         @click="readChapter(sub.ch)">
-                      <span class="truncate">{{ sub.name }}</span>
-                      <span class="timecode" style="font-size:9px">{{ sub.ch.kb }}KB</span>
-                    </div>
-                  </div>
-                </template>
-                <!-- 顶层文件(全本等) -->
-                <div v-else-if="node.type === 'file'"
-                     class="tree-leaf" :class="{ on: reading && reading.name === node.ch.name }"
-                     @click="readChapter(node.ch)">
-                  <el-icon :size="11" color="var(--mx-text3)"><Document /></el-icon>
-                  <span class="truncate">{{ node.name }}</span>
-                  <span class="timecode" style="font-size:9px">{{ node.ch.kb }}KB</span>
-                </div>
-              </template>
+              <ChapterTree :nodes="chapTree" :expanded="expandedDirs" :reading="reading"
+                          @read="readChapter" @toggle="toggleDir" />
             </div>
           </div>
           <!-- 收起态:展开按钮 -->
