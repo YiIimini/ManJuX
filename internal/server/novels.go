@@ -344,27 +344,31 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, fmt.Errorf("《%s》已创建过视频项目(首页「剧集合集」卡片可查看/续跑),请勿重复创建", name))
 		return
 	}
-	// 拆集+建项目(复用 novel-split 核心)
-	series, eps, err := s.splitNovelToProjects(r.Context(), name, text, in.Max)
-	if err != nil {
-		writeErr(w, 500, err)
-		return
-	}
-	// 封面复制到每集
-	if coverSrc != "" {
-		ext := strings.ToLower(filepath.Ext(coverSrc))
-		for _, ep := range eps {
-			dst := filepath.Join(s.store.Dir(ep), "assets", "cover"+ext)
-			if b, e := os.ReadFile(coverSrc); e == nil {
-				_ = os.MkdirAll(filepath.Dir(dst), 0o755)
-				_ = os.WriteFile(dst, b, 0o644)
+	// 后台异步:拆集→建项目→封面→自动批量。立即返回,弹窗不等待 LLM(2-6 分钟);
+	// 进度看全局日志(30 秒心跳),分集项目创建后首页实时出现。
+	cover := coverSrc
+	maxEp := in.Max
+	go func() {
+		series, eps, err := s.splitNovelToProjects(context.Background(), name, text, maxEp)
+		if err != nil {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
+				Message: "《" + name + "》拆集失败:" + err.Error()})
+			return
+		}
+		if cover != "" {
+			ext := strings.ToLower(filepath.Ext(cover))
+			for _, ep := range eps {
+				dst := filepath.Join(s.store.Dir(ep), "assets", "cover"+ext)
+				if b, e := os.ReadFile(cover); e == nil {
+					_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+					_ = os.WriteFile(dst, b, 0o644)
+				}
 			}
 		}
-	}
-	// 自动启动批量产线
-	s.startBatch(series, eps)
-	writeJSON(w, 200, map[string]any{"ok": true, "book": series, "episodes": len(eps),
-		"message": fmt.Sprintf("《%s》已拆 %d 集并自动开始批量产线", series, len(eps))})
+		s.startBatch(series, eps)
+	}()
+	writeJSON(w, 200, map[string]any{"ok": true, "submitted": true,
+		"message": "《" + name + "》已提交后台创作:拆集(2-6 分钟)→分集项目自动出现→自动开始批量产线,全程日志可观测"})
 }
 
 // startBatch 启动批量产线(供 produce 与手动接口共用)。
@@ -462,7 +466,6 @@ func hasTxtExt(p string) bool {
 	n := strings.ToLower(filepath.Ext(p))
 	return n == ".md" || n == ".txt"
 }
-
 
 // projectConfigDefault 新项目默认参数(与创建项目接口一致:全局默认引擎优先)。
 func (s *Server) projectConfigDefault() project.ProjectConfig {

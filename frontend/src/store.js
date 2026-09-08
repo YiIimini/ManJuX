@@ -105,6 +105,9 @@ function pushEvent(ev) {
   G.logs.push(ev)
   if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
   G.eventsOpen = true
+  if (ev.phase === 'novel' && ['success', 'error', 'warn'].includes(ev.level)) {
+    refreshProjects() // 拆集建项目/批量进度 → 首页实时出现分集
+  }
   if (ev.project_id && G.project && ev.project_id === G.project.project.id) {
     // 管线级事件(success/error/warn,如「⏹ 已停止」「✔ 完成」)→ 立即刷新项目状态
     if (ev.phase === 'pipeline' && ['success', 'error', 'warn'].includes(ev.level)) {

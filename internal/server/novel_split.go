@@ -3,12 +3,11 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -16,9 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
-	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 const novelSplitSystem = `你是短视频连载的总编剧。把用户给的小说/长文拆成多集短视频剧本大纲:
@@ -38,97 +35,30 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("请提供小说正文"))
 		return
 	}
+	if len([]rune(in.Text)) < 200 {
+		writeErr(w, 400, fmt.Errorf("小说正文太短(至少 200 字)"))
+		return
+	}
+	g := s.cfg.Get()
+	if g.LLM.BaseURL == "" || g.LLM.APIKey == "" || g.LLM.Model == "" {
+		writeErr(w, 400, fmt.Errorf("LLM 未配置"))
+		return
+	}
 	name := strings.TrimSpace(in.Name)
 	if name == "" {
 		name = "连载"
 	}
-	g := s.cfg.Get()
-	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
-	if !client.Configured() {
-		writeErr(w, 400, fmt.Errorf("LLM 未配置"))
+	if s.novelProduced(name) && name != "连载" {
+		writeErr(w, 409, fmt.Errorf("《%s》已创建过视频项目,请勿重复创建", name))
 		return
 	}
-
-	// 心跳:拆集要通读全文,推理模型数分钟
-	done := make(chan struct{})
-	defer close(done)
+	// 异步后台拆集建项目:立即返回,进度看全局日志(30 秒心跳+逐集创建事件),
+	// 首页项目列表随 novel 事件实时刷新——弹窗不再同步等待 LLM(2-6 分钟)。
 	go func() {
-		start := time.Now()
-		t := time.NewTicker(30 * time.Second)
-		defer t.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case <-t.C:
-				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-					Message: fmt.Sprintf("⏳ 小说拆集通读中…已等待 %d 秒(整本拆解通常 2-6 分钟)", int(time.Since(start).Seconds()))})
-			}
-		}
+		s.splitNovelToProjects(r.Context(), name, in.Text, in.Max)
 	}()
-	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-		Message: fmt.Sprintf("开始整本拆集:%s(正文 %d 字)", name, len([]rune(in.Text)))})
-
-	ctx, cancel := context.WithTimeout(r.Context(), time.Duration(g.LLM.Timeout)*time.Second+2*time.Minute)
-	defer cancel()
-	maxLine := ""
-	if in.Max > 0 {
-		maxLine = fmt.Sprintf("\n- 最多拆 %d 集。", in.Max)
-	}
-	raw, err := client.Chat(ctx, []llm.Message{
-		{Role: "system", Content: novelSplitSystem},
-		{Role: "user", Content: "小说正文:\n\"\"\"\n" + in.Text + "\n\"\"\"" + maxLine + "\n输出拆集 JSON。"},
-	}, true)
-	if err != nil {
-		writeErr(w, 500, fmt.Errorf("拆集失败: %w", err))
-		return
-	}
-	var plan struct {
-		Book     string `json:"book"`
-		Style    string `json:"style"`
-		Episodes []struct {
-			Ep    int    `json:"ep"`
-			Title string `json:"title"`
-			Brief string `json:"brief"`
-		} `json:"episodes"`
-	}
-	if err := jsonUnmarshalStrict(trimJSON(raw), &plan); err != nil || len(plan.Episodes) == 0 {
-		writeErr(w, 500, fmt.Errorf("拆集结果解析失败,请重试"))
-		return
-	}
-	sort.Slice(plan.Episodes, func(i, j int) bool { return plan.Episodes[i].Ep < plan.Episodes[j].Ep })
-
-	// 系列名:用户填了主名用主名;留空则用 LLM 从小说内容识别出的书名
-	series := name
-	if series == "连载" && strings.TrimSpace(plan.Book) != "" {
-		series = strings.TrimSpace(plan.Book)
-	}
-	// 每集建子项目:名「主名·第01集·标题」,源文本=书名+风格+前情+本集 brief
-	created := []map[string]any{}
-	for i, ep := range plan.Episodes {
-		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, ep.Title)
-		if _, ok := s.store.Get(epName); ok {
-			created = append(created, map[string]any{"project": epName, "ep": ep.Ep, "title": ep.Title, "exists": true})
-			continue
-		}
-		if _, err := s.store.Create(epName, project.ProjectConfig{}); err != nil {
-			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-				Message: fmt.Sprintf("子项目创建失败「%s」:%v", epName, err)})
-			continue
-		}
-		var prev string
-		if i > 0 {
-			p := plan.Episodes[i-1]
-			prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", p.Ep, p.Title, clampRunes(p.Brief, 120))
-		}
-		src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
-			name, ep.Ep, ep.Title, plan.Style, prev, ep.Brief)
-		_ = s.store.SaveSource(epName, src)
-		created = append(created, map[string]any{"project": epName, "ep": ep.Ep, "title": ep.Title})
-	}
-	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目(共享资产库,角色自动复用)", series, len(plan.Episodes), len(created))})
-	writeJSON(w, 200, map[string]any{"book": series, "style": plan.Style, "episodes": created})
+	writeJSON(w, 200, map[string]any{"ok": true, "submitted": true,
+		"message": "已提交后台拆集(通常 2-6 分钟):完成后分集项目自动出现在首页,日志有实时心跳"})
 }
 
 func clampRunes(s string, n int) string {
@@ -277,4 +207,3 @@ func epNo(name string) int {
 	}
 	return 9999
 }
-

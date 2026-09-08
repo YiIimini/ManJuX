@@ -17,8 +17,10 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -61,7 +63,7 @@ type Shot struct {
 type Character struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Description string `json:"description"` // 外貌/服装/气质(供一致性)
+	Description string `json:"description"`  // 外貌/服装/气质(供一致性)
 	ImagePrompt string `json:"image_prompt"` // 定妆照文生图提示词(英文)
 	Voice       string `json:"voice"`        // 声线描述(英文,进 H3 提示词)
 }
@@ -76,20 +78,20 @@ type Scene struct {
 
 // Plan LLM 直出的完整分镜方案。
 type Plan struct {
-	Title      string       `json:"title"`
-	Logline    string       `json:"logline"`
-	Style      string       `json:"style"` // 视觉风格(英文,注入每镜提示词)
-	Characters []Character  `json:"characters"`
-	Scenes     []Scene      `json:"scenes"`
-	Shots      []Shot       `json:"shots"`
+	Title      string      `json:"title"`
+	Logline    string      `json:"logline"`
+	Style      string      `json:"style"` // 视觉风格(英文,注入每镜提示词)
+	Characters []Character `json:"characters"`
+	Scenes     []Scene     `json:"scenes"`
+	Shots      []Shot      `json:"shots"`
 }
 
 // Asset 参考图资产。
 type Asset struct {
-	ID          string `json:"id"`          // 形如 char:linfan / scene:yuelai_inn
-	Kind        string `json:"kind"`        // characters / scenes / props
+	ID          string `json:"id"`   // 形如 char:linfan / scene:yuelai_inn
+	Kind        string `json:"kind"` // characters / scenes / props
 	Name        string `json:"name"`
-	File        string `json:"file"`        // 相对项目目录路径
+	File        string `json:"file"` // 相对项目目录路径
 	ImagePrompt string `json:"image_prompt"`
 	Source      string `json:"source"`      // upload / comfy / llm-prompt
 	Fingerprint string `json:"fingerprint"` // 内容指纹(变更检测)
@@ -97,14 +99,14 @@ type Asset struct {
 
 // ClipManifest 镜头产物清单(断点续跑与时效管理)。
 type ClipManifest struct {
-	ShotID    int       `json:"shot_id"`
+	ShotID    int        `json:"shot_id"`
 	Status    ShotStatus `json:"status"`
-	Engine    string    `json:"engine"` // comfy / api
-	File      string    `json:"file"`   // 相对项目目录
-	InputFP   string    `json:"input_fp"`  // 渲染输入指纹(提示词+资产+参数)
-	TaskID    string    `json:"task_id"`   // 云端任务 id(如有)
-	Error     string    `json:"error"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Engine    string     `json:"engine"`   // comfy / api
+	File      string     `json:"file"`     // 相对项目目录
+	InputFP   string     `json:"input_fp"` // 渲染输入指纹(提示词+资产+参数)
+	TaskID    string     `json:"task_id"`  // 云端任务 id(如有)
+	Error     string     `json:"error"`
+	UpdatedAt time.Time  `json:"updated_at"`
 }
 
 // ProjectConfig 项目级配置(创建时从全局默认拷贝,之后独立调优)。
@@ -114,10 +116,10 @@ type ProjectConfig struct {
 
 // Project 项目元数据。
 type Project struct {
-	ID        string       `json:"id"`
-	Name      string       `json:"name"`
-	CreatedAt time.Time    `json:"created_at"`
-	UpdatedAt time.Time    `json:"updated_at"`
+	ID        string        `json:"id"`
+	Name      string        `json:"name"`
+	CreatedAt time.Time     `json:"created_at"`
+	UpdatedAt time.Time     `json:"updated_at"`
 	Config    ProjectConfig `json:"config"`
 
 	// 运行时状态(不落盘字段由 Store 维护)
@@ -127,26 +129,48 @@ type Project struct {
 
 // Store 项目仓库(线程安全的内存索引 + 磁盘读写)。
 type Store struct {
-	mu        sync.Mutex
-	root      string // data/projects
-	projects  map[string]*Project
+	mu       sync.Mutex
+	root     string // data/projects
+	projects map[string]*Project
 }
 
 // NewStore 创建项目仓库并扫描磁盘恢复项目列表。
+// NewStore 打开项目仓库:先做旧版平铺分集的一次性迁移,再扫描目录装载项目。
+// 目录规范(两级):projects/普通项目/ 与 projects/书名/分集/;
+// 以目录内是否存在 project.json 判定项目,书名目录无 meta 不会被误判。
 func NewStore(root string) (*Store, error) {
 	s := &Store{root: root, projects: map[string]*Project{}}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return nil, err
+	}
+	s.migrateSeriesDirs()
+
+	loadDir := func(dir string) { // 目录下所有含 project.json 的子目录装为项目
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			p := &Project{ID: e.Name(), Name: e.Name()}
+			if err := s.loadMeta(p); err == nil {
+				s.projects[p.ID] = p
+			}
+		}
 	}
 	entries, _ := os.ReadDir(root)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		p := &Project{ID: e.Name(), Name: e.Name()}
-		if err := s.loadMeta(p); err == nil {
-			s.projects[p.ID] = p
+		full := filepath.Join(root, e.Name())
+		if _, err := os.Stat(filepath.Join(full, "project.json")); err == nil {
+			p := &Project{ID: e.Name(), Name: e.Name()}
+			if err := s.loadMeta(p); err == nil {
+				s.projects[p.ID] = p
+			}
+			continue
 		}
+		loadDir(full) // 书名目录:装载其下分集
 	}
 	return s, nil
 }
@@ -155,7 +179,17 @@ func NewStore(root string) (*Store, error) {
 func (s *Store) Root() string { return s.root }
 
 // Dir 返回项目目录。
-func (s *Store) Dir(id string) string { return filepath.Join(s.root, id) }
+// seriesRe 「书名·第N集·标题」系列分集命名。
+var seriesRe = regexp.MustCompile(`^(.+)·第\d+集`)
+
+// Dir 项目磁盘目录:系列分集归入「书名」子目录管理
+// (projects/书名/书名·第01集·标题),普通项目仍在根下。
+func (s *Store) Dir(id string) string {
+	if m := seriesRe.FindStringSubmatch(id); m != nil {
+		return filepath.Join(s.root, m[1], id)
+	}
+	return filepath.Join(s.root, id)
+}
 
 func (s *Store) metaPath(id string) string {
 	return filepath.Join(s.Dir(id), "project.json")
@@ -170,6 +204,33 @@ func (s *Store) loadMeta(p *Project) error {
 }
 
 // Create 新建项目:name 仅允许中文/字母/数字/下划线/连字符。
+// migrateSeriesDirs 一次性迁移:旧版平铺在 projects/ 根的分集目录
+// 移入「书名」子目录(目标已存在则跳过,可安全重试)。
+func (s *Store) migrateSeriesDirs() {
+	ents, err := os.ReadDir(s.root)
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		m := seriesRe.FindStringSubmatch(e.Name())
+		if m == nil {
+			continue
+		}
+		src := filepath.Join(s.root, e.Name())
+		dst := filepath.Join(s.root, m[1], e.Name())
+		if _, err := os.Stat(dst); err == nil {
+			continue
+		}
+		_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+		if err := os.Rename(src, dst); err == nil {
+			log.Printf("[store] 迁移分集目录:%s → %s/", e.Name(), m[1])
+		}
+	}
+}
+
 func (s *Store) Create(name string, cfg ProjectConfig) (*Project, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
