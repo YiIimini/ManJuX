@@ -76,6 +76,10 @@ async function quitNow() {
 }
 const gb = (b) => (b / 1024 ** 3).toFixed(1)
 const lastLog = computed(() => G.logs.length ? G.logs[G.logs.length - 1] : null)
+const projName = (id) => {
+  const p = (G.projects || []).find(x => x.id === id)
+  return p ? p.name : id
+}
 const verLabel = computed(() => {
   const v = (G.status?.version || '').replace(/^v+/i, '')
   return v ? 'V' + v : 'V…'
@@ -280,7 +284,9 @@ const env = computed(() => G.status?.env)
           title="运行日志(点击展开)">
           <span class="rec-dot" v-if="lastLog && G.eventsOpen"></span>
           <span class="tick-text" v-if="!G.eventsOpen" style="color:var(--mx-yellow)">日志连接中断,重连中…</span>
-          <span class="tick-text" v-else-if="lastLog" :class="lastLog.level">{{ lastLog.message }}</span>
+          <span class="tick-text" v-else-if="lastLog" :class="lastLog.level">
+            <template v-if="lastLog.project_id && lastLog.project_id !== (G.project?.project?.id)">【{{ projName(lastLog.project_id) }}】</template>{{ lastLog.message }}
+          </span>
           <span class="tick-text" v-else style="color:#46536f">运行日志待命…</span>
           <el-icon :size="12"><ArrowUp v-if="G.logPanelOpen" /><ArrowDown v-else /></el-icon>
         </button>

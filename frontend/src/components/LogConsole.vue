@@ -1,5 +1,13 @@
 <script setup>
 import { G, fmtTime } from '../store'
+
+// 项目名(事件流是全局的,跨项目运行都要能分清归属)
+const projName = (id) => {
+  if (!id) return ''
+  const p = (G.projects || []).find(x => x.id === id)
+  return p ? p.name : id
+}
+const curProj = () => G.project?.project?.id
 import { nextTick, watch, ref } from 'vue'
 
 const box = ref(null)
@@ -17,7 +25,7 @@ watch(() => G.logs.length, async () => {
     <div class="flex items-center gap-3 px-4 h-9 flex-none" style="border-bottom:1px solid var(--mx-line)">
       <span class="rec-dot"></span>
       <span class="timecode" style="color:var(--mx-red)">REC</span>
-      <span class="timecode">RUNTIME LOG · LIVE</span>
+      <span class="timecode">RUNTIME LOG · GLOBAL LIVE(全局事件流)</span>
       <span class="timecode" v-if="G.logs.length">{{ G.logs.length }} EVENTS</span>
       <div class="flex-1"></div>
       <el-checkbox v-model="autoscroll" size="small" label="自动滚动" />
@@ -28,9 +36,15 @@ watch(() => G.logs.length, async () => {
       <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="m" style="color:#46536f">等待管线事件…(运行任意阶段后实时输出)</span></div>
       <div v-for="(l, i) in G.logs" :key="i" class="log-line" :class="l.level">
         <span class="t">{{ fmtTime(l.at) }}</span>
+        <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
         <span class="ph" v-if="l.phase">[{{ l.phase }}]</span>
         <span class="m">{{ l.message }}</span>
       </div>
     </div>
   </div>
 </template>
+
+<style scoped>
+.pj { color: var(--mx-purple); margin-right: 8px; }
+.pj.cur { color: var(--mx-amber); }
+</style>

@@ -383,21 +383,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	}
 
 	genAsset := func(kind, id, name, imagePrompt string) (string, error) {
-		w, h := 832, 1248 // 角色半身竖幅
-		if kind == "scenes" {
-			if proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
-				w, h = 1248, 832
-			}
-		}
-		safe := director.SanitizeForCache(kind + "_" + id)
-		out := filepath.Join(c.store.Dir(proj.ID), "assets", kind, safe+".png")
-		seed := int64(len(id)*1000 + len(name)*7)
-		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:%s「%s」(%d×%d)…", kindLabel(kind), name, w, h)
-		path, err := comfyGen.GenerateImage(ctx, imagePrompt, krea2Negative, seed, w, h, out)
-		if err != nil {
-			return "", err
-		}
-		return path, nil
+		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt)
 	}
 
 	missing := 0
@@ -616,6 +602,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 
 	clipsDir := filepath.Join(c.store.Dir(proj.ID), "clips")
 	_ = os.MkdirAll(clipsDir, 0o755)
+	// 渲染前补齐缺失参考图(不问资产来源模式,除 skip;缺图先生成再渲染)
+	c.backfillAssets(ctx, proj, plan, assets)
 	// 阶段起点清一次遗留队列(仅本地引擎;绝不在逐镜循环内清,防误杀排队任务)
 	if ce, ok := eng.(*comfyengine.Engine); ok && engName == "comfy" {
 		ce.ClearQueue(ctx)
@@ -786,6 +774,86 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
 		head += "\n【全片视觉风格】" + strings.TrimSpace(plan.Style)
 	}
 	return head + "\n\n" + shot.H3Prompt
+}
+
+// genAssetImage Krea-2 生成单张资产图(角色竖幅半身/场景按画幅方向)。
+func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce *comfyengine.Engine, kind, id, name, imagePrompt string) (string, error) {
+	w, h := 832, 1248 // 角色半身竖幅
+	if kind == "scenes" {
+		if proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
+			w, h = 1248, 832
+		}
+	}
+	safe := director.SanitizeForCache(kind + "_" + id)
+	out := filepath.Join(c.store.Dir(proj.ID), "assets", kind, safe+".png")
+	seed := int64(len(id)*1000 + len(name)*7)
+	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:%s「%s」(%d×%d)…", kindLabel(kind), name, w, h)
+	return ce.GenerateImage(ctx, imagePrompt, krea2Negative, seed, w, h, out)
+}
+
+// backfillAssets 渲染前自动补齐缺失的参考图:资产阶段未跑/未生成全时,
+// 就地用本地 Krea-2 生成,绝不静默降级纯文生(2026-09-08 逻辑重构:
+// 「定妆照没生成就渲染」被用户点名的反直觉行为根治)。
+// 资产生成只依赖本地 ComfyUI,与本次渲染引擎选择无关(云端渲染也本地补图)。
+func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project, plan *project.Plan, assets map[string]project.Asset) bool {
+	if proj.Config.Params.Assets.Source == "skip" {
+		return true
+	}
+	type miss struct{ kind, id, name, desc, prompt string }
+	var list []miss
+	check := func(kind, id, name, desc, prompt string) {
+		if strings.TrimSpace(prompt) == "" {
+			return
+		}
+		if a, ok := assets[id]; ok && a.File != "" {
+			if _, err := os.Stat(filepath.Join(c.store.Dir(proj.ID), a.File)); err == nil {
+				return
+			}
+		}
+		list = append(list, miss{kind, id, name, desc, prompt})
+	}
+	for _, ch := range plan.Characters {
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt)
+	}
+	for _, sc := range plan.Scenes {
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
+	}
+	if len(list) == 0 {
+		return true
+	}
+	eng, err := c.reg.Get("comfy")
+	if err != nil {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地引擎不可用,对应镜头将降级纯文生(建议先启动 ComfyUI)", len(list))
+		return false
+	}
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		return false
+	}
+	if err := ce.Available(ctx); err != nil {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地 ComfyUI 未就绪(%v),对应镜头将降级纯文生", len(list), err)
+		return false
+	}
+	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(Krea-2)…", len(list))
+	for _, m := range list {
+		path, err := c.genAssetImage(ctx, proj, ce, m.kind, m.id, m.name, m.prompt)
+		if err != nil {
+			c.emit(proj.ID, PhaseRender, 0, "warn", 0, "补齐失败:%s「%s」:%v(该镜降级 t2va)", kindLabel(m.kind), m.name, err)
+			continue
+		}
+		rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
+		assets[m.id] = project.Asset{
+			ID: m.id, Kind: m.kind, Name: m.name,
+			File: filepath.ToSlash(rel), ImagePrompt: m.prompt,
+			Source: "krea2", Fingerprint: project.FingerprintFile(path),
+		}
+		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 已补齐:%s「%s」", kindLabel(m.kind), m.name)
+		if c.lib != nil {
+			_, _ = c.lib.Put(m.kind, m.name, m.desc, m.prompt, path, proj.ID, "krea2")
+		}
+	}
+	_ = c.store.SaveAssets(proj.ID, assets)
+	return true
 }
 
 // StylePresets 渲染风格预设(可多选组合):key → (显示名, 英文风格提示)。

@@ -60,7 +60,7 @@ type AssembleParams struct {
 func DefaultStageParams() StageParams {
 	return StageParams{
 		Script: ScriptParams{MaxShots: 6, TotalSeconds: 42, StyleHint: ""},
-		Assets: AssetsParams{Source: "upload"},
+		Assets: AssetsParams{Source: "krea2"}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
 			Steps: 8, Seed: 0, Turbo: true, CondCache: true, Seam: false,
