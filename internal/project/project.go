@@ -367,7 +367,7 @@ func validName(name string) bool {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 		case r >= 0x4e00 && r <= 0x9fff: // CJK 统一表意
-		case r == '_', r == '-':
+		case r == '_', r == '-', r == '·': // 间隔号·(剧集命名「主名·第N集·标题」用)
 		default:
 			return false
 		}

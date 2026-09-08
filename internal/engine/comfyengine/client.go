@@ -390,6 +390,24 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 	defer ticker.Stop()
 	deadline := time.Now().Add(45 * time.Minute) // 单镜兜底上限
 	missCount := 0                               // 连续不在队列且无 history 的次数
+	started := time.Now()                        // 执行计时(真实感知,不用假百分比)
+	lastNote := ""                               // 进度文案去重:同文案不重复上报
+	report := func(pct int, note string) {
+		if note == lastNote {
+			return
+		}
+		lastNote = note
+		if onProgress != nil {
+			onProgress(pct, note)
+		}
+	}
+	fmtDur := func() string {
+		s := int(time.Since(started).Seconds())
+		if s < 60 {
+			return fmt.Sprintf("%d 秒", s)
+		}
+		return fmt.Sprintf("%d 分 %02d 秒", s/60, s%60)
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -412,19 +430,20 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 				} else {
 					missCount = 0
 				}
-				if onProgress != nil {
-					if qerr == nil {
-						if containsID(pendIDs, promptID) {
-							onProgress(2, "排队中")
-						} else if containsID(runIDs, promptID) {
-							pct := progressFromQueuePos(runIDs, promptID)
-							onProgress(pct, fmt.Sprintf("执行中(%d%%)", pct))
-						} else {
-							onProgress(50, "执行中")
+				if qerr == nil {
+					if containsID(pendIDs, promptID) {
+						report(2, "排队中")
+					} else if containsID(runIDs, promptID) {
+						// 执行中:真实计时(每 30 秒更新一跳),不再给假百分比
+						s := int(time.Since(started).Seconds())
+						if s%30 < 3 {
+							report(20+min(60, s/10), fmt.Sprintf("执行中 · 已 %s", fmtDur()))
 						}
 					} else {
-						onProgress(2, "排队中")
+						report(50, "执行中")
 					}
+				} else {
+					report(2, "排队中")
 				}
 				continue
 			}
@@ -434,20 +453,12 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 			if h.Status.StatusStr == "error" {
 				return h, fmt.Errorf("执行出错: %s", execError(h))
 			}
-			if onProgress != nil {
+			{
 				pct := progressFromMessages(h)
-				onProgress(pct, fmt.Sprintf("渲染中 %d%%", pct))
+				report(pct, fmt.Sprintf("渲染中 %d%%", pct))
 			}
 		}
 	}
-}
-
-// progressFromQueuePos 队列首位=执行主体,给 20% 基础进度。
-func progressFromQueuePos(runIDs []string, promptID string) int {
-	if len(runIDs) > 0 && runIDs[0] == promptID {
-		return 20
-	}
-	return 3
 }
 
 func containsID(ids []string, id string) bool {

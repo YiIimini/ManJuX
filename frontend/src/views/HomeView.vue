@@ -1,6 +1,6 @@
 <script setup>
 import { G, api, refreshProjects, refreshStatus } from '../store'
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const creating = ref(false)
@@ -34,9 +34,81 @@ const busy = ref(false)
 const aiMode = ref(false)
 const aiPrompt = ref('')
 const composing = ref(false)
+// 整本小说批量模式
+const novelMode = ref(false)
+const novelText = ref('')
+const splitting = ref(false)
+const novelInput = ref(null)
+function onPickNovel(ev) {
+  const f = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!f) return
+  if (f.size > 20 << 20) { ElMessage.error('文件过大(>20MB)'); return }
+  const rd = new FileReader()
+  rd.onload = () => { novelText.value = String(rd.result || '') }
+  rd.readAsText(f, 'utf-8')
+}
+async function doNovelSplit() {
+  if (!newName.value.trim()) { ElMessage.warning('请输入书名/主项目名'); return }
+  if (novelText.value.trim().length < 200) { ElMessage.warning('小说正文太短(至少 200 字)'); return }
+  splitting.value = true
+  try {
+    const r = await api.novelSplit(newName.value.trim(), novelText.value, 0)
+    ElMessage.success(`拆集完成:《${r.book}》共 ${r.episodes.length} 集,点击项目组上的「批量产线」开始逐集生产`)
+    novelText.value = ''
+    dlg.value = false
+    await refreshProjects()
+  } catch (e) { ElMessage.error(e.message) } finally { splitting.value = false }
+}
 
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
+
+// 剧集分组:「主名·第N集·标题」归组显示
+const seriesGroups = computed(() => {
+  const re = /^(.+)·第\d+集/
+  const groups = {}
+  const singles = []
+  for (const p of G.projects) {
+    const m = p.name.match(re)
+    if (m) {
+      const key = m[1]
+      groups[key] = groups[key] || []
+      groups[key].push(p)
+    } else singles.push(p)
+  }
+  for (const k of Object.keys(groups)) groups[k].sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+  return { groups, singles }
+})
+
+// 批量产线
+const batchStat = ref(null)
+let batchTimer = null
+async function pollBatch() {
+  try {
+    const r = await api.novelBatchStatus()
+    batchStat.value = r.running ? r : null
+    if (r.running && !batchTimer) batchTimer = setInterval(async () => {
+      try {
+        const s = await api.novelBatchStatus()
+        batchStat.value = s.running ? s : null
+        if (!s.running) { refreshProjects() }
+      } catch { /* */ }
+    }, 8000)
+    if (!r.running && batchTimer) { clearInterval(batchTimer); batchTimer = null; refreshProjects() }
+  } catch { /* */ }
+}
+onMounted(pollBatch)
+async function startBatch(prefix) {
+  try {
+    const r = await api.novelBatchStart(prefix)
+    ElMessage.success(`批量产线已启动:共 ${r.total} 集,逐集串行生产`)
+    pollBatch()
+  } catch (e) { ElMessage.error(e.message) }
+}
+async function stopBatch() {
+  try { await api.novelBatchStop(); ElMessage.info('已请求停止,当前集收尾后终止') } catch (e) { ElMessage.error(e.message) }
+}
 
 function openCreate() {
   newName.value = ''
@@ -78,6 +150,7 @@ function onPickFile(ev) {
 }
 
 async function doCreate() {
+  if (novelMode.value) { await doNovelSplit(); return }
   if (!newName.value.trim()) { ElMessage.warning('请输入项目名'); return }
   busy.value = true
   try {
@@ -181,8 +254,30 @@ function stateChip(p) {
       还没有项目 —— 点击「新建项目」开始第一条短视频
     </div>
 
-    <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
-      <div v-for="p in G.projects" :key="p.id" class="shot-card proj-card cursor-pointer" @click="openProject(p.id)">
+    <!-- 剧集分组(整本小说拆集产物) -->
+    <div v-for="(eps, prefix) in seriesGroups.groups" :key="prefix" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
+      <div class="stage-ico active"><el-icon :size="16"><Film /></el-icon></div>
+      <div class="flex-1 min-w-[220px]">
+        <div class="text-sm"><b>《{{ prefix }}》</b> <span class="timecode">{{ eps.length }} 集</span>
+          <span class="timecode" v-if="eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length">
+            · 已完成 {{ eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length }}/{{ eps.length }}
+          </span>
+        </div>
+        <el-progress class="mt-1.5" style="max-width:420px"
+          :percentage="Math.round(eps.reduce((a, e) => a + (e.shots_done || 0), 0) * 100 / Math.max(1, eps.reduce((a, e) => a + (e.shots_total || 0), 0)))"
+          :stroke-width="5" :show-text="false" :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
+      </div>
+      <template v-if="batchStat && batchStat.prefix === prefix">
+        <span class="text-xs flex items-center gap-1.5" style="color:var(--mx-amber)"><i class="dot run"></i>批量中 第 {{ batchStat.current }}/{{ batchStat.total }} 集</span>
+        <el-button size="small" type="danger" plain @click="stopBatch"><el-icon class="mr-1"><VideoPause /></el-icon>停止批量</el-button>
+      </template>
+      <el-button v-else size="small" type="primary" plain :disabled="!!batchStat" @click="startBatch(prefix)">
+        <el-icon class="mr-1"><VideoCameraFilled /></el-icon>{{ batchStat ? '批量运行中…' : '批量产线' }}
+      </el-button>
+    </div>
+
+    <div v-if="seriesGroups.singles.length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
+      <div v-for="p in seriesGroups.singles" :key="p.id" class="shot-card proj-card cursor-pointer" @click="openProject(p.id)">
         <div class="proj-cover">
           <template v-if="p.cover">
             <img class="cover-fit" :src="api.fileURL(p.id, p.cover)" alt="" aria-hidden="true" />
@@ -217,14 +312,31 @@ function stateChip(p) {
         <el-form-item label="项目名(中文 / 字母 / 数字 / _-)">
           <el-input v-model="newName" maxlength="40" placeholder="如:天庭外卖员-第二集" @keyup.enter="doCreate" />
         </el-form-item>
-        <el-form-item label="AI 现场创作(只给需求,LLM 即时发挥写完整故事)">
+        <el-form-item v-if="!novelMode" label="AI 现场创作(只给需求,LLM 即时发挥写完整故事)">
           <div class="w-full flex flex-col gap-2">
-            <el-switch v-model="aiMode" active-text="由 AI 创作" inactive-text="自己提供文本" />
+            <el-switch v-model="aiMode" :disabled="novelMode" active-text="由 AI 创作" inactive-text="自己提供文本" />
             <el-input v-if="aiMode" v-model="aiPrompt" type="textarea" :rows="3" maxlength="300" show-word-limit
               placeholder="一句话或一个点子,如:外卖员送餐到天庭,玉帝当场包下他所有订单,搞笑爽文" />
           </div>
         </el-form-item>
-        <el-form-item label="导入文件(可选)" v-if="!aiMode">
+        <el-form-item label="整本小说批量(拆成多集短视频,逐集产线)">
+          <div class="w-full flex flex-col gap-2">
+            <el-switch v-model="novelMode" :disabled="aiMode" active-text="整本小说模式" inactive-text="单集模式" />
+            <template v-if="novelMode">
+              <div class="flex gap-2 items-center">
+                <el-input v-model="novelText" type="textarea" :rows="5" placeholder="粘贴整本小说/长文…&#10;LLM 将按叙事节拍拆成多集,每集一个短视频项目(同名角色自动复用定妆照)"
+                  style="flex:1" />
+                <div class="flex flex-col gap-2">
+                  <input ref="novelInput" type="file" accept=".txt,.md" hidden @change="onPickNovel" />
+                  <el-button size="small" @click="novelInput?.click()"><el-icon class="mr-1"><Upload /></el-icon>导入 txt</el-button>
+                  <span class="text-xs" style="color:var(--mx-text3)">{{ novelText.length ? novelText.length + ' 字' : '' }}</span>
+                </div>
+              </div>
+              <div class="text-xs" style="color:var(--mx-text3)">拆集需通读全文(2-6 分钟,日志有实时心跳);完成后在项目组上点「批量产线」</div>
+            </template>
+          </div>
+        </el-form-item>
+        <el-form-item label="导入文件(可选)" v-if="!aiMode && !novelMode">
           <div v-if="!pickedFile" class="upload-zone" @click="fileInput?.click()" @dragover.prevent @drop.prevent="onDropFile">
             <el-icon :size="26" color="var(--mx-text3)"><UploadFilled /></el-icon>
             <div class="text-xs mt-1" style="color:var(--mx-text2)">点击或拖入 <b>.txt / .md / .json</b></div>
@@ -251,8 +363,10 @@ function stateChip(p) {
       </el-form>
       <template #footer>
         <el-button @click="dlg = false">取消</el-button>
-        <el-button type="primary" :loading="busy || composing" :disabled="!newName.trim() || (aiMode && !aiPrompt.trim())" @click="doCreate">
-          {{ composing ? 'AI 创作中(1-3 分钟)…' : '创建项目' }}
+        <el-button type="primary" :loading="busy || composing || splitting"
+          :disabled="!newName.trim() || (aiMode && !aiPrompt.trim()) || (novelMode && novelText.trim().length < 200)"
+          @click="doCreate">
+          {{ splitting ? '拆集中(2-6 分钟)…' : composing ? 'AI 创作中(1-3 分钟)…' : novelMode ? '拆集并创建多集项目' : '创建项目' }}
         </el-button>
       </template>
     </el-dialog>
