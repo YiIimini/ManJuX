@@ -28,6 +28,7 @@ type Job struct {
 	Length      int // 帧数(17k+5 网格,engine 自行对齐)
 	Seed        int64
 	Steps       int
+	Accel       string // 加速档: quality(Acc-8Step) / turbo(默认) / express(极速预览)
 	OutputDir   string // 产物落盘目录(项目 clips/)
 	OutputName  string // 产物文件名主干(如 shot_001)
 	OnProgress  func(percent int, note string)

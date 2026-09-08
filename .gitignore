@@ -34,3 +34,4 @@ desktop.ini
 *.tmp
 *.bak
 ~$*
+.pnpm-store/

@@ -2,6 +2,7 @@ package comfyengine
 
 import (
 	"context"
+	"strings"
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
@@ -290,7 +291,9 @@ func addConditionNode(g map[string]any, job engine.Job, uploaded []string, w, h,
 	if job.Mode == "ref2va" && len(uploaded) > 0 {
 		inputs := copyMap(base)
 		inputs["audio_vae"] = link("3", 0)
-		inputs["ref_image_size"] = "match"
+		// 官方指南:max 保留最高 2048 短边编码,identity fidelity 更强
+		// (match 会把定妆照缩到生成分辨率再编码,人脸细节折损;2026-09-08 返正)
+		inputs["ref_image_size"] = "max"
 		// autogrow 输入的 API 提交格式:聚合键 ref_images = [节点引用…](不是 ref_image_N)
 		refs := make([]any, 0, len(uploaded))
 		for i, name := range uploaded {
@@ -321,7 +324,7 @@ func copyMap(m map[string]any) map[string]any {
 
 // buildEncodeGraph encode 子图:条件节点 → CondSave(输出节点)。
 func buildEncodeGraph(job engine.Job, c config.ComfySettings, uploaded []string, w, h, length int, cacheName string) map[string]any {
-	g := loaders(c)
+	g := loaders(c, job.Accel)
 	cond, _ := addConditionNode(g, job, uploaded, w, h, length)
 	g["60"] = nd("MiniMaxH3CondSave", map[string]any{
 		"conditioning": link(cond, 0),
@@ -330,17 +333,42 @@ func buildEncodeGraph(job engine.Job, c config.ComfySettings, uploaded []string,
 	return g
 }
 
-func loaders(c config.ComfySettings) map[string]any {
+func loaders(c config.ComfySettings, accel string) map[string]any {
+	videoVAE := c.VideoVAE
+	if accel == "express" {
+		// 极速档:int8 量化 VAE 解码提速 30-50%(有损,预览/抽卡用;文件缺失回退 fp16)
+		const int8VAE = "minimax_h3_video_vae_int8_convrot.safetensors"
+		if modelFileExists(c, int8VAE, []string{"vae"}) {
+			videoVAE = int8VAE
+		}
+	}
 	return map[string]any{
 		"1": nd("CLIPLoader", map[string]any{"clip_name": c.CLIP, "type": "minimax"}),
-		"2": nd("VAELoader", map[string]any{"vae_name": c.VideoVAE}),
+		"2": nd("VAELoader", map[string]any{"vae_name": videoVAE}),
 		"3": nd("VAELoader", map[string]any{"vae_name": c.AudioVAE}),
 	}
 }
 
+// modelFileExists 在模型子目录探测文件存在(质量档/极速档的文件守卫)。
+// 同时覆盖 ComfyUI/models 与 shared/models(extra_model_paths 映射的两个根)。
+func modelFileExists(c config.ComfySettings, name string, subs []string) bool {
+	roots := []string{
+		filepath.Join(c.RootDir, "ComfyUI", "models"),
+		filepath.Join(c.RootDir, "shared", "models"),
+	}
+	for _, root := range roots {
+		for _, sub := range subs {
+			if _, err := os.Stat(filepath.Join(root, sub, name)); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // buildRenderGraph 采样图:条件(内联或缓存)+ latent → 采样链 → 解码 → SaveVideo。
 func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, uploaded []string, w, h, length int) map[string]any {
-	g := loaders(c)
+	g := loaders(c, job.Accel)
 
 	var condNode, latentNode string
 	latentSlot := 1 // R2V/I2V 双输出:cond=0 / latent=1
@@ -355,10 +383,28 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 		condNode, latentNode = addConditionNode(g, job, uploaded, w, h, length)
 	}
 
-	// 模型链:UNET → (LoRA) → SigmaShift(官方默认 12/3)
+	// 模型链:UNET → (加速 LoRA) → SigmaShift(官方默认 12/3)
+	// 加速档(知识库 2026-09 结论):
+	//   quality = Kijai Acc-8Step(并行解码蒸馏,人物质感/清晰度/表情显著优于 Turbo,慢约 20%)
+	//   turbo   = 官方 Turbo 4step(最快,人物偏糊)
+	//   express = 官方 Turbo + int8 VAE(极速抽卡预览)
 	turbo := c.TurboLoRARef2VA
 	if job.Mode != "ref2va" {
 		turbo = c.TurboLoRAFL2VA
+	}
+	if job.Accel == "quality" {
+		// Acc-8Step(并行解码蒸馏)目前对 int8 量化底模不兼容
+		// (tensor 32 vs 1024,官方修复未合并主线——知识库 2026-09 实测结论)。
+		// int8 底模自动回退「官方 Turbo LoRA @ 8 步」:benchmark 实测 8 步质量
+		// 随步数单调上升、显著优于 4 步,配合 fp16 VAE + ref_image_size=max。
+		unet := unetFor(job, c)
+		acc := "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors"
+		if job.Mode != "ref2va" {
+			acc = "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors"
+		}
+		if !strings.Contains(unet, "int8") && modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
+			turbo = acc
+		}
 	}
 	modelLink := link("30", 0)
 	g["30"] = nd("UNETLoader", map[string]any{
@@ -381,6 +427,16 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	model := link("32", 0)
 
 	steps := job.Steps
+	switch job.Accel {
+	case "quality":
+		if steps < 8 {
+			steps = 8 // Acc-8Step 蒸馏锚定 8 步
+		}
+	case "express":
+		if steps > 4 {
+			steps = 4 // 极速预览
+		}
+	}
 	if steps <= 0 {
 		steps = 8
 	}

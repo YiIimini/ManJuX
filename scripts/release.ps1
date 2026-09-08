@@ -1,4 +1,4 @@
-﻿# ManJuX 发布脚本:构建 → 提交 → 打 tag → 推送 GitHub(私有仓)
+﻿# ManJuX 发布脚本:体检门禁 → 构建 → 提交 → 打 tag → 推送 GitHub(私有仓)
 # 版本更新自动推送:每次发布自动 commit + tag + push
 # 用法: powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Version v1.0.1] [-Note "说明"]
 param(
@@ -20,6 +20,17 @@ if (-not $Version) {
       $Version = "v{0}.{1}.{2}" -f [int]$m.Groups[1].Value, [int]$m.Groups[2].Value, ([int]$m.Groups[3].Value + 1)
     } else { $Version = "v1.0.1" }
   } else { $Version = "v1.0.0" }
+}
+
+# 1.5) 交付体检门禁:FAIL 立即中止,禁止带病发布
+$check = "C:/Mi/Ai/WorkBench/tools/deliver_check.py"
+if (Test-Path $check) {
+  $out = (& python $check $root 2>&1 | Out-String)
+  if ($out -match "FAIL") {
+    Write-Host $out -ForegroundColor Red
+    throw "deliver_check FAIL:修复后重跑,禁止带病交付"
+  }
+  Write-Host "==> deliver_check PASS" -ForegroundColor Green
 }
 
 # 2) 构建(注入本次发布版本号,避免 git describe 带旧 tag 后缀)

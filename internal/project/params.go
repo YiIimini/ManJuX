@@ -27,6 +27,7 @@ type AssetsParams struct {
 // RenderParams 渲染阶段(render)参数。
 type RenderParams struct {
 	Engine    string `json:"engine"`     // auto / comfy / api
+	Accel     string `json:"accel"`      // 加速档:quality(Acc-8Step质量) / turbo(官方Turbo,默认) / express(极速预览:int8VAE+4步)
 	Width     int    `json:"width"`      // 32 整除,短边≤768
 	Height    int    `json:"height"`
 	Steps     int    `json:"steps"`      // turbo 4-8 / 基线 20

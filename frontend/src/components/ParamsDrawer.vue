@@ -132,8 +132,12 @@ async function save() {
         <el-form-item label="Seed(0=每镜随机;固定值=全片画风一致)">
           <el-input-number v-model="form.render.seed" :min="0" :max="2147483647" style="width:100%" />
         </el-form-item>
-        <el-form-item label="加速 LoRA(Turbo)">
-          <el-switch v-model="form.render.turbo" />
+        <el-form-item label="加速档(质量档=Acc-8Step,人物质感/清晰度显著优于Turbo,慢约20%)">
+          <el-select v-model="form.render.accel">
+            <el-option value="" label="Turbo 均衡(默认,官方4步蒸馏)" />
+            <el-option value="quality" label="质量优先(Acc-8Step,成片推荐)" />
+            <el-option value="express" label="极速预览(int8 VAE+4步,抽卡用)" />
+          </el-select>
         </el-form-item>
         <el-form-item label="两阶段渲染(条件缓存,换 seed 不重编码)">
           <el-switch v-model="form.render.cond_cache" />

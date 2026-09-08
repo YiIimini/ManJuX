@@ -665,6 +665,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			Prompt: prompt, Mode: mode, RefImages: refs,
 			Width: rp.Width, Height: rp.Height,
 			Length: shot.Duration * 24, Seed: seed, Steps: rp.Steps,
+			Accel: rp.Accel,
 			OutputDir: clipsDir, OutputName: outName,
 			Seam:     rp.Seam && engName == "comfy",
 			PrevShot: shot.ID - 1,
@@ -731,7 +732,12 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	for _, r := range refs {
 		files = append(files, r.Path+":"+project.FingerprintFile(r.Path))
 	}
-	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam), strings.Join(files, ","))
+	// 知识库工程教训:指纹必须覆盖采样质量配置(VAE/LoRA 档位),否则换档后旧缓存静默命中
+	accel := rp.Accel
+	if accel == "" {
+		accel = "turbo"
+	}
+	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, "accel", accel), strings.Join(files, ","))
 }
 
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {
