@@ -96,10 +96,15 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(plan.Episodes, func(i, j int) bool { return plan.Episodes[i].Ep < plan.Episodes[j].Ep })
 
+	// 系列名:用户填了主名用主名;留空则用 LLM 从小说内容识别出的书名
+	series := name
+	if series == "连载" && strings.TrimSpace(plan.Book) != "" {
+		series = strings.TrimSpace(plan.Book)
+	}
 	// 每集建子项目:名「主名·第01集·标题」,源文本=书名+风格+前情+本集 brief
 	created := []map[string]any{}
 	for i, ep := range plan.Episodes {
-		epName := fmt.Sprintf("%s·第%02d集·%s", name, ep.Ep, ep.Title)
+		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, ep.Title)
 		if _, ok := s.store.Get(epName); ok {
 			created = append(created, map[string]any{"project": epName, "ep": ep.Ep, "title": ep.Title, "exists": true})
 			continue
@@ -120,8 +125,8 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 		created = append(created, map[string]any{"project": epName, "ep": ep.Ep, "title": ep.Title})
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目(共享资产库,角色自动复用)", plan.Book, len(plan.Episodes), len(created))})
-	writeJSON(w, 200, map[string]any{"book": plan.Book, "style": plan.Style, "episodes": created})
+		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目(共享资产库,角色自动复用)", series, len(plan.Episodes), len(created))})
+	writeJSON(w, 200, map[string]any{"book": series, "style": plan.Style, "episodes": created})
 }
 
 func clampRunes(s string, n int) string {

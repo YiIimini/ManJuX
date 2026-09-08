@@ -49,11 +49,11 @@ function onPickNovel(ev) {
   rd.readAsText(f, 'utf-8')
 }
 async function doNovelSplit() {
-  if (!newName.value.trim()) { ElMessage.warning('请输入书名/主项目名'); return }
   if (novelText.value.trim().length < 200) { ElMessage.warning('小说正文太短(至少 200 字)'); return }
   splitting.value = true
   try {
-    const r = await api.novelSplit(newName.value.trim(), novelText.value, 0)
+    // 书名留空 → 后端用 LLM 从小说内容自动识别
+    const r = await api.novelSplit(newName.value.trim() || '', novelText.value, 0)
     ElMessage.success(`拆集完成:《${r.book}》共 ${r.episodes.length} 集,点击项目组上的「批量产线」开始逐集生产`)
     novelText.value = ''
     dlg.value = false
@@ -310,7 +310,7 @@ function stateChip(p) {
                v-loading="composing" element-loading-text="AI 创作中(1-3 分钟),日志有实时心跳…">
       <el-form label-position="top">
         <el-form-item label="项目名(中文 / 字母 / 数字 / _-)">
-          <el-input v-model="newName" maxlength="40" placeholder="如:天庭外卖员-第二集" @keyup.enter="doCreate" />
+          <el-input v-model="newName" maxlength="40" :placeholder="novelMode ? '书名(可留空,AI 自动从小说识别)' : '如:天庭外卖员-第二集'" @keyup.enter="doCreate" />
         </el-form-item>
         <el-form-item v-if="!novelMode" label="AI 现场创作(只给需求,LLM 即时发挥写完整故事)">
           <div class="w-full flex flex-col gap-2">
@@ -328,11 +328,11 @@ function stateChip(p) {
                   style="flex:1" />
                 <div class="flex flex-col gap-2">
                   <input ref="novelInput" type="file" accept=".txt,.md" hidden @change="onPickNovel" />
-                  <el-button size="small" @click="novelInput?.click()"><el-icon class="mr-1"><Upload /></el-icon>导入 txt</el-button>
+                  <el-button size="small" @click="novelInput?.click()"><el-icon class="mr-1"><Upload /></el-icon>导入 txt / md</el-button>
                   <span class="text-xs" style="color:var(--mx-text3)">{{ novelText.length ? novelText.length + ' 字' : '' }}</span>
                 </div>
               </div>
-              <div class="text-xs" style="color:var(--mx-text3)">拆集需通读全文(2-6 分钟,日志有实时心跳);完成后在项目组上点「批量产线」</div>
+              <div class="text-xs" style="color:var(--mx-text3)">支持 txt / md;拆集需通读全文(2-6 分钟,日志有实时心跳);书名留空时 AI 自动识别;完成后在项目组上点「批量产线」</div>
             </template>
           </div>
         </el-form-item>
@@ -364,7 +364,7 @@ function stateChip(p) {
       <template #footer>
         <el-button @click="dlg = false">取消</el-button>
         <el-button type="primary" :loading="busy || composing || splitting"
-          :disabled="!newName.trim() || (aiMode && !aiPrompt.trim()) || (novelMode && novelText.trim().length < 200)"
+          :disabled="(!newName.trim() && !novelMode) || (aiMode && !aiPrompt.trim()) || (novelMode && novelText.trim().length < 200)"
           @click="doCreate">
           {{ splitting ? '拆集中(2-6 分钟)…' : composing ? 'AI 创作中(1-3 分钟)…' : novelMode ? '拆集并创建多集项目' : '创建项目' }}
         </el-button>
