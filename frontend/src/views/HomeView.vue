@@ -391,7 +391,9 @@ function stateChip(p) {
       还没有项目 —— 点击「新建项目」开始第一条短视频
     </div>
 
-    <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
+    <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length
+             || (!batch && novelJobs.some(j => j.state === 'running' || j.state === 'failed'))"
+         class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
       <!-- 拆集进行中:书级占位卡(提交即出现,分集陆续填充) -->
       <div v-for="j in novelJobs.filter(x => x.state === 'running' || x.state === 'failed')"
            :key="'job-' + j.series" class="shot-card proj-card" style="border-style:dashed">

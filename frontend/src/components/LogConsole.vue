@@ -1,5 +1,5 @@
 <script setup>
-import { G, fmtTime } from '../store'
+import { G, fmtTime, logDot } from '../store'
 
 // 项目名(事件流是全局的,跨项目运行都要能分清归属)
 const projName = (id) => {
@@ -23,8 +23,8 @@ watch(() => G.logs.length, async () => {
 <template>
   <div class="log-console flex flex-col flex-none" style="height: 216px">
     <div class="flex items-center gap-3 px-4 h-9 flex-none" style="border-bottom:1px solid var(--mx-line)">
-      <span class="rec-dot"></span>
-      <span class="timecode" style="color:var(--mx-red)">REC</span>
+      <span class="tick-dot" :class="logDot"></span>
+      <span class="timecode" :style="{ color: logDot === 'ok' ? 'var(--mx-green)' : logDot === 'bad' ? 'var(--mx-red)' : logDot === 'warn' ? 'var(--mx-yellow)' : 'var(--mx-text3)' }">REC</span>
       <span class="timecode">RUNTIME LOG · GLOBAL LIVE(全局事件流)</span>
       <span class="timecode" v-if="G.logs.length">{{ G.logs.length }} EVENTS</span>
       <div class="flex-1"></div>

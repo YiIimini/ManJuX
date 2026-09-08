@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, computed, ref, reactive } from 'vue'
-import { G, api, connectEvents, refreshStatus, refreshProjects, refreshProject } from './store'
+import { G, api, connectEvents, refreshStatus, refreshProjects, refreshProject, logDot } from './store'
 import { ElMessageBox } from 'element-plus'
 import { applyTheme } from './themes'
 import HomeView from './views/HomeView.vue'
@@ -114,15 +114,6 @@ async function quitNow() {
 }
 const gb = (b) => (b / 1024 ** 3).toFixed(1)
 const lastLog = computed(() => G.logs.length ? G.logs[G.logs.length - 1] : null)
-// 日志状态灯语义:管线运行中=绿;停止/中断(warn)=橙;故障(error)=红;待命=暗
-const tickDot = computed(() => {
-  const running = G.status?.running && Object.keys(G.status.running).length > 0
-  if (running) return 'ok'
-  const last = lastLog.value
-  if (last?.level === 'error') return 'bad'
-  if (last?.level === 'warn') return 'warn'
-  return 'idle'
-})
 const projName = (id) => {
   const p = (G.projects || []).find(x => x.id === id)
   return p ? p.name : id
@@ -345,7 +336,7 @@ const env = computed(() => G.status?.env)
         <!-- 运行日志 ticker:最新一条,点击展开/收起日志面板 -->
         <button class="logticker" :class="{ open: G.logPanelOpen }" @click="G.logPanelOpen = !G.logPanelOpen"
           title="运行日志(点击展开)">
-          <span class="tick-dot" :class="tickDot" v-if="G.eventsOpen"></span>
+          <span class="tick-dot" :class="logDot" v-if="G.eventsOpen"></span>
           <span class="tick-text" v-if="!G.eventsOpen" style="color:var(--mx-yellow)">日志连接中断,重连中…</span>
           <span class="tick-text" v-else-if="lastLog" :class="lastLog.level">
             <template v-if="lastLog.project_id && lastLog.project_id !== (G.project?.project?.id)">【{{ projName(lastLog.project_id) }}】</template>{{ lastLog.message }}

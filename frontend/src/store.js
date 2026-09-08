@@ -1,4 +1,4 @@
-import { reactive } from 'vue'
+import { reactive, computed } from 'vue'
 
 // ---------- 全局状态 ----------
 export const G = reactive({
@@ -156,3 +156,15 @@ export function fmtTime(iso) {
   const p = (n) => String(n).padStart(2, '0')
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
+
+
+// 日志状态灯(全局唯一逻辑,ticker 与日志面板共用):
+// 管线运行中=绿;停止/中断(warn)=橙;故障(error)=红;待命=暗
+export const logDot = computed(() => {
+  const running = G.status?.running && Object.keys(G.status.running).length > 0
+  if (running) return 'ok'
+  const last = G.logs.length ? G.logs[G.logs.length - 1] : null
+  if (last?.level === 'error') return 'bad'
+  if (last?.level === 'warn') return 'warn'
+  return 'idle'
+})
