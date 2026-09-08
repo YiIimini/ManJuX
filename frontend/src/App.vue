@@ -318,11 +318,14 @@ const env = computed(() => G.status?.env)
         <SettingsView v-else-if="G.view === 'settings'" />
 
         </main>
-        <!-- 日志面板:内容列内嵌(展开压内容,不遮右侧产线栏) -->
-        <Transition name="logslide">
+      </div>
+
+      <!-- 运行日志:悬浮弹窗(可拖动/调大小,不占内容区也不遮挡) -->
+      <Teleport to="body">
+        <Transition name="logpop">
           <LogConsole v-if="G.logPanelOpen" />
         </Transition>
-      </div>
+      </Teleport>
 
       <!-- 底部状态栏 -->
       <footer class="statusbar">

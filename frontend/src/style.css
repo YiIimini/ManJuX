@@ -339,17 +339,16 @@ html, body, #app {
 .badge-mode.t2va { border-color: rgba(255, 209, 102, .4); color: var(--mx-yellow); background: rgba(255, 209, 102, .08); }
 .badge-mode.dur { border-color: rgba(255, 180, 84, .45); color: var(--mx-amber); background: rgba(255, 180, 84, .08); }
 
-/* ============ 日志控制台 ============ */
+/* ============ 日志控制台(悬浮弹窗) ============ */
 .log-console {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .02), rgba(0, 0, 0, .2)),
     var(--mx-panel-bg, rgba(6, 8, 14, .98));
   backdrop-filter: var(--mx-bd-filter, none);
-  border-top: 1px solid var(--mx-line);
   font-family: var(--mx-mono);
   font-size: 12px;
   line-height: 1.8;
-  box-shadow: 0 -8px 32px rgba(0, 0, 0, .35);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .5);
 }
 .log-console::before {
   /* 顶部细渐变线 */
@@ -673,16 +672,45 @@ html, body, #app {
 .tick-text.error { color: var(--mx-red); }
 .tick-text.info { color: var(--mx-text2); }
 
-/* 日志面板:内容列内嵌(展开时压缩内容区,不遮右侧产线栏) */
-.log-console {
-  flex: none;
-  height: 216px;
+/* 日志弹窗:悬浮窗(默认右下角锚定,避开状态栏;拖动后由内联 left/top 接管) */
+.log-pop {
+  position: fixed;
+  right: 16px;
+  bottom: 46px;
+  z-index: 2600;
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--mx-line-hi);
-  border-bottom: none;
-  border-radius: 10px 10px 0 0;
+  border-radius: 12px;
+  overflow: hidden;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
 }
-.logslide-enter-active, .logslide-leave-active { transition: transform .22s ease, opacity .22s ease; }
-.logslide-enter-from, .logslide-leave-to { transform: translateY(30px); opacity: 0; }
+.log-pop-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+  height: 36px;
+  flex: none;
+  border-bottom: 1px solid var(--mx-line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, .03), rgba(0, 0, 0, .15));
+  cursor: move;
+  user-select: none;
+}
+.log-rsz {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  background: linear-gradient(135deg, transparent 50%, var(--mx-line-hi) 50%);
+  opacity: .6;
+}
+.log-rsz:hover { opacity: 1; }
+.logpop-enter-active, .logpop-leave-active { transition: transform .2s ease, opacity .2s ease; }
+.logpop-enter-from, .logpop-leave-to { transform: translateY(18px) scale(.98); opacity: 0; }
 
 /* ============================================================
    个性化:主题与玻璃拟态(2026-09-07)
