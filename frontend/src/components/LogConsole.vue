@@ -1,5 +1,5 @@
 <script setup>
-import { G, fmtTime, logDot } from '../store'
+import { G, fmtTime, logDot, phaseLabel } from '../store'
 
 // 项目名(事件流是全局的,跨项目运行都要能分清归属)
 const projName = (id) => {
@@ -37,7 +37,7 @@ watch(() => G.logs.length, async () => {
       <div v-for="(l, i) in G.logs" :key="i" class="log-line" :class="l.level">
         <span class="t">{{ fmtTime(l.at) }}</span>
         <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
-        <span class="ph" v-if="l.phase">[{{ l.phase }}]</span>
+        <span class="ph" v-if="l.phase">[{{ phaseLabel(l.phase) }}]</span>
         <span class="m">{{ l.message }}</span>
       </div>
     </div>

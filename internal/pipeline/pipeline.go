@@ -188,6 +188,16 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	return nil
 }
 
+// setRunPhase 运行中随阶段推进更新投影(/api/status 反映真实当前阶段,
+// 而非启动时的 all——前端产线卡状态色依赖它)。
+func (c *Coordinator) setRunPhase(projectID, phase string) {
+	c.mu.Lock()
+	if r, ok := c.runs[projectID]; ok {
+		r.Phase = phase
+	}
+	c.mu.Unlock()
+}
+
 // Stop 停止项目运行。
 func (c *Coordinator) Stop(projectID string) bool {
 	c.mu.Lock()
@@ -253,6 +263,7 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 			c.emit(proj.ID, "pipeline", 0, "warn", 0, "⏹ 已停止")
 			return
 		}
+		c.setRunPhase(proj.ID, st)
 		switch st {
 		case PhaseScript:
 			err = c.runScript(ctx, proj)

@@ -1,5 +1,5 @@
 <script setup>
-import { G, api, refreshProject } from '../store'
+import { G, api, refreshProject, phaseLabel } from '../store'
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
@@ -175,7 +175,7 @@ const doneShots = computed(() =>
           <h2 class="text-base font-bold m-0">{{ pj.project.name }}</h2>
           <el-tag v-if="plan" size="small" effect="plain">《{{ plan.title }}》</el-tag>
           <span v-if="running" class="flex items-center gap-1.5 text-xs" style="color:var(--mx-orange)">
-            <i class="dot run"></i>{{ pj.project.phase }} 阶段运行中
+            <i class="dot run"></i>{{ phaseLabel(pj.project.phase) }}运行中
           </span>
           <div class="flex-1"></div>
           <!-- 产线进度环:渐变描边 + 中心百分比 -->

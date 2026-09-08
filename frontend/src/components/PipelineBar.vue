@@ -7,6 +7,51 @@ const props = defineProps({ phase: String, progress: Number })
 
 const project = computed(() => G.project?.project)
 
+// 数据推断:该阶段是否已产出完整结果(不依赖运行 phase,all/续跑时兜底)
+function dataDone(id) {
+  const pj = G.project
+  if (!pj) return false
+  switch (id) {
+    case 'script': return !!pj.plan
+    case 'assets': {
+      if (!pj.plan) return false
+      if (pj.project.params?.assets?.source === 'skip') return true
+      const total = pj.plan.characters.length + pj.plan.scenes.length
+      const have = Object.keys(pj.assets || {}).length
+      return total > 0 && have >= total
+    }
+    case 'render': {
+      if (!pj.plan) return false
+      const total = pj.plan.shots.length
+      const done = Object.values(pj.manifest || {}).filter(m => m.status === 'done').length
+      return total > 0 && done >= total
+    }
+    case 'qc': {
+      const list = Object.values(pj.qc || {})
+      return list.length > 0 && list.every(r => r.ok)
+    }
+    case 'assemble': return !!(pj.output?.ready || pj.output?.ready_2k)
+  }
+  return false
+}
+
+// 数据推断:阶段有部分进度(运行中应亮橙流光)
+function partial(id) {
+  const pj = G.project
+  if (!pj || !pj.plan) return false
+  if (id === 'assets') {
+    const total = pj.plan.characters.length + pj.plan.scenes.length
+    const have = Object.keys(pj.assets || {}).filter(k => !k.includes('_chibi')).length
+    return total > 0 && have > 0 && have < total
+  }
+  if (id === 'render') {
+    const total = pj.plan.shots.length
+    const done = Object.values(pj.manifest || {}).filter(m => m.status === 'done').length
+    return total > 0 && done > 0 && done < total
+  }
+  return false
+}
+
 function stageState(id) {
   const pj = G.project
   if (!pj) return ''
@@ -15,27 +60,20 @@ function stageState(id) {
     const order = PHASES.map(p => p.id)
     const cur = order.indexOf(props.phase)
     const me = order.indexOf(id)
-    if (me < cur) return 'done'
+    if (cur >= 0 && me < cur) return 'done'
+    if (props.phase === 'upgrade2k' && id === 'assemble') return 'active'
+    // phase 未细分(all 等)或位于当前阶段之后:已齐=绿,有进度=橙
+    if (dataDone(id)) return 'done'
+    if (cur < 0 || me > cur) {
+      if (partial(id)) return 'active'
+    }
     return ''
   }
-  if (id === 'script') return pj.plan ? 'done' : ''
-  if (id === 'assets') {
-    if (!pj.plan) return ''
-    const total = pj.plan.characters.length + pj.plan.scenes.length
-    const have = Object.keys(pj.assets || {}).length
-    return (pj.project.params?.assets?.source === 'skip' || (total > 0 && have >= total)) ? 'done' : 'warn'
-  }
-  if (id === 'render') {
-    if (!pj.plan) return ''
-    const total = pj.plan.shots.length
-    const done = Object.values(pj.manifest || {}).filter(m => m.status === 'done').length
-    return done >= total && total > 0 ? 'done' : (done > 0 ? 'warn' : '')
-  }
-  if (id === 'qc') {
-    return pj.qc ? (Object.values(pj.qc).every(r => r.ok) ? 'done' : 'bad') : ''
-  }
-  if (id === 'assemble') return pj.output?.ready ? 'done' : (pj.output?.ready_2k ? 'done' : '')
-  return ''
+  if (dataDone(id)) return 'done'
+  if (id === 'qc' && pj.qc && Object.keys(pj.qc).length) return 'bad'
+  if (id === 'assets' && pj.plan) return 'warn'
+  // 静止但有部分进度:轻提示
+  return partial(id) ? 'warn' : ''
 }
 
 function countOf(id) {

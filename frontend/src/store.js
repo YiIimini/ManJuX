@@ -27,6 +27,13 @@ export const PHASES = [
   { id: 'assemble', name: '合成成片', icon: 'Film',         desc: '拼接+字幕+响度归一+faststart' },
 ]
 
+// phase 显示名:all/upgrade2k 等非阶段值映射为人话,具体阶段用中文名
+export function phaseLabel(p) {
+  if (!p) return ''
+  const m = { all: '全流程', upgrade2k: '2K 精修', compose: 'AI 创作', pipeline: '管线', novel: '小说产线' }
+  return m[p] || PHASES.find(x => x.id === p)?.name || p
+}
+
 // ---------- API ----------
 async function req(method, url, body) {
   const opt = { method, headers: {} }
@@ -109,8 +116,9 @@ function pushEvent(ev) {
     refreshProjects() // 拆集建项目/批量进度 → 首页实时出现分集
   }
   if (ev.project_id && G.project && ev.project_id === G.project.project.id) {
-    // 管线级事件(success/error/warn,如「⏹ 已停止」「✔ 完成」)→ 立即刷新项目状态
-    if (ev.phase === 'pipeline' && ['success', 'error', 'warn'].includes(ev.level)) {
+    // 当前项目的 success/error/warn(阶段完成/单镜完成/失败/停止)→ 立即刷新详情;
+    // 单阶段运行不发 pipeline 级结束事件,阶段级 success 就是运行结束信号
+    if (['success', 'error', 'warn'].includes(ev.level)) {
       refreshProject()
       refreshStatus()
     }

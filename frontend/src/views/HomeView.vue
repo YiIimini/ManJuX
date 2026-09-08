@@ -1,5 +1,5 @@
 <script setup>
-import { G, api, refreshProjects, refreshStatus } from '../store'
+import { G, api, refreshProjects, refreshStatus, phaseLabel } from '../store'
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -325,7 +325,7 @@ async function removeProject(p) {
 }
 
 function stateChip(p) {
-  if (p.running) return { t: `运行中 · ${p.phase}`, c: 'run' }
+  if (p.running) return { t: `${phaseLabel(p.phase)} · 运行中`, c: 'run' }
   if (p.shots_total && p.shots_done >= p.shots_total) return { t: '已完成', c: 'ok' }
   if (p.shots_done > 0) return { t: `渲染 ${p.shots_done}/${p.shots_total}`, c: 'warn' }
   if (p.has_plan) return { t: '待渲染', c: '' }
@@ -520,7 +520,7 @@ function stateChip(p) {
             <i class="dot" :class="e.running ? 'run' : (e.shots_total && e.shots_done >= e.shots_total) ? 'ok' : (e.shots_done > 0 ? 'warn' : '')"></i>
             <div class="flex-1 min-w-0">
               <div class="text-sm truncate">{{ e.name.split('·').slice(2).join('·') || e.name }}</div>
-              <div class="text-xs" style="color:var(--mx-text3)">{{ e.running ? ('运行中 · ' + e.phase) : (e.shots_total ? ('镜头 ' + e.shots_done + '/' + e.shots_total) : '待创作') }}</div>
+              <div class="text-xs" style="color:var(--mx-text3)">{{ e.running ? (phaseLabel(e.phase) + ' · 运行中') : (e.shots_total ? ('镜头 ' + e.shots_done + '/' + e.shots_total) : '待创作') }}</div>
             </div>
             <el-tooltip content="删除本集(仅这一集)" placement="top">
               <el-button size="small" text type="danger" @click.stop="delEpisode(e)"><el-icon><Delete /></el-icon></el-button>
