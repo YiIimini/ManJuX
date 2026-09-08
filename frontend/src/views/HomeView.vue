@@ -112,11 +112,27 @@ async function doNovelSplit() {
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
 
-// 剧集弹窗:点击分组卡打开,逐集管理
+// 剧集弹窗:点击分组卡打开,逐集管理(含单集独立删除)
 const seriesDlg = ref(null) // {prefix, eps}
 function openSeries(prefix, eps) { seriesDlg.value = { prefix, eps } }
+async function delEpisode(e) {
+  try {
+    await ElMessageBox.confirm(`删除分集「${e.name}」?该集的方案/资产/镜头/成片将移除,其它集不受影响。`, '删除分集',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  try {
+    await api.deleteProject(e.id)
+    ElMessage.success(`已删除「${e.name}」`)
+    // 刷新弹窗与首页
+    await refreshProjects()
+    const left = (G.projects || []).filter(p => p.name.startsWith(seriesDlg.value.prefix + '·第'))
+    if (left.length) seriesDlg.value = { prefix: seriesDlg.value.prefix, eps: left }
+    else seriesDlg.value = null
+  } catch (err) { ElMessage.error(err.message) }
+}
 
-// 批量管理:项目复选删除(含剧集子项目)
+// 批量管理:按「管理单元」勾选删除 —— 单项目 或 整部小说(series:书名=全部集)。
+// 多集的独立管理(删某一集)在剧集弹窗里做,首页只按书整删。
 const batch = ref(false)
 const sel = ref(new Set())
 function toggleSel(id) {
@@ -124,16 +140,28 @@ function toggleSel(id) {
   else sel.value.add(id)
   sel.value = new Set(sel.value) // 触发响应
 }
+function selUnitCount() {
+  let n = 0
+  for (const u of sel.value) n += u.startsWith('series:') ? seriesGroups.value.groups[u.slice(7)]?.length || 0 : 1
+  return n
+}
 async function batchDelete() {
   if (!sel.value.size) return
-  const n = sel.value.size
+  const units = sel.value.size
+  const n = selUnitCount()
   try {
-    await ElMessageBox.confirm(`删除选中的 ${n} 个项目?项目数据(分镜/资产/镜头/成片)将全部移除,不可恢复。`, '批量删除项目',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+    await ElMessageBox.confirm(
+      `删除选中的 ${units} 个管理单元(共 ${n} 个项目)?` +
+      (units < n ? ' 其中包含整部小说系列,该书全部分集将一并移除。' : '') +
+      ' 项目数据(分镜/资产/镜头/成片)全部移除,不可恢复。',
+      '批量删除', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   let ok = 0, fail = 0
-  for (const id of sel.value) {
-    try { await api.deleteProject(id); ok++ } catch { fail++ }
+  for (const u of sel.value) {
+    const ids = u.startsWith('series:') ? (seriesGroups.value.groups[u.slice(7)] || []).map(e => e.id) : [u]
+    for (const id of ids) {
+      try { await api.deleteProject(id); ok++ } catch { fail++ }
+    }
   }
   sel.value = new Set()
   batch.value = false
@@ -327,7 +355,7 @@ function stateChip(p) {
       <span class="timecode ml-3">{{ G.projects.length }} PROJECTS</span>
       <div class="flex-1"></div>
       <template v-if="batch">
-        <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
+        <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 单元 / {{ selUnitCount() }} 项目</span>
         <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
           <el-icon class="mr-1"><Delete /></el-icon>删除选中
         </el-button>
@@ -340,7 +368,7 @@ function stateChip(p) {
 
     <!-- 批量模式提示条 -->
     <el-alert v-if="batch" type="info" :closable="false" class="mb-3"
-      title="批量管理模式:勾选卡片左上角复选框,可跨剧集分组选择,点「删除选中」一次移除。" />
+      title="批量管理模式:整部小说按书勾选(一键删全部分集),单项目按卡勾选;删除某一集请在剧集合集弹窗里单独操作。" />
 
     <div v-if="!G.projects.length" class="panel p-14 text-center" style="color:var(--mx-text3)">
       还没有项目 —— 点击「新建项目」开始第一条短视频
@@ -383,7 +411,27 @@ function stateChip(p) {
         </div>
       </div>
 
-      <div v-for="p in (batch ? G.projects : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative" @click="batch ? toggleSel(p.id) : openProject(p.id)">
+      <!-- 批量模式:系列=一个管理单元(勾=整书删除) -->
+      <div v-if="batch" v-for="(eps, prefix) in seriesGroups.groups" :key="'bs-' + prefix"
+           class="shot-card proj-card cursor-pointer relative" @click="toggleSel('series:' + prefix)">
+        <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel('series:' + prefix)">
+          <el-checkbox :model-value="sel.has('series:' + prefix)" size="large" />
+        </div>
+        <div class="proj-cover">
+          <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <el-icon :size="30" color="var(--mx-text3)"><Folder /></el-icon>
+            <span class="timecode">{{ eps.length }} 集</span>
+          </div>
+        </div>
+        <div class="px-3.5 py-3 flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <b class="truncate flex-1 text-sm">《{{ prefix }}》</b>
+            <span class="timecode" style="font-size:10px">整部系列</span>
+          </div>
+        </div>
+      </div>
+
+      <div v-for="p in (batch ? seriesGroups.singles : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative" @click="batch ? toggleSel(p.id) : openProject(p.id)">
         <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel(p.id)">
           <el-checkbox :model-value="sel.has(p.id)" size="large" />
         </div>
@@ -433,7 +481,10 @@ function stateChip(p) {
               <div class="text-sm truncate">{{ e.name.split('·').slice(2).join('·') || e.name }}</div>
               <div class="text-xs" style="color:var(--mx-text3)">{{ e.running ? ('运行中 · ' + e.phase) : (e.shots_total ? ('镜头 ' + e.shots_done + '/' + e.shots_total) : '待创作') }}</div>
             </div>
-            <el-button size="small" text type="primary"><el-icon><ArrowRight /></el-icon>进入</el-button>
+            <el-tooltip content="删除本集(仅这一集)" placement="top">
+              <el-button size="small" text type="danger" @click.stop="delEpisode(e)"><el-icon><Delete /></el-icon></el-button>
+            </el-tooltip>
+            <el-button size="small" text type="primary" @click.stop="seriesDlg = null; openProject(e.id)"><el-icon><ArrowRight /></el-icon>进入</el-button>
           </div>
         </div>
       </template>
