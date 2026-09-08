@@ -49,6 +49,36 @@ function enter(item) {
   api.project(item.project).then(p => { G.project = p; G.view = 'project' }).catch(e => ElMessage.error(e.message))
 }
 const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`
+
+// 批量删除成片产物
+const batch = ref(false)
+const sel = ref(new Set())
+function toggleSel(id) {
+  if (sel.value.has(id)) sel.value.delete(id)
+  else sel.value.add(id)
+  sel.value = new Set(sel.value)
+}
+async function batchDelete() {
+  if (!sel.value.size) return
+  try {
+    await ElMessageBox.confirm(`删除选中的 ${sel.value.size} 个项目的成片产物?项目与镜头产物不受影响。`, '批量删除成片',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  let ok = 0, fail = 0
+  for (const pid of sel.value) {
+    try {
+      await fetch(`/api/projects/${encodeURIComponent(pid)}/output`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ what: 'all' }),
+      })
+      ok++
+    } catch { fail++ }
+  }
+  sel.value = new Set()
+  batch.value = false
+  ElMessage.success(`已删除 ${ok} 项` + (fail ? `,${fail} 个失败` : ''))
+  refresh()
+}
 </script>
 
 <template>
@@ -65,6 +95,16 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
           <div class="text-center"><div class="stat-num">{{ list.length }}</div><div class="stat-label">项目</div></div>
           <div class="text-center"><div class="stat-num">{{ list.filter(x => x.final_2k).length }}</div><div class="stat-label">2K 版</div></div>
         </div>
+        <template v-if="batch">
+          <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
+          <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
+            <el-icon class="mr-1"><Delete /></el-icon>删除选中
+          </el-button>
+          <el-button size="small" @click="batch = false; sel = new Set()">退出批量</el-button>
+        </template>
+        <el-button v-else size="small" plain :disabled="!list.length" @click="batch = true; sel = new Set()">
+          <el-icon class="mr-1"><Operation /></el-icon>批量管理
+        </el-button>
         <el-button size="small" circle @click="refresh" :loading="loading"><el-icon><Refresh /></el-icon></el-button>
       </div>
     </div>
@@ -74,7 +114,11 @@ const fmtDur = (s) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padSta
     </div>
 
     <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(286px,1fr))">
-      <div v-for="it in list" :key="it.project" class="shot-card proj-card">
+      <div v-for="it in list" :key="it.project" class="shot-card proj-card relative"
+           @click="batch && toggleSel(it.project)">
+        <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(it.project)">
+          <el-checkbox :model-value="sel.has(it.project)" size="large" />
+        </div>
         <!-- 封面:项目定妆照;点击播放标准版 -->
         <div class="proj-cover cursor-pointer" @click="it.final && play(it, 'std')">
           <template v-if="it.cover">

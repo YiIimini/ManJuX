@@ -22,6 +22,33 @@ watch(() => G.tick.library, refresh)
 
 const list = computed(() => lib.value[kind.value] || [])
 
+// 批量删除
+const batch = ref(false)
+const sel = ref(new Set())
+function toggleSel(name) {
+  if (sel.value.has(name)) sel.value.delete(name)
+  else sel.value.add(name)
+  sel.value = new Set(sel.value)
+}
+async function batchDelete() {
+  if (!sel.value.size) return
+  try {
+    await ElMessageBox.confirm(`从资产库删除选中的 ${sel.value.size} 项?不影响已使用它们的项目,只影响后续复用。`, '批量删除库资产',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  let ok = 0, fail = 0
+  for (const n of sel.value) {
+    try {
+      await fetch(`/api/library/${kind.value}/${encodeURIComponent(n)}`, { method: 'DELETE' })
+      ok++
+    } catch { fail++ }
+  }
+  sel.value = new Set()
+  batch.value = false
+  ElMessage.success(`已删除 ${ok} 项` + (fail ? `,${fail} 个失败` : ''))
+  refresh()
+}
+
 const kindLabel = { characters: '角色', scenes: '场景' }
 
 // ---- 抽卡 & 自定义新建(仅角色)----
@@ -107,6 +134,16 @@ async function remove(e) {
         <el-radio-button value="scenes">场景({{ lib.scenes?.length || 0 }})</el-radio-button>
       </el-radio-group>
       <div class="flex-1"></div>
+      <template v-if="batch">
+        <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
+        <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
+          <el-icon class="mr-1"><Delete /></el-icon>删除选中
+        </el-button>
+        <el-button size="small" @click="batch = false; sel = new Set()">退出批量</el-button>
+      </template>
+      <el-button v-else size="small" plain :disabled="!list.length" @click="batch = true; sel = new Set()">
+        <el-icon class="mr-1"><Operation /></el-icon>批量管理
+      </el-button>
       <el-button size="small" @click="refresh" :loading="loading">刷新</el-button>
     </div>
 
@@ -145,7 +182,11 @@ async function remove(e) {
     </div>
 
     <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
-      <div v-for="e in list" :key="e.kind + e.name" class="shot-card p-3 flex flex-col gap-2">
+      <div v-for="e in list" :key="e.kind + e.name" class="shot-card p-3 flex flex-col gap-2 relative"
+           :class="{ 'sel-on': sel.has(e.name) }" @click="batch && toggleSel(e.name)">
+        <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(e.name)">
+          <el-checkbox :model-value="sel.has(e.name)" size="large" />
+        </div>
         <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="G.viewer={index:0,items:[{type:'image',src:`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`,title:e.name,meta:(e.source==='krea2'?'Krea-2':'上传')+` · 复用 ${e.used_count} 次`,kindLabel:'LIBRARY'}]}">
           <img :src="`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`"
                style="width:100%;height:100%;object-fit:cover" loading="lazy"

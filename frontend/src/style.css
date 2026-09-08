@@ -1258,3 +1258,7 @@ html, body, #app {
 .close-opt span { font-size: 11px; color: var(--mx-text3); line-height: 1.6; }
 .close-opt:hover { border-color: rgba(83, 216, 255, .5); background: rgba(83, 216, 255, .05); transform: translateY(-2px); }
 .close-opt.danger:hover { border-color: rgba(255, 107, 107, .5); background: rgba(255, 107, 107, .06); }
+
+/* 批量管理模式选中态 */
+.sel-on { border-color: rgba(255, 180, 84, .6) !important; box-shadow: 0 0 0 1px rgba(255, 180, 84, .3); }
+.bg-black\/40 { background: rgba(6, 8, 14, .55); backdrop-filter: blur(3px); }

@@ -64,6 +64,31 @@ async function doNovelSplit() {
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
 
+// 批量管理:项目复选删除(含剧集子项目)
+const batch = ref(false)
+const sel = ref(new Set())
+function toggleSel(id) {
+  if (sel.value.has(id)) sel.value.delete(id)
+  else sel.value.add(id)
+  sel.value = new Set(sel.value) // 触发响应
+}
+async function batchDelete() {
+  if (!sel.value.size) return
+  const n = sel.value.size
+  try {
+    await ElMessageBox.confirm(`删除选中的 ${n} 个项目?项目数据(分镜/资产/镜头/成片)将全部移除,不可恢复。`, '批量删除项目',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  let ok = 0, fail = 0
+  for (const id of sel.value) {
+    try { await api.deleteProject(id); ok++ } catch { fail++ }
+  }
+  sel.value = new Set()
+  batch.value = false
+  ElMessage.success(`已删除 ${ok} 个项目` + (fail ? `,${fail} 个失败` : ''))
+  refreshProjects()
+}
+
 // 剧集分组:「主名·第N集·标题」归组显示
 const seriesGroups = computed(() => {
   const re = /^(.+)·第\d+集/
@@ -248,14 +273,29 @@ function stateChip(p) {
     <div class="flex items-center mb-3">
       <h2 class="text-base font-bold m-0">我的项目</h2>
       <span class="timecode ml-3">{{ G.projects.length }} PROJECTS</span>
+      <div class="flex-1"></div>
+      <template v-if="batch">
+        <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
+        <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
+          <el-icon class="mr-1"><Delete /></el-icon>删除选中
+        </el-button>
+        <el-button size="small" @click="batch = false; sel = new Set()">退出批量</el-button>
+      </template>
+      <el-button v-else size="small" plain :disabled="!G.projects.length" @click="batch = true">
+        <el-icon class="mr-1"><Operation /></el-icon>批量管理
+      </el-button>
     </div>
+
+    <!-- 批量模式提示条 -->
+    <el-alert v-if="batch" type="info" :closable="false" class="mb-3"
+      title="批量管理模式:勾选卡片左上角复选框,可跨剧集分组选择,点「删除选中」一次移除。" />
 
     <div v-if="!G.projects.length" class="panel p-14 text-center" style="color:var(--mx-text3)">
       还没有项目 —— 点击「新建项目」开始第一条短视频
     </div>
 
     <!-- 剧集分组(整本小说拆集产物) -->
-    <div v-for="(eps, prefix) in seriesGroups.groups" :key="prefix" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
+    <div v-if="!batch" v-for="(eps, prefix) in seriesGroups.groups" :key="prefix" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
       <div class="stage-ico active"><el-icon :size="16"><Film /></el-icon></div>
       <div class="flex-1 min-w-[220px]">
         <div class="text-sm"><b>《{{ prefix }}》</b> <span class="timecode">{{ eps.length }} 集</span>
@@ -276,8 +316,11 @@ function stateChip(p) {
       </el-button>
     </div>
 
-    <div v-if="seriesGroups.singles.length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
-      <div v-for="p in seriesGroups.singles" :key="p.id" class="shot-card proj-card cursor-pointer" @click="openProject(p.id)">
+    <div v-if="batch || seriesGroups.singles.length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
+      <div v-for="p in (batch ? G.projects : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative" @click="batch ? toggleSel(p.id) : openProject(p.id)">
+        <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel(p.id)">
+          <el-checkbox :model-value="sel.has(p.id)" size="large" />
+        </div>
         <div class="proj-cover">
           <template v-if="p.cover">
             <img class="cover-fit" :src="api.fileURL(p.id, p.cover)" alt="" aria-hidden="true" />
