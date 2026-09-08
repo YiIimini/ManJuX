@@ -1326,3 +1326,15 @@ html, body, #app {
   color: var(--mx-amber-hi);
   background: rgba(255, 180, 84, .1);
 }
+
+/* 日志 ticker 状态灯:绿=运行中 橙=中断/停止 红=故障 暗=待命 */
+.tick-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex: none;
+  background: #46536f; /* 待命 */
+  transition: background .3s;
+}
+.tick-dot.ok   { background: var(--mx-green); animation: recblink 1.6s ease-in-out infinite; box-shadow: 0 0 8px rgba(61, 220, 132, .8); }
+.tick-dot.warn { background: var(--mx-yellow); box-shadow: 0 0 8px rgba(255, 209, 102, .7); }
+.tick-dot.bad  { background: var(--mx-red); animation: recblink 1.1s ease-in-out infinite; box-shadow: 0 0 8px rgba(255, 107, 107, .85); }

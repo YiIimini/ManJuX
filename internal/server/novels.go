@@ -456,6 +456,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			series, ep.Ep, ep.Title, plan.Style, prev, ep.Brief)
 		_ = s.store.SaveSource(epName, src)
 		eps = append(eps, epName)
+		// 逐集事件:首页项目列表实时出现分集(不等全部拆完)
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success", ProjectID: epName,
+			Message: fmt.Sprintf("已创建分集 %d/%d:《%s》", i+1, len(plan.Episodes), epName)})
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目", series, len(plan.Episodes), len(eps))})
