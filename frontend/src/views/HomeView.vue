@@ -64,6 +64,10 @@ async function doNovelSplit() {
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
 
+// 剧集弹窗:点击分组卡打开,逐集管理
+const seriesDlg = ref(null) // {prefix, eps}
+function openSeries(prefix, eps) { seriesDlg.value = { prefix, eps } }
+
 // 批量管理:项目复选删除(含剧集子项目)
 const batch = ref(false)
 const sel = ref(new Set())
@@ -294,29 +298,43 @@ function stateChip(p) {
       还没有项目 —— 点击「新建项目」开始第一条短视频
     </div>
 
-    <!-- 剧集分组(整本小说拆集产物) -->
-    <div v-if="!batch" v-for="(eps, prefix) in seriesGroups.groups" :key="prefix" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
-      <div class="stage-ico active"><el-icon :size="16"><Film /></el-icon></div>
-      <div class="flex-1 min-w-[220px]">
-        <div class="text-sm"><b>《{{ prefix }}》</b> <span class="timecode">{{ eps.length }} 集</span>
-          <span class="timecode" v-if="eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length">
-            · 已完成 {{ eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length }}/{{ eps.length }}
-          </span>
+    <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
+      <!-- 剧集系列卡(点击打开逐集弹窗) -->
+      <div v-if="!batch" v-for="(eps, prefix) in seriesGroups.groups" :key="'s-' + prefix"
+           class="shot-card proj-card cursor-pointer" @click="openSeries(prefix, eps)">
+        <div class="proj-cover">
+          <template v-if="eps.find(e => e.cover)">
+            <img class="cover-fit" :src="api.fileURL(eps.find(e => e.cover).id, eps.find(e => e.cover).cover)" alt="" aria-hidden="true" />
+            <img class="cover-full" :src="api.fileURL(eps.find(e => e.cover).id, eps.find(e => e.cover).cover)" alt="" style="filter:saturate(1.06)" />
+          </template>
+          <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <el-icon :size="30" color="var(--mx-text3)"><Film /></el-icon>
+            <span class="timecode">{{ eps.length }} 集</span>
+          </div>
+          <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
+            <div class="px-3 py-1.5 rounded-lg flex items-center gap-2"
+                 style="background:rgba(6,8,14,.55);border:1px solid rgba(255,180,84,.4);backdrop-filter:blur(4px)">
+              <el-icon :size="16" color="var(--mx-amber-hi)"><Folder /></el-icon>
+              <span class="text-xs" style="color:var(--mx-amber-hi)">剧集合集</span>
+            </div>
+          </div>
+          <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+            <i class="dot run" v-if="batchStat && batchStat.prefix === prefix"></i>
+          </div>
         </div>
-        <el-progress class="mt-1.5" style="max-width:420px"
-          :percentage="Math.round(eps.reduce((a, e) => a + (e.shots_done || 0), 0) * 100 / Math.max(1, eps.reduce((a, e) => a + (e.shots_total || 0), 0)))"
-          :stroke-width="5" :show-text="false" :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
+        <div class="px-3.5 py-3 flex flex-col gap-2">
+          <div class="flex items-center gap-2">
+            <b class="truncate flex-1 text-sm">《{{ prefix }}》</b>
+            <span class="timecode" style="font-size:10px">
+              {{ (batchStat && batchStat.prefix === prefix) ? ('批量中 ' + batchStat.current + '/' + batchStat.total) : (eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length + '/' + eps.length + ' 集') }}
+            </span>
+          </div>
+          <el-progress
+            :percentage="Math.round(eps.reduce((a, e) => a + (e.shots_done || 0), 0) * 100 / Math.max(1, eps.reduce((a, e) => a + (e.shots_total || 0), 0)))"
+            :stroke-width="5" :show-text="false" :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
+        </div>
       </div>
-      <template v-if="batchStat && batchStat.prefix === prefix">
-        <span class="text-xs flex items-center gap-1.5" style="color:var(--mx-amber)"><i class="dot run"></i>批量中 第 {{ batchStat.current }}/{{ batchStat.total }} 集</span>
-        <el-button size="small" type="danger" plain @click="stopBatch"><el-icon class="mr-1"><VideoPause /></el-icon>停止批量</el-button>
-      </template>
-      <el-button v-else size="small" type="primary" plain :disabled="!!batchStat" @click="startBatch(prefix)">
-        <el-icon class="mr-1"><VideoCameraFilled /></el-icon>{{ batchStat ? '批量运行中…' : '批量产线' }}
-      </el-button>
-    </div>
 
-    <div v-if="batch || seriesGroups.singles.length" class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
       <div v-for="p in (batch ? G.projects : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative" @click="batch ? toggleSel(p.id) : openProject(p.id)">
         <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel(p.id)">
           <el-checkbox :model-value="sel.has(p.id)" size="large" />
@@ -346,6 +364,42 @@ function stateChip(p) {
         </div>
       </div>
     </div>
+
+    <!-- 剧集合集弹窗:逐集管理 -->
+    <el-dialog :model-value="!!seriesDlg" :title="seriesDlg ? ('《' + seriesDlg.prefix + '》· 剧集合集(' + seriesDlg.eps.length + ' 集)') : ''"
+               width="640px" @update:model-value="seriesDlg = null">
+      <template v-if="seriesDlg">
+        <div class="flex items-center gap-3 mb-3">
+          <el-progress style="flex:1"
+            :percentage="Math.round(seriesDlg.eps.reduce((a, e) => a + (e.shots_done || 0), 0) * 100 / Math.max(1, seriesDlg.eps.reduce((a, e) => a + (e.shots_total || 0), 0)))"
+            :stroke-width="6" :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
+          <span class="timecode">{{ seriesDlg.eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length }}/{{ seriesDlg.eps.length }} 集完成</span>
+        </div>
+        <div class="flex flex-col gap-2" style="max-height:46vh;overflow-y:auto">
+          <div v-for="e in seriesDlg.eps" :key="e.id"
+               class="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer ep-row"
+               @click="seriesDlg = null; openProject(e.id)">
+            <span class="timecode" style="width:44px">{{ (e.name.match(/·第(\d+)集/) || [])[1] || '—' }}</span>
+            <i class="dot" :class="e.running ? 'run' : (e.shots_total && e.shots_done >= e.shots_total) ? 'ok' : (e.shots_done > 0 ? 'warn' : '')"></i>
+            <div class="flex-1 min-w-0">
+              <div class="text-sm truncate">{{ e.name.split('·').slice(2).join('·') || e.name }}</div>
+              <div class="text-xs" style="color:var(--mx-text3)">{{ e.running ? ('运行中 · ' + e.phase) : (e.shots_total ? ('镜头 ' + e.shots_done + '/' + e.shots_total) : '待创作') }}</div>
+            </div>
+            <el-button size="small" text type="primary"><el-icon><ArrowRight /></el-icon>进入</el-button>
+          </div>
+        </div>
+      </template>
+      <template #footer>
+        <template v-if="batchStat && seriesDlg && batchStat.prefix === seriesDlg.prefix">
+          <span class="text-xs mr-2 flex items-center gap-1.5" style="color:var(--mx-amber)"><i class="dot run"></i>批量中 第 {{ batchStat.current }}/{{ batchStat.total }} 集(已成片自动跳过,支持中断续跑)</span>
+          <el-button type="danger" plain @click="stopBatch"><el-icon class="mr-1"><VideoPause /></el-icon>停止批量</el-button>
+        </template>
+        <el-button v-else type="primary" plain :disabled="!seriesDlg || !!batchStat" @click="seriesDlg && startBatch(seriesDlg.prefix)">
+          <el-icon class="mr-1"><VideoCameraFilled /></el-icon>{{ batchStat ? '批量运行中…' : '批量产线(断点续跑)' }}
+        </el-button>
+        <el-button @click="seriesDlg = null">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 新建项目:可选上传 txt / md / json -->
     <el-dialog v-model="dlg" title="新建短视频项目" width="560px"

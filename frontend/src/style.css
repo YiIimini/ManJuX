@@ -1262,3 +1262,29 @@ html, body, #app {
 /* 批量管理模式选中态 */
 .sel-on { border-color: rgba(255, 180, 84, .6) !important; box-shadow: 0 0 0 1px rgba(255, 180, 84, .3); }
 .bg-black\/40 { background: rgba(6, 8, 14, .55); backdrop-filter: blur(3px); }
+
+/* 剧集直达 chip */
+.ep-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border-radius: 16px;
+  border: 1px solid var(--mx-line);
+  background: rgba(255, 255, 255, .02);
+  color: var(--mx-text2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all .14s;
+  white-space: nowrap;
+}
+.ep-chip:hover {
+  border-color: rgba(255, 180, 84, .5);
+  color: var(--mx-amber-hi);
+  background: rgba(255, 180, 84, .07);
+  transform: translateY(-1px);
+}
+
+/* 剧集弹窗行 */
+.ep-row { border: 1px solid var(--mx-line); background: rgba(255, 255, 255, .015); transition: all .14s; }
+.ep-row:hover { border-color: rgba(255, 180, 84, .5); background: rgba(255, 180, 84, .06); }

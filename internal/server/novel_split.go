@@ -5,6 +5,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -223,6 +225,22 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		}
 		batch.cur = i + 1
 		batch.mu.Unlock()
+
+		// 断点续跑:已有成片(768P/2K 任一)的集直接跳过 —— 中断后再点「批量产线」
+		// 从第一个未完成集继续;半成品集由全流程指纹机制续渲剩余镜头。
+		done := func() bool {
+			for _, f := range []string{"final.mp4", "final_2k.mp4"} {
+				if st, err := os.Stat(filepath.Join(s.store.Dir(ep), "output", f)); err == nil && st.Size() > 0 {
+					return true
+				}
+			}
+			return false
+		}()
+		if done {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+				Message: fmt.Sprintf("⏩ 批量产线 %d/%d:《%s》已成片,跳过(断点续跑)", i+1, len(eps), ep)})
+			continue
+		}
 
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 			Message: fmt.Sprintf("▶ 批量产线 %d/%d:开始《%s》", i+1, len(eps), ep)})
