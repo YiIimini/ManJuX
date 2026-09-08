@@ -9,6 +9,21 @@ const tab = ref('script')
 const sourceText = ref('')
 const sourceLoaded = ref(false)
 const importInput = ref(null)
+const aiDlg = ref(false)
+const aiPrompt = ref('')
+const aiBusy = ref(false)
+async function aiCompose() {
+  if (!aiPrompt.value.trim()) { ElMessage.warning('请填写创作需求'); return }
+  aiBusy.value = true
+  try {
+    const r = await api.composeStory(pj.value.project.id, aiPrompt.value.trim(), '')
+    sourceText.value = (await api.project(pj.value.project.id)).source || sourceText.value
+    G.project = await api.project(pj.value.project.id)
+    ElMessage.success(`AI 创作完成(${r.chars} 字),已载入源文本`)
+    aiDlg.value = false
+    aiPrompt.value = ''
+  } catch (e) { ElMessage.error(e.message) } finally { aiBusy.value = false }
+}
 
 const pj = computed(() => G.project)
 const plan = computed(() => pj.value?.plan || null)
@@ -191,6 +206,9 @@ const doneShots = computed(() =>
                 <el-button size="small" @click="importInput?.click()">
                   <el-icon class="mr-1"><Upload /></el-icon>导入 txt / md
                 </el-button>
+                <el-button size="small" type="primary" plain @click="aiDlg = true">
+                  <el-icon class="mr-1"><MagicStick /></el-icon>AI 现场创作
+                </el-button>
                 <el-button size="small" @click="saveSource">保存</el-button>
               </div>
               <el-input v-model="sourceText" type="textarea" :rows="16" resize="none"
@@ -352,6 +370,21 @@ const doneShots = computed(() =>
       </el-tabs>
     </div>
     </div>
+
+    <!-- AI 现场创作:按需求即时发挥 -->
+    <el-dialog v-model="aiDlg" title="AI 现场创作故事" width="520px" append-to-body>
+      <el-input v-model="aiPrompt" type="textarea" :rows="4" maxlength="300" show-word-limit
+        placeholder="一句话或一个点子,如:修仙界开网约车,专渡雷劫,接单的是个社恐剑仙" />
+      <div class="text-xs mt-2" style="color:var(--mx-text3)">
+        深度推理模型创作约需 1-3 分钟(日志有实时心跳);完成 后自动写入源文本并保存。
+      </div>
+      <template #footer>
+        <el-button @click="aiDlg = false">取消</el-button>
+        <el-button type="primary" :loading="aiBusy" :disabled="!aiPrompt.trim()" @click="aiCompose">
+          {{ aiBusy ? '创作中(1-3 分钟)…' : '开始创作' }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <!-- 右:悬浮产线(管线节点竖排) -->
     <aside class="pipe-rail-wrap">

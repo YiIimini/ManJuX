@@ -84,8 +84,21 @@ async function doCreate() {
     } else if (pickedFile.value?.text) {
       await api.saveSource(id, pickedFile.value.text)
     }
-    ElMessage.success(`项目「${id}」已创建${pickedFile.value ? (pickedFile.value.kind === 'plan' ? '(分镜已导入)' : '(源文本已载入)') : ''}`)
-    dlg.value = false
+    if (aiMode.value && aiPrompt.value.trim()) {
+      // AI 现场创作:按需求即时发挥写完整故事(推理模型 1-3 分钟)
+      dlg.value = false
+      composing.value = true
+      try {
+        const r = await api.composeStory(id, aiPrompt.value.trim(), '')
+        ElMessage.success(`AI 创作完成(${r.chars} 字),已写入「剧本」`)
+      } catch (e) {
+        ElMessage.warning(`项目已创建,但 AI 创作失败:${e.message}(可在剧本页重试)`)
+      } finally { composing.value = false }
+      aiPrompt.value = ''
+    } else {
+      ElMessage.success(`项目「${id}」已创建${pickedFile.value ? (pickedFile.value.kind === 'plan' ? '(分镜已导入)' : '(源文本已载入)') : ''}`)
+      dlg.value = false
+    }
     await refreshProjects()
     await openProject(id)
   } catch (e) { ElMessage.error(e.message) } finally { busy.value = false }
@@ -192,7 +205,14 @@ function stateChip(p) {
         <el-form-item label="项目名(中文 / 字母 / 数字 / _-)">
           <el-input v-model="newName" maxlength="40" placeholder="如:天庭外卖员-第二集" @keyup.enter="doCreate" />
         </el-form-item>
-        <el-form-item label="导入文件(可选)">
+        <el-form-item label="AI 现场创作(只给需求,LLM 即时发挥写完整故事)">
+          <div class="w-full flex flex-col gap-2">
+            <el-switch v-model="aiMode" active-text="由 AI 创作" inactive-text="自己提供文本" />
+            <el-input v-if="aiMode" v-model="aiPrompt" type="textarea" :rows="3" maxlength="300" show-word-limit
+              placeholder="一句话或一个点子,如:外卖员送餐到天庭,玉帝当场包下他所有订单,搞笑爽文" />
+          </div>
+        </el-form-item>
+        <el-form-item label="导入文件(可选)" v-if="!aiMode">
           <div v-if="!pickedFile" class="upload-zone" @click="fileInput?.click()" @dragover.prevent @drop.prevent="onDropFile">
             <el-icon :size="26" color="var(--mx-text3)"><UploadFilled /></el-icon>
             <div class="text-xs mt-1" style="color:var(--mx-text2)">点击或拖入 <b>.txt / .md / .json</b></div>
@@ -219,7 +239,9 @@ function stateChip(p) {
       </el-form>
       <template #footer>
         <el-button @click="dlg = false">取消</el-button>
-        <el-button type="primary" :loading="busy" :disabled="!newName.trim()" @click="doCreate">创建项目</el-button>
+        <el-button type="primary" :loading="busy || composing" :disabled="!newName.trim() || (aiMode && !aiPrompt.trim())" @click="doCreate">
+          {{ composing ? 'AI 创作中(1-3 分钟)…' : '创建项目' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>

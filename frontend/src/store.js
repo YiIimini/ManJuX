@@ -55,6 +55,7 @@ export const api = {
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),
   importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
+  composeStory: (id, prompt, styleHint) => req('POST', `/api/projects/${encodeURIComponent(id)}/compose-story`, { prompt, style_hint: styleHint }),
   uploadAsset: (id, kind, assetId, name, file) => {
     const fd = new FormData()
     fd.append('kind', kind); fd.append('asset_id', assetId)

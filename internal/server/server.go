@@ -135,6 +135,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
 	m.HandleFunc("PUT /api/projects/{id}/shot", s.putShot)
+	m.HandleFunc("POST /api/projects/{id}/compose-story", s.handleComposeStory)
 	m.HandleFunc("POST /api/comfy/open-web", s.comfyOpenWeb)
 	m.HandleFunc("POST /api/projects/{id}/import-plan", s.importPlan)
 	m.HandleFunc("POST /api/window/{action}", s.handleWindowAction)
