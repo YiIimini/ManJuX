@@ -75,39 +75,79 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLibraryCreateCharacter 自定义新建:上传图片直接定妆,或按描述生成。
-// multipart: name(必)、description、image_prompt、image(可选文件)、mode=upload|generate
+// 支持 JSON(image_b64/image_path,桌面模式主通道,见 upload_payload.go)
+// 与 multipart(浏览器模式兼容):name(必)、description、image_prompt、mode=upload|generate
 func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
+	var name, desc, prompt, imgPath string
+	uploaded := false
+	var cleanup func()
+	defer func() {
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
+
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		var in struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			ImagePrompt string `json:"image_prompt"`
+			imagePayload
+		}
+		if err := readBody(r, &in); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		name = strings.TrimSpace(in.Name)
+		desc = strings.TrimSpace(in.Description)
+		prompt = strings.TrimSpace(in.ImagePrompt)
+		if name == "" {
+			writeErr(w, 400, fmt.Errorf("角色名必填"))
+			return
+		}
+		if in.ImageB64 != "" || in.ImagePath != "" {
+			p, cl, err := in.resolve()
+			if err != nil {
+				writeErr(w, 400, err)
+				return
+			}
+			imgPath, cleanup, uploaded = p, cl, true
+		}
+	} else if err := r.ParseMultipartForm(64 << 20); err == nil {
+		name = strings.TrimSpace(r.FormValue("name"))
+		desc = strings.TrimSpace(r.FormValue("description"))
+		prompt = strings.TrimSpace(r.FormValue("image_prompt"))
+		if file, hdr, ferr := r.FormFile("image"); ferr == nil {
+			defer file.Close()
+			tmp, terr := os.CreateTemp("", "mx-char-*"+strings.ToLower(filepath.Ext(hdr.Filename)))
+			if terr != nil {
+				writeErr(w, 500, terr)
+				return
+			}
+			defer os.Remove(tmp.Name())
+			if _, rerr := tmp.ReadFrom(file); rerr != nil {
+				tmp.Close()
+				writeErr(w, 500, rerr)
+				return
+			}
+			tmp.Close()
+			imgPath = tmp.Name()
+			uploaded = true
+		}
+	} else {
 		writeErr(w, 400, fmt.Errorf("表单解析失败: %v", err))
 		return
 	}
-	name := strings.TrimSpace(r.FormValue("name"))
 	if name == "" {
 		writeErr(w, 400, fmt.Errorf("角色名必填"))
 		return
 	}
-	desc := strings.TrimSpace(r.FormValue("description"))
-	prompt := strings.TrimSpace(r.FormValue("image_prompt"))
 
-	var imgPath string
-	uploaded := false
-	if file, hdr, err := r.FormFile("image"); err == nil {
-		defer file.Close()
-		tmp, err := os.CreateTemp("", "mx-char-*"+strings.ToLower(filepath.Ext(hdr.Filename)))
-		if err != nil {
-			writeErr(w, 500, err)
+	if imgPath == "" {
+		if prompt == "" {
+			writeErr(w, 400, fmt.Errorf("请上传参考图片,或填写生成提示词"))
 			return
 		}
-		defer os.Remove(tmp.Name())
-		if _, err := tmp.ReadFrom(file); err != nil {
-			tmp.Close()
-			writeErr(w, 500, err)
-			return
-		}
-		tmp.Close()
-		imgPath = tmp.Name()
-		uploaded = true
-	} else if prompt != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
 		defer cancel()
 		p, err := s.genLibraryPortrait(ctx, prompt, time.Now().UnixNano()&0x7fffffff)
@@ -116,9 +156,6 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 			return
 		}
 		imgPath = p
-	} else {
-		writeErr(w, 400, fmt.Errorf("请上传参考图片,或填写生成提示词"))
-		return
 	}
 
 	source := "krea2"

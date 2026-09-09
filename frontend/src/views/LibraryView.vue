@@ -1,5 +1,5 @@
 <script setup>
-import { G, api } from '../store'
+import { G, api, fileToB64 } from '../store'
 import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -29,6 +29,10 @@ function toggleSel(name) {
   if (sel.value.has(name)) sel.value.delete(name)
   else sel.value.add(name)
   sel.value = new Set(sel.value)
+}
+const allSelected = computed(() => list.value.length > 0 && list.value.every(e => sel.value.has(e.name)))
+function toggleAllSel() {
+  sel.value = allSelected.value ? new Set() : new Set(list.value.map(e => e.name))
 }
 async function batchDelete() {
   if (!sel.value.size) return
@@ -71,6 +75,7 @@ const createOpen = ref(false)
 const createBusy = ref(false)
 const createForm = reactive({ name: '', description: '', image_prompt: '', mode: 'generate' })
 const createImage = ref(null)
+const createNativePath = ref(null) // 桌面拖放(wails 原生)拿到的本机绝对路径
 const createInput = ref(null)
 function onPickImg(ev) {
   const f = ev.target.files?.[0]
@@ -78,27 +83,47 @@ function onPickImg(ev) {
   if (!f) return
   if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { ElMessage.error('仅支持 png/jpg/webp'); return }
   createImage.value = f
+  createNativePath.value = null
+}
+// 桌面模式拖放:App.vue 把 wails file-drop 事件转发到带 --wails-drop-target 的元素
+function onNativeDrop(ev) {
+  const p = ev.detail?.[0]
+  if (!p) return
+  if (!/\.(png|jpe?g|webp)$/i.test(p)) { ElMessage.error('仅支持 png/jpg/webp'); return }
+  createNativePath.value = p
+  createImage.value = null
+  createForm.mode = 'upload'
 }
 async function doCreate() {
   if (!createForm.name.trim()) { ElMessage.warning('请填写角色名'); return }
   createBusy.value = true
   try {
-    const fd = new FormData()
-    fd.append('name', createForm.name.trim())
-    fd.append('description', createForm.description)
+    // JSON + base64/路径双通道:桌面 webview 的 wails 代理会截断 multipart
+    // 大文件(2026-09-09「源图不存在」根因),浏览器模式同样可用
+    const body = { name: createForm.name.trim(), description: createForm.description }
     if (createForm.mode === 'upload') {
-      if (!createImage.value) { ElMessage.warning('请选择上传图片'); createBusy.value = false; return }
-      fd.append('image', createImage.value)
+      if (createNativePath.value) {
+        body.image_path = createNativePath.value
+      } else if (createImage.value) {
+        body.image_b64 = await fileToB64(createImage.value)
+        body.filename = createImage.value.name
+      } else {
+        ElMessage.warning('请选择或拖入上传图片'); createBusy.value = false; return
+      }
     } else {
       if (!createForm.image_prompt.trim()) { ElMessage.warning('请填写生成提示词'); createBusy.value = false; return }
-      fd.append('image_prompt', createForm.image_prompt.trim())
+      body.image_prompt = createForm.image_prompt.trim()
     }
-    const r = await fetch('/api/library/characters', { method: 'POST', body: fd })
+    const r = await fetch('/api/library/characters', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
     const d = await r.json()
     if (!r.ok) throw new Error(d.error)
     ElMessage.success(`角色「${d.entry.name}」已入库`)
     createOpen.value = false
-    createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null
+    createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null; createNativePath.value = null
     kind.value = 'characters'
     refresh()
   } catch (e) { ElMessage.error(e.message) } finally { createBusy.value = false }
@@ -136,6 +161,7 @@ async function remove(e) {
       <div class="flex-1"></div>
       <template v-if="batch">
         <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
+        <el-button size="small" plain @click="toggleAllSel">{{ allSelected ? '取消全选' : '全选' }}</el-button>
         <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
           <el-icon class="mr-1"><Delete /></el-icon>删除选中
         </el-button>
@@ -144,7 +170,9 @@ async function remove(e) {
       <el-button v-else size="small" plain :disabled="!list.length" @click="batch = true; sel = new Set()">
         <el-icon class="mr-1"><Operation /></el-icon>批量管理
       </el-button>
-      <el-button size="small" @click="refresh" :loading="loading">刷新</el-button>
+      <el-tooltip content="重新读取资产库(复用计数排序)" placement="bottom">
+        <el-button size="small" @click="refresh" :loading="loading">刷新</el-button>
+      </el-tooltip>
     </div>
 
     <!-- 角色运营:抽卡 / 自定义新建 -->
@@ -156,14 +184,18 @@ async function remove(e) {
           <div class="text-xs" style="color:var(--mx-text3)">随机题材 × 随机气质,LLM 原创角色 + Krea-2 定妆直接入库</div>
         </div>
         <div class="flex-1"></div>
-        <el-button type="primary" :loading="gachaBusy" @click="gacha">
-          <el-icon class="mr-1"><Trophy /></el-icon>{{ gachaBusy ? '抽卡中(约 1 分钟)…' : '抽一张' }}
-        </el-button>
+        <el-tooltip content="随机题材×随机气质,AI 原创角色并 Krea-2 定妆直接入库(约 1 分钟)" placement="top">
+          <el-button type="primary" :loading="gachaBusy" @click="gacha">
+            <el-icon class="mr-1"><Trophy /></el-icon>{{ gachaBusy ? '抽卡中(约 1 分钟)…' : '抽一张' }}
+          </el-button>
+        </el-tooltip>
       </div>
       <el-divider direction="vertical" style="height:34px" />
-      <el-button plain @click="createOpen = true">
-        <el-icon class="mr-1"><Plus /></el-icon>自定义新建(上传图 / 提示词生成)
-      </el-button>
+      <el-tooltip content="手动建角色:上传现成图片或填提示词 Krea-2 生成后入库" placement="top">
+        <el-button plain @click="createOpen = true">
+          <el-icon class="mr-1"><Plus /></el-icon>自定义新建(上传图 / 提示词生成)
+        </el-button>
+      </el-tooltip>
       <div v-if="gachaResult" class="w-full flex items-center gap-2 text-xs p-2 rounded-lg"
            style="background:rgba(255,180,84,.06);border:1px solid rgba(255,180,84,.25)">
         <img :src="`/api/library/characters/${encodeURIComponent(gachaResult.entry.name)}/image`"
@@ -177,11 +209,13 @@ async function remove(e) {
       </div>
     </div>
 
-    <div v-if="!list.length" class="panel p-10 text-center" style="color:var(--mx-text-2)">
-      库还是空的 —— 在任意项目跑一次「资产定妆」(Krea-2 生成或上传),资产会自动出现在这里
+    <div v-if="!list.length" class="panel empty-zone">
+      <div class="ez-ico"><el-icon :size="26"><Collection /></el-icon></div>
+      <div class="ez-title">资产库还是空的</div>
+      <p class="ez-desc">在任意项目跑一次「资产定妆」(Krea-2 生成或手动上传),角色与场景会自动入库;之后新项目遇到同名资产即可一键复用。</p>
     </div>
 
-    <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
+    <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
       <div v-for="e in list" :key="e.kind + e.name" class="shot-card p-3 flex flex-col gap-2 relative"
            :class="{ 'sel-on': sel.has(e.name) }" @click="batch && toggleSel(e.name)">
         <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(e.name)">
@@ -195,13 +229,15 @@ async function remove(e) {
           <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:rgba(4,6,10,.4)">
             <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
           </div>
+          <button class="cover-del" title="删除该库资产" @click.stop="remove(e)">
+            <el-icon :size="13"><Delete /></el-icon>
+          </button>
         </div>
         <div class="flex items-center gap-2">
           <b class="text-sm truncate flex-1">{{ e.name }}</b>
           <el-tag size="small" effect="plain" :type="e.source === 'krea2' ? 'warning' : 'info'">
             {{ e.source === 'krea2' ? 'Krea-2' : '上传' }}
           </el-tag>
-          <el-button text size="small" @click="remove(e)"><el-icon><Delete /></el-icon></el-button>
         </div>
         <div class="text-xs" style="color:var(--mx-text-2)">
           ♻ 复用 {{ e.used_count }} 次 · 来自「{{ e.source_project || '-' }}」
@@ -230,14 +266,17 @@ async function remove(e) {
             placeholder="A 20-year-old Chinese young man, short black hair, cyan hanfu robe, bright determined eyes, cinematic soft lighting, upper-body portrait" />
         </el-form-item>
         <el-form-item v-else label="参考图片(png / jpg / webp)">
-          <div v-if="!createImage" class="upload-zone" @click="createInput?.click()" @dragover.prevent @drop.prevent="createImage = $event.dataTransfer?.files?.[0] || null">
+          <div v-if="!createImage && !createNativePath" class="upload-zone" style="--wails-drop-target: drop"
+               @click="createInput?.click()" @dragover.prevent @drop.prevent="createImage = $event.dataTransfer?.files?.[0] || null"
+               @mx-filedrop="onNativeDrop">
             <el-icon :size="24" color="var(--mx-text3)"><UploadFilled /></el-icon>
             <div class="text-xs" style="color:var(--mx-text2)">点击或拖入图片</div>
           </div>
           <div v-else class="flex items-center gap-3 p-2 rounded-lg" style="border:1px solid var(--mx-line-hi)">
-            <img :src="URL.createObjectURL(createImage)" style="width:46px;height:58px;object-fit:cover;border-radius:6px" />
-            <span class="text-xs flex-1 truncate">{{ createImage.name }}</span>
-            <el-button text size="small" @click="createImage = null"><el-icon><Close /></el-icon></el-button>
+            <img v-if="createImage" :src="URL.createObjectURL(createImage)" style="width:46px;height:58px;object-fit:cover;border-radius:6px" />
+            <img v-else-if="createNativePath" :src="'/api/thumb?path=' + encodeURIComponent(createNativePath)" style="width:46px;height:58px;object-fit:cover;border-radius:6px" />
+            <span class="text-xs flex-1 truncate">{{ createNativePath || createImage.name }}</span>
+            <el-button text size="small" @click="createImage = null; createNativePath = null"><el-icon><Close /></el-icon></el-button>
           </div>
           <input ref="createInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="onPickImg" />
         </el-form-item>

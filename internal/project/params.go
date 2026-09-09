@@ -71,8 +71,9 @@ func DefaultStageParams() StageParams {
 			MinDuration: 3.0, MaxDuration: 18.0,
 		},
 		Assemble: AssembleParams{
-			Transition: "cut", BurnSubtitles: true,
-			Loudness: -16, Peak: 0.92, SubtitleSize: 5,
+			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)
+			Transition: "dissolve", BurnSubtitles: true,
+			Loudness: -16, Peak: 0.92, SubtitleSize: 4,
 			Upgrade2K: false,
 		},
 	}
@@ -127,6 +128,6 @@ func (p *StageParams) Sanitize() {
 		p.Assemble.Peak = 0.92
 	}
 	if p.Assemble.SubtitleSize <= 0 {
-		p.Assemble.SubtitleSize = 5
+		p.Assemble.SubtitleSize = 4
 	}
 }

@@ -83,12 +83,16 @@ func main() {
 	// 跨项目资产库(角色/场景一次定妆全局复用)
 	lib, err := library.New(filepath.Join(g.DataDir, "assets_library"))
 	fatalIf(err, "初始化资产库失败")
-	// ComfyUI 空闲自动退出通知 → 全局事件流(用户可见)
-	comfyengine.SetIdleNotice(func(mins int) {
-		bus.Publish(pipeline.Event{
-			Phase: "comfy", Level: "info",
-			Message: "ComfyUI 已空闲 " + itoa(mins) + " 分钟无任务,自动退出释放资源(下次渲染将自动重新启动)",
-		})
+	// ComfyUI 生命周期通知(启动成功/停止完成)→ 全局事件流:
+	// 前端底栏灯/首页 chip/管理页即时同步,不再等 15s 轮询或探测翻转
+	comfyengine.SetLifecycleNotice(func(alive bool, why string) {
+		msg := "ComfyUI 已停止(手动)"
+		if alive {
+			msg = "ComfyUI 已启动,渲染与抽卡可用"
+		} else if why == "空闲自动退出" {
+			msg = "ComfyUI 已停止(空闲自动退出,下次渲染自动重启)"
+		}
+		bus.Publish(pipeline.Event{Phase: "comfy", Level: "info", Message: msg})
 	})
 	comfyEng.RunIdleWatcher()
 	coord := pipeline.New(store, cfgMgr, reg, f, bus, lib)
@@ -126,6 +130,19 @@ func main() {
 			WebviewIsTransparent: false,
 			WindowIsTranslucent:  false,
 			DisableWindowIcon:    false,
+			// WebView2 稳定性:渲染采样期 GPU 满载曾挤崩 webview 的 GPU 进程,
+			// 而 go-webview2 对失效 webview 的兜底是 os.Exit(1) 整进程退出
+			// (2026-09-09 崩溃链实证)。界面为 DOM 型,软件合成足够;禁用
+			// webview GPU 加速根治渲染期闪退。(注:WEBVIEW2_ADDITIONAL_
+			// BROWSER_ARGUMENTS 环境变量在 WebView2 152 实测不生效,须走本开关)
+			WebviewGpuIsDisabled: true,
+		},
+		// 原生文件拖放:把拖入文件的绝对路径发给前端(上传区用
+		// --wails-drop-target 标记);同时关掉 webview 自带的拖放,
+		// 杜绝拖文件误当网页打开。
+		DragAndDrop: &options.DragAndDrop{
+			EnableFileDrop:     true,
+			DisableWebViewDrop: true,
 		},
 		OnStartup: func(ctx context.Context) {
 			winctl.Default.Bind(ctx)
@@ -155,11 +172,12 @@ func main() {
 		},
 		OnShutdown: func(ctx context.Context) {
 			tray.Quit()
-			log.Printf("[manjux] 退出:停止全部管线并同步退出代管的 ComfyUI")
+			log.Printf("[manjux] 退出:停止全部管线并结束 ComfyUI 全部进程")
 			coord.StopAll()
 			if eng, err := reg.Get("comfy"); err == nil {
 				if ce, ok := eng.(*comfyengine.Engine); ok {
-					_ = ce.StopAdmin() // 仅本应用代管启动的实例;外部启动的不动
+					// 直接退出承诺:ComfyUI 进程清干净(代管树 + rootDir 内 python)
+					_ = ce.StopAdmin()
 				}
 			}
 			bus.Close()

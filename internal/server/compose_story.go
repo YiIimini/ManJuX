@@ -112,21 +112,63 @@ func (s *Server) uploadCover(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, fmt.Errorf("项目不存在"))
 		return
 	}
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		writeErr(w, 400, fmt.Errorf("表单解析失败: %v", err))
-		return
+	// JSON(image_b64/image_path)为桌面模式主通道(wails 管对 multipart 的
+	// 截断,见 upload_payload.go);multipart 兼容浏览器模式。
+	var srcPath, ext string
+	var cleanup func()
+	defer func() {
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		var in imagePayload
+		if err := readBody(r, &in); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		p, cl, err := in.resolve()
+		if err != nil {
+			writeErr(w, 400, fmt.Errorf("缺少封面文件:%v", err))
+			return
+		}
+		srcPath, cleanup = p, cl
+		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(p), "."))
+	} else {
+		if err := r.ParseMultipartForm(32 << 20); err != nil {
+			writeErr(w, 400, fmt.Errorf("表单解析失败: %v", err))
+			return
+		}
+		file, hdr, err := r.FormFile("file")
+		if err != nil {
+			writeErr(w, 400, fmt.Errorf("缺少封面文件"))
+			return
+		}
+		defer file.Close()
+		ext = strings.ToLower(strings.TrimPrefix(filepath.Ext(hdr.Filename), "."))
+		tmp, terr := os.CreateTemp("", "mx-cover-*."+ext)
+		if terr != nil {
+			writeErr(w, 500, terr)
+			return
+		}
+		defer os.Remove(tmp.Name())
+		if _, rerr := tmp.ReadFrom(file); rerr != nil {
+			tmp.Close()
+			writeErr(w, 500, rerr)
+			return
+		}
+		tmp.Close()
+		srcPath = tmp.Name()
 	}
-	file, hdr, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, 400, fmt.Errorf("缺少封面文件"))
-		return
-	}
-	defer file.Close()
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(hdr.Filename), "."))
 	switch ext {
 	case "png", "jpg", "jpeg", "webp":
 	default:
 		writeErr(w, 400, fmt.Errorf("仅支持 png/jpg/webp"))
+		return
+	}
+	raw, rerr := os.ReadFile(srcPath)
+	if rerr != nil || len(raw) == 0 {
+		writeErr(w, 400, fmt.Errorf("封面文件为空或不可读(请重新选择文件)"))
 		return
 	}
 	dir := filepath.Join(s.store.Dir(id), "assets")
@@ -140,14 +182,8 @@ func (s *Server) uploadCover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	dst := filepath.Join(dir, "cover."+ext)
-	out, err := os.Create(dst)
-	if err != nil {
-		writeErr(w, 500, err)
-		return
-	}
-	defer out.Close()
-	if _, err := out.ReadFrom(file); err != nil {
-		writeErr(w, 500, err)
+	if werr := os.WriteFile(dst, raw, 0o644); werr != nil {
+		writeErr(w, 500, werr)
 		return
 	}
 	writeJSON(w, 200, map[string]any{"ok": true, "cover": "assets/cover." + ext})

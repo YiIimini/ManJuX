@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { G } from '../store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -19,18 +19,57 @@ async function refresh() {
   catch (e) { ElMessage.error('状态获取失败') }
   loading.value = false
 }
-async function refreshVersions(online = false) {
+async function refreshVersions(online = false, manual = false) {
   if (online) checking.value = true
   else verLoading.value = true
   try {
     const r = await fetch(`/api/comfy/versions${online ? '?online=1' : ''}`)
     vers.value = await r.json()
     if (!r.ok) throw new Error(vers.value?.error || `HTTP ${r.status}`)
-  } catch (e) { ElMessage.error('版本信息获取失败:' + e.message) }
+    if (online && manual) {
+      const core = vers.value?.core?.[0] || {}
+      const rows = [...(vers.value.core || []), ...(vers.value.nodes || [])]
+      const unknown = rows.filter(x => x.status === 'unknown' && x.repo).length
+      const behind = rows.filter(x => x.status === 'behind').length
+      if (core.remote || core.remoteCommit) {
+        ElMessage.success(`版本对比完成${behind ? `:${behind} 项有更新` : ':全部最新'}${unknown ? `,${unknown} 项未获取到` : ''}`)
+      } else {
+        ElMessage.warning('在线版本获取失败:GitHub 限流或网络不通(本地版本不受影响,稍后自动重试)')
+      }
+    }
+  } catch (e) {
+    if (manual) ElMessage.error('版本检查失败:' + e.message)
+  }
   checking.value = false
   verLoading.value = false
 }
-onMounted(() => { refresh(); refreshVersions(false) })
+// 页面停留时自动刷新(8s):引擎在别处(首页/外部)启停后本页状态不陈旧;
+// 卸载即停,不空转
+let pollTimer = null
+let retryTimer = null
+let onlineTries = 0
+// 自动补查:首轮联网对比后仍有仓未获取到(网络抖动/限流)→ 3s 后自动再拉,
+// 最多 3 轮(后端失败不缓存,重试即真查)。用户不应看到大面积「未检查」。
+function autoOnlinePassive() {
+  onlineTries++
+  if (onlineTries > 3 || !vers.value) return
+  const rows = [ ...(vers.value.core || []), ...(vers.value.nodes || []) ]
+  const unknown = rows.filter(r => r.status === 'unknown' && r.repo).length
+  if (unknown > 0) {
+    retryTimer = setTimeout(() => { refreshVersions(true) }, 3000)
+  }
+}
+const rawRefreshVersions = refreshVersions
+refreshVersions = async (online = false, manual = false) => {
+  await rawRefreshVersions(online, manual)
+  if (online) autoOnlinePassive()
+}
+onMounted(() => {
+  refresh()
+  refreshVersions(true) // 挂载即自动联网对比(有 10 分钟缓存,不重复查)
+  pollTimer = setInterval(refresh, 8000)
+})
+onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); if (retryTimer) clearTimeout(retryTimer) })
 watch(() => G.tick.comfy, () => { refresh(); refreshVersions(false) })
 
 async function act(action, tip) {
@@ -43,7 +82,7 @@ async function act(action, tip) {
     const r = await fetch(`/api/comfy/${action}`, { method: 'POST' })
     const d = await r.json()
     if (!r.ok) throw new Error(d.error)
-    ElMessage.success('已执行')
+    ElMessage.success(d.note || '已执行')
     setTimeout(refresh, action === 'start' ? 1500 : 400)
   } catch (e) { ElMessage.error(e.message) } finally { acting.value = '' }
 }
@@ -99,12 +138,16 @@ function verCellCls(row, which) {
         </div>
         <div class="flex-1"></div>
         <div class="flex gap-2 flex-wrap">
+          <el-tooltip content="启动本地 ComfyUI 渲染引擎(加载模型约需 1-2 分钟)" placement="bottom">
           <el-button v-if="!st.alive" type="primary" :loading="acting==='start'" @click="act('start')">
             <el-icon class="mr-1"><VideoPlay /></el-icon>启动引擎
           </el-button>
-          <el-button v-if="st.alive" :disabled="!st.owned" @click="act('stop','停止 ComfyUI?运行中的任务将中断。')">
-            <el-icon class="mr-1"><VideoPause /></el-icon>停止{{ st.owned ? '' : '(外部启动)' }}
+          </el-tooltip>
+          <el-tooltip content="结束全部 ComfyUI 相关进程(含外部启动的同安装实例)" placement="bottom">
+          <el-button v-if="st.alive" :loading="acting==='stop'" @click="act('stop', '停止引擎?将结束全部 ComfyUI 进程,运行中的任务将中断。')">
+            <el-icon class="mr-1"><VideoPause /></el-icon>停止引擎
           </el-button>
+          </el-tooltip>
           <el-dropdown v-if="st.alive" @command="(c) => c === 'app' ? openWebApp() : openWebBrowser()">
             <el-button type="primary" plain>
               <el-icon class="mr-1"><Link /></el-icon>打开 WEB 窗口<el-icon class="ml-1"><ArrowDown /></el-icon>
@@ -131,7 +174,9 @@ function verCellCls(row, which) {
               <div class="text-sm">队列任务</div>
               <div class="text-xs" style="color:var(--mx-text3)">清空等待中的任务(不影响运行中)</div>
             </div>
-            <el-button size="small" :disabled="!st.pending" @click="act('queue-clear')">清空队列</el-button>
+            <el-tooltip content="清空等待中的任务(不影响正在执行的任务)" placement="top">
+              <el-button size="small" :disabled="!st.pending" :loading="acting==='queue-clear'" @click="act('queue-clear')">清空队列</el-button>
+            </el-tooltip>
           </div>
           <el-divider style="margin:6px 0" />
           <div class="flex items-center gap-3">
@@ -139,7 +184,9 @@ function verCellCls(row, which) {
               <div class="text-sm">中断当前任务</div>
               <div class="text-xs" style="color:var(--mx-text3)">中止正在执行的渲染(可重试)</div>
             </div>
-            <el-button size="small" type="warning" plain :disabled="!st.running" @click="act('interrupt','中断当前执行的任务?')">中断</el-button>
+            <el-tooltip content="中止正在执行的渲染(该镜可重试)" placement="top">
+              <el-button size="small" type="warning" plain :disabled="!st.running" :loading="acting==='interrupt'" @click="act('interrupt','中断当前执行的任务?')">中断</el-button>
+            </el-tooltip>
           </div>
           <el-divider style="margin:6px 0" />
           <div class="flex items-center gap-3">
@@ -147,7 +194,9 @@ function verCellCls(row, which) {
               <div class="text-sm">释放显存</div>
               <div class="text-xs" style="color:var(--mx-text3)">卸载已加载模型(/free,长任务前清理)</div>
             </div>
-            <el-button size="small" :disabled="!st.alive" @click="act('free')">释放</el-button>
+            <el-tooltip content="卸载已加载模型释放显存(长任务前清理)" placement="top">
+              <el-button size="small" :disabled="!st.alive" :loading="acting==='free'" @click="act('free')">释放</el-button>
+            </el-tooltip>
           </div>
         </div>
       </div>
@@ -202,7 +251,7 @@ function verCellCls(row, which) {
           <el-button size="small" :loading="verLoading" circle @click="refreshVersions(false)"><el-icon><Refresh /></el-icon></el-button>
         </el-tooltip>
         <el-tooltip content="联网对比 GitHub 上游仓库最新 Release / Tag(数秒;受网络影响个别仓库可能查询失败显示「未检查」)" placement="top">
-          <el-button size="small" type="primary" plain :loading="checking" @click="refreshVersions(true)">
+          <el-button size="small" type="primary" plain :loading="checking" @click="refreshVersions(true, true)">
             <el-icon class="mr-1"><Cloudy /></el-icon>检查更新
           </el-button>
         </el-tooltip>
@@ -223,15 +272,17 @@ function verCellCls(row, which) {
         </el-table-column>
         <el-table-column prop="local" label="本地版本" width="130">
           <template #default="{ row }">
-            <span class="font-mono text-xs" :class="verCellCls(row, 'local')">{{ row.local || '—' }}</span>
+            <div class="flex flex-col">
+              <span class="font-mono text-xs" :class="verCellCls(row, 'local')">{{ row.local !== row.localCommit ? (row.local || '—') : '—' }}</span>
+              <span class="font-mono" style="font-size:10px;color:var(--mx-text3)">{{ row.localCommit ? '@' + row.localCommit : '—' }}</span>
+            </div>
           </template>
         </el-table-column>
         <el-table-column prop="remote" label="在线最新" width="140">
           <template #default="{ row }">
             <div class="flex flex-col">
-              <span class="font-mono text-xs" :class="verCellCls(row, 'remote')">{{ row.remote || '—' }}</span>
-              <span v-if="row.remoteCommit" class="font-mono" style="font-size:10px;color:var(--mx-text3)"
-                    :title="`远端 HEAD ${row.remoteCommit} 与本地 commit 精确比对`">@{{ row.remoteCommit }}</span>
+              <span class="font-mono text-xs" :class="verCellCls(row, 'remote')">{{ row.remote !== row.remoteCommit ? (row.remote || '—') : '—' }}</span>
+              <span class="font-mono" style="font-size:10px;color:var(--mx-text3)">{{ row.remoteCommit ? '@' + row.remoteCommit : '—' }}</span>
             </div>
           </template>
         </el-table-column>

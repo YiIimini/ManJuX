@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	gopsproc "github.com/shirou/gopsutil/v4/process"
@@ -57,21 +56,4 @@ func (e *Engine) adoptFromPidFile() bool {
 		return true
 	}
 	return false
-}
-
-// killProc 结束进程并等待退出(Kill 后 Wait 释放资源;超时 5s 放弃)。
-func killProc(p *os.Process) error {
-	if err := p.Kill(); err != nil {
-		return err
-	}
-	done := make(chan struct{})
-	go func() {
-		_, _ = p.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-	}
-	return nil
 }

@@ -179,8 +179,9 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			continue
 		}
 		if err := s.pipe.Start(ep, pipeline.PhaseAll, nil, "", 0); err != nil {
-			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error", Message: fmt.Sprintf("《%s》启动失败:%v", ep, err)})
-			continue
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
+				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, len(eps), ep, err)})
+			return
 		}
 		// 等本集跑完(轮询 Running;单集上限 2.5 小时兜底)
 		deadline := time.Now().Add(150 * time.Minute)
@@ -197,6 +198,19 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			if s.pipe.Running(ep) == nil {
 				break
 			}
+		}
+		// 排队铁律:只有「自然完成」才续下一集;中止/失败一律停住队列,
+		// 不得把被停的集当成完成继续空转跳集(2026-09-08 用户规则)。
+		res := s.pipe.Result(ep)
+		if res == pipeline.ResultStopped {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+				Message: fmt.Sprintf("⏹ 批量产线暂停于 %d/%d:《%s》已被中止,不自动跳集(重新点「批量产线」从中断处续跑)", i+1, len(eps), ep)})
+			return
+		}
+		if res == pipeline.ResultFailed {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
+				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》运行失败,不自动跳集(修复问题后重新点「批量产线」续跑)", i+1, len(eps), ep)})
+			return
 		}
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 			Message: fmt.Sprintf("✔ 批量产线 %d/%d:《%s》完成", i+1, len(eps), ep)})

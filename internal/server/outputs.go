@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
 
 // projectCover 项目封面:自定义封面(assets/cover.*) > 首个角色定妆照 > 首个场景图。
@@ -121,9 +123,15 @@ func (s *Server) projectOutputDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("what 须为 final/final2k/all"))
 		return
 	}
+	removed := 0
 	for _, f := range targets {
-		_ = os.Remove(filepath.Join(outDir, f))
+		if _, err := os.Stat(filepath.Join(outDir, f)); err == nil {
+			_ = os.Remove(filepath.Join(outDir, f))
+			removed++
+		}
 	}
+	s.bus.Publish(pipeline.Event{Phase: "system", Level: "info",
+		Message: fmt.Sprintf("🗑 已删除成片产物 %d 个文件(项目「%s」)", removed, id)})
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

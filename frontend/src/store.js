@@ -30,7 +30,7 @@ export const PHASES = [
 // phase 显示名:all/upgrade2k 等非阶段值映射为人话,具体阶段用中文名
 export function phaseLabel(p) {
   if (!p) return ''
-  const m = { all: '全流程', upgrade2k: '2K 精修', compose: 'AI 创作', pipeline: '管线', novel: '小说产线' }
+  const m = { all: '全流程', upgrade2k: '2K 精修', compose: 'AI 创作', pipeline: '管线', novel: '小说产线', system: '系统', comfy: '引擎' }
   return m[p] || PHASES.find(x => x.id === p)?.name || p
 }
 
@@ -69,11 +69,13 @@ export const api = {
   novelBatchStatus: () => req('GET', '/api/novel-batch'),
   composeStory: (id, prompt, styleHint) => req('POST', `/api/projects/${encodeURIComponent(id)}/compose-story`, { prompt, style_hint: styleHint }),
   uploadAsset: (id, kind, assetId, name, file) => {
-    const fd = new FormData()
-    fd.append('kind', kind); fd.append('asset_id', assetId)
-    fd.append('name', name); fd.append('file', file)
-    return fetch(`/api/projects/${encodeURIComponent(id)}/assets`, { method: 'POST', body: fd })
-      .then(async r => { const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`); return d })
+    // 桌面 webview 经 wails 代理发 multipart 会把大文件截成 0 字节
+    // (2026-09-09 实测),统一改 JSON + base64;浏览器模式同样可用。
+    return fileToB64(file).then(b64 =>
+      req('POST', `/api/projects/${encodeURIComponent(id)}/assets`, {
+        kind, asset_id: assetId, name,
+        image_b64: b64, filename: file.name,
+      }))
   },
   deleteAsset: (id, assetId) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}`),
   openExplorer: (path, project) => req('POST', '/api/open', { path, project }),
@@ -81,6 +83,35 @@ export const api = {
   sysmon: () => req('GET', '/api/sysmon'),
   window: (action) => req('POST', `/api/window/${encodeURIComponent(action)}`),
   quit: () => req('POST', '/api/quit'),
+}
+
+// ---------- 图片上传载荷(wails 管对 multipart 有截断,改 JSON+base64) ----------
+// 超大图先在画布压缩(最长边 ≤1600,JPEG q0.92),避免几 MB 照片撑爆
+// JSON 请求体;小图/透明 PNG 保持原样。
+export function fileToB64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onerror = () => reject(new Error('图片读取失败,请改用「点击选择文件」重新选择'))
+    r.onload = () => {
+      const dataURL = String(r.result || '')
+      const img = new Image()
+      img.onerror = () => resolve(dataURL) // 解不出尺寸就原样上,后端兜底
+      img.onload = () => {
+        try {
+          const MAX = 1600
+          if (img.width <= MAX && img.height <= MAX && (dataURL.length < 1.5 * 1024 * 1024)) return resolve(dataURL)
+          const scale = Math.min(1, MAX / Math.max(img.width, img.height))
+          const cv = document.createElement('canvas')
+          cv.width = Math.round(img.width * scale)
+          cv.height = Math.round(img.height * scale)
+          cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height)
+          resolve(cv.toDataURL('image/jpeg', 0.92))
+        } catch { resolve(dataURL) }
+      }
+      img.src = dataURL
+    }
+    r.readAsDataURL(file)
+  })
 }
 
 // ---------- 实时日志:SSE(浏览器) / 轮询(桌面 webview) ----------
@@ -112,6 +143,11 @@ function pushEvent(ev) {
   G.logs.push(ev)
   if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
   G.eventsOpen = true
+  if (ev.phase === 'comfy') {
+    // 引擎启停/空闲自动退出事件:底栏灯、首页 chip、管理页即时同步,不等 15s 轮询
+    refreshStatus()
+    G.tick.comfy++
+  }
   if (ev.phase === 'novel' && ['success', 'error', 'warn'].includes(ev.level)) {
     refreshProjects() // 拆集建项目/批量进度 → 首页实时出现分集
   }

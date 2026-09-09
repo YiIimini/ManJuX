@@ -91,15 +91,15 @@ function buildTree(chapters) {
   }
   sortRec(tree)
   // 唯一顶层目录(如「正文」)自动提升,不显示多余外壳层
-  const onlyDir = tree.length === 1 && tree[0].type === 'dir'
-  if (onlyDir) tree = tree[0].children
+  let nodes = tree
+  if (tree.length === 1 && tree[0].type === 'dir') nodes = tree[0].children
   // 统一美化目录名(查找用原名,显示才替换)
   const pretty = (arr) => arr.forEach(x => {
     if (x.type === 'dir') { x.label = x.name.replace(/_/g, ' · '); pretty(x.children) }
     else { x.label = x.name }
   })
-  pretty(tree)
-  return tree
+  pretty(nodes)
+  return nodes
 }
 // 显示名美化:去文件扩展名;下划线换「 · 」
 function prettyName(n) {
@@ -164,6 +164,25 @@ async function openDir(n) {
   } catch { /* /api/open 需要 project——后端走 DataDir 白名单;小说目录默认就在 data/Novel 下 */ }
 }
 
+// 删除整本小说(磁盘文件,二次确认;已创作的剧集项目不受影响)
+async function removeNovel(n) {
+  const scope = n.type === 'dir' ? '该书目录(全本/封面/正文等全部文件)' : '该小说文件'
+  try {
+    await ElMessageBox.confirm(
+      `将删除《${n.name}》—— ${scope} 从磁盘移除,不可恢复。` +
+      (n.produced ? '\n该书已创作的剧集项目不受影响,可到「项目」页另行管理。' : ''),
+      '删除小说', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  try {
+    const r = await fetch('/api/novels?path=' + encodeURIComponent(n.path), { method: 'DELETE' })
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    ElMessage.success(`《${n.name}》已删除`)
+    if (dlg.value && dlg.value.novel.path === n.path) dlg.value = null
+    refresh()
+  } catch (e) { ElMessage.error(e.message) }
+}
+
 const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 字'
 </script>
 
@@ -180,16 +199,21 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
         </div>
         <div class="flex-1"></div>
         <div class="text-center"><div class="stat-num">{{ novels.length }}</div><div class="stat-label">小说</div></div>
-        <el-button size="small" circle :loading="loading" @click="refresh"><el-icon><Refresh /></el-icon></el-button>
+        <el-tooltip content="重新扫描小说库目录(增删书后点此刷新)" placement="bottom">
+          <el-button size="small" circle :loading="loading" @click="refresh"><el-icon><Refresh /></el-icon></el-button>
+        </el-tooltip>
       </div>
     </div>
 
-    <div v-if="!novels.length" class="panel p-14 text-center" style="color:var(--mx-text3)">
-      目录里还没有小说 —— 放入小说文件夹(推荐结构:书名/全本/*.md + 书名/封面/*.png + 书名/正文/分卷章节)
+    <div v-if="!novels.length" class="panel empty-zone">
+      <div class="ez-ico"><el-icon :size="26"><Reading /></el-icon></div>
+      <div class="ez-title">小说库还没有内容</div>
+      <p class="ez-desc">把小说放进扫描目录(推荐结构:书名/全本/*.md、书名/封面/*.png、书名/正文/分卷章节),这里会自动列出书卡。</p>
     </div>
 
-    <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(216px,1fr))">
-      <div v-for="n in novels" :key="n.path" class="shot-card cursor-pointer" @click="openDetail(n)">
+    <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(216px,1fr))">
+      <div v-for="n in novels" :key="n.path" class="shot-card cursor-pointer"
+           :title="'查看《' + n.name + '》章节目录与正文,可一键送入视频产线'" @click="openDetail(n)">
         <div class="relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px 10px 0 0;overflow:hidden">
           <img v-if="n.cover" :src="'/api/novels/cover?path=' + encodeURIComponent(n.cover)"
                style="width:100%;height:100%;object-fit:cover" loading="lazy" />
@@ -197,7 +221,11 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
             <el-icon :size="34" color="var(--mx-text3)"><Reading /></el-icon>
             <span class="timecode">{{ n.type === 'dir' ? '文件夹' : '单文件' }}</span>
           </div>
-          <el-tag v-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 right-2">已创作</el-tag>
+          <el-tag v-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 left-2">已创作</el-tag>
+          <!-- 右上:删除整本小说(磁盘文件;已创作系列项目不受影响) -->
+          <button class="cover-del" title="删除该书(磁盘文件)" @click.stop="removeNovel(n)">
+            <el-icon :size="13"><Delete /></el-icon>
+          </button>
         </div>
         <div class="p-3 flex flex-col gap-1.5">
           <b class="text-sm truncate">《{{ n.name }}》</b>
@@ -259,10 +287,12 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
       </template>
       <template #footer>
         <el-button @click="dlg = null">关闭</el-button>
+        <el-tooltip content="整本拆集成多集短视频项目并自动批量产线(拆集 2-6 分钟)" placement="top">
         <el-button type="primary" :loading="producing" :disabled="dlg && dlg.novel.produced"
                    @click="dlg && produce(dlg.novel)">
           {{ dlg && dlg.novel.produced ? '已创作(勿重复)' : '一键视频创作' }}
         </el-button>
+        </el-tooltip>
       </template>
     </el-dialog>
   </div>

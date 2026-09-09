@@ -1,6 +1,25 @@
 <script setup>
-import { G, fmtTime, logDot, phaseLabel } from '../store'
-import { nextTick, watch, ref, onBeforeUnmount } from 'vue'
+import { G, api, fmtTime, logDot, phaseLabel } from '../store'
+import { computed, ref, onBeforeUnmount } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+
+// 一键停止:运行中的管线(通常 0 或 1 个;批量产线归并为单管线逐集推进)
+const runningIds = computed(() => Object.keys(G.status?.running || {}))
+async function confirmStop() {
+  const ids = runningIds.value.slice()
+  if (!ids.length) return
+  const names = ids.map(projName).filter(Boolean).join('、')
+  try {
+    await ElMessageBox.confirm(
+      `确定停止当前运行中的管线?${names ? '(『' + names + '』)' : ''}渲染中的任务将被中断,已完成阶段保留,修复问题后可续跑。`,
+      '一键停止', { confirmButtonText: '停止', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  let ok = 0
+  for (const id of ids) {
+    try { await api.stop(id); ok++ } catch { /* 单个失败继续 */ }
+  }
+  if (ok) ElMessage.success('已停止 ' + ok + ' 条管线')
+}
 
 // 项目名(事件流是全局的,跨项目运行都要能分清归属)
 const projName = (id) => {
@@ -10,13 +29,12 @@ const projName = (id) => {
 }
 const curProj = () => G.project?.project?.id
 
-const box = ref(null)
-const autoscroll = ref(true)
-
-watch(() => G.logs.length, async () => {
-  if (!autoscroll.value) return
-  await nextTick()
-  if (box.value) box.value.scrollTop = box.value.scrollHeight
+// 倒序显示:最新事件恒在顶部,无需自动滚动(数据层 G.logs 仍时序追加,
+// 底栏 ticker 与增量轮询不受影响)
+const reversed = computed(() => {
+  const arr = G.logs.slice()
+  arr.reverse()
+  return arr
 })
 
 // ---- 弹窗:标题栏拖动 + 右下角调大小(非模态,不挡主界面) ----
@@ -81,17 +99,26 @@ onBeforeUnmount(() => {
   }">
       <div class="log-pop-bar" title="拖动移动" @mousedown="onDragDown">
         <span class="tick-dot" :class="logDot"></span>
-        <span class="timecode" :style="{ color: logDot === 'ok' ? 'var(--mx-green)' : logDot === 'bad' ? 'var(--mx-red)' : logDot === 'warn' ? 'var(--mx-yellow)' : 'var(--mx-text3)' }">REC</span>
-        <span class="timecode">RUNTIME LOG · GLOBAL LIVE</span>
-        <span class="timecode" v-if="G.logs.length">{{ G.logs.length }} EVENTS</span>
+        <span class="timecode" :style="{ color: logDot === 'ok' ? 'var(--mx-green)' : logDot === 'bad' ? 'var(--mx-red)' : logDot === 'warn' ? 'var(--mx-yellow)' : 'var(--mx-text3)' }">记录中</span>
+        <span class="timecode">运行日志 · 全局实时</span>
+        <span class="timecode" v-if="G.logs.length">{{ G.logs.length }} 条事件</span>
         <div class="flex-1"></div>
-        <el-checkbox v-model="autoscroll" size="small" label="自动滚动" @mousedown.stop />
-        <el-button text size="small" @click="G.logs = []" @mousedown.stop>清空</el-button>
-        <el-button text size="small" @click="G.logPanelOpen = false" @mousedown.stop>收起 ✕</el-button>
+        <el-tooltip :content="runningIds.length ? '一键停止:停止当前运行中的管线(二次确认)' : '当前无运行中的管线'" placement="bottom">
+          <el-button text size="small" class="logbar-ico" :disabled="!runningIds.length"
+                     :style="runningIds.length ? 'color:var(--mx-red)' : ''" @click="confirmStop" @mousedown.stop>
+            <el-icon :size="14"><VideoPause /></el-icon>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip content="清空当前日志显示(磁盘运行史不受影响)" placement="bottom">
+          <el-button text size="small" class="logbar-ico" @click="G.logs = []" @mousedown.stop><el-icon :size="14"><Delete /></el-icon></el-button>
+        </el-tooltip>
+        <el-tooltip content="收起日志面板(底栏日志条可再次展开)" placement="bottom">
+          <el-button text size="small" class="logbar-ico" @click="G.logPanelOpen = false" @mousedown.stop><el-icon :size="14"><ArrowDown /></el-icon></el-button>
+        </el-tooltip>
       </div>
-      <div ref="box" class="flex-1 overflow-y-auto py-1.5">
+      <div class="flex-1 overflow-y-auto py-1.5">
         <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="m" style="color:#46536f">等待管线事件…(运行任意阶段后实时输出)</span></div>
-        <div v-for="(l, i) in G.logs" :key="i" class="log-line" :class="l.level">
+        <div v-for="(l, i) in reversed" :key="i" class="log-line" :class="l.level">
           <span class="t">{{ fmtTime(l.at) }}</span>
           <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
           <span class="ph" v-if="l.phase">[{{ phaseLabel(l.phase) }}]</span>
@@ -105,4 +132,6 @@ onBeforeUnmount(() => {
 <style scoped>
 .pj { color: var(--mx-purple); margin-right: 8px; }
 .pj.cur { color: var(--mx-amber); }
+.logbar-ico { padding: 4px 7px !important; }
+.logbar-ico:hover { color: var(--mx-amber-hi) !important; background: rgba(255, 180, 84, .1) !important; }
 </style>

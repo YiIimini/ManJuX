@@ -310,17 +310,24 @@ func (c *Client) Download(ctx context.Context, f OutputFile, destPath string) er
 	return os.Rename(tmp, destPath)
 }
 
-// Free 释放显存。
-func (c *Client) Free(ctx context.Context) {
+// Free 释放显存(卸载模型+清缓存)。失败必须上报——曾把连接失败/非 200
+// 全部吞掉,引擎没运行也报「已请求」,用户观感为假功能(2026-09-09)。
+func (c *Client) Free(ctx context.Context) error {
 	body := bytes.NewReader([]byte(`{"unload_models":true,"free_memory":true}`))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/free", body)
 	if err != nil {
-		return
+		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if resp, err := c.http.Do(req); err == nil {
-		resp.Body.Close()
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("请求 ComfyUI /free 失败:%w", err)
 	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ComfyUI /free 返回 %s", resp.Status)
+	}
+	return nil
 }
 
 // Interrupt 中断当前执行。

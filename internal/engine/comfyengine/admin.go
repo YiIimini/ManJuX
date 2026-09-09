@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 )
 
 // AdminStatus ComfyUI 管理状态聚合。
@@ -140,17 +141,19 @@ func (e *Engine) StartAdmin(ctx context.Context) error {
 	return e.launch(ctx, e.cfg())
 }
 
-// StopAdmin 停止代管启动的 ComfyUI。外部启动的实例不接管;
-// 但 pid 文件可认领的(本应用上实例启动、应用重启后)会先接管再停。
+// StopAdmin 手动停止:结束全部 ComfyUI 相关进程 —— 代管进程树
+// (taskkill /T) + rootDir 内所有 python(外部/上实例启动的同安装实例一并清),
+// 停止按钮承诺「杀干净」,不再出现停止后进程残留/端口仍活。
+// 引擎本来就没在运行 → 幂等成功;清完进程但端口仍活 → 提示核对根目录配置。
 func (e *Engine) StopAdmin() error {
-	if e.proc == nil && !e.adoptFromPidFile() {
-		return fmt.Errorf("ComfyUI 非本应用启动,请在其自身窗口/终端关闭")
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	alive := e.cli.Alive(ctx)
+	cancel()
+	n := e.killAllComfy("手动停止")
+	notifyLifecycle(false, "手动停止")
+	if alive && n == 0 {
+		return fmt.Errorf("未能定位 ComfyUI 进程:请检查「设置→ComfyUI→根目录」是否与实际安装一致")
 	}
-	if err := killProc(e.proc); err != nil {
-		return err
-	}
-	e.proc = nil
-	clearPidFile(e.cfg())
 	return nil
 }
 
@@ -160,5 +163,5 @@ func (e *Engine) QueueClear(ctx context.Context) { e.cli.ClearPending(ctx) }
 // Interrupt 中断当前执行。
 func (e *Engine) Interrupt(ctx context.Context) { e.cli.Interrupt(ctx) }
 
-// FreeVRAM 释放显存。
-func (e *Engine) FreeVRAM(ctx context.Context) { e.cli.Free(ctx) }
+// FreeVRAM 释放显存;失败上报(引擎未运行/请求异常都返回 error)。
+func (e *Engine) FreeVRAM(ctx context.Context) error { return e.cli.Free(ctx) }

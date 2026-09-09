@@ -149,9 +149,36 @@ func (s *Server) scanNovelDir(dir, name string) novelItem {
 	return it
 }
 
+// safeSeries 书名 → 项目名安全形态:项目 ID 白名单外的字符(全角逗号/空格/
+// 感叹号等)统一替换为间隔号「·」,再压缩连续与首尾。书名「天庭把我裁员，
+// 我在人间爆红」→「天庭把我裁员·我在人间爆红」。查重与拆集共用,保证一致。
+func safeSeries(name string) string {
+	var b []rune
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b = append(b, r)
+		case r >= 0x4e00 && r <= 0x9fff:
+			b = append(b, r)
+		case r == '_', r == '-', r == '·':
+			b = append(b, r)
+		default:
+			b = append(b, '·')
+		}
+	}
+	out := strings.Trim(string(b), "·")
+	for strings.Contains(out, "··") {
+		out = strings.ReplaceAll(out, "··", "·")
+	}
+	if out == "" {
+		out = "未命名系列"
+	}
+	return out
+}
+
 // novelProduced 是否已为该书创建过系列/同名项目。
 func (s *Server) novelProduced(name string) bool {
-	re := regexp.MustCompile(`^` + regexp.QuoteMeta(name) + `(·第\d+集|$)`)
+	re := regexp.MustCompile(`^` + regexp.QuoteMeta(safeSeries(name)) + `(·第\d+集|$)`)
 	for _, p := range s.store.List() {
 		if re.MatchString(p.ID) {
 			return true
@@ -399,6 +426,65 @@ func jobSet(series, state string, created int, msg string) {
 	novelJobs.m[series] = &novelJob{Series: series, Created: created, State: state, Message: msg, At: time.Now().Unix()}
 }
 
+// handleNovelDelete DELETE /api/novels?path= 删除小说库条目(仅允许一级:书目录或单文件)。
+func (s *Server) handleNovelDelete(w http.ResponseWriter, r *http.Request) {
+	p := r.URL.Query().Get("path")
+	if p == "" {
+		writeErr(w, 400, fmt.Errorf("请提供小说路径"))
+		return
+	}
+	if !s.inNovelRoot(p) {
+		writeErr(w, 403, fmt.Errorf("路径超出小说库范围"))
+		return
+	}
+	root := filepath.Clean(s.novelRoot())
+	if filepath.Clean(p) == root {
+		writeErr(w, 403, fmt.Errorf("不能删除小说库根目录"))
+		return
+	}
+	if filepath.Clean(filepath.Dir(p)) != root {
+		writeErr(w, 400, fmt.Errorf("仅支持删除小说库中的一级条目(整本书或单文件)"))
+		return
+	}
+	fi, err := os.Stat(p)
+	if err != nil {
+		writeErr(w, 404, fmt.Errorf("小说不存在"))
+		return
+	}
+	if fi.IsDir() {
+		err = os.RemoveAll(p)
+	} else {
+		err = os.Remove(p)
+	}
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	s.bus.Publish(pipeline.Event{Phase: "system", Level: "info",
+		Message: "🗑 已从小说库删除《" + filepath.Base(p) + "》(磁盘文件)"})
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// handleNovelJobsDelete DELETE /api/novel-jobs?series= 移除拆集任务占位(首页失败占位卡清理)。
+func (s *Server) handleNovelJobsDelete(w http.ResponseWriter, r *http.Request) {
+	series := r.URL.Query().Get("series")
+	if series == "" {
+		writeErr(w, 400, fmt.Errorf("请提供 series"))
+		return
+	}
+	novelJobs.Lock()
+	_, ok := novelJobs.m[series]
+	delete(novelJobs.m, series)
+	novelJobs.Unlock()
+	if !ok {
+		writeErr(w, 404, fmt.Errorf("任务不存在或已结束"))
+		return
+	}
+	s.bus.Publish(pipeline.Event{Phase: "system", Level: "info",
+		Message: "🗑 已移除拆集失败占位卡《" + series + "》"})
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 // handleNovelJobs GET /api/novel-jobs:进行中/刚完成的拆集任务(失败保留 10 分钟)。
 func (s *Server) handleNovelJobs(w http.ResponseWriter, r *http.Request) {
 	novelJobs.Lock()
@@ -421,6 +507,11 @@ func (s *Server) handleNovelJobs(w http.ResponseWriter, r *http.Request) {
 
 // startBatch 启动批量产线(供 produce 与手动接口共用)。
 func (s *Server) startBatch(prefix string, eps []string) bool {
+	if len(eps) == 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
+			Message: "✕ 批量产线未启动:《" + prefix + "》没有可处理的分集(拆集 0 集,见上方日志)"})
+		return false
+	}
 	batch.mu.Lock()
 	if batch.running {
 		batch.mu.Unlock()
@@ -485,8 +576,14 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	if series == "连载" && strings.TrimSpace(plan.Book) != "" {
 		series = strings.TrimSpace(plan.Book)
 	}
+	if safe := safeSeries(series); safe != series {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: "书名含项目名不支持的字符号(如全角逗号/空格),已自动规整为「" + safe + "」"})
+		series = safe
+	}
 	jobSet(series, "running", 0, "AI 拆集通读中…")
 	var eps []string
+	createFail := 0
 	for i, ep := range plan.Episodes {
 		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, ep.Title)
 		if _, ok := s.store.Get(epName); ok {
@@ -494,6 +591,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			continue
 		}
 		if _, err := s.store.Create(epName, s.projectConfigDefault()); err != nil {
+			createFail++
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+				Message: fmt.Sprintf("⚠ 分集 %d 创建失败(%v),已跳过", ep.Ep, err)})
 			continue
 		}
 		var prev string
@@ -510,10 +610,24 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			Message: fmt.Sprintf("已创建分集 %d/%d:《%s》", i+1, len(plan.Episodes), epName)})
 		jobSet(series, "running", i+1, fmt.Sprintf("已建 %d/%d 集", i+1, len(plan.Episodes)))
 	}
+	if len(eps) == 0 {
+		err := fmt.Errorf("拆集结果 %d 集全部创建失败,请查看日志告警", len(plan.Episodes))
+		jobSet(series, "failed", 0, err.Error())
+		return "", nil, err
+	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目", series, len(plan.Episodes), len(eps))})
+		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目%s", series, len(plan.Episodes), len(eps),
+			failNote(createFail))})
 	jobSet(series, "done", len(eps), fmt.Sprintf("拆集完成:%d 集", len(eps)))
 	return series, eps, nil
+}
+
+// failNote 创建失败数附注。
+func failNote(n int) string {
+	if n > 0 {
+		return fmt.Sprintf("(另有 %d 集创建失败已跳过)", n)
+	}
+	return ""
 }
 
 func hasTxtExt(p string) bool {

@@ -31,6 +31,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/sysexec"
+	"github.com/YiIimini/ManJuX/internal/sysmon"
 	"github.com/YiIimini/ManJuX/internal/version"
 	"github.com/YiIimini/ManJuX/internal/winctl"
 )
@@ -121,6 +122,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/quit", s.quitApp)
 	m.HandleFunc("POST /api/test", s.testConn)
 	m.HandleFunc("GET /api/library", s.listLibrary)
+	m.HandleFunc("GET /api/thumb", s.serveThumb)
 	m.HandleFunc("GET /api/library/{kind}/{name}/image", s.libraryImage)
 	m.HandleFunc("DELETE /api/library/{kind}/{name}", s.deleteLibrary)
 	m.HandleFunc("POST /api/projects/{id}/export-pack", s.exportClipPack)
@@ -135,12 +137,15 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
 	m.HandleFunc("PUT /api/projects/{id}/shot", s.putShot)
+	m.HandleFunc("DELETE /api/projects/{id}/shot/{shotID}", s.deleteShot)
 	m.HandleFunc("POST /api/projects/{id}/cover", s.uploadCover)
 	m.HandleFunc("POST /api/projects/{id}/compose-story", s.handleComposeStory)
 	m.HandleFunc("POST /api/novel-split", s.handleNovelSplit)
 	m.HandleFunc("GET /api/novel-batch", s.handleNovelBatch)
 	m.HandleFunc("GET /api/novels", s.handleNovels)
+	m.HandleFunc("DELETE /api/novels", s.handleNovelDelete)
 	m.HandleFunc("GET /api/novel-jobs", s.handleNovelJobs)
+	m.HandleFunc("DELETE /api/novel-jobs", s.handleNovelJobsDelete)
 	m.HandleFunc("GET /api/novels/cover", s.handleNovelCover)
 	m.HandleFunc("GET /api/novels/detail", s.handleNovelDetail)
 	m.HandleFunc("GET /api/novels/read", s.handleNovelRead)
@@ -151,6 +156,13 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/comfy/open-appwin", s.comfyOpenAppWin)
 	m.HandleFunc("POST /api/projects/{id}/import-plan", s.importPlan)
 	m.HandleFunc("POST /api/window/{action}", s.handleWindowAction)
+}
+
+// opLog 用户操作审计日志:删除/创建/保存/导出等关键操作全部进运行日志面板
+// (phase=system,前端 phaseLabel 显示「系统」)。
+func (s *Server) opLog(format string, args ...any) {
+	s.bus.Publish(pipeline.Event{Phase: "system", Level: "info",
+		Message: fmt.Sprintf(format, args...)})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -273,6 +285,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	s.opLog("💾 全局设置已保存(LLM=%s / 默认引擎=%s / 端口=%d)", in.LLM.Model, in.Render.DefaultEngine, in.ServerPort)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -292,6 +305,8 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		Done    int    `json:"shots_done"`
 		Total   int    `json:"shots_total"`
 		Cover   string `json:"cover"` // 项目封面(角色定妆照/场景图)
+		Chars   int    `json:"characters"` // 方案内角色数(首页统计用)
+		Scenes  int    `json:"scenes"`     // 方案内场景数
 	}
 	out := []item{}
 	for _, p := range s.store.List() {
@@ -299,6 +314,8 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		if plan, err := s.store.LoadPlan(p.ID); err == nil {
 			it.HasPlan = true
 			it.Total = len(plan.Shots)
+			it.Chars = len(plan.Characters)
+			it.Scenes = len(plan.Scenes)
 			if m, err := s.store.LoadManifest(p.ID); err == nil {
 				for _, c := range m {
 					if c.Status == project.ShotDone {
@@ -334,6 +351,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.opLog("＋ 已创建项目「%s」", in.Name)
 	writeJSON(w, 200, p)
 }
 
@@ -393,6 +411,7 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.opLog("🗑 已删除项目「%s」(方案/资产/镜头/成片一并移除)", id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -527,13 +546,65 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, fmt.Errorf("项目不存在"))
 		return
 	}
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		writeErr(w, 400, err)
-		return
+	// JSON(image_b64/image_path)为桌面模式主通道(见 upload_payload.go);
+	// multipart 兼容浏览器模式。multipart 同样落临时文件再安装——wails
+	// 资产代理对大体积 multipart 有截断,统一在服务端校验非空,坏文件
+	// 直接报错而非落盘 0 字节。
+	var kind, assetID, name, srcPath, ext string
+	var cleanup func()
+	defer func() {
+		if cleanup != nil {
+			cleanup()
+		}
+	}()
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+		var in struct {
+			Kind    string `json:"kind"`     // characters / scenes / props
+			AssetID string `json:"asset_id"` // 形如 char:xxx / scene:xxx
+			Name    string `json:"name"`
+			imagePayload
+		}
+		if err := readBody(r, &in); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		kind, assetID, name = in.Kind, in.AssetID, in.Name
+		p, cl, err := in.resolve()
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		srcPath, cleanup = p, cl
+		ext = strings.ToLower(filepath.Ext(p))
+	} else {
+		if err := r.ParseMultipartForm(64 << 20); err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		kind = r.FormValue("kind")
+		assetID = r.FormValue("asset_id")
+		name = r.FormValue("name")
+		file, hdr, err := r.FormFile("file")
+		if err != nil {
+			writeErr(w, 400, err)
+			return
+		}
+		defer file.Close()
+		ext = strings.ToLower(filepath.Ext(hdr.Filename))
+		tmp, terr := os.CreateTemp("", "mx-asset-*"+ext)
+		if terr != nil {
+			writeErr(w, 500, terr)
+			return
+		}
+		defer os.Remove(tmp.Name())
+		if _, ierr := io.Copy(tmp, file); ierr != nil {
+			tmp.Close()
+			writeErr(w, 500, ierr)
+			return
+		}
+		tmp.Close()
+		srcPath = tmp.Name()
 	}
-	kind := r.FormValue("kind")        // characters / scenes / props
-	assetID := r.FormValue("asset_id") // 形如 char:xxx / scene:xxx
-	name := r.FormValue("name")
 	switch kind {
 	case "characters", "scenes", "props":
 	default:
@@ -544,18 +615,15 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("asset_id 不能为空"))
 		return
 	}
-	file, hdr, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, 400, err)
-		return
-	}
-	defer file.Close()
-
-	ext := strings.ToLower(filepath.Ext(hdr.Filename))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".webp":
 	default:
 		writeErr(w, 400, fmt.Errorf("仅支持 png/jpg/webp"))
+		return
+	}
+	raw, rerr := os.ReadFile(srcPath)
+	if rerr != nil || len(raw) == 0 {
+		writeErr(w, 400, fmt.Errorf("上传的图片为空或不可读(请重新选择文件)"))
 		return
 	}
 	// 文件名安全化
@@ -566,17 +634,10 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 	destDir := filepath.Join(s.store.Dir(id), "assets", kind)
 	_ = os.MkdirAll(destDir, 0o755)
 	dest := filepath.Join(destDir, safeName+ext)
-	out, err := os.Create(dest)
-	if err != nil {
-		writeErr(w, 500, err)
+	if werr := os.WriteFile(dest, raw, 0o644); werr != nil {
+		writeErr(w, 500, werr)
 		return
 	}
-	if _, err := io.Copy(out, file); err != nil {
-		out.Close()
-		writeErr(w, 500, err)
-		return
-	}
-	out.Close()
 
 	assets, _ := s.store.LoadAssets(id)
 	rel, _ := filepath.Rel(s.store.Dir(id), dest)
@@ -613,6 +674,7 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 			// 入库成功仅记录日志,不阻塞响应
 		}
 	}
+	s.opLog("⬆ 已上传%s「%s」并入库(项目「%s」)", map[string]string{"characters": "角色定妆照", "scenes": "场景参考图", "props": "道具图"}[kind], name, id)
 	writeJSON(w, 200, assets[assetID])
 }
 
@@ -634,6 +696,7 @@ func (s *Server) deleteAsset(w http.ResponseWriter, r *http.Request) {
 	}
 	delete(assets, assetID)
 	_ = s.store.SaveAssets(id, assets)
+	s.opLog("🗑 已删除资产 %s(项目「%s」)", assetID, id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -745,8 +808,15 @@ func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, err)
 		return
 	}
-	// explorer 的 /select 必须与路径连成一个参数,拆开会打开默认文档目录
-	cmd := sysexec.Hide(exec.Command("explorer.exe", "/select,"+target))
+	// explorer 怪癖:/select,<目录> 在已有实例时常静默不弹窗(2026-09-09 实测
+	// 窗口数不变);目录改为直接打开,文件保持 /select 定位选中。
+	var cmd *exec.Cmd
+	if fi, err := os.Stat(target); err == nil && fi.IsDir() {
+		cmd = sysexec.Hide(exec.Command("explorer.exe", target))
+	} else {
+		// explorer 的 /select 必须与路径连成一个参数,拆开会打开默认文档目录
+		cmd = sysexec.Hide(exec.Command("explorer.exe", "/select,"+target))
+	}
 	_ = cmd.Start()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -873,14 +943,36 @@ func (s *Server) comfyAction(w http.ResponseWriter, r *http.Request) {
 	switch r.PathValue("action") {
 	case "start":
 		err = ce.StartAdmin(ctx)
+		if err == nil {
+			s.markComfyLive(true) // 立即置在线,不等探测缓存
+		}
 	case "stop":
 		err = ce.StopAdmin()
+		if err == nil {
+			s.markComfyLive(false) // 立即置离线,不等 8s 缓存/失败翻转
+		}
 	case "queue-clear":
 		ce.QueueClear(ctx)
+		s.opLog("🧹 已清空 ComfyUI 等待队列(运行中任务不受影响)")
 	case "interrupt":
 		ce.Interrupt(ctx)
+		s.opLog("⏹ 已中断 ComfyUI 当前执行任务(可重试)")
 	case "free":
-		ce.FreeVRAM(ctx)
+		before, hasB := sysmon.VRAMUsedMB()
+		if err = ce.FreeVRAM(ctx); err != nil {
+			// 引擎未运行/请求失败必须如实上报,不再假装成功
+			s.opLog("⚠ 释放显存未生效:%v(引擎已停止时显存随进程释放,无需操作)", err)
+			break // 走底部 writeErr,前端弹真实错误
+		}
+		time.Sleep(2500 * time.Millisecond) // 给卸载模型+empty_cache 生效时间
+		after, hasA := sysmon.VRAMUsedMB()
+		if hasB && hasA {
+			note := fmt.Sprintf("显存 %.1f GB → %.1f GB", before/1024, after/1024)
+			s.opLog("🧽 已卸载模型释放显存:%s(任务执行中卸载会延后到当前任务结束)", note)
+			writeJSON(w, 200, map[string]any{"ok": true, "note": note})
+			return
+		}
+		s.opLog("🧽 已请求 ComfyUI 卸载模型释放显存(/free)")
 	default:
 		writeErr(w, 400, fmt.Errorf("未知操作"))
 		return
@@ -937,6 +1029,62 @@ func (s *Server) putShot(w http.ResponseWriter, r *http.Request) {
 	writeErr(w, 404, fmt.Errorf("镜头不存在: %d", in.ShotID))
 }
 
+// deleteShot 删除单个分镜:方案移除该镜 + 清理渲染产物与清单项;
+// 成片/质检报告/素材包为派生品一并作废(镜头序列已变),其它镜头不受影响。
+func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if s.pipe.Running(id) != nil {
+		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		return
+	}
+	shotID, err := strconv.Atoi(r.PathValue("shotID"))
+	if err != nil || shotID <= 0 {
+		writeErr(w, 400, fmt.Errorf("无效的镜头号"))
+		return
+	}
+	plan, err := s.store.LoadPlan(id)
+	if err != nil {
+		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
+		return
+	}
+	idx := -1
+	for i := range plan.Shots {
+		if plan.Shots[i].ID == shotID {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		writeErr(w, 404, fmt.Errorf("镜头不存在: %d", shotID))
+		return
+	}
+	plan.Shots = append(plan.Shots[:idx], plan.Shots[idx+1:]...)
+	if err := s.store.SavePlan(id, plan); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	// 渲染产物与清单项
+	key := strconv.Itoa(shotID)
+	if m, err := s.store.LoadManifest(id); err == nil {
+		if c, ok := m[key]; ok {
+			if c.File != "" {
+				_ = os.Remove(filepath.Join(s.store.Dir(id), filepath.FromSlash(c.File)))
+			}
+			delete(m, key)
+			_ = s.store.SaveManifest(id, m)
+		}
+	}
+	// 派生品作废(成片/2K 定稿/质检报告/剪辑素材包)
+	outDir := filepath.Join(s.store.Dir(id), "output")
+	if ents, err := os.ReadDir(outDir); err == nil {
+		for _, e := range ents {
+			_ = os.RemoveAll(filepath.Join(outDir, e.Name()))
+		}
+	}
+	s.opLog("🗑 已删除镜头 %d(项目「%s」,成片已作废待重合成)", shotID, id)
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
 // importPlan 导入既有分镜方案(JSON,新建项目时上传)。
 func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
@@ -966,14 +1114,57 @@ func (s *Server) comfyVersions(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, fmt.Errorf("引擎类型错误"))
 		return
 	}
+	online := r.URL.Query().Get("online") == "1"
 	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
 	defer cancel()
-	rep, err := ce.Versions(ctx, r.URL.Query().Get("online") == "1")
+	rep, err := ce.Versions(ctx, online)
 	if err != nil {
 		writeErr(w, 500, err)
 		return
 	}
+	if online {
+		// 在线对比结果进运行日志:成功给摘要(落后几项),失败明确说原因,
+		// 不再静默(2026-09-09 用户反馈「超时也不提示、日志也没有」)
+		rows := append(append([]comfyengine.VersionItem{}, rep.Core...), rep.Nodes...)
+		behind, unknown := 0, 0
+		for _, it := range rows {
+			switch it.Status {
+			case "behind":
+				behind++
+			case "unknown":
+				unknown++
+			}
+		}
+		core := "本体未装"
+		if len(rep.Core) > 0 {
+			c := rep.Core[0]
+			if c.Remote != "" || c.RemoteCommit != "" {
+				core = "本体在线 " + c.Remote
+				if c.RemoteCommit != "" {
+					core += "@" + c.RemoteCommit
+				}
+			} else {
+				core = "本体在线查询失败"
+			}
+		}
+		// 版本/网络状态只落文件日志与管理页展示(用户 2026-09-09 定调):
+		// 运行日志是应用内部操作与管线渲染的事件流,不放远程网络类噪音
+		// (在线查询失败曾每 3s 补查一轮刷屏)。
+		if behind == 0 && unknown == 0 {
+			log.Printf("[version] 版本检查完成:%s,全部最新", core)
+		} else {
+			log.Printf("[version] 版本检查完成:%s,落后 %d 项%+s", core, behind, suffix(unknown))
+		}
+	}
 	writeJSON(w, 200, rep)
+}
+
+// suffix unknown 计数补充文案。
+func suffix(unknown int) string {
+	if unknown > 0 {
+		return fmt.Sprintf(",%d 项未获取到(GitHub 限流或网络不通,稍后自动重试)", unknown)
+	}
+	return ""
 }
 
 // comfyOpenWeb 用系统默认浏览器打开 ComfyUI WEB 界面。
@@ -1064,6 +1255,7 @@ func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.opLog("🗑 已删除资产库条目「%s」(%s)", r.PathValue("name"), r.PathValue("kind"))
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
@@ -1074,13 +1266,16 @@ func (s *Server) quitApp(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]any{"ok": true})
 	go func() {
-		<-r.Context().Done() // 等响应送达
+		// 等 300ms 让响应送达。不能等 r.Context().Done():桌面(Wails)模式下
+		// AssetServer 的请求由 http.NewRequest 构造,context 是 Background,
+		// 永不 cancel —— 曾致「直接退出」点击无反应(浏览器模式正常、桌面死等)。
+		time.Sleep(300 * time.Millisecond)
 		// 桌面模式走 winctl(置放行标志再 Quit,防 OnBeforeClose 反复拦截)
 		winctl.Default.ForceQuit()
 		if s.quit != nil {
 			s.quit()
 		}
-		time.Sleep(3 * time.Second) // 兜底:Quit 未生效则强杀
+		time.Sleep(2 * time.Second) // 兜底:Quit 未生效则强杀
 		os.Exit(0)
 	}()
 }

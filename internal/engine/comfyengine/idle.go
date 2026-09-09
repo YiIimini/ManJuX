@@ -1,5 +1,7 @@
 // idle.go ComfyUI 空闲自动退出:管线结束后 N 分钟无任务(渲染/生成/队列),
 // 停掉本应用代管的引擎释放显存与内存;外部启动的实例(e.proc==nil)永不接管。
+// 停止只动代管进程树(stopManagedOnly);状态变化经 notifyLifecycle 通知,
+// 由装配回调发全局事件,前端状态灯/管理页即时同步。
 package comfyengine
 
 import (
@@ -13,17 +15,9 @@ import (
 type idleWatcher struct {
 	mu       sync.Mutex
 	lastBusy time.Time
-	onStop   func(minutes int) // 自动退出时通知(接事件总线)
 }
 
 var idle = &idleWatcher{}
-
-// SetIdleNotice 注册自动退出通知回调(应用装配时接管线事件总线)。
-func SetIdleNotice(cb func(minutes int)) {
-	idle.mu.Lock()
-	idle.onStop = cb
-	idle.mu.Unlock()
-}
 
 // touchBusy 标记「正在使用」(渲染/生成/管理操作时调用)。
 func touchBusy() {
@@ -49,7 +43,6 @@ func (e *Engine) RunIdleWatcher() {
 			}
 			idle.mu.Lock()
 			busy := time.Since(idle.lastBusy)
-			cb := idle.onStop
 			idle.mu.Unlock()
 			if busy < time.Duration(c.IdleStopMin)*time.Minute {
 				continue
@@ -64,14 +57,11 @@ func (e *Engine) RunIdleWatcher() {
 				continue
 			}
 			mins := c.IdleStopMin
-			if err := e.StopAdmin(); err != nil {
+			if err := e.stopManagedOnly(); err != nil {
 				log.Printf("[comfy] ⚠ 空闲自动退出失败: %v", err)
 				continue
 			}
 			log.Printf("[comfy] 空闲 %d 分钟无任务,已自动退出 ComfyUI 释放资源", mins)
-			if cb != nil {
-				cb(mins)
-			}
 		}
 	}()
 }

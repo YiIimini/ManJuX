@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/config"
@@ -25,6 +26,31 @@ type Engine struct {
 	cfg  func() config.ComfySettings // 设置快照 provider(热更新)
 	cli  *Client
 	proc *os.Process // 代管启动的 ComfyUI 进程
+}
+
+// lifecycleNotice 引擎生命周期通知:启动成功 / 停止完成即回调
+// (装配期接事件总线 → 前端底栏灯/首页/管理页即时同步,不依赖轮询窗口)。
+type lifecycleNotice struct {
+	sync.Mutex
+	cb func(alive bool, why string)
+}
+
+var lifecycle = &lifecycleNotice{}
+
+// SetLifecycleNotice 注册生命周期回调(单引擎,装配期调用一次)。
+func SetLifecycleNotice(cb func(alive bool, why string)) {
+	lifecycle.Lock()
+	lifecycle.cb = cb
+	lifecycle.Unlock()
+}
+
+func notifyLifecycle(alive bool, why string) {
+	lifecycle.Lock()
+	cb := lifecycle.cb
+	lifecycle.Unlock()
+	if cb != nil {
+		cb(alive, why)
+	}
 }
 
 // New 创建引擎;cfg 返回最新设置快照。
@@ -97,6 +123,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 		case <-time.After(4 * time.Second):
 		}
 		if e.cli.Alive(ctx) {
+			notifyLifecycle(true, "启动") // 就绪即通知:各状态点即时点亮
 			return nil
 		}
 	}

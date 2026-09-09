@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/sysexec"
+	"golang.org/x/sys/windows/registry"
 )
 
 // VersionItem 版本管理器一行。
@@ -62,8 +64,7 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 	// ---- 本体 ----
 	core := VersionItem{Kind: "core", Name: "ComfyUI 本体", Local: readCoreVersion(root), Repo: "comfyanonymous/ComfyUI"}
 	if c := gitShort(root); c != "" {
-		core.LocalCommit = c
-		core.Detail = "commit " + c
+		core.LocalCommit = c // 版本列显示 @commit,名称列不再重复
 	}
 	rep.Core = []VersionItem{core}
 
@@ -82,7 +83,6 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 			if it.Local == "" {
 				it.Local = c
 			}
-			it.Detail = "commit " + c
 		}
 		if u := gitRemote(dir); u != "" {
 			if m := repoRe.FindStringSubmatch(u); m != nil {
@@ -205,9 +205,9 @@ func gitShort(dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// gitDescribe 可读版本(tag 优先)。
+// gitDescribe 可读版本:精确 tag 优先;不在 tag 上时为「最近 tag+距离+commit」(如 v1.30-5-gc9869ea)。
 func gitDescribe(dir string) string {
-	out, err := sysexec.Hide(exec.Command("git", "-C", dir, "describe", "--tags", "--exact-match", "HEAD")).Output()
+	out, err := sysexec.Hide(exec.Command("git", "-C", dir, "describe", "--tags", "HEAD")).Output()
 	if err == nil {
 		return strings.TrimSpace(string(out))
 	}
@@ -240,16 +240,23 @@ func fetchLatest(ctx context.Context, repo string) (string, string, int64) {
 	}
 	ghLatest.Unlock()
 
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 12*time.Second)
 	defer cancel()
-	// commits/HEAD = 默认分支最新提交
-	commit := ghGetCommit(ctx, fmt.Sprintf("https://api.github.com/repos/%s/commits/HEAD", repo))
-	tag := ghGetRelease(ctx, fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo))
+	// 版本号取最新 tag 为准:ComfyUI 上游并非每版都发 Release(release/latest
+	// 停在旧版,tag 已到新版 —— 2026-09-09 实测 release=v0.34.0 / tag=v0.34.6,
+	// 用 release 当「在线最新」会把新版本地误判为落后)。
+	tag := ghGetFirstTag(ctx, fmt.Sprintf("https://api.github.com/repos/%s/tags?per_page=1", repo))
 	if tag == "" {
-		// 无正式 release:取最新 tag(第一项即最新推的)
-		tag = ghGetFirstTag(ctx, fmt.Sprintf("https://api.github.com/repos/%s/tags?per_page=1", repo))
+		tag = ghGetRelease(ctx, fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo))
 	}
+	// commits/HEAD = 默认分支最新提交(与本地 commit 比对的主依据)
+	commit := ghGetCommit(ctx, fmt.Sprintf("https://api.github.com/repos/%s/commits/HEAD", repo))
 	now := time.Now()
+	// 失败(双空)不写缓存:曾把空结果缓存 10 分钟,页面呈现「未检查」且
+	// 不再重试,用户看到的版本管理大面积空白(2026-09-09 反馈根因)。
+	if tag == "" && commit == "" {
+		return "", "", now.Unix()
+	}
 	ghLatest.Lock()
 	ghLatest.cache[repo] = remoteVer{tag: tag, commit: commit, at: now}
 	ghLatest.Unlock()
@@ -262,7 +269,8 @@ func ghGetCommit(ctx context.Context, url string) string {
 		return ""
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := ghClient.Do(req)
+	req.Header.Set("User-Agent", "ManJuX")
+	resp, err := ghFetch(ctx, req)
 	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}
@@ -284,13 +292,83 @@ var ghClient = &http.Client{
 	Transport: &http.Transport{Proxy: nil},
 }
 
+// ghProxyClient 系统代理回退客户端(部分网络访问 GitHub 必须走代理;
+// 2026-09-09 实测直连超时而系统代理可达)。ProxyFromEnvironment 只认
+// 环境变量,Windows 系统代理在注册表 → 显式读取 HKCU Internet Settings。
+var ghProxyClient = func() *http.Client {
+	u := windowsSystemProxy()
+	if u == nil {
+		return &http.Client{Transport: &http.Transport{Proxy: http.ProxyFromEnvironment}}
+	}
+	return &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(u)}}
+}()
+
+// windowsSystemProxy 读注册表系统代理(ProxyEnable=1 时取 ProxyServer;支持 "host:port" 与 "http=...;https=..." 两种格式)。
+func windowsSystemProxy() *url.URL {
+	k, err := registry.OpenKey(registry.CURRENT_USER,
+		`Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.QUERY_VALUE)
+	if err != nil {
+		return nil
+	}
+	defer k.Close()
+	enable, _, err := k.GetIntegerValue("ProxyEnable")
+	if err != nil || enable == 0 {
+		return nil
+	}
+	srv, _, err := k.GetStringValue("ProxyServer")
+	if err != nil || srv == "" {
+		return nil
+	}
+	// "http=host:port;https=host:port" 格式优先取 https 项
+	for _, part := range strings.Split(srv, ";") {
+		if strings.HasPrefix(part, "https=") {
+			srv = strings.TrimPrefix(part, "https=")
+			break
+		}
+	}
+	srv = strings.Split(srv, ";")[0]
+	if !strings.Contains(srv, "://") {
+		srv = "http://" + srv
+	}
+	u, err := url.Parse(srv)
+	if err != nil || u.Host == "" {
+		return nil
+	}
+	return u
+}
+
+// ghFetch 先直连,失败/被限流(403)回退系统代理。双路兜底:
+// 直连出口 IP 的 GitHub 匿名配额常被耗尽(2026-09-09 实测 403),
+// 而本机代理出口配额独立,走注册表系统代理即可恢复。
+func ghFetch(ctx context.Context, req *http.Request) (*http.Response, error) {
+	resp, err := ghClient.Do(req)
+	if err == nil && resp.StatusCode < 400 {
+		return resp, nil
+	}
+	if resp != nil && resp.Body != nil {
+		resp.Body.Close()
+	}
+	// 重建同参数请求走代理(原请求 body 已消费;GitHub API 查询均为 GET 无 body)
+	proxyReq, e := http.NewRequestWithContext(ctx, req.Method, req.URL.String(), nil)
+	if e != nil {
+		return nil, e
+	}
+	proxyReq.Header = req.Header.Clone()
+	resp2, err2 := ghProxyClient.Do(proxyReq)
+	if err2 != nil {
+		return nil, err2
+	}
+	return resp2, nil
+}
+
 func ghGetRelease(ctx context.Context, url string) string {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return ""
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := ghClient.Do(req)
+	req.Header.Set("User-Agent", "ManJuX")
+	resp, err := ghFetch(ctx, req)
 	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}
@@ -309,7 +387,8 @@ func ghGetFirstTag(ctx context.Context, url string) string {
 		return ""
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
-	resp, err := ghClient.Do(req)
+	req.Header.Set("User-Agent", "ManJuX")
+	resp, err := ghFetch(ctx, req)
 	if err != nil || resp.StatusCode != 200 {
 		return ""
 	}

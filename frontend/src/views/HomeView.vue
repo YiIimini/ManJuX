@@ -1,5 +1,5 @@
 <script setup>
-import { G, api, refreshProjects, refreshStatus, phaseLabel } from '../store'
+import { G, api, refreshProjects, refreshStatus, phaseLabel, fileToB64 } from '../store'
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -10,7 +10,7 @@ const comfyBusy = ref(false)
 const comfyLive = computed(() => !!G.status?.env?.comfy_live)
 async function comfyToggle() {
   if (comfyLive.value) {
-    try { await ElMessageBox.confirm('停止 ComfyUI?运行中的任务将中断。', '确认', { type: 'warning' }) }
+    try { await ElMessageBox.confirm('停止引擎?将结束全部 ComfyUI 进程,运行中的任务将中断。', '确认', { type: 'warning' }) }
     catch { return }
   }
   comfyBusy.value = true
@@ -41,8 +41,16 @@ const splitting = ref(false)
 const novelInput = ref(null)
 const novelDirInput = ref(null)
 const novelCover = ref(null)   // File:系列封面(目录「封面」文件夹自动识别 或 手动选择)
+const novelCoverPath = ref('') // 桌面拖放(wails 原生)的本机封面路径
 const novelCoverInput = ref(null)
-const novelCoverURL = computed(() => novelCover.value ? URL.createObjectURL(novelCover.value) : '')
+const novelCoverURL = computed(() => novelCover.value ? URL.createObjectURL(novelCover.value) : (novelCoverPath.value ? '/api/thumb?path=' + encodeURIComponent(novelCoverPath.value) : ''))
+function onCoverNativeDrop(ev) {
+  const p = ev.detail?.[0]
+  if (!p) return
+  if (!/\.(png|jpe?g|webp)$/i.test(p)) { ElMessage.error('仅支持 png/jpg/webp'); return }
+  novelCoverPath.value = p
+  novelCover.value = null
+}
 function onPickNovel(ev) {
   const f = ev.target.files?.[0]
   ev.target.value = ''
@@ -81,6 +89,7 @@ function onPickNovelCover(ev) {
   if (!f) return
   if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { ElMessage.error('仅支持 png/jpg/webp'); return }
   novelCover.value = f
+  novelCoverPath.value = ''
 }
 async function doNovelSplit() {
   if (novelText.value.trim().length < 200) { ElMessage.warning('小说正文太短(至少 200 字)'); return }
@@ -89,21 +98,29 @@ async function doNovelSplit() {
     // 书名留空 → 后端用 LLM 从小说内容自动识别
     const r = await api.novelSplit(newName.value.trim() || '', novelText.value, 0)
     // 封面:上传到每集项目(系列卡取第一集封面,单集卡也各自显示)
-    if (novelCover.value) {
+    if (novelCover.value || novelCoverPath.value) {
       let okc = 0
-      for (const e of r.episodes) {
-        try {
-          const fd = new FormData()
-          fd.append('file', novelCover.value)
-          const cr = await fetch(`/api/projects/${encodeURIComponent(e.project)}/cover`, { method: 'POST', body: fd })
-          if (cr.ok) okc++
-        } catch { /* 单集失败不阻塞 */ }
+      const payload = novelCoverPath.value
+        ? { image_path: novelCoverPath.value }
+        : await fileToB64(novelCover.value).then(b64 => ({ image_b64: b64, filename: novelCover.value.name })).catch(() => null)
+      if (payload) {
+        for (const e of r.episodes) {
+          try {
+            const cr = await fetch(`/api/projects/${encodeURIComponent(e.project)}/cover`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            })
+            if (cr.ok) okc++
+          } catch { /* 单集失败不阻塞 */ }
+        }
       }
       if (okc) ElMessage.success(`封面已应用到 ${okc} 集`)
     }
     ElMessage.success(`拆集完成:《${r.book}》共 ${r.episodes.length} 集,点击「剧集合集」卡片管理并批量生产`)
     novelText.value = ''
     novelCover.value = null
+    novelCoverPath.value = ''
     dlg.value = false
     await refreshProjects()
   } catch (e) { ElMessage.error(e.message) } finally { splitting.value = false }
@@ -111,6 +128,10 @@ async function doNovelSplit() {
 
 const totalShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_total || 0), 0))
 const doneShots = computed(() => G.projects.reduce((a, p) => a + (p.shots_done || 0), 0))
+// 项目总量按「管理单元」计:整部剧集系列算 1 部,独立项目算 1 个(不按集数膨胀)
+const totalUnits = computed(() => seriesGroups.value.singles.length + Object.keys(seriesGroups.value.groups).length)
+const totalChars = computed(() => G.projects.reduce((a, p) => a + (p.characters || 0), 0))
+const totalScenes = computed(() => G.projects.reduce((a, p) => a + (p.scenes || 0), 0))
 
 // 进行中拆集任务(首页占位卡:提交一键创作后书卡立即出现)
 const novelJobs = ref([])
@@ -123,6 +144,17 @@ async function refreshJobs() {
     const r = await fetch('/api/novel-jobs').then(x => x.json())
     novelJobs.value = r.jobs || []
   } catch { /* */ }
+}
+// 移除失败占位卡(仅清除提示;运行中的任务卡不可移除)
+async function clearJob(j) {
+  if (j.state !== 'failed') return
+  try {
+    const r = await fetch('/api/novel-jobs?series=' + encodeURIComponent(j.series), { method: 'DELETE' })
+    const d = await r.json().catch(() => ({}))
+    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    ElMessage.success('已移除失败占位卡')
+    refreshJobs()
+  } catch (e) { ElMessage.error(e.message) }
 }
 onMounted(() => {
   refreshJobs()
@@ -161,6 +193,15 @@ function selUnitCount() {
   let n = 0
   for (const u of sel.value) n += u.startsWith('series:') ? seriesGroups.value.groups[u.slice(7)]?.length || 0 : 1
   return n
+}
+// 全选/取消全选(管理单元 = 整书系列 + 单项目)
+const allUnits = computed(() => [
+  ...Object.keys(seriesGroups.value.groups).map(k => 'series:' + k),
+  ...seriesGroups.value.singles.map(p => p.id),
+])
+const allSelected = computed(() => allUnits.value.length > 0 && allUnits.value.every(u => sel.value.has(u)))
+function toggleAllSel() {
+  sel.value = allSelected.value ? new Set() : new Set(allUnits.value)
 }
 async function batchDelete() {
   if (!sel.value.size) return
@@ -324,6 +365,25 @@ async function removeProject(p) {
   catch (e) { ElMessage.error(e.message) }
 }
 
+// 系列卡右上角删除:整部剧集合集(全部子项目)二次确认后逐集删除
+async function removeSeries(prefix, eps) {
+  if (batchStat && batchStat.prefix === prefix) {
+    ElMessage.warning('该系列正在批量产线运行中,请先停止批量再删除')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `将删除剧集合集《${prefix}》全部 ${eps.length} 集项目(分镜/资产/镜头/成片,整部不可恢复)。`, '删除整部系列',
+      { confirmButtonText: '删除整部', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  let ok = 0, fail = 0
+  for (const e of eps) {
+    try { await api.deleteProject(e.id); ok++ } catch { fail++ }
+  }
+  ElMessage.success(`已删除 ${ok} 集` + (fail ? `,${fail} 集失败` : ''))
+  refreshProjects()
+}
+
 function stateChip(p) {
   if (p.running) return { t: `${phaseLabel(p.phase)} · 运行中`, c: 'run' }
   if (p.shots_total && p.shots_done >= p.shots_total) return { t: '已完成', c: 'ok' }
@@ -348,20 +408,26 @@ function stateChip(p) {
             双引擎渲染 → 机械+VLM 双重质检 → 合成成片。资产一次定妆,全项目复用。
           </p>
         </div>
-        <div class="flex gap-7 pb-1">
-          <div class="text-center"><div class="stat-num">{{ G.projects.length }}</div><div class="stat-label">项目</div></div>
+        <div class="flex gap-6 pb-1">
+          <div class="text-center"><div class="stat-num">{{ totalUnits }}</div><div class="stat-label">项目</div></div>
+          <div class="text-center"><div class="stat-num">{{ totalChars }}</div><div class="stat-label">角色</div></div>
+          <div class="text-center"><div class="stat-num">{{ totalScenes }}</div><div class="stat-label">场景</div></div>
           <div class="text-center"><div class="stat-num">{{ doneShots }}<span style="font-size:15px;color:var(--mx-text3)">/{{ totalShots }}</span></div><div class="stat-label">镜头</div></div>
         </div>
         <div class="flex flex-col gap-2 items-stretch">
           <div class="flex items-center gap-2 justify-end">
             <span class="envchip"><i class="dot" :class="comfyLive ? 'ok' : 'warn'"></i>COMFY {{ comfyLive ? '在线' : '离线' }}</span>
+            <el-tooltip :content="comfyLive ? '结束全部 ComfyUI 相关进程,释放显存' : '启动本地 ComfyUI 渲染引擎(加载模型约 1-2 分钟)'" placement="bottom">
             <el-button size="small" :type="comfyLive ? 'default' : 'primary'" plain :loading="comfyBusy" @click="comfyToggle">
               <el-icon class="mr-1"><VideoPause v-if="comfyLive" /><VideoPlay v-else /></el-icon>{{ comfyLive ? '停止引擎' : '启动引擎' }}
             </el-button>
+            </el-tooltip>
           </div>
-          <el-button type="primary" size="large" @click="openCreate">
-            <el-icon class="mr-1"><Plus /></el-icon>新建项目
-          </el-button>
+          <el-tooltip content="单集项目(粘贴文本/AI 创作/导方案)或整本小说一键拆集" placement="bottom">
+            <el-button type="primary" size="large" @click="openCreate">
+              <el-icon class="mr-1"><Plus /></el-icon>新建项目
+            </el-button>
+          </el-tooltip>
         </div>
       </div>
     </div>
@@ -369,31 +435,37 @@ function stateChip(p) {
     <!-- 项目网格 -->
     <div class="flex items-center mb-3">
       <h2 class="text-base font-bold m-0">我的项目</h2>
-      <span class="timecode ml-3">{{ G.projects.length }} PROJECTS</span>
+      <span class="timecode ml-3">{{ totalUnits }} UNITS · {{ G.projects.length }} EPISODES</span>
       <div class="flex-1"></div>
       <template v-if="batch">
         <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 单元 / {{ selUnitCount() }} 项目</span>
+        <el-button size="small" plain @click="toggleAllSel">{{ allSelected ? '取消全选' : '全选' }}</el-button>
         <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
           <el-icon class="mr-1"><Delete /></el-icon>删除选中
         </el-button>
         <el-button size="small" @click="batch = false; sel = new Set()">退出批量</el-button>
       </template>
-      <el-button v-else size="small" plain :disabled="!G.projects.length" @click="batch = true">
-        <el-icon class="mr-1"><Operation /></el-icon>批量管理
-      </el-button>
+      <el-tooltip v-else content="按书/按项目勾选,批量删除管理单元" placement="top">
+        <el-button size="small" plain :disabled="!G.projects.length" @click="batch = true">
+          <el-icon class="mr-1"><Operation /></el-icon>批量管理
+        </el-button>
+      </el-tooltip>
     </div>
 
     <!-- 批量模式提示条 -->
     <el-alert v-if="batch" type="info" :closable="false" class="mb-3"
       title="批量管理模式:整部小说按书勾选(一键删全部分集),单项目按卡勾选;删除某一集请在剧集合集弹窗里单独操作。" />
 
-    <div v-if="!G.projects.length" class="panel p-14 text-center" style="color:var(--mx-text3)">
-      还没有项目 —— 点击「新建项目」开始第一条短视频
+    <div v-if="!G.projects.length && !novelJobs.some(j => j.state === 'running' || j.state === 'failed')"
+         class="panel empty-zone">
+      <div class="ez-ico"><el-icon :size="26"><Film /></el-icon></div>
+      <div class="ez-title">还没有项目</div>
+      <p class="ez-desc">点击右上「新建项目」:粘贴故事文本、让 AI 现场创作,或导入整本小说一键拆集成多集短视频。</p>
     </div>
 
     <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length
              || (!batch && novelJobs.some(j => j.state === 'running' || j.state === 'failed'))"
-         class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
+         class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
       <!-- 拆集进行中:书级占位卡(提交即出现,分集陆续填充) -->
       <div v-for="j in novelJobs.filter(x => x.state === 'running' || x.state === 'failed')"
            :key="'job-' + j.series" class="shot-card proj-card" style="border-style:dashed">
@@ -404,6 +476,9 @@ function stateChip(p) {
             </el-icon>
             <span class="timecode">{{ j.state === 'running' ? 'AI 拆集中' : '拆集失败' }}</span>
           </div>
+          <button v-if="j.state === 'failed'" class="cover-del" title="移除失败占位卡" @click.stop="clearJob(j)">
+            <el-icon :size="13"><Delete /></el-icon>
+          </button>
         </div>
         <div class="px-3.5 py-3 flex flex-col gap-2">
           <div class="flex items-center gap-2">
@@ -418,7 +493,7 @@ function stateChip(p) {
 
       <!-- 剧集系列卡(点击打开逐集弹窗) -->
       <div v-if="!batch" v-for="(eps, prefix) in seriesGroups.groups" :key="'s-' + prefix"
-           class="shot-card proj-card cursor-pointer" @click="openSeries(prefix, eps)">
+           class="shot-card proj-card cursor-pointer" :title="'打开《' + prefix + '》剧集管理(逐集进入/删除/批量产线)'" @click="openSeries(prefix, eps)">
         <div class="proj-cover">
           <template v-if="eps.find(e => e.cover)">
             <img class="cover-fit" :src="api.fileURL(eps.find(e => e.cover).id, eps.find(e => e.cover).cover)" alt="" aria-hidden="true" />
@@ -435,9 +510,13 @@ function stateChip(p) {
               <span class="text-xs" style="color:var(--mx-amber-hi)">剧集合集</span>
             </div>
           </div>
-          <div class="absolute top-2.5 right-2.5 flex items-center gap-1.5">
-            <i class="dot run" v-if="batchStat && batchStat.prefix === prefix"></i>
-          </div>
+          <!-- 封面右上:批量运行灯(左)与删除整部(右),批量运行中禁用删除 -->
+          <i v-if="batchStat && batchStat.prefix === prefix" class="dot run"
+             style="position:absolute;top:12px;right:42px"></i>
+          <button class="cover-del" title="删除整部系列(全部集)" :disabled="!!(batchStat && batchStat.prefix === prefix)"
+                  @click.stop="removeSeries(prefix, eps)">
+            <el-icon :size="13"><Delete /></el-icon>
+          </button>
         </div>
         <div class="px-3.5 py-3 flex flex-col gap-2">
           <div class="flex items-center gap-2">
@@ -472,7 +551,8 @@ function stateChip(p) {
         </div>
       </div>
 
-      <div v-for="p in (batch ? seriesGroups.singles : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative" @click="batch ? toggleSel(p.id) : openProject(p.id)">
+      <div v-for="p in (batch ? seriesGroups.singles : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative"
+           :title="batch ? '勾选加入批量删除' : '进入「' + p.name + '」工作台'" @click="batch ? toggleSel(p.id) : openProject(p.id)">
         <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel(p.id)">
           <el-checkbox :model-value="sel.has(p.id)" size="large" />
         </div>
@@ -485,15 +565,16 @@ function stateChip(p) {
             <el-icon :size="30" color="var(--mx-text3)"><Film /></el-icon>
             <span class="timecode">{{ p.has_plan ? p.shots_total + ' 镜' : 'NEW' }}</span>
           </div>
-          <div class="absolute top-2.5 right-2.5">
-            <i class="dot" :class="stateChip(p).c"></i>
-          </div>
+          <!-- 封面右上:状态灯(左)与删除(右)保持间距,不重叠 -->
+          <i class="dot" :class="stateChip(p).c" style="position:absolute;top:12px;right:42px"></i>
+          <button v-if="!batch" class="cover-del" title="删除项目" @click.stop="removeProject(p)">
+            <el-icon :size="13"><Delete /></el-icon>
+          </button>
         </div>
         <div class="px-3.5 py-3 flex flex-col gap-2">
           <div class="flex items-center gap-2">
             <b class="truncate flex-1 text-sm">{{ p.name }}</b>
             <span class="timecode" style="font-size:10px">{{ stateChip(p).t }}</span>
-            <el-button text size="small" @click.stop="removeProject(p)"><el-icon :size="13"><Delete /></el-icon></el-button>
           </div>
           <el-progress v-if="p.shots_total" :percentage="Math.round(p.shots_done * 100 / p.shots_total)"
                        :stroke-width="5" :show-text="false"
@@ -572,13 +653,13 @@ function stateChip(p) {
                   <span class="text-xs" style="color:var(--mx-text3)">{{ novelText.length ? novelText.length + ' 字' : '' }}</span>
                 </div>
               </div>
-              <div class="flex items-center gap-3">
-                <div v-if="novelCover" class="flex items-center gap-2 p-1.5 rounded-lg" style="border:1px solid var(--mx-line-hi)">
-                  <img :src="novelCoverURL" style="width:34px;height:46px;object-fit:cover;border-radius:5px" />
-                  <el-button text size="small" @click="novelCover = null"><el-icon><Close /></el-icon></el-button>
+              <div class="flex items-center gap-3" style="--wails-drop-target: drop" @mx-filedrop="onCoverNativeDrop">
+                <div v-if="novelCover || novelCoverPath" class="flex items-center gap-2 p-1.5 rounded-lg" style="border:1px solid var(--mx-line-hi)">
+                  <img v-if="novelCoverURL" :src="novelCoverURL" style="width:34px;height:46px;object-fit:cover;border-radius:5px" />
+                  <el-button text size="small" @click="novelCover = null; novelCoverPath = ''"><el-icon><Close /></el-icon></el-button>
                 </div>
                 <el-button v-else size="small" plain @click="novelCoverInput?.click()">
-                  <el-icon class="mr-1"><Picture /></el-icon>选择封面(可选)
+                  <el-icon class="mr-1"><Picture /></el-icon>选择封面(可选,可拖入)
                 </el-button>
                 <span class="text-xs" style="color:var(--mx-text3)">封面应用为每集项目封面</span>
               </div>

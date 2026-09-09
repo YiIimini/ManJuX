@@ -141,3 +141,17 @@ func (m *Monitor) sampleGPU() *GPUSnapshot {
 func parseF(s string) float64 { v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64); return round1(v) }
 func parseU(s string) uint64  { v, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64); return v }
 func round1(v float64) float64 { return float64(int(v*10+0.5)) / 10 }
+
+// VRAMUsedMB 一次性读取显存占用(MB);无卡/查询失败返回 false。
+// 供「释放显存」等动作做前后对比反馈,不依赖常驻采样循环。
+func VRAMUsedMB() (float64, bool) {
+	out, err := sysexec.Hide(exec.Command("nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits")).Output()
+	if err != nil {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(strings.TrimSpace(string(out)), 64)
+	if err != nil {
+		return 0, false
+	}
+	return f, true
+}

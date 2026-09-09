@@ -2,7 +2,9 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -41,14 +43,15 @@ var PhaseNames = []struct{ ID, Name, Icon string }{
 
 // Coordinator 管线协调器:每项目最多一个运行实例,阶段可单跑。
 type Coordinator struct {
-	mu    sync.Mutex
-	runs  map[string]*Run
-	store *project.Store
-	cfg   *config.Manager
-	reg   *engine.Registry
-	ff    *ff.FF
-	bus   *Bus
-	lib   *library.Library // 跨项目资产库(可为 nil=禁用)
+	mu     sync.Mutex
+	runs   map[string]*Run
+	result map[string]string // 最近一次运行结束原因:completed/stopped/failed(批量排队判断用)
+	store  *project.Store
+	cfg    *config.Manager
+	reg    *engine.Registry
+	ff     *ff.FF
+	bus    *Bus
+	lib    *library.Library // 跨项目资产库(可为 nil=禁用)
 }
 
 // Run 一次运行。
@@ -60,12 +63,39 @@ type Run struct {
 	SeedOverride   int64
 }
 
+// RunResult 运行结束原因枚举。
+const (
+	ResultCompleted = "completed" // 全部阶段自然跑完
+	ResultStopped   = "stopped"   // 被用户/外部取消
+	ResultFailed    = "failed"    // 阶段报错中止
+)
+
 // New 创建协调器。
 func New(store *project.Store, cfg *config.Manager, reg *engine.Registry, f *ff.FF, bus *Bus, lib *library.Library) *Coordinator {
 	return &Coordinator{
-		runs:  map[string]*Run{},
-		store: store, cfg: cfg, reg: reg, ff: f, bus: bus, lib: lib,
+		runs:   map[string]*Run{},
+		result: map[string]string{},
+		store:  store, cfg: cfg, reg: reg, ff: f, bus: bus, lib: lib,
 	}
+}
+
+// SetResult 记录本次运行结束原因;Result 读取后即清除(只保留最近一次)。
+func (c *Coordinator) SetResult(projectID, res string) {
+	c.mu.Lock()
+	c.result[projectID] = res
+	c.mu.Unlock()
+}
+
+// Result 读取最近一次运行结束原因(completed/stopped/failed;无记录返回空)。
+func (c *Coordinator) Result(projectID string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	res, ok := c.result[projectID]
+	if !ok {
+		return ""
+	}
+	delete(c.result, projectID)
+	return res
 }
 
 // Running 返回项目当前运行信息(未运行返回 nil)。
@@ -242,7 +272,12 @@ func (c *Coordinator) emit(projectID, phase string, shotID int, level string, pr
 }
 
 func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string, seedOverride int64) {
-	defer c.finish(proj.ID)
+	// 记录结束原因(completed/stopped/failed)供批量排队判断:中止或失败不得被当作"完成"而自动跳集
+	ended := ResultCompleted
+	defer func() {
+		c.SetResult(proj.ID, ended)
+		c.finish(proj.ID)
+	}()
 	stages := []string{phase}
 	if phase == PhaseAll {
 		stages = []string{PhaseScript, PhaseAssets, PhaseRender, PhaseQC, PhaseAssemble}
@@ -260,6 +295,7 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 	var err error
 	for _, st := range stages {
 		if ctx.Err() != nil {
+			ended = ResultStopped
 			c.emit(proj.ID, "pipeline", 0, "warn", 0, "⏹ 已停止")
 			return
 		}
@@ -283,8 +319,10 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		}
 		if err != nil {
 			if ctx.Err() != nil {
+				ended = ResultStopped
 				c.emit(proj.ID, "pipeline", 0, "warn", 0, "⏹ 已停止")
 			} else {
+				ended = ResultFailed
 				c.emit(proj.ID, st, 0, "error", 0, "✕ 阶段失败:%v", err)
 				c.emit(proj.ID, "pipeline", 0, "error", 0, "✕ 管线中止于「%s」", stageLabel(st))
 			}
@@ -349,9 +387,20 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 		}
 	}()
 
+	// 书级角色锚定:系列前几集已确立的角色/场景名注入提示,强制沿用同名
+	// ——配合资产库按名复用,杜绝同角色跨集换脸(漂移)。实证:貔貅第01集
+	// 「貅满堂」到第02集被 LLM 写成「貅满仓」,一字之差即匹配失效重生成。
+	hint := composeStyleHint(p.Styles, p.StyleHint)
+	if roster, nChars := c.bookRoster(proj.ID); roster != "" {
+		if hint != "" {
+			hint += "\n"
+		}
+		hint += roster
+		c.emit(proj.ID, PhaseScript, 0, "info", 10, "🔁 系列角色锚定:沿用本书已确立角色名 %d 个(跨集不换脸)", nChars)
+	}
 	plan, err := director.Generate(ctx, client, text, director.Options{
 		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
-		ExtraHint: composeStyleHint(p.Styles, p.StyleHint), Chibi: p.Chibi,
+		ExtraHint: hint, Chibi: p.Chibi,
 		OnBatch: func(batch, total, fromShot, toShot int) {
 			c.emit(proj.ID, PhaseScript, 0, "info", 15, "▸ 分批分镜 %d/%d:镜 %d-%d 生成中…", batch, total, fromShot, toShot)
 		},
@@ -659,7 +708,11 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		if seedOverride > 0 {
 			seed = seedOverride + int64(shot.ID)*101 // 单镜微调种子:同值同镜稳定复现
 		} else if seed == 0 {
-			seed = time.Now().UnixNano()&0x7fffffff + int64(shot.ID)*101
+			// 角色锚定种子:默认种子曾用时间随机,同角色同定妆照跨集仍换脸
+			// (2026-09-09 用户实证「貅兜兜飘逸」)。改为按镜头角色组合派生,
+			// 同角色组合跨集得到同基种子,配合同一张库定妆照,一致性最强;
+			// shot.ID 项保住集内镜头间的多样性。
+			seed = nameSeed("shot", strings.Join(shot.Characters, "+")) + int64(shot.ID)*101
 		}
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
 		prompt := anchorPrompt(plan, &shot)
@@ -807,6 +860,88 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
 }
 
 // genAssetImage Krea-2 生成单张资产图(角色竖幅半身/场景按画幅方向)。
+// bookRoster 收集系列兄弟集(同父目录)已确立的角色名+形象设定与场景名,
+// 返回注入分镜提示的锚定文案与角色数。跨集角色一致性的根因修复:同集内
+// 镜头间角色稳定(定妆照锚定有效),但每集分镜由 LLM 独立撰写,同一角色的
+// 形象描述措辞漂移(穿着/毛色/年龄细节不一致),文字把画面拉离定妆照
+// (2026-09-09 用户实证「貅兜兜跨集飘逸」)。单集项目返回空。
+func (c *Coordinator) bookRoster(projectID string) (string, int) {
+	epDir := c.store.Dir(projectID)
+	series := filepath.Dir(epDir)
+	if filepath.Base(series) == "projects" {
+		return "", 0
+	}
+	type charInfo struct{ name, desc string }
+	chars := []charInfo{}
+	scenes := []string{}
+	seenC, seenS := map[string]bool{}, map[string]bool{}
+	eps, err := os.ReadDir(series)
+	if err != nil {
+		return "", 0
+	}
+	for _, e := range eps {
+		if !e.IsDir() || filepath.Join(series, e.Name()) == epDir {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(series, e.Name(), "plan", "plan.json"))
+		if err != nil {
+			continue
+		}
+		var plan struct {
+			Characters []struct {
+				Name        string `json:"name"`
+				Description string `json:"description"`
+			} `json:"characters"`
+			Scenes []struct {
+				Name string `json:"name"`
+			} `json:"scenes"`
+		}
+		if json.Unmarshal(raw, &plan) != nil {
+			continue
+		}
+		for _, ch := range plan.Characters {
+			n := strings.TrimSpace(ch.Name)
+			if n == "" || seenC[n] {
+				continue
+			}
+			seenC[n] = true
+			if len(chars) < 8 {
+				d := strings.TrimSpace(ch.Description)
+				if r := []rune(d); len(r) > 110 {
+					d = string(r[:110]) + "…"
+				}
+				chars = append(chars, charInfo{n, d})
+			}
+		}
+		for _, sc := range plan.Scenes {
+			n := strings.TrimSpace(sc.Name)
+			if n != "" && !seenS[n] {
+				seenS[n] = true
+				if len(scenes) < 10 {
+					scenes = append(scenes, n)
+				}
+			}
+		}
+	}
+	if len(chars) == 0 && len(scenes) == 0 {
+		return "", 0
+	}
+	var sb strings.Builder
+	sb.WriteString("【系列角色一致性·必须遵守】以下角色已在前几集登场并定妆,本集若出现这些角色:①必须严格沿用原名(不得增减字/换同音字/另起别名);②角色表描述与每镜 H3 提示词中的形象必须与下面给出的设定逐项一致(毛色/服饰/年龄/特征细节不得改动):\n")
+	for i, ch := range chars {
+		fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, ch.name, ch.desc)
+	}
+	if len(scenes) > 0 {
+		sb.WriteString("已确立的场景名(再次出现时沿用原名):")
+		for _, n := range scenes {
+			sb.WriteString("「" + n + "」")
+		}
+		sb.WriteString("\n")
+	}
+	sb.WriteString("本集新登场的人物/场景属正常剧情推进,可另起新名与新设定,但不得与上述既有角色混淆或顶替。")
+	return sb.String(), len(chars)
+}
+
 func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce *comfyengine.Engine, kind, id, name, imagePrompt string) (string, error) {
 	w, h := 832, 1248 // 角色半身竖幅
 	if kind == "scenes" {
@@ -816,9 +951,19 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	}
 	safe := director.SanitizeForCache(kind + "_" + id)
 	out := filepath.Join(c.store.Dir(proj.ID), "assets", kind, safe+".png")
-	seed := int64(len(id)*1000 + len(name)*7)
+	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
+	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
+	seed := nameSeed(kind, name)
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:%s「%s」(%d×%d)…", kindLabel(kind), name, w, h)
 	return ce.GenerateImage(ctx, imagePrompt, krea2Negative, seed, w, h, out)
+}
+
+// nameSeed 资产名→稳定种子:同名必同图,是跨集一致性的第二道保险
+// (第一道是资产库按名复用)。
+func nameSeed(kind, name string) int64 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(kind + "\x00" + name))
+	return int64(h.Sum32())
 }
 
 // backfillAssets 渲染前自动补齐缺失的参考图:资产阶段未跑/未生成全时,

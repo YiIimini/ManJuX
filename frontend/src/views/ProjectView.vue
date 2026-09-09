@@ -105,8 +105,15 @@ function upload(kind, id, name) {
 }
 
 async function removeAsset(assetId) {
+  const label = assetId.startsWith('char:') ? '该角色的定妆照' : '该场景的参考图'
+  try {
+    await ElMessageBox.confirm(
+      `将删除${label}(资产)并同步移除跨项目复用?项目内其它引用同步失效,可随时重新上传/生成。`, '删除资产',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
   try {
     await api.deleteAsset(pj.value.project.id, assetId)
+    ElMessage.success('已删除')
     refreshProject()
   } catch (e) { ElMessage.error(e.message) }
 }
@@ -215,7 +222,9 @@ const doneShots = computed(() =>
                 <el-button size="small" type="primary" plain @click="aiDlg = true">
                   <el-icon class="mr-1"><MagicStick /></el-icon>AI 现场创作
                 </el-button>
-                <el-button size="small" @click="saveSource">保存</el-button>
+                <el-tooltip content="保存源文本(「生成分镜方案」的输入)" placement="top">
+                  <el-button size="small" @click="saveSource">保存</el-button>
+                </el-tooltip>
               </div>
               <el-input v-model="sourceText" type="textarea" :rows="16" resize="none"
                         placeholder="写下你的故事。例如:深夜的修仙都市,外卖员林凡接到一单送往云顶天宫的订单…&#10;&#10;LLM 将据此直出分镜与完整 H3 提示词(六段式/三段式,对白原生配音)。"
@@ -227,9 +236,11 @@ const doneShots = computed(() =>
                 <p class="text-xs mt-2 mb-3" style="color:var(--mx-text-2)">
                   LLM 直出:角色卡 / 场景卡 / 分镜表 + 每镜完整 H3 提示词(对白逐字保留、原生配音)。
                 </p>
-                <el-button type="primary" :disabled="running" @click="runPhase('script')">
-                  <el-icon class="mr-1"><EditPen /></el-icon>生成分镜方案
-                </el-button>
+                <el-tooltip content="LLM 直出角色卡/场景卡/分镜表与每镜 H3 提示词(已有方案会被跳过)" placement="top">
+                  <el-button type="primary" :disabled="running" @click="runPhase('script')">
+                    <el-icon class="mr-1"><EditPen /></el-icon>生成分镜方案
+                  </el-button>
+                </el-tooltip>
               </div>
               <div v-if="plan" class="panel p-4 text-sm flex flex-col gap-2">
                 <div><b style="color:var(--mx-orange)">《{{ plan.title }}》</b></div>
@@ -242,7 +253,7 @@ const doneShots = computed(() =>
 
         <!-- 分镜故事板 -->
         <el-tab-pane :label="`分镜(${totalShots})`" name="storyboard" :disabled="!plan">
-          <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
+          <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(230px,1fr))">
             <ShotCard v-for="s in plan?.shots || []" :key="s.id"
                       :shot="s" :manifest-item="manifest[String(s.id)]" />
           </div>
@@ -256,28 +267,31 @@ const doneShots = computed(() =>
                 <el-icon><User /></el-icon>角色定妆照
                 <span class="text-xs font-normal" style="color:var(--mx-text-2)">半身正脸构图 · 锁脸参考(Ref2VA &lt;Picture 1&gt;)</span>
               </h3>
-              <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">
+              <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">
                 <div v-for="c in charsWithAsset" :key="c.id" class="shot-card p-3 flex flex-col gap-2">
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ c.name }}</b>
                     <el-tag v-if="c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
                     <el-tag v-else-if="c.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="c.asset ? 'ok' : 'warn'"></i>
-                    <div class="flex-1"></div>
-                    <el-tooltip v-if="c.asset" content="预览大图" placement="top">
-                      <el-button text size="small" @click="previewAsset(c.name, c.asset.file)"><el-icon><ZoomIn /></el-icon></el-button>
-                    </el-tooltip>
-                    <el-tooltip v-if="c.asset" content="打开所在目录" placement="top">
-                      <el-button text size="small" @click="openAssetDir(c.asset.file)"><el-icon><FolderOpened /></el-icon></el-button>
-                    </el-tooltip>
-                    <el-button v-if="c.asset" text size="small" @click="removeAsset('char:'+c.id)"><el-icon><Delete /></el-icon></el-button>
                   </div>
-                  <div style="aspect-ratio:3/4;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="flex items-center justify-center cursor-pointer"
-                       @click="upload('characters', 'char:'+c.id, c.name)">
+                  <div style="aspect-ratio:3/4;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
+                       :title="'点击上传「' + c.name + '」定妆照(png/jpg/webp);同名资产自动复用库'" @click="upload('characters', 'char:'+c.id, c.name)">
                     <img v-if="c.asset" :src="api.fileURL(pj.project.id, c.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text-2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传定妆照</div>
+                    </div>
+                    <div v-if="c.asset" class="cover-acts">
+                      <button class="cover-act" title="预览大图" @click.stop="previewAsset(c.name, c.asset.file)">
+                        <el-icon :size="13"><ZoomIn /></el-icon>
+                      </button>
+                      <button class="cover-act" title="打开所在目录" @click.stop="openAssetDir(c.asset.file)">
+                        <el-icon :size="13"><FolderOpened /></el-icon>
+                      </button>
+                      <button class="cover-act danger" title="删除定妆照" @click.stop="removeAsset('char:'+c.id)">
+                        <el-icon :size="13"><Delete /></el-icon>
+                      </button>
                     </div>
                   </div>
                   <div class="text-xs" style="color:var(--mx-text-2)">{{ c.description }}</div>
@@ -289,23 +303,24 @@ const doneShots = computed(() =>
                 <el-icon><MapLocation /></el-icon>场景参考图
                 <span class="text-xs font-normal" style="color:var(--mx-text-2)">空镜锚定 &amp; 氛围参考(&lt;Picture 2&gt;)</span>
               </h3>
-              <div class="grid gap-4" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
+              <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
                 <div v-for="s in scenesWithAsset" :key="s.id" class="shot-card p-3 flex flex-col gap-2">
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ s.name }}</b>
                     <el-tag v-if="s.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
                     <el-tag v-else-if="s.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="s.asset ? 'ok' : 'warn'"></i>
-                    <div class="flex-1"></div>
-                    <el-button v-if="s.asset" text size="small" @click="removeAsset('scene:'+s.id)"><el-icon><Delete /></el-icon></el-button>
                   </div>
-                  <div style="aspect-ratio:16/9;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="flex items-center justify-center cursor-pointer"
-                       @click="upload('scenes', 'scene:'+s.id, s.name)">
+                  <div style="aspect-ratio:16/9;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
+                       :title="'点击上传「' + s.name + '」场景参考图(png/jpg/webp)'" @click="upload('scenes', 'scene:'+s.id, s.name)">
                     <img v-if="s.asset" :src="api.fileURL(pj.project.id, s.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text-2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传场景图</div>
                     </div>
+                    <button v-if="s.asset" class="cover-del" title="删除场景图" @click.stop="removeAsset('scene:'+s.id)">
+                      <el-icon :size="13"><Delete /></el-icon>
+                    </button>
                   </div>
                   <div class="text-xs" style="color:var(--mx-text-2)">{{ s.description }}</div>
                 </div>
@@ -343,20 +358,29 @@ const doneShots = computed(() =>
                   转场 / 字幕 / 响度可在管线卡片「质检」「合成成片」的 ⚙ 调优入口修改(项目级独立生效)。
                 </p>
                 <div class="flex gap-2 mt-3 flex-wrap">
-                  <el-button type="primary" :disabled="running || !totalShots" @click="runPhase('assemble')">
-                    <el-icon class="mr-1"><Film /></el-icon>合成成片
-                  </el-button>
-                  <el-button :disabled="running || !totalShots" @click="runPhase('qc')">
-                    <el-icon class="mr-1"><CircleCheck /></el-icon>质检
-                  </el-button>
-                  <el-button type="warning" plain :disabled="running || !pj.output?.ready" @click="upgrade2K"
-                            title="本地 768P 成片送云端 regeneration 原生重生成 2K(消耗云额度)">
-                    <el-icon class="mr-1"><MagicStick /></el-icon>升级 2K
-                  </el-button>
-                  <el-button :disabled="!totalShots" :loading="exporting" @click="exportPack">
-                    <el-icon class="mr-1"><Suitcase /></el-icon>导出剪辑素材包
-                  </el-button>
-                  <el-button @click="openDir"><el-icon class="mr-1"><FolderOpened /></el-icon>打开目录</el-button>
+                  <el-tooltip content="拼接镜头+烧录字幕+响度归一,输出 output/final.mp4" placement="top">
+                    <el-button type="primary" :disabled="running || !totalShots" @click="runPhase('assemble')">
+                      <el-icon class="mr-1"><Film /></el-icon>合成成片
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="时长/音轨/亮度机械质检(黑屏防线),报告在下方" placement="top">
+                    <el-button :disabled="running || !totalShots" @click="runPhase('qc')">
+                      <el-icon class="mr-1"><CircleCheck /></el-icon>质检
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="本地 768P 成片送云端 regeneration 原生重生成 2K(消耗云额度)" placement="top">
+                    <el-button type="warning" plain :disabled="running || !pj.output?.ready" @click="upgrade2K">
+                      <el-icon class="mr-1"><MagicStick /></el-icon>升级 2K
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="打包逐镜片段+成片+字幕 zip(剪映导入友好)到项目 output 目录" placement="top">
+                    <el-button :disabled="!totalShots" :loading="exporting" @click="exportPack">
+                      <el-icon class="mr-1"><Suitcase /></el-icon>导出剪辑素材包
+                    </el-button>
+                  </el-tooltip>
+                  <el-tooltip content="在资源管理器中打开项目 output 目录(优先选中成片)" placement="top">
+                    <el-button @click="openDir"><el-icon class="mr-1"><FolderOpened /></el-icon>打开目录</el-button>
+                  </el-tooltip>
                 </div>
               </div>
               <div v-if="pj.qc" class="panel p-4">

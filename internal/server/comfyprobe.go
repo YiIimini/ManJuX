@@ -20,11 +20,24 @@ type comfyProbe struct {
 	lastURL  string
 	live     bool // 最近一次有效结论
 	at       time.Time
-	flipFail int // 连续失败计数(用于从在线翻转为离线)
+	flipFail int  // 连续失败计数(用于从在线翻转为离线)
 	inFlight bool
+	gen      uint64 // 代际:手动启停置位后作废进行中的旧探测,防旧结论回写
 }
 
 var probe = &comfyProbe{}
+
+// markComfyLive 手动启停成功后即时置位(绕开 8s 缓存与失败翻转延迟),
+// 底栏灯/首页 chip/管理页在下一个 status 请求即一致;同时使进行中
+// 的旧探测作废(gen++),避免其结束回写旧结论。
+func (s *Server) markComfyLive(v bool) {
+	probe.mu.Lock()
+	probe.gen++
+	probe.live = v
+	probe.flipFail = 0
+	probe.at = time.Now()
+	probe.mu.Unlock()
+}
 
 // probeComfy 探测(8s 缓存内直接复用)。
 func (s *Server) probeComfy(baseURL string) bool {
@@ -48,6 +61,7 @@ func (s *Server) probeComfy(baseURL string) bool {
 	}
 	probe.inFlight = true
 	wasLive := probe.live
+	gen := probe.gen
 	probe.mu.Unlock()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
@@ -62,6 +76,12 @@ func (s *Server) probeComfy(baseURL string) bool {
 
 	probe.mu.Lock()
 	probe.inFlight = false
+	if probe.gen != gen {
+		// 探测期间发生了手动启停:旧结论作废,不覆盖新置位
+		live := probe.live
+		probe.mu.Unlock()
+		return live
+	}
 	probe.lastURL = url
 	if ok {
 		probe.live, probe.flipFail = true, 0

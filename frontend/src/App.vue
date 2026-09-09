@@ -1,7 +1,7 @@
 <script setup>
 import { onMounted, onUnmounted, computed, ref, reactive } from 'vue'
 import { G, api, connectEvents, refreshStatus, refreshProjects, refreshProject, logDot } from './store'
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyTheme } from './themes'
 import HomeView from './views/HomeView.vue'
 import ProjectView from './views/ProjectView.vue'
@@ -67,7 +67,14 @@ function navSave() {
   location.reload() // 简单可靠:重载即生效(偏好已落盘)
 }
 
-const nav = (v) => {
+const nav = async (v) => {
+  // 工作台:未打开项目时若管线在跑,直接进入运行中的项目(渲染进度随时可看)
+  if (v === 'project' && !G.project) {
+    const running = (G.projects || []).find(p => p.running)
+    if (!running) return
+    try { G.project = await api.project(running.id) }
+    catch (e) { ElMessage.error(e.message); return }
+  }
   G.view = v
   if (v === 'home') G.project = null
 }
@@ -130,6 +137,21 @@ const na = (s) => (s || '—').replaceAll('[N/A]', '—')
 onMounted(() => {
   applyTheme() // 主题与玻璃偏好(启动即恢复)
   connectEvents()
+  // 桌面模式原生文件拖放:wails 把拖入文件的绝对路径发到这里,
+  // 转发给落点处带 --wails-drop-target:drop 标记的上传区(浏览器模式无此事件,
+  // 上传区自身的 @drop 仍然生效)
+  window.runtime?.EventsOn?.('wails:file-drop', (x, y, paths) => {
+    if (!Array.isArray(paths) || !paths.length) return
+    try {
+      const els = document.elementsFromPoint(x, y) || []
+      for (const el of els) {
+        if (getComputedStyle(el).getPropertyValue('--wails-drop-target').trim() === 'drop') {
+          el.dispatchEvent(new CustomEvent('mx-filedrop', { detail: paths }))
+          return
+        }
+      }
+    } catch { /* 忽略异常坐标 */ }
+  })
   refreshStatus()
   refreshProjects()
   timer = setInterval(() => { refreshStatus(); refreshProjects() }, 15000)
@@ -180,7 +202,9 @@ const env = computed(() => G.status?.env)
 
       <nav class="side-nav">
         <el-tooltip v-for="n in navList" :key="n.id" :content="n.label" :disabled="!collapse" placement="right" :show-after="300">
-          <button class="side-item" :class="{ on: G.view === n.id }" :disabled="n.id === 'project' && !G.project" @click="nav(n.id)">
+          <button class="side-item" :class="{ on: G.view === n.id }"
+                  :disabled="n.id === 'project' && !G.project && !(G.projects || []).some(p => p.running)"
+                  @click="nav(n.id)">
             <el-icon :size="17"><component :is="n.icon" /></el-icon>
             <span class="side-label" v-if="!collapse">{{ n.label }}</span>
           </button>
@@ -306,7 +330,7 @@ const env = computed(() => G.status?.env)
         </div>
       </header>
 
-      <div class="flex-1 flex flex-col min-w-0">
+      <div class="flex-1 flex flex-col min-w-0 min-h-0">
         <main class="flex-1 overflow-hidden">
 
         <HomeView v-if="G.view === 'home'" />
@@ -400,7 +424,7 @@ const env = computed(() => G.status?.env)
         <button class="close-opt danger" @click="quitNow">
           <el-icon :size="26" color="var(--mx-red)"><SwitchButton /></el-icon>
           <b>直接退出</b>
-          <span>停止全部管线,ComfyUI 引擎同步退出</span>
+          <span>结束 ComfyUI 全部进程并退出本体,运行中任务不可恢复</span>
         </button>
       </div>
       <template #footer>

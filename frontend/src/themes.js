@@ -15,6 +15,7 @@ export const THEMES = [
       '--mx-text': '#edf1fa', '--mx-text2': '#93a0bd', '--mx-text3': '#5a6580',
       '--mx-glow1': 'rgba(255, 140, 60, .07)', '--mx-glow2': 'rgba(83, 216, 255, .06)',
     },
+    onAccent: '#0a0d16', // 强调色背景上的文字色(反转显示)
     panelRGB: '16, 20, 33',
   },
   {
@@ -29,6 +30,7 @@ export const THEMES = [
       '--mx-text': '#eef7fc', '--mx-text2': '#8fadbf', '--mx-text3': '#54707f',
       '--mx-glow1': 'rgba(76, 201, 240, .08)', '--mx-glow2': 'rgba(178, 139, 255, .06)',
     },
+    onAccent: '#04141c', // 强调色背景上的文字色(反转显示)
     panelRGB: '12, 22, 32',
   },
   {
@@ -43,6 +45,7 @@ export const THEMES = [
       '--mx-text': '#f6eefc', '--mx-text2': '#a896c4', '--mx-text3': '#665680',
       '--mx-glow1': 'rgba(200, 107, 250, .08)', '--mx-glow2': 'rgba(255, 158, 207, .06)',
     },
+    onAccent: '#160a20', // 强调色背景上的文字色(反转显示)
     panelRGB: '21, 16, 36',
   },
   {
@@ -57,6 +60,7 @@ export const THEMES = [
       '--mx-text': '#eefaf3', '--mx-text2': '#93b5a4', '--mx-text3': '#54705f',
       '--mx-glow1': 'rgba(47, 217, 143, .07)', '--mx-glow2': 'rgba(255, 209, 102, .05)',
     },
+    onAccent: '#04120c', // 强调色背景上的文字色(反转显示)
     panelRGB: '12, 26, 19',
   },
   {
@@ -71,6 +75,7 @@ export const THEMES = [
       '--mx-text': '#fbf0f4', '--mx-text2': '#c0a3b1', '--mx-text3': '#7d6470',
       '--mx-glow1': 'rgba(247, 143, 179, .08)', '--mx-glow2': 'rgba(140, 224, 192, .05)',
     },
+    onAccent: '#140d10', // 强调色背景上的文字色(反转显示)
     panelRGB: '28, 19, 24',
   },
   {
@@ -85,6 +90,7 @@ export const THEMES = [
       '--mx-text': '#f5f6fa', '--mx-text2': '#a2a9b8', '--mx-text3': '#5c6270',
       '--mx-glow1': 'rgba(160, 170, 190, .06)', '--mx-glow2': 'rgba(93, 109, 255, .05)',
     },
+    onAccent: '#08080a', // 强调色背景上的文字色(反转显示)
     panelRGB: '16, 16, 19',
   },
 ]
@@ -112,6 +118,8 @@ export function applyTheme({ themeId, glass, glassAlpha } = {}) {
   const t = THEMES.find(x => x.id === prefs.theme) || THEMES[0]
   const root = document.documentElement
   for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v)
+  // 强调色上的文字反转色(主按钮/激活 chip 等,随主题适配)
+  root.style.setProperty('--mx-on-accent', t.onAccent)
   root.setAttribute('data-theme', t.id)
 
   const on = !!prefs.glass

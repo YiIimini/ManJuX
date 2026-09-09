@@ -133,7 +133,7 @@ func Default() *Settings {
 			Steps:         8,
 			Seed:          0,
 			BurnSubtitles: true,
-			Transition:    "cut",
+			Transition:    "dissolve",
 			MaxShots:      24,
 		},
 	}
@@ -147,7 +147,10 @@ type Manager struct {
 }
 
 // NewManager 创建管理器:path 为设置文件路径;exeDir 用于推导默认数据目录。
-// 文件存在则加载(缺失字段以默认值补齐),否则生成默认设置。
+// 文件存在则加载(缺失字段以默认值补齐),否则生成默认设置文件。
+// 注意:文件已存在时【不】回写磁盘 —— 曾有无条件 saveLocked,任何实例(含
+// 旧版/服务模式并存实例)启动都会整文件重写,与「另一实例刚保存的新值」
+// 形成读-改-写竞态,表现为用户设置莫名被旧值覆盖(2026-09-09 事故)。
 func NewManager(path, exeDir string) (*Manager, error) {
 	m := &Manager{path: path}
 	def := Default()
@@ -179,9 +182,10 @@ func NewManager(path, exeDir string) (*Manager, error) {
 			s.NovelDir = def.NovelDir
 		}
 		m.settings = s
-	} else {
-		m.settings = def
+		return m, nil
 	}
+	// 文件缺失/为空:落一份默认文件(此时没有可覆盖的用户值)
+	m.settings = def
 	if err := m.saveLocked(); err != nil {
 		return nil, err
 	}

@@ -1,7 +1,7 @@
 <script setup>
 import { G, api, refreshStatus } from '../store'
 import { THEMES, loadPrefs, applyTheme } from '../themes'
-import { reactive, onMounted, ref, computed, watch } from 'vue'
+import { reactive, onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const form = reactive({
@@ -9,13 +9,22 @@ const form = reactive({
   llm: {}, comfy: {}, minimax: {}, ff: {}, render: {},
 })
 const testing = ref('')
-async function loadSettings() {
+// ---- 自动保存:任何字段变更即标记 dirty;离开页面(切导航/关窗)自动落盘 ----
+// 修复「改了超时/模型没点保存,切页回来就丢」的体验(2026-09-09 反馈)
+const dirty = ref(false)
+let savedSnap = ''
+const isDirty = () => JSON.stringify(form) !== savedSnap
+watch(form, () => { dirty.value = isDirty() }, { deep: true })
+async function loadSettings(force = false) {
+  if (dirty.value && !force) return // 有未保存修改时不拉旧值覆盖(顶栏刷新也不打断编辑)
   try {
     const s = await api.getSettings()
     Object.assign(form, s)
+    savedSnap = JSON.stringify(form)
+    dirty.value = false
   } catch (e) { ElMessage.error(e.message) }
 }
-watch(() => G.tick.settings, loadSettings)
+watch(() => G.tick.settings, () => loadSettings())
 
 // 个性化:主题与玻璃拟态(纯前端偏好,即时生效即时保存)
 const appear = reactive({ theme: 'midnight-amber', glass: false, glassAlpha: 0.72 })
@@ -47,10 +56,14 @@ onMounted(async () => {
 async function save() {
   try {
     await api.putSettings(form)
+    savedSnap = JSON.stringify(form)
+    dirty.value = false
     ElMessage.success('设置已保存')
     refreshStatus()
   } catch (e) { ElMessage.error(e.message) }
 }
+// 离开设置页时若有未保存修改自动落盘(切页/切视图/刷新前)
+onBeforeUnmount(() => { if (dirty.value) save() })
 
 // 悬浮条:一键测试全部依赖
 const testingAll = ref(false)
@@ -110,11 +123,11 @@ async function testConn(target) {
             <el-form-item label="流体玻璃效果(卡片/弹层/侧栏半透明毛玻璃)">
               <el-switch v-model="appear.glass" @change="onGlass" />
             </el-form-item>
-            <el-form-item label="玻璃不透明度(越低越通透)">
+            <el-form-item label="玻璃不透明度(越低越通透,拖动实时预览)">
               <div class="flex items-center gap-4 w-full">
                 <el-slider v-model="appear.glassAlpha" :min="0.3" :max="0.98" :step="0.02"
                   :disabled="!appear.glass" :format-tooltip="v => (v * 100).toFixed(0) + '%'"
-                  style="flex:1" @change="onAlpha" />
+                  style="flex:1" @input="onAlpha" />
                 <span class="font-mono text-xs" style="color:var(--mx-text2); width:40px">{{ (appear.glassAlpha * 100).toFixed(0) }}%</span>
               </div>
             </el-form-item>
@@ -153,11 +166,15 @@ async function testConn(target) {
           <el-form-item label="API Key" class="col-span-2">
             <div class="flex gap-2 w-full">
               <el-input v-model="form.llm.api_key" show-password placeholder="sk-…(本地存储于 data/settings.json)" style="flex:1" />
-              <el-button :loading="testing==='llm'" @click="testConn('llm')">测试</el-button>
+              <el-tooltip content="发一次对话请求验证 LLM 连通与密钥" placement="top">
+                <el-button :loading="testing==='llm'" @click="testConn('llm')">测试</el-button>
+              </el-tooltip>
             </div>
           </el-form-item>
           <el-form-item label="超时(秒;推理模型分镜直出建议 ≥600)" class="col-span-2">
-            <el-input-number v-model="form.llm.timeout" :min="60" :max="1800" :step="60" style="width:100%" />
+            <!-- v-model 键须与后端 JSON 键一致:timeout_seconds(曾误用 timeout,
+                 致改动从未落盘、「设置莫名丢失」假象——2026-09-09 根因) -->
+            <el-input-number v-model="form.llm.timeout_seconds" :min="60" :max="1800" :step="60" style="width:100%" />
           </el-form-item>
         </el-form>
       </div>
@@ -213,7 +230,9 @@ async function testConn(target) {
             <el-input v-model="form.comfy.image_vae" />
           </el-form-item>
           <el-form-item label="连通性" class="col-span-2">
-            <el-button :loading="testing==='comfy'" @click="testConn('comfy')">测试 ComfyUI 连接</el-button>
+            <el-tooltip content="探测 ComfyUI 服务地址连通性(未运行时显示离线属正常)" placement="top">
+              <el-button :loading="testing==='comfy'" @click="testConn('comfy')">测试 ComfyUI 连接</el-button>
+            </el-tooltip>
             <span class="text-xs ml-2" style="color:var(--mx-text-2)">未运行时渲染阶段会自动代管启动</span>
           </el-form-item>
         </el-form>
@@ -239,7 +258,9 @@ async function testConn(target) {
           <el-form-item label="API Key" class="col-span-2">
             <div class="flex gap-2 w-full">
               <el-input v-model="form.minimax.api_key" show-password placeholder="eyJ…(platform.minimaxi.com 创建)" style="flex:1" />
-              <el-button :loading="testing==='minimax'" @click="testConn('minimax')">测试</el-button>
+              <el-tooltip content="验证 MiniMax H3 云端 API 密钥可用性" placement="top">
+                <el-button :loading="testing==='minimax'" @click="testConn('minimax')">测试</el-button>
+              </el-tooltip>
             </div>
           </el-form-item>
         </el-form>
@@ -259,7 +280,9 @@ async function testConn(target) {
           <el-form-item label="API Key" class="col-span-2">
             <div class="flex gap-2 w-full">
               <el-input v-model="form.vlm.api_key" show-password placeholder="智谱 BigModel Key" style="flex:1" />
-              <el-button :loading="testing==='vlm'" @click="testConn('vlm')">测试</el-button>
+              <el-tooltip content="验证视觉大模型(智能审片)连通性" placement="top">
+                <el-button :loading="testing==='vlm'" @click="testConn('vlm')">测试</el-button>
+              </el-tooltip>
             </div>
           </el-form-item>
         </el-form>
@@ -309,7 +332,9 @@ async function testConn(target) {
         </el-form>
       </div>
 
-      <div class="flex justify-end gap-2">
+      <div class="flex justify-end gap-2 items-center">
+        <span v-if="dirty" class="text-xs mr-1" style="color:var(--mx-amber)">● 有未保存修改(离开页面自动保存)</span>
+        <span v-else class="text-xs mr-1" style="color:var(--mx-text3)">修改自动保存,切页不丢失</span>
         <el-button @click="testAll" :loading="testingAll">测试全部</el-button>
         <el-button type="primary" @click="save">
           <el-icon class="mr-1"><Check /></el-icon>保存设置
