@@ -1,6 +1,35 @@
-/* ===== Element Plus 暗色主题定制(须在 EP css 之后加载)===== */
-html.dark {
-  --el-color-primary: var(--mx-amber);
+/* ===== Element Plus 暗色主题定制(须在 EP css 之后加载)=====
+   注:作用域用 :root 常驻——applyTheme 只写 CSS 变量、不挂 html.dark,
+   此前 html.dark 作用域导致整块从未生效(EP 一直跑浅色默认:白下拉/白
+   滑块把手/默认蓝开关)。主色接主题 accent(原钉死琥珀,六主题一个脸)。*/
+:root {
+  --el-color-primary: var(--mx-accent, var(--mx-amber));
+  --el-color-primary-light-3: color-mix(in srgb, var(--mx-accent, #f0a24a) 70%, #fff);
+  --el-color-primary-light-5: color-mix(in srgb, var(--mx-accent, #f0a24a) 50%, #fff);
+  --el-color-primary-light-7: color-mix(in srgb, var(--mx-accent, #f0a24a) 30%, #fff);
+  --el-color-primary-light-8: color-mix(in srgb, var(--mx-accent, #f0a24a) 20%, #fff);
+  --el-color-primary-light-9: color-mix(in srgb, var(--mx-accent, #f0a24a) 12%, #fff);
+  --el-color-primary-dark-2: color-mix(in srgb, var(--mx-accent, #f0a24a) 80%, #000);
+  /* 表单控件主题化:开关/滑块/勾选/单选随主题 accent */
+  --el-switch-on-color: var(--mx-accent, #f0a24a);
+  --el-switch-off-color: var(--mx-bg3, #161b2b);
+  --el-switch-border-color: var(--mx-line-hi, #2a3247);
+  --el-slider-main-bg-color: var(--mx-accent, #f0a24a);
+  --el-slider-runway-bg-color: var(--mx-bg3, #161b2b);
+  --el-slider-stop-bg-color: var(--mx-line-hi, #2a3247);
+  --el-checkbox-checked-bg-color: var(--mx-accent, #f0a24a);
+  --el-checkbox-checked-input-border-color: var(--mx-accent, #f0a24a);
+  --el-checkbox-input-border-color: var(--mx-line-hi, #2a3247);
+  --el-checkbox-bg-color: transparent;
+  --el-radio-checked-color: var(--mx-accent, #f0a24a);
+  --el-radio-input-border-color: var(--mx-line-hi, #2a3247);
+  --el-radio-button-checked-bg-color: var(--mx-accent, #f0a24a);
+  --el-radio-button-checked-text-color: var(--mx-on-accent, #10141f);
+  --el-radio-button-checked-border-color: var(--mx-accent, #f0a24a);
+  --el-radio-button-bg-color: var(--mx-bg2, #101623);
+  --el-radio-button-text-color: var(--mx-text2, #93a0b4);
+  --el-radio-button-border-color: var(--mx-line-hi, #2a3247);
+  --el-radio-button-hover-text-color: var(--mx-text, #e7ecf4);
   --el-bg-color: var(--mx-bg1);
   --el-bg-color-overlay: var(--mx-bg3);
   --el-bg-color-page: var(--mx-bg0);
@@ -35,6 +64,33 @@ html.dark {
 }
 .el-drawer__header, .el-dialog__header { margin-bottom: 14px; color: var(--mx-text); }
 .el-message { border: 1px solid var(--mx-line-hi); background: var(--mx-bg3) !important; }
+
+/* 下拉/浮层面板主题化:is-light 类浮层(select 下拉、el-dropdown 菜单、
+   日期选择等)原为 EP 浅色默认白底,统一接主题面板色 */
+.el-select__popper.el-popper.is-light,
+.el-dropdown__popper.el-popper.is-light,
+.el-picker__popper.el-popper.is-light {
+  background: var(--mx-panel-bg2, #161b2b) !important;
+  border: 1px solid var(--mx-line-hi) !important;
+  backdrop-filter: var(--mx-bd-filter, none);
+}
+.el-select__popper .el-popper__arrow::before,
+.el-dropdown__popper .el-popper__arrow::before,
+.el-picker__popper .el-popper__arrow::before {
+  background: var(--mx-panel-bg2, #161b2b) !important;
+  border-color: var(--mx-line-hi) !important;
+}
+.el-select-dropdown__item { color: var(--mx-text); }
+.el-select-dropdown__item.is-hovering { background: rgba(255, 255, 255, .06); }
+.el-select-dropdown__item.is-selected { color: var(--mx-accent); font-weight: 600; }
+.el-dropdown-menu { background: transparent; }
+.el-dropdown-menu__item:not(.is-disabled):hover,
+.el-dropdown-menu__item:not(.is-disabled):focus { background: rgba(255, 255, 255, .06); color: var(--mx-text); }
+/* 滑块把手:原白底圆钮改 accent 填充 */
+.el-slider__button {
+  background-color: var(--mx-accent, #f0a24a);
+  border-color: var(--mx-bg0, #0b0e14);
+}
 
 /* 所有 select 文本居中(全局规矩) */
 .el-select .el-select__wrapper .el-select__selected-item,
