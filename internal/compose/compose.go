@@ -211,13 +211,35 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 		lastV = outV
 		acc += durations[i] - d
 	}
-	// 音频链
-	lastA := "[0:a]"
-	for i := 1; i < n; i++ {
-		outA := fmt.Sprintf("[a%d]", i)
-		filters = append(filters, fmt.Sprintf("%s[%d:a]acrossfade=d=%.2f%s", lastA, i, d, outA))
-		lastA = outA
+	// 音频链:转场中点硬切(出镜配乐吃到叠化前半,入镜从后半起),
+	// 切点前后各 20ms 线性淡入淡出防爆音。曾用 acrossfade d=0.5——两条
+	// 独立配乐各衰减一半叠加 0.5 秒,每个转场都是「双配乐糊团+响度凹陷」
+	// (2026-09-09 实测转场中心 RMS 凹 6dB),拼接不丝滑的主因。
+	const afade = 0.02
+	aParts := make([]string, 0, n)
+	for i := 0; i < n; i++ {
+		head, tail := 0.0, durations[i]
+		if i > 0 {
+			head = d / 2
+		}
+		if i < n-1 {
+			tail = durations[i] - d/2
+		}
+		if tail-head < 4*afade { // 超短镜兜底:整段保留不裁
+			head, tail = 0, durations[i]
+		}
+		f := fmt.Sprintf("[%d:a]atrim=%.3f:%.3f,asetpts=PTS-STARTPTS", i, head, tail)
+		if i > 0 && tail-head > 8*afade {
+			f += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", afade)
+		}
+		if i < n-1 && tail-head > 8*afade {
+			f += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", tail-head-afade, afade)
+		}
+		filters = append(filters, f+fmt.Sprintf("[ap%d]", i))
+		aParts = append(aParts, fmt.Sprintf("[ap%d]", i))
 	}
+	filters = append(filters, fmt.Sprintf("%sconcat=a=1:v=0:n=%d[aout]", strings.Join(aParts, ""), n))
+	lastA := "[aout]"
 	// 不加头尾强制淡入淡出:曾对成片首尾各加 0.5s 黑场渐变,用户观感为
 	// 「开头/结尾闪黑窗」(2026-09-09 反馈)——镜间叠化已足够,成片直接
 	// 从首镜画面开始、末镜画面结束。null=视频直通滤镜(nop 不存在);
