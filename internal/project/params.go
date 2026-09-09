@@ -64,7 +64,10 @@ func DefaultStageParams() StageParams {
 		Assets: AssetsParams{Source: "krea2"}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
-			Steps: 8, Seed: 0, Turbo: true, CondCache: true, Seam: false,
+			// Seam 默认开:镜间连续(MotionContext)让相邻镜头运镜/画面延续,
+			// 配合音频中点切与叠化,整片观感丝滑;上一镜无存档自动降级普通
+			// 渲染,云端/混合链安全(2026-09-09 用户定调直接升级)。
+			Steps: 8, Seed: 0, Turbo: true, CondCache: true, Seam: true,
 		},
 		QC: QCParams{
 			Enabled: true, DarkRatioFail: 0.60, DarkRatioWarn: 0.45,
