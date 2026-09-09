@@ -115,6 +115,8 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/projects/{id}/stop", s.stopProject)
 	m.HandleFunc("POST /api/projects/{id}/upgrade2k", s.upgrade2K)
 	m.HandleFunc("POST /api/projects/{id}/assets", s.uploadAsset)
+	m.HandleFunc("POST /api/projects/{id}/assets/{assetID}/frame-preview", s.handleAssetFramePreview)
+	m.HandleFunc("POST /api/projects/{id}/assets/{assetID}/frame-apply", s.handleAssetFrameApply)
 	m.HandleFunc("DELETE /api/projects/{id}/assets/{assetID}", s.deleteAsset)
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
 	m.HandleFunc("GET /api/events", s.events)

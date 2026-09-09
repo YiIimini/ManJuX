@@ -1,6 +1,6 @@
 <script setup>
 import { G, api, refreshProject, phaseLabel } from '../store'
-import { computed, ref } from 'vue'
+import { computed, ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
 import ShotCard from '../components/ShotCard.vue'
@@ -133,6 +133,42 @@ async function openAssetDir(file) {
 }
 
 // 资产大图预览
+// ---- 视频截帧定妆:H3 成片形象优于 Krea-2 定妆,直接截帧替换(与成片零偏差) ----
+const frameDlg = reactive({ open: false, kind: '', assetId: '', name: '', shots: [], shot: 0, frames: [], pick: -1, busy: false })
+function openFrameDlg(kind, assetId, name) {
+  const plan = pj.value?.plan
+  if (!plan) { ElMessage.warning('尚未生成分镜方案'); return }
+  const charId = kind === 'characters' ? assetId.slice(5) : ''
+  const shots = (plan.shots || []).filter(s => {
+    const m = manifest.value[String(s.id)]
+    if (!m || m.status !== 'done') return false
+    if (charId) return (s.characters || []).includes(charId) // 只列该角色出场的已渲染镜头
+    return true
+  })
+  if (!shots.length) { ElMessage.warning(kind === 'characters' ? '该角色还没有已渲染的镜头' : '还没有已渲染的镜头'); return }
+  frameDlg.kind = kind; frameDlg.assetId = assetId; frameDlg.name = name
+  frameDlg.shots = shots.map(s => ({ id: s.id, label: `镜 ${s.id} · ${Math.round((manifest.value[String(s.id)]?.duration || 7))} 秒` }))
+  frameDlg.shot = shots[0].id; frameDlg.frames = []; frameDlg.pick = -1; frameDlg.open = true
+  loadFramePreview()
+}
+async function loadFramePreview() {
+  frameDlg.frames = []; frameDlg.pick = -1; frameDlg.busy = true
+  try {
+    const r = await api.assetFramePreview(pj.value.project.id, frameDlg.assetId, frameDlg.shot)
+    frameDlg.frames = (r.frames || []).map(f => ({ url: api.fileURL(pj.value.project.id, f), ratio: [0.25, 0.5, 0.75][frameDlg.frames.length] }))
+    if (frameDlg.frames.length) frameDlg.pick = 1 // 默认选中中间帧
+  } catch (e) { ElMessage.error(e.message) } finally { frameDlg.busy = false }
+}
+async function applyFrame() {
+  if (frameDlg.pick < 0) { ElMessage.warning('请先选择一帧'); return }
+  frameDlg.busy = true
+  try {
+    await api.assetFrameApply(pj.value.project.id, frameDlg.assetId, frameDlg.shot, frameDlg.frames[frameDlg.pick].ratio)
+    ElMessage.success(`「${frameDlg.name}」定妆已替换为视频截帧`)
+    frameDlg.open = false
+    refreshProject()
+  } catch (e) { ElMessage.error(e.message) } finally { frameDlg.busy = false }
+}
 function previewAsset(name, file) {
   G.viewer = {
     index: 0,
@@ -283,6 +319,9 @@ const doneShots = computed(() =>
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传定妆照</div>
                     </div>
                     <div v-if="c.asset" class="cover-acts">
+                      <button class="cover-act" title="从视频截帧定妆(与成片形象一致)" @click.stop="openFrameDlg('characters', 'char:'+c.id, c.name)">
+                        <el-icon :size="13"><Camera /></el-icon>
+                      </button>
                       <button class="cover-act" title="预览大图" @click.stop="previewAsset(c.name, c.asset.file)">
                         <el-icon :size="13"><ZoomIn /></el-icon>
                       </button>
@@ -318,9 +357,14 @@ const doneShots = computed(() =>
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text-2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传场景图</div>
                     </div>
-                    <button v-if="s.asset" class="cover-del" title="删除场景图" @click.stop="removeAsset('scene:'+s.id)">
-                      <el-icon :size="13"><Delete /></el-icon>
-                    </button>
+                    <div v-if="s.asset" class="cover-acts">
+                      <button class="cover-act" title="从视频截帧定妆(与成片形象一致)" @click.stop="openFrameDlg('scenes', 'scene:'+s.id, s.name)">
+                        <el-icon :size="13"><Camera /></el-icon>
+                      </button>
+                      <button class="cover-act" title="删除场景图" @click.stop="removeAsset('scene:'+s.id)">
+                        <el-icon :size="13"><Delete /></el-icon>
+                      </button>
+                    </div>
                   </div>
                   <div class="text-xs" style="color:var(--mx-text-2)">{{ s.description }}</div>
                 </div>
@@ -421,4 +465,28 @@ const doneShots = computed(() =>
       <PipelineBar :phase="pj.project.phase || ''" />
     </aside>
   </div>
+
+    <!-- 视频截帧定妆 -->
+    <el-dialog v-model="frameDlg.open" :title="`视频截帧定妆 · ${frameDlg.name}`" width="560px" append-to-body>
+      <div class="flex items-center gap-3 mb-4">
+        <span class="text-xs" style="color:var(--mx-text-2)">选择镜头</span>
+        <el-select v-model="frameDlg.shot" size="small" style="width:180px" @change="loadFramePreview">
+          <el-option v-for="s in frameDlg.shots" :key="s.id" :value="s.id" :label="s.label" />
+        </el-select>
+        <span class="text-xs" style="color:var(--mx-text3)">H3 成片形象直接锚定为定妆照,后续集复用天然一致</span>
+      </div>
+      <div v-loading="frameDlg.busy" class="grid gap-3" style="grid-template-columns:repeat(3,1fr);min-height:200px">
+        <div v-for="(f, i) in frameDlg.frames" :key="i"
+             class="cursor-pointer rounded-lg overflow-hidden relative" style="border:2px solid var(--mx-line)"
+             :style="frameDlg.pick === i ? 'border-color:var(--mx-accent)' : ''" @click="frameDlg.pick = i">
+          <img :src="f.url + '?t=' + Date.now()" style="width:100%;aspect-ratio:3/4;object-fit:cover;display:block" />
+          <div class="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5" style="background:rgba(0,0,0,.5);color:#fff">{{ Math.round(f.ratio * 100) }}%</div>
+        </div>
+        <div v-if="!frameDlg.busy && !frameDlg.frames.length" class="col-span-3 text-center text-xs py-10" style="color:var(--mx-text3)">截帧中…</div>
+      </div>
+      <template #footer>
+        <el-button @click="frameDlg.open = false">取消</el-button>
+        <el-button type="primary" :disabled="frameDlg.pick < 0" :loading="frameDlg.busy" @click="applyFrame">替换定妆并入库</el-button>
+      </template>
+    </el-dialog>
 </template>
