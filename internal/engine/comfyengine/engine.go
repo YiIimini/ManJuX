@@ -19,6 +19,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/sysexec"
+	"golang.org/x/sys/windows"
 )
 
 // Engine 本地 ComfyUI 渲染引擎(H3-Base 768p,音视频一体直出)。
@@ -97,7 +98,11 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	if err != nil {
 		logF = nil
 	}
-	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1"))
+	// --fast fp16_accumulation:Tensor Core 矩阵累加加速(官方 flag,Ada/Blackwell
+	// 收益明显;只开这一项,不开全量 --fast 避免画质劣化项;2026-09-10 调研)。
+	// 进一步提速两杠杆(需动引擎环境,未自动做):torch 升 cu130 解锁 kitchen
+	// CUDA 内核(int8_convrot ~2x)+ --use-ck-attention 注意力后端。
+	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1", "--fast", "fp16_accumulation"))
 	cmd.Dir = filepath.Dir(main)
 	// 无控制台(CREATE_NO_WINDOW)下 Python 管道 IO 默认按系统 locale(GBK)编码,
 	// ComfyUI 启动横幅的 emoji(🎉)会触发 UnicodeEncodeError 直接崩溃 —— 强制 UTF-8。
@@ -114,6 +119,12 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	}
 	e.proc = cmd.Process
 	writePidFile(c, cmd.Process.Pid) // 代管状态持久化:重启后可接管
+	// 渲染引擎提为高优先级:分镜渲染是最重的生产任务,不应被桌面/其它进程
+	// 抢 CPU(GPU 等待时自然让出,不会饿死系统;2026-09-10 用户定调)。
+	if h, herr := windows.OpenProcess(windows.PROCESS_SET_INFORMATION, false, uint32(cmd.Process.Pid)); herr == nil {
+		_ = windows.SetPriorityClass(h, windows.HIGH_PRIORITY_CLASS)
+		_ = windows.CloseHandle(h)
+	}
 	touchBusy()
 	deadline := time.Now().Add(5 * time.Minute)
 	for time.Now().Before(deadline) {

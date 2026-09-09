@@ -20,6 +20,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
+	"github.com/YiIimini/ManJuX/internal/sysmon"
 )
 
 // Phase 阶段标识。
@@ -231,12 +232,14 @@ func (c *Coordinator) setRunPhase(projectID, phase string) {
 // Stop 停止项目运行。
 func (c *Coordinator) Stop(projectID string) bool {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	r, ok := c.runs[projectID]
 	if !ok {
+		c.mu.Unlock()
 		return false
 	}
 	r.Cancel()
+	c.mu.Unlock()
+	c.interruptComfy() // 服务端同步中断+清队,防重开渲染堵在旧任务后面
 	return true
 }
 
@@ -255,6 +258,25 @@ func (c *Coordinator) StopAll() {
 	for _, r := range c.runs {
 		r.Cancel()
 	}
+	c.interruptComfy()
+}
+
+// interruptComfy 停止管线后向服务端补发中断+清队:ctx 取消只停了本地等待,
+// 服务端仍在执行/排队的提示词会占住工作线程——用户停止后重开渲染就会
+// 「一直在排队」,直到重启引擎(2026-09-10 实证)。仅在确有 comfy 运行管线时发。
+func (c *Coordinator) interruptComfy() {
+	eng, err := c.reg.Get("comfy")
+	if err != nil {
+		return
+	}
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	ce.Interrupt(ctx)
+	ce.ClearQueue(ctx)
 }
 
 func (c *Coordinator) finish(projectID string) {
@@ -673,8 +695,18 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// 渲染前补齐缺失参考图(不问资产来源模式,除 skip;缺图先生成再渲染)
 	c.backfillAssets(ctx, proj, plan, assets)
 	// 阶段起点清一次遗留队列(仅本地引擎;绝不在逐镜循环内清,防误杀排队任务)
+	// 并释放残留显存:上一阶段(Krea-2 定妆/抽卡等)模型常驻会把 H3 主模型
+	// (~20GB)挤出显存触发 dynamic VRAM loading——每步在 CPU↔GPU 搬权重,
+	// 实测 150s/步(正常 ~2s),极端时整镜 45 分钟超时(2026-09-10 血案)。
 	if ce, ok := eng.(*comfyengine.Engine); ok && engName == "comfy" {
 		ce.ClearQueue(ctx)
+		b, hasB := sysmon.VRAMUsedMB()
+		ce.FreeVRAM(ctx)
+		if hasB {
+			if a, hasA := sysmon.VRAMUsedMB(); hasA {
+				c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB → %.1f GB(腾出主模型常驻空间)", b/1024, a/1024)
+			}
+		}
 	}
 	done, skipped, failed := 0, 0, 0
 	var failures []string
@@ -735,23 +767,39 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		c.emit(proj.ID, PhaseRender, shot.ID, "info", base, "镜头 %d/%d 渲染开始(%s,%ds,seed=%d)", shot.ID, len(shots), mode, shot.Duration, seed)
 		c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotRendering, engName, "", inputFP, "")
 
-		res, err := eng.Render(ctx, engine.Job{
-			ProjectID: proj.ID, ShotID: shot.ID,
-			Prompt: prompt, Mode: mode, RefImages: refs,
-			Width: rp.Width, Height: rp.Height,
-			Length: shot.Duration * 24, Seed: seed, Steps: rp.Steps,
-			Accel: rp.Accel,
-			OutputDir: clipsDir, OutputName: outName,
-			Seam:     rp.Seam && engName == "comfy",
-			PrevShot: shot.ID - 1,
-			OnProgress: func(p int, note string) {
-				total := base + p/len(shots)
-				if total > 100 {
-					total = 100
-				}
-				c.emit(proj.ID, PhaseRender, shot.ID, "info", total, "镜头 %d:%s", shot.ID, note)
-			},
-		})
+		var res *engine.Result
+		var err error
+		for attempt := 1; attempt <= 2; attempt++ {
+			res, err = eng.Render(ctx, engine.Job{
+				ProjectID: proj.ID, ShotID: shot.ID,
+				Prompt: prompt, Mode: mode, RefImages: refs,
+				Width: rp.Width, Height: rp.Height,
+				Length: shot.Duration * 24, Seed: seed, Steps: rp.Steps,
+				Accel:     rp.Accel,
+				OutputDir: clipsDir, OutputName: outName,
+				Seam:     rp.Seam && engName == "comfy",
+				PrevShot: shot.ID - 1,
+				OnProgress: func(p int, note string) {
+					total := base + p/len(shots)
+					if total > 100 {
+						total = 100
+					}
+					c.emit(proj.ID, PhaseRender, shot.ID, "info", total, "镜头 %d:%s", shot.ID, note)
+				},
+			})
+			if err == nil || ctx.Err() != nil {
+				break
+			}
+			// 超时类失败多为显存挤压导致的动态换页极慢(150s/步)甚至假死:
+			// 先释放显存再原地重试一次,多数可恢复正常速度(2026-09-10)。
+			if !strings.Contains(err.Error(), "超时") || attempt == 2 {
+				break
+			}
+			c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "⚠ 镜头 %d 超时,释放显存后重试一次:%v", shot.ID, err)
+			if ce, ok := eng.(*comfyengine.Engine); ok && engName == "comfy" {
+				ce.FreeVRAM(ctx)
+			}
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
