@@ -98,11 +98,11 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	if err != nil {
 		logF = nil
 	}
-	// --fast fp16_accumulation:Tensor Core 矩阵累加加速(官方 flag,Ada/Blackwell
-	// 收益明显;只开这一项,不开全量 --fast 避免画质劣化项;2026-09-10 调研)。
-	// 进一步提速两杠杆(需动引擎环境,未自动做):torch 升 cu130 解锁 kitchen
-	// CUDA 内核(int8_convrot ~2x)+ --use-ck-attention 注意力后端。
-	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1", "--fast", "fp16_accumulation", "--use-ck-attention"))
+	// 画质回退(2026-09-10 用户实证「同内容昨天好看今晚变差」):--fast
+	// fp16_accumulation(fp16 累加,官方明示可能画质劣化)与 --use-ck-attention
+	// (注意力后端数值特性)均已撤下——速度收益主体是 torch cu130 的 kitchen
+	// CUDA 内核(保留)+渲染前释放显存,画质优先于极限速度。
+	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1"))
 	cmd.Dir = filepath.Dir(main)
 	// 无控制台(CREATE_NO_WINDOW)下 Python 管道 IO 默认按系统 locale(GBK)编码,
 	// ComfyUI 启动横幅的 emoji(🎉)会触发 UnicodeEncodeError 直接崩溃 —— 强制 UTF-8。

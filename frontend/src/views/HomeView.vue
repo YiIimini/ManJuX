@@ -366,6 +366,32 @@ async function removeProject(p) {
 }
 
 // 系列卡右上角删除:整部剧集合集(全部子项目)二次确认后逐集删除
+// ---- 卡片直达:开始(启动/续跑管线)与停止(停管线+释放显存) ----
+async function startSeriesBatch(prefix) {
+  try { await api.novelBatchStart(prefix); ElMessage.success('批量产线已启动(从中断处续跑)') }
+  catch (e) { ElMessage.error(e.message) }
+}
+async function stopSeriesBatch() {
+  try {
+    await api.novelBatchStop()
+    for (const id of Object.keys(G.status?.running || {})) { try { await api.stop(id) } catch { /* 单个失败继续 */ } }
+    await api.comfyFree()
+    ElMessage.success('已停止管线并释放显存')
+    refreshStatus()
+  } catch (e) { ElMessage.error(e.message) }
+}
+async function startProjectRun(p) {
+  try { await api.run(p.id, 'all'); ElMessage.success(`「${p.name}」管线已启动(续跑)`) }
+  catch (e) { ElMessage.error(e.message) }
+}
+async function stopProjectRun(p) {
+  try {
+    await api.stop(p.id)
+    await api.comfyFree()
+    ElMessage.success('已停止管线并释放显存')
+    refreshStatus()
+  } catch (e) { ElMessage.error(e.message) }
+}
 async function removeSeries(prefix, eps) {
   if (batchStat && batchStat.prefix === prefix) {
     ElMessage.warning('该系列正在批量产线运行中,请先停止批量再删除')
@@ -512,7 +538,15 @@ function stateChip(p) {
           </div>
           <!-- 封面右上:批量运行灯(左)与删除整部(右),批量运行中禁用删除 -->
           <i v-if="batchStat && batchStat.prefix === prefix" class="dot run"
-             style="position:absolute;top:12px;right:42px"></i>
+             style="position:absolute;top:12px;right:106px"></i>
+          <button class="cover-del" style="right:74px" title="开始:启动批量产线(从中断处续跑)"
+                  :disabled="!!(batchStat && batchStat.running)" @click.stop="startSeriesBatch(prefix)">
+            <el-icon :size="13"><VideoPlay /></el-icon>
+          </button>
+          <button class="cover-del" style="right:42px" title="停止:停止管线并释放显存"
+                  :disabled="!(batchStat && batchStat.prefix === prefix)" @click.stop="stopSeriesBatch()">
+            <el-icon :size="13"><VideoPause /></el-icon>
+          </button>
           <button class="cover-del" title="删除整部系列(全部集)" :disabled="!!(batchStat && batchStat.prefix === prefix)"
                   @click.stop="removeSeries(prefix, eps)">
             <el-icon :size="13"><Delete /></el-icon>
@@ -566,7 +600,15 @@ function stateChip(p) {
             <span class="timecode">{{ p.has_plan ? p.shots_total + ' 镜' : 'NEW' }}</span>
           </div>
           <!-- 封面右上:状态灯(左)与删除(右)保持间距,不重叠 -->
-          <i class="dot" :class="stateChip(p).c" style="position:absolute;top:12px;right:42px"></i>
+          <i class="dot" :class="stateChip(p).c" style="position:absolute;top:12px;right:106px"></i>
+          <button class="cover-del" style="right:74px" title="开始:启动管线(开始/续跑)"
+                  :disabled="!!G.status?.running?.[p.id]" @click.stop="startProjectRun(p)">
+            <el-icon :size="13"><VideoPlay /></el-icon>
+          </button>
+          <button class="cover-del" style="right:42px" title="停止:停止管线并释放显存"
+                  :disabled="!G.status?.running?.[p.id]" @click.stop="stopProjectRun(p)">
+            <el-icon :size="13"><VideoPause /></el-icon>
+          </button>
           <button v-if="!batch" class="cover-del" title="删除项目" @click.stop="removeProject(p)">
             <el-icon :size="13"><Delete /></el-icon>
           </button>

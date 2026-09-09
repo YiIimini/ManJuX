@@ -862,7 +862,9 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	if rp.Accel == "quality" || rp.Accel == "express" {
 		accelTag = "accel" + rp.Accel
 	}
-	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, accelTag), strings.Join(files, ","))
+	// qualityTag:采样环境版本(v1=2026-09-10 撤下 fp16_accumulation/ck-attention
+	// 后的画质基线;画质敏感项再变更时递增,旧镜指纹失配自动重渲)。
+	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, accelTag, "q1"), strings.Join(files, ","))
 }
 
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {

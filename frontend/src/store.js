@@ -59,6 +59,7 @@ export const api = {
   putParams: (id, params) => req('PUT', `/api/projects/${encodeURIComponent(id)}/params`, params),
   run: (id, phase, only, engine, seed) => req('POST', `/api/projects/${encodeURIComponent(id)}/run`, { phase, only, engine, seed }),
   stop: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/stop`),
+  comfyFree: () => req('POST', '/api/comfy/free'),
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),
   importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
