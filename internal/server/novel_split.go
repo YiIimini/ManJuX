@@ -56,6 +56,8 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 	// 异步后台拆集建项目:立即返回,进度看全局日志(30 秒心跳+逐集创建事件),
 	// 首页项目列表随 novel 事件实时刷新——弹窗不再同步等待 LLM(2-6 分钟)。
 	go func() {
+		// 注册键与拆集内部 safeSeries 规整键一致,防占位卡孤儿(同 novels.go)
+		name = safeSeries(name)
 		jobSet(name, "running", 0, "AI 拆集通读中…")
 		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max)
 		if err != nil {

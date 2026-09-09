@@ -377,6 +377,10 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	cover := coverSrc
 	maxEp := in.Max
 	go func() {
+		// 注册键必须与拆集内部键一致:splitNovelToProjects 会做 safeSeries 规整
+		// (全角逗号等→「·」),原始书名注册的占位卡会因键不一致永远停在 running
+		// (2026-09-09 实证:「天庭把我裁员，我在人间爆红」占位卡不退场)。
+		name = safeSeries(name)
 		jobSet(name, "running", 0, "AI 拆集通读中…(提交即注册,首页占位卡立即可见)")
 		series, eps, err := s.splitNovelToProjects(context.Background(), name, text, maxEp)
 		if err != nil {
@@ -493,6 +497,12 @@ func (s *Server) handleNovelJobs(w http.ResponseWriter, r *http.Request) {
 	out := []*novelJob{}
 	for k, j := range novelJobs.m {
 		if j.State == "failed" && now-j.At > 600 {
+			delete(novelJobs.m, k)
+			continue
+		}
+		// running 兜底:拆集 LLM 通常 2-6 分钟;20 分钟无任何推进(键错位/
+		// 进程重启遗留等)按孤儿清掉,占位卡不再永久滞留
+		if j.State == "running" && now-j.At > 1200 {
 			delete(novelJobs.m, k)
 			continue
 		}
