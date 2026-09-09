@@ -102,7 +102,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	// 收益明显;只开这一项,不开全量 --fast 避免画质劣化项;2026-09-10 调研)。
 	// 进一步提速两杠杆(需动引擎环境,未自动做):torch 升 cu130 解锁 kitchen
 	// CUDA 内核(int8_convrot ~2x)+ --use-ck-attention 注意力后端。
-	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1", "--fast", "fp16_accumulation"))
+	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1", "--fast", "fp16_accumulation", "--use-ck-attention"))
 	cmd.Dir = filepath.Dir(main)
 	// 无控制台(CREATE_NO_WINDOW)下 Python 管道 IO 默认按系统 locale(GBK)编码,
 	// ComfyUI 启动横幅的 emoji(🎉)会触发 UnicodeEncodeError 直接崩溃 —— 强制 UTF-8。
