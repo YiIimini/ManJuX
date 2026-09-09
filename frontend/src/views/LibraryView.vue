@@ -75,6 +75,13 @@ const createOpen = ref(false)
 const createBusy = ref(false)
 const createForm = reactive({ name: '', description: '', image_prompt: '', mode: 'generate' })
 const createImage = ref(null)
+const createImageURL = ref('')
+watch(createImage, (f, oldF) => {
+  // 模板里不能直接调 URL.createObjectURL:URL 不在 Vue 模板全局白名单,
+  // 编译成 _ctx.URL → 渲染即抛错,缩略图从未显示过(2026-09-09 实证)
+  if (oldF && createImageURL.value) { try { URL.revokeObjectURL(createImageURL.value) } catch {} }
+  createImageURL.value = f ? URL.createObjectURL(f) : ''
+})
 const createNativePath = ref(null) // 桌面拖放(wails 原生)拿到的本机绝对路径
 const createInput = ref(null)
 function onPickImg(ev) {
@@ -273,7 +280,7 @@ async function remove(e) {
             <div class="text-xs" style="color:var(--mx-text2)">点击或拖入图片</div>
           </div>
           <div v-else class="flex items-center gap-3 p-2 rounded-lg" style="border:1px solid var(--mx-line-hi)">
-            <img v-if="createImage" :src="URL.createObjectURL(createImage)" style="width:46px;height:58px;object-fit:cover;border-radius:6px" />
+            <img v-if="createImage" :src="createImageURL" style="width:46px;height:58px;object-fit:cover;border-radius:6px" />
             <img v-else-if="createNativePath" :src="'/api/thumb?path=' + encodeURIComponent(createNativePath)" style="width:46px;height:58px;object-fit:cover;border-radius:6px" />
             <span class="text-xs flex-1 truncate">{{ createNativePath || createImage.name }}</span>
             <el-button text size="small" @click="createImage = null; createNativePath = null"><el-icon><Close /></el-icon></el-button>
