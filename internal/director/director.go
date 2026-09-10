@@ -252,7 +252,10 @@ func parsePlan(raw string) (*project.Plan, error) {
 	s = s[start : end+1]
 	var plan project.Plan
 	if err := json.Unmarshal([]byte(s), &plan); err != nil {
-		return nil, fmt.Errorf("JSON 解析失败: %v", err)
+		// LLM 常在字符串值里写裸换行/制表符(标准 JSON 非法),先修再试一次
+		if err2 := json.Unmarshal([]byte(repairJSONStrings(s)), &plan); err2 != nil {
+			return nil, fmt.Errorf("JSON 解析失败: %v", err)
+		}
 	}
 	return &plan, nil
 }
@@ -446,7 +449,7 @@ Produce the STRICT BATCH PLAN JSON now.`, sourceText, opt.MaxShots, opt.TotalSec
 		return nil, fmt.Errorf("规划轮失败: %w", err)
 	}
 	var head planHead
-	if err := json.Unmarshal([]byte(trimJSONBlock(raw)), &head); err != nil || head.Title == "" || len(head.Segments) == 0 {
+	if err := json.Unmarshal([]byte(repairJSONStrings(trimJSONBlock(raw))), &head); err != nil || head.Title == "" || len(head.Segments) == 0 {
 		return nil, fmt.Errorf("规划轮输出解析失败(缺少 title/segments)")
 	}
 	normalizeSegments(&head, opt.MaxShots)
@@ -557,7 +560,7 @@ func normalizeSegments(h *planHead, max int) {
 
 // parseShotsBatch 解析一批 shots 并校验区间。
 func parseShotsBatch(raw string, from, to int) ([]project.Shot, error) {
-	s := trimJSONBlock(raw)
+	s := repairJSONStrings(trimJSONBlock(raw))
 	var out batchShotOut
 	if err := json.Unmarshal([]byte(s), &out); err != nil {
 		return nil, fmt.Errorf("JSON 解析失败: %v", err)

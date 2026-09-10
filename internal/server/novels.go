@@ -667,7 +667,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			Style    string   `json:"style"`
 			Episodes []epItem `json:"episodes"`
 		}
-		if err := jsonUnmarshalStrict(trimJSON(raw), &pl); err != nil {
+		if err := jsonUnmarshalStrict(trimJSON(repairJSONStrings(raw)), &pl); err != nil {
 			return nil, "", "", err
 		}
 		return pl.Episodes, pl.Book, pl.Style, nil
@@ -759,54 +759,77 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			onEps(series, created)
 		}
 	}
+	// ===== 并行拆段(2026-09-10 用户定调:字数多就拆多任务跑,互不影响)=====
+	// 各段章界不重叠、集号由系统按段序统一编排,段间零依赖 → 3 路并发
+	// 调 LLM,总耗时≈单段时长(原逐段串行是段数×单段)。
+	type segResult struct {
+		eps   []epItem
+		book  string
+		style string
+		err   error
+	}
+	results := make([]segResult, len(chunks))
+	if len(chunks) > 1 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解 %d 段,3 路并行解析(互不影响)", len([]rune(text)), len(chunks))})
+	}
+	sem := make(chan struct{}, 3)
+	var wg sync.WaitGroup
+	for ci, ck := range chunks {
+		wg.Add(1)
+		go func(ci int, ck chunk) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			var user string
+			if len(chunks) > 1 {
+				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;本段通常 10-20 集,每集 brief 400-700 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, ck.label, ck.body)
+			} else {
+				user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
+			}
+			// 段级自动重试一次:思考模型大 JSON 偶发截断/串格式,重试多可过
+			var eps []epItem
+			var book, style string
+			var err error
+			for attempt := 1; attempt <= 2; attempt++ {
+				var raw string
+				raw, err = splitOnce(user)
+				if err == nil {
+					eps, book, style, err = parsePlan(raw)
+					if err == nil && len(eps) > 0 {
+						break
+					}
+					err = fmt.Errorf("解析失败(%v;输出尾部:…%s)", err, tailRunes(raw, 120))
+				}
+				if attempt == 1 {
+					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+						Message: fmt.Sprintf("⚠ 第 %d/%d 段拆集结果异常,自动重试一次:%v", ci+1, len(chunks), err)})
+				}
+			}
+			results[ci] = segResult{eps: eps, book: book, style: style, err: err}
+		}(ci, ck)
+	}
+	wg.Wait()
+	// 按段序统一建项(集号全局连续;建项顺序 = 段顺序,产线流式推送不变)
 	planned := 0
 	for ci, ck := range chunks {
-		var user string
-		if len(chunks) > 1 {
-			prev := "本书开篇"
-			if lastEp.Ep > 0 {
-				prev = fmt.Sprintf("上一段拆到第 %d 集《%s》:%s", lastEp.Ep, lastEp.Title, clampRunes(lastEp.Brief, 300))
-			}
-			user = fmt.Sprintf("【前情提要】%s\n【起始集号】第 %d 集(本段 episodes 从该集号起连续编号,不重复前情已拆内容;本段通常 10-20 集,每集 brief 400-700 字逐拍列节拍)\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", prev, planned+1, ck.label, ck.body)
-		} else {
-			user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
-		}
-		// 段级自动重试一次:思考模型大 JSON 偶发截断/串格式,重试多可过
-		var segEps []epItem
-		var book, style string
-		var err error
-		for attempt := 1; attempt <= 2; attempt++ {
-			var raw string
-			raw, err = splitOnce(user)
-			if err == nil {
-				segEps, book, style, err = parsePlan(raw)
-				if err == nil && len(segEps) > 0 {
-					break
-				}
-				err = fmt.Errorf("解析失败(输出可能被截断,原文尾部:…%s)", tailRunes(raw, 200))
-			}
-			if attempt == 1 {
-				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-					Message: fmt.Sprintf("⚠ 第 %d/%d 段拆集结果异常,自动重试一次:%v", ci+1, len(chunks), err)})
-			}
-		}
-		if err != nil || len(segEps) == 0 {
-			return series, epsAll, fmt.Errorf("拆集失败(第 %d/%d 段):%v", ci+1, len(chunks), err)
+		res := results[ci]
+		if res.err != nil || len(res.eps) == 0 {
+			return series, epsAll, fmt.Errorf("拆集失败(第 %d/%d 段):%v", ci+1, len(chunks), res.err)
 		}
 		if ci == 0 {
-			fixSeries(book)
-			globalStyle = style
+			fixSeries(res.book)
+			globalStyle = res.style
 		}
-		// 段内重编号(全局顺序号),随后立即建项并回调(流水线推送)
-		for j := range segEps {
+		for j := range res.eps {
 			planned++
-			segEps[j].Ep = planned
+			res.eps[j].Ep = planned
 		}
-		createSeg(segEps, ck)
+		createSeg(res.eps, ck)
 		jobSet(series, "running", createdTotal, fmt.Sprintf("已建 %d 集(拆解进行中)", createdTotal))
 		if len(chunks) > 1 {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-				Message: fmt.Sprintf("📚 分层拆解 %d/%d 段完成,累计已建 %d 集", ci+1, len(chunks), createdTotal)})
+				Message: fmt.Sprintf("📚 分层拆解 %d/%d 段入队完成,累计已建 %d 集", ci+1, len(chunks), createdTotal)})
 		}
 	}
 	if len(epsAll) == 0 {
