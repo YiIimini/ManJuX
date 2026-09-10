@@ -258,16 +258,17 @@ function verCellCls(row, which) {
       </h3>
 
       <el-table :data="[{ ...vers.core?.[0], _kind: '本体' }, ...(vers.nodes||[]).map(n => ({ ...n, _kind: '插件' }))]"
-        size="small" style="--el-table-border-color: var(--mx-line); width: 100%">
-        <el-table-column label="类型" width="64">
+        size="small" height="380"
+        style="--el-table-border-color: var(--mx-line); width: 100%">
+        <el-table-column label="类型" width="56">
           <template #default="{ row }">
             <span class="timecode">{{ row._kind }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="名称" min-width="210" show-overflow-tooltip>
+        <el-table-column prop="name" label="名称" width="230" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="text-xs">{{ row.name }}</div>
-            <div class="text-xs" style="color:var(--mx-text3)" v-if="row.detail">{{ row.detail }}</div>
+            <div style="font-size:10px;color:var(--mx-text3);line-height:1.4" v-if="row.desc">{{ row.desc }}</div>
           </template>
         </el-table-column>
         <el-table-column prop="local" label="本地版本" width="130">
@@ -291,6 +292,11 @@ function verCellCls(row, which) {
             <span class="ver-badge" :class="STATUS_META[row.status]?.cls">
               <i class="dot" :class="STATUS_META[row.status]?.cls || ''" v-if="row.status !== 'unknown'"></i>{{ STATUS_META[row.status]?.label || row.status }}
             </span>
+          </template>
+        </el-table-column>
+        <el-table-column label="仓库" min-width="180">
+          <template #default="{ row }">
+            <span class="font-mono" style="font-size:10px;color:var(--mx-text3)">{{ row.repo || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="repo" label="仓库" width="200" show-overflow-tooltip>

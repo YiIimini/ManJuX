@@ -35,6 +35,7 @@ type VersionItem struct {
 	Repo         string `json:"repo"`                   // owner/repo
 	Status       string `json:"status"`                 // latest / behind / unknown / local / norepo
 	Detail       string `json:"detail"`                 // 附加信息(模型大小等)
+	Desc         string `json:"desc,omitempty"`          // 中文简要描述(名称下小灰行)
 	CheckedAt    int64  `json:"checkedAt"`              // 在线检查时刻(0=未检查)
 }
 
@@ -62,7 +63,8 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 	}
 
 	// ---- 本体 ----
-	core := VersionItem{Kind: "core", Name: "ComfyUI 本体", Local: readCoreVersion(root), Repo: "comfyanonymous/ComfyUI"}
+	core := VersionItem{Kind: "core", Name: "ComfyUI 本体", Local: readCoreVersion(root), Repo: "comfyanonymous/ComfyUI",
+		Desc: "H3 渲染核心主程序"}
 	if c := gitShort(root); c != "" {
 		core.LocalCommit = c // 版本列显示 @commit,名称列不再重复
 	}
@@ -76,7 +78,7 @@ func (e *Engine) Versions(ctx context.Context, online bool) (*VersionReport, err
 			continue
 		}
 		dir := filepath.Join(cnDir, en.Name())
-		it := VersionItem{Kind: "node", Name: en.Name()}
+		it := VersionItem{Kind: "node", Name: en.Name(), Desc: nodeDesc(en.Name())}
 		if c := gitShort(dir); c != "" {
 			it.LocalCommit = c
 			it.Local = gitDescribe(dir)
@@ -436,4 +438,19 @@ func findModelFile(root, name string) string {
 		}
 	}
 	return ""
+}
+
+// nodeDesc 插件目录名 → 中文简要描述(名称下小灰行);未知插件给通用描述。
+func nodeDesc(dir string) string {
+	known := map[string]string{
+		"ComfyUI-H3-ConditioningCache": "H3 两阶段渲染条件缓存",
+		"comfyui-kitchen":              "采样加速内核",
+		"ComfyUI-Manager":              "插件与依赖管理",
+		"comfyui_controlnet_aux":       "ControlNet 预处理",
+		"comfyui-custom-scripts":       "界面增强脚本集",
+	}
+	if d, ok := known[dir]; ok {
+		return d
+	}
+	return "自定义节点插件"
 }

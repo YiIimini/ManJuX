@@ -1591,12 +1591,17 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   }
 }
 
-/* 状态栏作者链接 */
+/* 状态栏作者链接:呼吸色突出 */
 .author-link {
-  color: var(--mx-text3); font-size: 11px; text-decoration: none; cursor: pointer;
-  transition: color .15s; margin-left: 6px; letter-spacing: .3px;
+  font-size: 11px; text-decoration: none; cursor: pointer;
+  margin-left: 2px; letter-spacing: .4px; font-weight: 600;
+  animation: authorBreath 3.2s ease-in-out infinite;
 }
-.author-link:hover { color: var(--mx-accent, var(--mx-amber)); text-decoration: underline; }
+.author-link:hover { text-decoration: underline; animation-play-state: paused; color: var(--mx-accent, var(--mx-amber)); }
+@keyframes authorBreath {
+  0%, 100% { color: var(--mx-text3); text-shadow: 0 0 0 transparent; }
+  50% { color: var(--mx-accent, var(--mx-amber)); text-shadow: 0 0 10px color-mix(in srgb, var(--mx-accent, #ffb454) 55%, transparent); }
+}
 
 /* 侧栏宽度拖动条 */
 .side-resizer {

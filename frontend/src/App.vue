@@ -408,7 +408,8 @@ const env = computed(() => G.status?.env)
         </button>
         <div class="vdiv"></div>
         <span class="timecode verchip">{{ verLabel }}</span>
-        <a class="author-link" title="作者 GitHub 主页" @click.prevent="openAuthor">· YiIimini</a>
+        <span class="timecode" style="color:var(--mx-text3);opacity:.55">|</span>
+        <a class="author-link" title="作者 GitHub 主页" @click.prevent="openAuthor">YiIimini</a>
       </footer>
 
     </div>
