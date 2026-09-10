@@ -679,7 +679,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	// 静默补集(生产者-消费者,2026-09-10 用户定调)。
 	type chunk struct{ label, body string }
 	var chunks []chunk
-	if len([]rune(text)) > 120000 {
+	// 阈值 4 万(原 12 万):8-10 万字的书单段拆解时 brief+chapters+思考链
+	// 仍会撞输出上限截断(2026-09-10 实证 ep12 处 JSON 腰斩);分段输出才可控
+	if len([]rune(text)) > 40000 {
 		// 4 万字/段:更大的段输出(30-45 集大纲+思考链)会撞 completion 上限
 		// (2026-09-10 实证第 1/8 段 JSON 截断);缩小段=缩输出。
 		for _, ck := range chunkNovelText(text, 40000) {
