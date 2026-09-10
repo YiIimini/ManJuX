@@ -107,8 +107,13 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 
 	// ---- 步骤二:拼接 ----
 	var master string
+	// dissolve(xfade 像素溶解,颗粒噪点观感)按用户 2026-09-10 定调不再使用,
+	// 存量项目参数里的 dissolve 一律按 fade(平滑交叉叠化)执行,不迁移数据。
+	if p.Transition == "dissolve" {
+		p.Transition = "fade"
+	}
 	switch p.Transition {
-	case "fade", "dissolve":
+	case "fade":
 		master, err = stitchWithTransitions(ctx, f, parts, durations, work, p, onProgress)
 		if err != nil {
 			return nil, err

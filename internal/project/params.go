@@ -76,7 +76,8 @@ func DefaultStageParams() StageParams {
 		},
 		Assemble: AssembleParams{
 			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)
-			Transition: "dissolve", BurnSubtitles: true,
+			// fade=平滑交叉叠化(用户 2026-09-10 定调:不要 dissolve 像素溶解的粒子观感)
+			Transition: "fade", BurnSubtitles: true,
 			Loudness: -16, Peak: 0.92, SubtitleSize: 4,
 			Upgrade2K: false,
 		},
