@@ -1591,16 +1591,23 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   }
 }
 
-/* 状态栏作者链接:呼吸色突出 */
+/* 状态栏作者链接:金色流光横扫+常驻辉光(用户:灰白呼吸毫无突出感) */
 .author-link {
-  font-size: 11px; text-decoration: none; cursor: pointer;
-  margin-left: 2px; letter-spacing: .4px; font-weight: 600;
-  animation: authorBreath 3.2s ease-in-out infinite;
+  font-size: 12px; text-decoration: none; cursor: pointer;
+  margin-left: 2px; letter-spacing: .6px; font-weight: 800;
+  background: linear-gradient(90deg,
+    var(--mx-amber-hi, #ffd08a) 0%, var(--mx-amber-deep, #f97a1f) 30%,
+    #fff6e0 50%, var(--mx-amber, #ffb454) 70%, var(--mx-amber-hi, #ffd08a) 100%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--mx-amber, #ffb454) 70%, transparent))
+          drop-shadow(0 0 14px color-mix(in srgb, var(--mx-amber-deep, #f97a1f) 40%, transparent));
+  animation: authorFlow 2.6s linear infinite;
 }
-.author-link:hover { text-decoration: underline; animation-play-state: paused; color: var(--mx-accent, var(--mx-amber)); }
-@keyframes authorBreath {
-  0%, 100% { color: var(--mx-text3); text-shadow: 0 0 0 transparent; }
-  50% { color: var(--mx-accent, var(--mx-amber)); text-shadow: 0 0 10px color-mix(in srgb, var(--mx-accent, #ffb454) 55%, transparent); }
+.author-link:hover { text-decoration: underline; filter: drop-shadow(0 0 8px var(--mx-amber-hi, #ffd08a)); }
+@keyframes authorFlow {
+  0% { background-position: 0% 0; }
+  100% { background-position: -220% 0; }
 }
 
 /* 侧栏宽度拖动条 */
