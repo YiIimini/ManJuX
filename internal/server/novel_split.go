@@ -61,7 +61,7 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 		// 注册键与拆集内部 safeSeries 规整键一致,防占位卡孤儿(同 novels.go)
 		name = safeSeries(name)
 		jobSet(name, "running", 0, "AI 拆集通读中…")
-		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max)
+		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, nil)
 		if err != nil {
 			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
 		}
@@ -149,14 +149,39 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		batch.mu.Unlock()
 	}()
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-		Message: fmt.Sprintf("▶ 批量产线启动:《%s》共 %d 集,逐集串行(分镜→定妆→渲染→质检→成片)", prefix, len(eps))})
-	for i, ep := range eps {
+		Message: fmt.Sprintf("▶ 批量产线启动:《%s》首批 %d 集,逐集串行(分镜→定妆→渲染→质检→成片)%s", prefix, len(eps),
+			func() string {
+				if prodAlive(prefix) {
+					return ";拆集仍在进行,新集将实时入队"
+				}
+				return ""
+			}())})
+	waitAnnounced := false
+	for i := 0; ; i++ {
 		batch.mu.Lock()
 		if batch.stop {
 			batch.mu.Unlock()
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: "⏹ 批量产线已停止"})
 			return
 		}
+		if i >= len(batch.projects) {
+			alive := prodAlive(prefix)
+			total := len(batch.projects)
+			batch.mu.Unlock()
+			if !alive {
+				break // 自然收尾:已知集全部处理完且拆集已结束
+			}
+			if !waitAnnounced {
+				waitAnnounced = true
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+					Message: fmt.Sprintf("⏳ 产线已追平拆集进度(%d 集全部入队/处理中),等待新段拆集…", total)})
+			}
+			time.Sleep(4 * time.Second)
+			i-- // 原地等待新分集入队
+			continue
+		}
+		waitAnnounced = false
+		ep := batch.projects[i]
 		batch.cur = i + 1
 		batch.mu.Unlock()
 
@@ -172,19 +197,19 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		}()
 		if done {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-				Message: fmt.Sprintf("⏩ 批量产线 %d/%d:《%s》已成片,跳过(断点续跑)", i+1, len(eps), ep)})
+				Message: fmt.Sprintf("⏩ 批量产线 %d/%d:《%s》已成片,跳过(断点续跑)", i+1, batchTotal(), ep)})
 			continue
 		}
 
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-			Message: fmt.Sprintf("▶ 批量产线 %d/%d:开始《%s》", i+1, len(eps), ep)})
+			Message: fmt.Sprintf("▶ 批量产线 %d/%d:开始《%s》", i+1, batchTotal(), ep)})
 		if s.pipe.Running(ep) != nil {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: fmt.Sprintf("《%s》已在运行,跳过", ep)})
 			continue
 		}
 		if err := s.pipe.Start(ep, pipeline.PhaseAll, nil, "", 0); err != nil {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
-				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, len(eps), ep, err)})
+				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, batchTotal(), ep, err)})
 			return
 		}
 		// 等本集跑完(轮询 Running;单集上限 2.5 小时兜底)
@@ -208,7 +233,7 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		res := s.pipe.Result(ep)
 		if res == pipeline.ResultStopped {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-				Message: fmt.Sprintf("⏹ 批量产线暂停于 %d/%d:《%s》已被中止,不自动跳集(重新点「批量产线」从中断处续跑)", i+1, len(eps), ep)})
+				Message: fmt.Sprintf("⏹ 批量产线暂停于 %d/%d:《%s》已被中止,不自动跳集(重新点「批量产线」从中断处续跑)", i+1, batchTotal(), ep)})
 			return
 		}
 		if res == pipeline.ResultFailed {
@@ -220,7 +245,7 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			Message: fmt.Sprintf("✔ 批量产线 %d/%d:《%s》完成", i+1, len(eps), ep)})
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("🎉 批量产线全部完成:《%s》%d 集处理结束,成片见各集项目/作品库", prefix, len(eps))})
+		Message: fmt.Sprintf("🎉 批量产线全部完成:《%s》%d 集处理结束,成片见各集项目/作品库", prefix, batchTotal())})
 }
 
 func epNo(name string) int {
@@ -230,4 +255,20 @@ func epNo(name string) int {
 		return n
 	}
 	return 9999
+}
+
+// batchTotal 当前产线总集数(动态:流式拆集会持续追加)。
+func batchTotal() int {
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+	return len(batch.projects)
+}
+
+// tailRunes 取字符串尾部 n 字(诊断输出截断用)。
+func tailRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return string(r)
+	}
+	return string(r[len(r)-n:])
 }

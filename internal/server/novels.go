@@ -396,16 +396,17 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		// (2026-09-09 实证:「天庭把我裁员，我在人间爆红」占位卡不退场)。
 		name = safeSeries(name)
 		jobSet(name, "running", 0, "AI 拆集通读中…(提交即注册,首页占位卡立即可见)")
-		series, eps, err := s.splitNovelToProjects(context.Background(), name, text, maxEp)
-		if err != nil {
-			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
-				Message: "《" + name + "》拆集失败:" + err.Error()})
-			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
-			return
-		}
-		if cover != "" {
+		// 流水线化(2026-09-10 用户定调):首段拆集就绪即启动批量产线,
+		// LLM 静默持续分段解析补集,产线消费到哪追到哪,日志双流同步。
+		var started bool
+		var seriesFinal string
+		var prodCh chan struct{}
+		applyCover := func(newEps []string) {
+			if cover == "" {
+				return
+			}
 			ext := strings.ToLower(filepath.Ext(cover))
-			for _, ep := range eps {
+			for _, ep := range newEps {
 				dst := filepath.Join(s.store.Dir(ep), "assets", "cover"+ext)
 				if b, e := os.ReadFile(cover); e == nil {
 					_ = os.MkdirAll(filepath.Dir(dst), 0o755)
@@ -413,10 +414,78 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		s.startBatch(series, eps)
+		_, _, err := s.splitNovelToProjects(context.Background(), name, text, maxEp, func(series string, newEps []string) {
+			seriesFinal = series
+			if prodCh == nil {
+				prodCh = prodStart(series) // 注册生产者:产线耗尽已知集时会等新集
+			}
+			applyCover(newEps)
+			if !started {
+				started = true
+				if s.startBatch(series, newEps) {
+					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+						Message: "🚀 首段拆集就绪,批量产线提前启动(拆集继续后台补集,产线实时消费)"})
+				} else {
+					s.batchAppend(series, newEps) // 已有产线在跑:直接入队
+				}
+			} else {
+				s.batchAppend(series, newEps)
+			}
+		})
+		if prodCh != nil {
+			prodDone(seriesFinal, prodCh) // 拆集结束:产线跑完已知集自然收尾
+		}
+		if err != nil {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
+				Message: "《" + name + "》拆集失败:" + err.Error()})
+			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
+			return
+		}
 	}()
 	writeJSON(w, 200, map[string]any{"ok": true, "submitted": true,
 		"message": "《" + name + "》已提交后台创作:拆集(2-6 分钟)→分集项目自动出现→自动开始批量产线,全程日志可观测"})
+}
+
+// ---------- 流式拆集生产者注册表(产线据此判断还有没有新分集要来) ----------
+var novelProducers = struct {
+	sync.Mutex
+	m map[string]chan struct{} // series → done 通道(close=拆集结束)
+}{m: map[string]chan struct{}{}}
+
+func prodStart(series string) chan struct{} {
+	ch := make(chan struct{})
+	novelProducers.Lock()
+	novelProducers.m[series] = ch
+	novelProducers.Unlock()
+	return ch
+}
+func prodDone(series string, ch chan struct{}) {
+	novelProducers.Lock()
+	delete(novelProducers.m, series)
+	novelProducers.Unlock()
+	select {
+	case <-ch:
+	default:
+		close(ch)
+	}
+}
+func prodAlive(series string) bool {
+	novelProducers.Lock()
+	defer novelProducers.Unlock()
+	_, ok := novelProducers.m[series]
+	return ok
+}
+
+// batchAppend 向运行中的批量产线追加新分集(流式拆集逐段推送)。
+func (s *Server) batchAppend(prefix string, newEps []string) {
+	batch.mu.Lock()
+	defer batch.mu.Unlock()
+	if !batch.running || batch.prefix != prefix {
+		return
+	}
+	batch.projects = append(batch.projects, newEps...)
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+		Message: fmt.Sprintf("📥 拆集新段就绪 +%d 集,已加入批量产线队列(当前共 %d 集)", len(newEps), len(batch.projects))})
 }
 
 // ---------- 进行中拆集任务注册表(首页占位卡数据源) ----------
@@ -548,12 +617,14 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 }
 
 // splitNovelToProjects 拆集核心(与 /api/novel-split 共用):返回(系列名, 子项目列表)。
-func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int) (string, []string, error) {
+func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, onEps func(series string, newEps []string)) (string, []string, error) {
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 	if !client.Configured() {
 		return "", nil, fmt.Errorf("LLM 未配置")
 	}
+	heartbeatCtx, hbCancel := context.WithCancel(ctx)
+	defer hbCancel()
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -564,9 +635,11 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			select {
 			case <-done:
 				return
+			case <-heartbeatCtx.Done():
+				return
 			case <-t.C:
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-					Message: fmt.Sprintf("⏳ 《%s》拆集通读中…已等待 %d 秒(整本拆解通常 2-6 分钟)", name, int(time.Since(start).Seconds()))})
+					Message: fmt.Sprintf("⏳ 《%s》拆集解析中…已等待 %d 秒(分层拆解逐段进行)", name, int(time.Since(start).Seconds()))})
 			}
 		}
 	}()
@@ -574,7 +647,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	if max > 0 {
 		maxLine = fmt.Sprintf("\n- 最多拆 %d 集。", max)
 	}
-	splitOnce := func(ctx context.Context, userText string) (string, error) {
+	splitOnce := func(userText string) (string, error) {
 		cctx, cancel := context.WithTimeout(ctx, time.Duration(g.LLM.Timeout)*time.Second+2*time.Minute)
 		defer cancel()
 		return client.Chat(cctx, []llm.Message{
@@ -587,15 +660,10 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		Title string `json:"title"`
 		Brief string `json:"brief"`
 	}
-	var plan struct {
-		Book     string   `json:"book"`
-		Style    string   `json:"style"`
-		Episodes []epItem `json:"episodes"`
-	}
 	parsePlan := func(raw string) ([]epItem, string, string, error) {
 		var pl struct {
-			Book     string   `json:"book"`
-			Style    string   `json:"style"`
+			Book     string    `json:"book"`
+			Style    string    `json:"style"`
 			Episodes []epItem `json:"episodes"`
 		}
 		if err := jsonUnmarshalStrict(trimJSON(raw), &pl); err != nil {
@@ -604,112 +672,145 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		return pl.Episodes, pl.Book, pl.Style, nil
 	}
 
-	// 分层拆解:全本(如 240 章 39 万字)单次调用的输出上限装不下完整拆集
-	// (曾整体压缩成 52 集梗概式,大量丢内容,2026-09-10 用户实证)。按章节
-	// 切块逐段拆解:前情滚动衔接、连续编号、合并后统一重编号。
+	// ---- 分层拆解 + 流水线化 ----
+	// 全本(如 240 章 39 万字)单次调用输出上限装不下完整拆集;按章节切块
+	// 逐段拆解,且**逐段建项**:onEps 回调让产线在首段就绪时即启动,后续段
+	// 静默补集(生产者-消费者,2026-09-10 用户定调)。
 	type chunk struct{ label, body string }
 	var chunks []chunk
 	if len([]rune(text)) > 120000 {
-		for _, ck := range chunkNovelText(text, 60000) {
+		// 4 万字/段:更大的段输出(30-45 集大纲+思考链)会撞 completion 上限
+		// (2026-09-10 实证第 1/8 段 JSON 截断);缩小段=缩输出。
+		for _, ck := range chunkNovelText(text, 40000) {
 			chunks = append(chunks, chunk(ck))
 		}
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解:共 %d 段(逐段拆集,前情滚动衔接)", len([]rune(text)), len(chunks))})
+			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解:共 %d 段(逐段拆集,首段即开产线,后续段静默补集)", len([]rune(text)), len(chunks))})
 	} else {
 		chunks = []chunk{{label: "全书", body: text}}
 	}
-	var allEps []epItem
+
+	series := name
+	seriesFixed := false
+	fixSeries := func(book string) {
+		if seriesFixed {
+			return
+		}
+		seriesFixed = true
+		if series == "连载" && strings.TrimSpace(book) != "" {
+			series = strings.TrimSpace(book)
+		}
+		if safe := safeSeries(series); safe != series {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+				Message: "书名含项目名不支持的字符号(如全角逗号/空格),已自动规整为「" + safe + "」"})
+			series = safe
+		}
+		jobSet(series, "running", 0, "AI 拆集通读中…")
+	}
+	globalStyle := ""
+	var epsAll []string  // 全部集(含补缺命中的已有集)
+	var lastEp epItem    // 跨段前情(上一集概要,供 SaveSource 前情提要)
+	createFail := 0
+	createdTotal := 0
+	createSeg := func(segEps []epItem) {
+		fixSeries(series)
+		var created []string
+		for _, ep := range segEps {
+			epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, safeSeries(ep.Title))
+			if ex := s.seriesExistingEp(series, ep.Ep); ex != "" {
+				epsAll = append(epsAll, ex)
+				lastEp = ep
+				continue
+			}
+			if _, ok := s.store.Get(epName); ok {
+				epsAll = append(epsAll, epName)
+				lastEp = ep
+				continue
+			}
+			if _, err := s.store.Create(epName, s.projectConfigDefault()); err != nil {
+				createFail++
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+					Message: fmt.Sprintf("⚠ 分集 %d 创建失败(%v),已跳过", ep.Ep, err)})
+				continue
+			}
+			var prev string
+			if lastEp.Ep > 0 {
+				prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", lastEp.Ep, lastEp.Title, clampRunes(lastEp.Brief, 400))
+			}
+			src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
+				series, ep.Ep, ep.Title, globalStyle, prev, ep.Brief)
+			_ = s.store.SaveSource(epName, src)
+			epsAll = append(epsAll, epName)
+			created = append(created, epName)
+			lastEp = ep
+			createdTotal++
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success", ProjectID: epName,
+				Message: fmt.Sprintf("已创建分集 %d:《%s》", ep.Ep, epName)})
+		}
+		if onEps != nil && len(created) > 0 {
+			onEps(series, created)
+		}
+	}
+	planned := 0
 	for ci, ck := range chunks {
 		var user string
 		if len(chunks) > 1 {
 			prev := "本书开篇"
-			if n := len(allEps); n > 0 {
-				last := allEps[n-1]
-				prev = fmt.Sprintf("上一段拆到第 %d 集《%s》:%s", n, last.Title, clampRunes(last.Brief, 300))
+			if lastEp.Ep > 0 {
+				prev = fmt.Sprintf("上一段拆到第 %d 集《%s》:%s", lastEp.Ep, lastEp.Title, clampRunes(lastEp.Brief, 300))
 			}
-			user = fmt.Sprintf("【前情提要】%s\n【起始集号】第 %d 集(本段 episodes 从该集号起连续编号,不重复前情已拆内容)\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", prev, len(allEps)+1, ck.label, ck.body)
+			user = fmt.Sprintf("【前情提要】%s\n【起始集号】第 %d 集(本段 episodes 从该集号起连续编号,不重复前情已拆内容;本段通常 8-15 集,每集 brief 300-500 字精炼但节拍完整)\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", prev, planned+1, ck.label, ck.body)
 		} else {
 			user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
 		}
-		raw, err := splitOnce(ctx, user)
-		if err != nil {
-			return "", nil, fmt.Errorf("拆集失败(第 %d/%d 段):%w", ci+1, len(chunks), err)
+		// 段级自动重试一次:思考模型大 JSON 偶发截断/串格式,重试多可过
+		var segEps []epItem
+		var book, style string
+		var err error
+		for attempt := 1; attempt <= 2; attempt++ {
+			var raw string
+			raw, err = splitOnce(user)
+			if err == nil {
+				segEps, book, style, err = parsePlan(raw)
+				if err == nil && len(segEps) > 0 {
+					break
+				}
+				err = fmt.Errorf("解析失败(输出可能被截断,原文尾部:…%s)", tailRunes(raw, 200))
+			}
+			if attempt == 1 {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+					Message: fmt.Sprintf("⚠ 第 %d/%d 段拆集结果异常,自动重试一次:%v", ci+1, len(chunks), err)})
+			}
 		}
-		eps, book, style, err := parsePlan(raw)
-		if err != nil || len(eps) == 0 {
-			return "", nil, fmt.Errorf("拆集结果解析失败(第 %d/%d 段),请重试", ci+1, len(chunks))
+		if err != nil || len(segEps) == 0 {
+			return series, epsAll, fmt.Errorf("拆集失败(第 %d/%d 段):%v", ci+1, len(chunks), err)
 		}
 		if ci == 0 {
-			plan.Book, plan.Style = book, style
+			fixSeries(book)
+			globalStyle = style
 		}
-		allEps = append(allEps, eps...)
+		// 段内重编号(全局顺序号),随后立即建项并回调(流水线推送)
+		for j := range segEps {
+			planned++
+			segEps[j].Ep = planned
+		}
+		createSeg(segEps)
+		jobSet(series, "running", createdTotal, fmt.Sprintf("已建 %d 集(拆解进行中)", createdTotal))
 		if len(chunks) > 1 {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-				Message: fmt.Sprintf("📚 分层拆解 %d/%d 段完成,累计 %d 集", ci+1, len(chunks), len(allEps))})
+				Message: fmt.Sprintf("📚 分层拆解 %d/%d 段完成,累计已建 %d 集", ci+1, len(chunks), createdTotal)})
 		}
 	}
-	if len(allEps) == 0 {
-		return "", nil, fmt.Errorf("拆集结果为空,请重试")
-	}
-	// 统一重编号:分段局部编号不可信,顺序即真相
-	for i := range allEps {
-		allEps[i].Ep = i + 1
-	}
-	plan.Episodes = allEps
-	series := name
-	if series == "连载" && strings.TrimSpace(plan.Book) != "" {
-		series = strings.TrimSpace(plan.Book)
-	}
-	if safe := safeSeries(series); safe != series {
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-			Message: "书名含项目名不支持的字符号(如全角逗号/空格),已自动规整为「" + safe + "」"})
-		series = safe
-	}
-	jobSet(series, "running", 0, "AI 拆集通读中…")
-	var eps []string
-	createFail := 0
-	for i, ep := range plan.Episodes {
-		// 标题同样过白名单:LLM 小标题可能带 ！？：等全角符号,裸拼进项目名
-		// 会让 Create 静默失败(2026-09-10 实证:分集 47 创建失败已跳过)
-		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, safeSeries(ep.Title))
-		if ex := s.seriesExistingEp(series, ep.Ep); ex != "" {
-			eps = append(eps, ex) // 按集号补缺:已有分集(哪怕标题措辞不同)不动
-			continue
-		}
-		if _, ok := s.store.Get(epName); ok {
-			eps = append(eps, epName)
-			continue
-		}
-		if _, err := s.store.Create(epName, s.projectConfigDefault()); err != nil {
-			createFail++
-			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-				Message: fmt.Sprintf("⚠ 分集 %d 创建失败(%v),已跳过", ep.Ep, err)})
-			continue
-		}
-		var prev string
-		if i > 0 {
-			p := plan.Episodes[i-1]
-			prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", p.Ep, p.Title, clampRunes(p.Brief, 400))
-		}
-		src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
-			series, ep.Ep, ep.Title, plan.Style, prev, ep.Brief)
-		_ = s.store.SaveSource(epName, src)
-		eps = append(eps, epName)
-		// 逐集事件:首页项目列表实时出现分集(不等全部拆完)
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success", ProjectID: epName,
-			Message: fmt.Sprintf("已创建分集 %d/%d:《%s》", i+1, len(plan.Episodes), epName)})
-		jobSet(series, "running", i+1, fmt.Sprintf("已建 %d/%d 集", i+1, len(plan.Episodes)))
-	}
-	if len(eps) == 0 {
-		err := fmt.Errorf("拆集结果 %d 集全部创建失败,请查看日志告警", len(plan.Episodes))
+	if len(epsAll) == 0 {
+		err := fmt.Errorf("拆集结果 %d 集全部创建失败,请查看日志告警", planned)
 		jobSet(series, "failed", 0, err.Error())
 		return "", nil, err
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目%s", series, len(plan.Episodes), len(eps),
+		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目%s", series, planned, createdTotal,
 			failNote(createFail))})
-	jobSet(series, "done", len(eps), fmt.Sprintf("拆集完成:%d 集", len(eps)))
-	return series, eps, nil
+	jobSet(series, "done", createdTotal, fmt.Sprintf("拆集完成:%d 集", createdTotal))
+	return series, epsAll, nil
 }
 
 // failNote 创建失败数附注。
