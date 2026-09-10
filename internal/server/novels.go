@@ -574,28 +574,88 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	if max > 0 {
 		maxLine = fmt.Sprintf("\n- 最多拆 %d 集。", max)
 	}
-	ctx, cancel := context.WithTimeout(ctx, time.Duration(g.LLM.Timeout)*time.Second+2*time.Minute)
-	defer cancel()
-	raw, err := client.Chat(ctx, []llm.Message{
-		{Role: "system", Content: novelSplitSystem},
-		{Role: "user", Content: "小说正文:\n\"\"\"\n" + text + "\n\"\"\"" + maxLine + "\n输出拆集 JSON。"},
-	}, true)
-	if err != nil {
-		return "", nil, fmt.Errorf("拆集失败: %w", err)
+	splitOnce := func(ctx context.Context, userText string) (string, error) {
+		cctx, cancel := context.WithTimeout(ctx, time.Duration(g.LLM.Timeout)*time.Second+2*time.Minute)
+		defer cancel()
+		return client.Chat(cctx, []llm.Message{
+			{Role: "system", Content: novelSplitSystem},
+			{Role: "user", Content: userText + maxLine + "\n输出拆集 JSON。"},
+		}, true)
+	}
+	type epItem struct {
+		Ep    int    `json:"ep"`
+		Title string `json:"title"`
+		Brief string `json:"brief"`
 	}
 	var plan struct {
-		Book     string `json:"book"`
-		Style    string `json:"style"`
-		Episodes []struct {
-			Ep    int    `json:"ep"`
-			Title string `json:"title"`
-			Brief string `json:"brief"`
-		} `json:"episodes"`
+		Book     string   `json:"book"`
+		Style    string   `json:"style"`
+		Episodes []epItem `json:"episodes"`
 	}
-	if err := jsonUnmarshalStrict(trimJSON(raw), &plan); err != nil || len(plan.Episodes) == 0 {
-		return "", nil, fmt.Errorf("拆集结果解析失败,请重试")
+	parsePlan := func(raw string) ([]epItem, string, string, error) {
+		var pl struct {
+			Book     string   `json:"book"`
+			Style    string   `json:"style"`
+			Episodes []epItem `json:"episodes"`
+		}
+		if err := jsonUnmarshalStrict(trimJSON(raw), &pl); err != nil {
+			return nil, "", "", err
+		}
+		return pl.Episodes, pl.Book, pl.Style, nil
 	}
-	sort.Slice(plan.Episodes, func(i, j int) bool { return plan.Episodes[i].Ep < plan.Episodes[j].Ep })
+
+	// 分层拆解:全本(如 240 章 39 万字)单次调用的输出上限装不下完整拆集
+	// (曾整体压缩成 52 集梗概式,大量丢内容,2026-09-10 用户实证)。按章节
+	// 切块逐段拆解:前情滚动衔接、连续编号、合并后统一重编号。
+	type chunk struct{ label, body string }
+	var chunks []chunk
+	if len([]rune(text)) > 120000 {
+		for _, ck := range chunkNovelText(text, 60000) {
+			chunks = append(chunks, chunk(ck))
+		}
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解:共 %d 段(逐段拆集,前情滚动衔接)", len([]rune(text)), len(chunks))})
+	} else {
+		chunks = []chunk{{label: "全书", body: text}}
+	}
+	var allEps []epItem
+	for ci, ck := range chunks {
+		var user string
+		if len(chunks) > 1 {
+			prev := "本书开篇"
+			if n := len(allEps); n > 0 {
+				last := allEps[n-1]
+				prev = fmt.Sprintf("上一段拆到第 %d 集《%s》:%s", n, last.Title, clampRunes(last.Brief, 300))
+			}
+			user = fmt.Sprintf("【前情提要】%s\n【起始集号】第 %d 集(本段 episodes 从该集号起连续编号,不重复前情已拆内容)\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", prev, len(allEps)+1, ck.label, ck.body)
+		} else {
+			user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
+		}
+		raw, err := splitOnce(ctx, user)
+		if err != nil {
+			return "", nil, fmt.Errorf("拆集失败(第 %d/%d 段):%w", ci+1, len(chunks), err)
+		}
+		eps, book, style, err := parsePlan(raw)
+		if err != nil || len(eps) == 0 {
+			return "", nil, fmt.Errorf("拆集结果解析失败(第 %d/%d 段),请重试", ci+1, len(chunks))
+		}
+		if ci == 0 {
+			plan.Book, plan.Style = book, style
+		}
+		allEps = append(allEps, eps...)
+		if len(chunks) > 1 {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+				Message: fmt.Sprintf("📚 分层拆解 %d/%d 段完成,累计 %d 集", ci+1, len(chunks), len(allEps))})
+		}
+	}
+	if len(allEps) == 0 {
+		return "", nil, fmt.Errorf("拆集结果为空,请重试")
+	}
+	// 统一重编号:分段局部编号不可信,顺序即真相
+	for i := range allEps {
+		allEps[i].Ep = i + 1
+	}
+	plan.Episodes = allEps
 	series := name
 	if series == "连载" && strings.TrimSpace(plan.Book) != "" {
 		series = strings.TrimSpace(plan.Book)
@@ -673,4 +733,68 @@ func (s *Server) projectConfigDefault() project.ProjectConfig {
 		cfg.Params.Render.Engine = s.cfg.Get().Render.DefaultEngine
 	}
 	return cfg
+}
+
+// chunkNovelText 按章节标题把全书切成 ≤limit 字的段(无章节标题则按尺寸硬切)。
+// 供分层拆解:每段一次 LLM 调用,输出体量可控,整本不丢内容。
+func chunkNovelText(text string, limit int) []struct{ label, body string } {
+	type piece struct{ head, body string }
+	re := regexp.MustCompile(`(?m)^\s{0,4}(第[0-9零〇一二三四五六七八九十百千两]+[章回节])[^\n]{0,50}\s*$`)
+	locs := re.FindAllStringSubmatchIndex(text, -1)
+	var pieces []piece
+	if len(locs) >= 8 { // 章节结构可信
+		for i, loc := range locs {
+			start := loc[0]
+			end := len(text)
+			if i+1 < len(locs) {
+				end = locs[i+1][0]
+			}
+			pieces = append(pieces, piece{head: strings.TrimSpace(text[loc[0]:loc[1]]), body: text[start:end]})
+		}
+		if locs[0][0] > 0 { // 楔子/简介并入首段
+			pre := text[:locs[0][0]]
+			if strings.TrimSpace(pre) != "" && len(pieces) > 0 {
+				pieces[0].body = pre + pieces[0].body
+			}
+		}
+	} else { // 无章节结构:按尺寸硬切,段落边界优先
+		runes := []rune(text)
+		for start := 0; start < len(runes); {
+			end := start + limit
+			if end >= len(runes) {
+				end = len(runes)
+			} else {
+				for end > start && end < len(runes) && runes[end] != '\n' {
+					end--
+				}
+				if end == start {
+					end = start + limit
+				}
+			}
+			pieces = append(pieces, piece{head: fmt.Sprintf("第 %d 块", len(pieces)+1), body: string(runes[start:end])})
+			start = end
+		}
+	}
+	// 贪心合并相邻章成 ≤limit 的段
+	var out []struct{ label, body string }
+	var curLabel, curBody string
+	flush := func() {
+		if strings.TrimSpace(curBody) != "" {
+			out = append(out, struct{ label, body string }{curLabel, curBody})
+		}
+		curLabel, curBody = "", ""
+	}
+	for _, pc := range pieces {
+		switch {
+		case curBody == "":
+			curLabel, curBody = pc.head, pc.body
+		case len([]rune(curBody))+len([]rune(pc.body)) <= limit:
+			curBody += pc.body
+		default:
+			flush()
+			curLabel, curBody = pc.head, pc.body
+		}
+	}
+	flush()
+	return out
 }
