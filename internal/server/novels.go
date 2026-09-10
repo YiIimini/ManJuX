@@ -176,6 +176,18 @@ func safeSeries(name string) string {
 	return out
 }
 
+// seriesExistingEp 系列下按集号找已有分集项目名(前缀匹配,无则空串)。
+// 补缺重拆时 LLM 重新措辞的标题不再催生重复集。
+func (s *Server) seriesExistingEp(series string, ep int) string {
+	prefix := fmt.Sprintf("%s·第%02d集·", series, ep)
+	for _, p := range s.store.List() {
+		if strings.HasPrefix(p.ID, prefix) {
+			return p.ID
+		}
+	}
+	return ""
+}
+
 // novelProduced 是否已为该书创建过系列/同名项目。
 func (s *Server) novelProduced(name string) bool {
 	re := regexp.MustCompile(`^` + regexp.QuoteMeta(safeSeries(name)) + `(·第\d+集|$)`)
@@ -369,8 +381,10 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	}
 	// 查重:同书系列/同名项目已存在
 	if s.novelProduced(name) {
-		writeErr(w, 409, fmt.Errorf("《%s》已创建过视频项目(首页「剧集合集」卡片可查看/续跑),请勿重复创建", name))
-		return
+		// 已有系列:放行进入补缺模式——重拆按集号去重,已有分集不动,只建缺失
+		// (2026-09-10:分集 47 因标题符号创建失败后无补建通道,用户被查重挡死)
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: "《" + name + "》已有系列,进入补缺模式:已有分集保持不动,仅补建缺失的集"})
 	}
 	// 后台异步:拆集→建项目→封面→自动批量。立即返回,弹窗不等待 LLM(2-6 分钟);
 	// 进度看全局日志(30 秒心跳),分集项目创建后首页实时出现。
@@ -595,7 +609,13 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	var eps []string
 	createFail := 0
 	for i, ep := range plan.Episodes {
-		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, ep.Title)
+		// 标题同样过白名单:LLM 小标题可能带 ！？：等全角符号,裸拼进项目名
+		// 会让 Create 静默失败(2026-09-10 实证:分集 47 创建失败已跳过)
+		epName := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, safeSeries(ep.Title))
+		if ex := s.seriesExistingEp(series, ep.Ep); ex != "" {
+			eps = append(eps, ex) // 按集号补缺:已有分集(哪怕标题措辞不同)不动
+			continue
+		}
 		if _, ok := s.store.Get(epName); ok {
 			eps = append(eps, epName)
 			continue

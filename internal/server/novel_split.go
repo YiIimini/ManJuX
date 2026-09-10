@@ -50,8 +50,9 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 		name = "连载"
 	}
 	if s.novelProduced(name) && name != "连载" {
-		writeErr(w, 409, fmt.Errorf("《%s》已创建过视频项目,请勿重复创建", name))
-		return
+		// 补缺模式:重拆按集号去重,已有分集不动(2026-09-10 与一键创作入口统一)
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: "《" + name + "》已有系列,进入补缺模式:已有分集保持不动,仅补建缺失的集"})
 	}
 	// 异步后台拆集建项目:立即返回,进度看全局日志(30 秒心跳+逐集创建事件),
 	// 首页项目列表随 novel 事件实时刷新——弹窗不再同步等待 LLM(2-6 分钟)。
