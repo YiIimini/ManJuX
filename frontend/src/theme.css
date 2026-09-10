@@ -110,3 +110,22 @@
 
 /* 消息/通知 */
 .el-message { backdrop-filter: blur(10px); }
+
+/* el-table 深色主题化:表头去亮底、行透明、悬停微亮(2026-09-10 视觉实勘) */
+.el-table {
+  --el-table-header-bg-color: var(--mx-bg2, #10141f);
+  --el-table-header-text-color: var(--mx-text2, #93a0bd);
+  --el-table-bg-color: transparent;
+  --el-table-tr-bg-color: transparent;
+  --el-table-border-color: var(--mx-line, #1e2537);
+  --el-table-text-color: var(--mx-text, #edf1fa);
+  --el-table-row-hover-bg-color: rgba(255, 255, 255, .045);
+  --el-table-fixed-box-shadow: none;
+  background: transparent;
+  font-size: 12px;
+}
+.el-table th.el-table__cell {
+  font-weight: 600;
+  letter-spacing: .5px;
+}
+.el-table .el-table__empty-block { background: transparent; }

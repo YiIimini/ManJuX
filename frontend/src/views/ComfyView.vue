@@ -260,18 +260,18 @@ function verCellCls(row, which) {
       <el-table :data="[{ ...vers.core?.[0], _kind: '本体' }, ...(vers.nodes||[]).map(n => ({ ...n, _kind: '插件' }))]"
         size="small" height="380"
         style="--el-table-border-color: var(--mx-line); width: 100%">
-        <el-table-column label="类型" width="56">
+        <el-table-column label="类型" width="56" align="center" header-align="center">
           <template #default="{ row }">
             <span class="timecode">{{ row._kind }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="name" label="名称" width="230" show-overflow-tooltip>
+        <el-table-column prop="name" label="名称" min-width="240">
           <template #default="{ row }">
             <div class="text-xs">{{ row.name }}</div>
             <div style="font-size:10px;color:var(--mx-text3);line-height:1.4" v-if="row.desc">{{ row.desc }}</div>
           </template>
         </el-table-column>
-        <el-table-column prop="local" label="本地版本" width="130">
+        <el-table-column prop="local" label="本地版本" width="128" align="center" header-align="center">
           <template #default="{ row }">
             <div class="flex flex-col">
               <span class="font-mono text-xs" :class="verCellCls(row, 'local')">{{ row.local !== row.localCommit ? (row.local || '—') : '—' }}</span>
@@ -279,7 +279,7 @@ function verCellCls(row, which) {
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="remote" label="在线最新" width="140">
+        <el-table-column prop="remote" label="在线最新" width="136" align="center" header-align="center">
           <template #default="{ row }">
             <div class="flex flex-col">
               <span class="font-mono text-xs" :class="verCellCls(row, 'remote')">{{ row.remote !== row.remoteCommit ? (row.remote || '—') : '—' }}</span>
@@ -287,16 +287,11 @@ function verCellCls(row, which) {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="110">
+        <el-table-column label="状态" width="96" align="center" header-align="center">
           <template #default="{ row }">
             <span class="ver-badge" :class="STATUS_META[row.status]?.cls">
               <i class="dot" :class="STATUS_META[row.status]?.cls || ''" v-if="row.status !== 'unknown'"></i>{{ STATUS_META[row.status]?.label || row.status }}
             </span>
-          </template>
-        </el-table-column>
-        <el-table-column label="仓库" min-width="180">
-          <template #default="{ row }">
-            <span class="font-mono" style="font-size:10px;color:var(--mx-text3)">{{ row.repo || '—' }}</span>
           </template>
         </el-table-column>
         <el-table-column prop="repo" label="仓库" width="200" show-overflow-tooltip>
