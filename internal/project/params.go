@@ -12,11 +12,11 @@ type StageParams struct {
 
 // ScriptParams 剧本/分镜阶段(script)参数。
 type ScriptParams struct {
-	MaxShots     int      `json:"max_shots"`      // 目标镜头数(3-12)
-	TotalSeconds int      `json:"total_seconds"`  // 目标总时长(秒)
-	Styles       []string `json:"styles"`         // 渲染风格预设 key(可多选组合)
-	StyleHint    string   `json:"style_hint"`     // 附加风格要求(自由文本)
-	Chibi        bool     `json:"chibi"`          // 定妆时同步生成 Q 版形象(内心活动表达)
+	MaxShots     int      `json:"max_shots"`     // 目标镜头数(3-12)
+	TotalSeconds int      `json:"total_seconds"` // 目标总时长(秒)
+	Styles       []string `json:"styles"`        // 渲染风格预设 key(可多选组合)
+	StyleHint    string   `json:"style_hint"`    // 附加风格要求(自由文本)
+	Chibi        bool     `json:"chibi"`         // 定妆时同步生成 Q 版形象(内心活动表达)
 }
 
 // AssetsParams 资产阶段(assets)参数。
@@ -26,9 +26,9 @@ type AssetsParams struct {
 
 // RenderParams 渲染阶段(render)参数。
 type RenderParams struct {
-	Engine    string `json:"engine"`     // auto / comfy / api
-	Accel     string `json:"accel"`      // 加速档:quality(Acc-8Step质量) / turbo(官方Turbo,默认) / express(极速预览:int8VAE+4步)
-	Width     int    `json:"width"`      // 32 整除,短边≤768
+	Engine    string `json:"engine"` // auto / comfy / api
+	Accel     string `json:"accel"`  // 加速档:quality(Acc-8Step质量) / turbo(官方Turbo,默认) / express(极速预览:int8VAE+4步)
+	Width     int    `json:"width"`  // 32 整除,短边≤768
 	Height    int    `json:"height"`
 	Steps     int    `json:"steps"`      // turbo 4-8 / 基线 20
 	Seed      int64  `json:"seed"`       // 0=每镜随机;非 0=全项目固定
@@ -60,7 +60,8 @@ type AssembleParams struct {
 // DefaultStageParams 返回全局默认的阶段参数。
 func DefaultStageParams() StageParams {
 	return StageParams{
-		Script: ScriptParams{MaxShots: 6, TotalSeconds: 42, StyleHint: ""},
+		// 默认 8 镜(2026-09-10:解析更细+镜头更多→叙事不断层、衔接丝滑;3-12 可调)
+		Script: ScriptParams{MaxShots: 8, TotalSeconds: 56, StyleHint: ""},
 		Assets: AssetsParams{Source: "krea2"}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,

@@ -44,7 +44,8 @@ Return STRICT JSON only (no markdown fences, no commentary):
 }`
 
 const sysShotRules = `## SHOT PLAN RULES
-- 3-12 shots total. Each shot 4-10 seconds (integer). Hook in shot 1, payoff at the end.
+- 3-12 shots total (target 8-12 for a full episode beat; prefer MORE, smaller shots over fewer overloaded ones). Each shot 4-10 seconds (integer). Hook in shot 1, payoff at the end.
+- CONTINUITY (critical, 2026-09-10): consecutive shots must read as ONE continuous flow. Each shot's action must BEGIN where the previous shot ENDED — same location (unless a deliberate scene change), carried-over posture/emotion/props, coherent time-of-day and lighting. NEVER skip a narrative beat the audience needs; if a beat needs two camera moments, split it into two shots with one clear action each. On scene changes, bridge with narration or a matching visual anchor, never jump-cut blind.
 - shot_size 景别用中文:远景/全景/中景/近景/特写。Emotional beats and dialogue MUST use 近景/特写 (H3 face tokens are scarce; closer framing beats wider framing).
 - One camera move per shot, chosen from official motion vocabulary ONLY: Push In / Pull Out / Pan / Truck / Tilt / Pedestal / Arc / Tracking / Static / POV / Roll / Shake, plus amplitude (small/large amplitude) and speed (slow/fast) in natural English. NEVER use jargon like dolly, crane, whip pan.
 - mode: "ref2va" when character/scene reference images will be provided (any shot with on-screen characters); "t2va" for pure text-to-video shots without references.

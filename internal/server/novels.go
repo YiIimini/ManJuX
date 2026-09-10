@@ -609,7 +609,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		var prev string
 		if i > 0 {
 			p := plan.Episodes[i-1]
-			prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", p.Ep, p.Title, clampRunes(p.Brief, 120))
+			prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", p.Ep, p.Title, clampRunes(p.Brief, 400))
 		}
 		src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
 			series, ep.Ep, ep.Title, plan.Style, prev, ep.Brief)
