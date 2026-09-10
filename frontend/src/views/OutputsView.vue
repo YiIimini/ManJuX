@@ -85,6 +85,11 @@ function epNo(it) {
 // 批量删除成片产物
 const batch = ref(false)
 const sel = ref(new Set())
+function batchSelectGroup(sec) {
+  batch.value = true
+  sel.value = new Set(sec.items.map(i => i.project))
+  ElMessage.info(`已勾选《${sec.header}》${sec.items.length} 集,确认后点「删除选中」`)
+}
 function toggleSel(id) {
   if (sel.value.has(id)) sel.value.delete(id)
   else sel.value.add(id)
@@ -163,6 +168,11 @@ async function batchDelete() {
         <b class="text-sm">《{{ sec.header }}》</b>
         <span class="timecode">{{ sec.items.length }} 集 · {{ sec.items.filter(x => x.final || x.final_2k).length }} 有成片</span>
         <div class="flex-1"></div>
+        <button class="text-xs flex items-center gap-1 px-2 py-1 rounded"
+                style="color:var(--mx-text3);border:1px solid var(--mx-line);background:transparent"
+                title="勾选本组全部项目进入批量删除" @click.stop="batchSelectGroup(sec)">
+          <el-icon :size="12"><Delete /></el-icon>批量删除
+        </button>
         <span class="text-xs" style="color:var(--mx-text3)">{{ collapsed[sec.header] ? '展开' : '收起' }}</span>
         <el-icon :size="13" style="transition:transform .18s" :style="collapsed[sec.header] ? '' : 'transform:rotate(180deg)'"><ArrowUp /></el-icon>
       </div>
@@ -223,7 +233,7 @@ async function batchDelete() {
               <el-button size="small" :disabled="!it.final_2k" @click="play(it,'2k')"><el-icon class="mr-1"><MagicStick /></el-icon>2K</el-button>
             </el-tooltip>
             <el-tooltip content="打开该项目的工作台(分镜/资产/产线)" placement="top">
-              <el-button size="small" @click="enter(it)"><el-icon class="mr-1"><EditPen /></el-icon>进入项目</el-button>
+              <el-button size="small" @click="enter(it)"><el-icon class="mr-1"><EditPen /></el-icon>进入工作台</el-button>
             </el-tooltip>
           </div>
         </div>

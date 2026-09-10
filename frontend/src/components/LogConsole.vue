@@ -95,7 +95,7 @@ onBeforeUnmount(() => {
 <template>
   <div ref="root" class="log-console log-pop" :style="{
     width: size.w + 'px', height: size.h + 'px',
-    ...(pos ? { left: pos.left + 'px', top: pos.top + 'px', right: 'auto', bottom: 'auto' } : {}),
+    ...(pos ? { left: pos.left + 'px', top: pos.top + 'px', right: 'auto', bottom: 'auto', transform: 'none' } : {}),
   }">
       <div class="log-pop-bar" title="拖动移动" @mousedown="onDragDown">
         <span class="tick-dot" :class="logDot"></span>
@@ -117,12 +117,15 @@ onBeforeUnmount(() => {
         </el-tooltip>
       </div>
       <div class="flex-1 overflow-y-auto py-1.5">
-        <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="m" style="color:#46536f">等待管线事件…(运行任意阶段后实时输出)</span></div>
+        <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="tl-dot"></span><span class="body"><span class="m" style="color:#46536f">等待管线事件…(运行任意阶段后实时输出)</span></span></div>
         <div v-for="(l, i) in reversed" :key="i" class="log-line" :class="l.level">
           <span class="t">{{ fmtTime(l.at) }}</span>
-          <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
-          <span class="ph" v-if="l.phase">[{{ phaseLabel(l.phase) }}]</span>
-          <span class="m">{{ l.message }}</span>
+          <span class="tl-dot"></span>
+          <span class="body">
+            <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
+            <span class="ph" v-if="l.phase">[{{ phaseLabel(l.phase) }}]</span>
+            <span class="m">{{ l.message }}</span>
+          </span>
         </div>
       </div>
       <div class="log-rsz" title="拖动调大小" @mousedown="onRszDown"></div>

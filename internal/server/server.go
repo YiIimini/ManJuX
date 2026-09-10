@@ -121,6 +121,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("POST /api/open", s.openInExplorer)
+	m.HandleFunc("POST /api/open-url", s.openExternalURL)
 	m.HandleFunc("POST /api/quit", s.quitApp)
 	m.HandleFunc("POST /api/test", s.testConn)
 	m.HandleFunc("GET /api/library", s.listLibrary)
@@ -773,6 +774,21 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- 打开目录(白名单)----------
+
+// openExternalURL 系统默认浏览器打开外链(仅 https,防任意协议)。
+func (s *Server) openExternalURL(w http.ResponseWriter, r *http.Request) {
+	var in struct{ URL string `json:"url"` }
+	_ = readBody(r, &in)
+	if !strings.HasPrefix(in.URL, "https://") {
+		writeErr(w, 400, fmt.Errorf("仅支持 https 链接"))
+		return
+	}
+	if err := browser.OpenDefault(in.URL); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
 
 func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 	var in struct {

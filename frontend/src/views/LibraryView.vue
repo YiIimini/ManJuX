@@ -159,30 +159,7 @@ async function remove(e) {
         Krea-2 生成与手动上传的资产都会自动入库;复用计数排序。
       </p>
     </div>
-
-    <div class="flex items-center gap-3 mb-4">
-      <el-radio-group v-model="kind">
-        <el-radio-button value="characters">角色({{ lib.characters?.length || 0 }})</el-radio-button>
-        <el-radio-button value="scenes">场景({{ lib.scenes?.length || 0 }})</el-radio-button>
-      </el-radio-group>
-      <div class="flex-1"></div>
-      <template v-if="batch">
-        <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
-        <el-button size="small" plain @click="toggleAllSel">{{ allSelected ? '取消全选' : '全选' }}</el-button>
-        <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
-          <el-icon class="mr-1"><Delete /></el-icon>删除选中
-        </el-button>
-        <el-button size="small" @click="batch = false; sel = new Set()">退出批量</el-button>
-      </template>
-      <el-button v-else size="small" plain :disabled="!list.length" @click="batch = true; sel = new Set()">
-        <el-icon class="mr-1"><Operation /></el-icon>批量管理
-      </el-button>
-      <el-tooltip content="重新读取资产库(复用计数排序)" placement="bottom">
-        <el-button size="small" @click="refresh" :loading="loading">刷新</el-button>
-      </el-tooltip>
-    </div>
-
-    <!-- 角色运营:抽卡 / 自定义新建 -->
+<!-- 角色运营:抽卡 / 自定义新建 -->
     <div v-if="kind === 'characters'" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
       <div class="flex items-center gap-3 flex-1 min-w-[300px]">
         <div class="stage-ico active" style="width:38px;height:38px"><el-icon :size="18"><MagicStick /></el-icon></div>
@@ -214,6 +191,28 @@ async function remove(e) {
         </div>
         <el-button text size="small" @click="gachaResult = null"><el-icon><Close /></el-icon></el-button>
       </div>
+    </div>
+
+    <div class="flex items-center gap-3 mb-4">
+      <el-radio-group v-model="kind">
+        <el-radio-button value="characters">角色({{ lib.characters?.length || 0 }})</el-radio-button>
+        <el-radio-button value="scenes">场景({{ lib.scenes?.length || 0 }})</el-radio-button>
+      </el-radio-group>
+      <div class="flex-1"></div>
+      <template v-if="batch">
+        <span class="text-xs mr-2" style="color:var(--mx-amber)">已选 {{ sel.size }} 项</span>
+        <el-button size="small" plain @click="toggleAllSel">{{ allSelected ? '取消全选' : '全选' }}</el-button>
+        <el-button size="small" type="danger" :disabled="!sel.size" @click="batchDelete">
+          <el-icon class="mr-1"><Delete /></el-icon>删除选中
+        </el-button>
+        <el-button size="small" @click="batch = false; sel = new Set()">退出批量</el-button>
+      </template>
+      <el-button v-else size="small" plain :disabled="!list.length" @click="batch = true; sel = new Set()">
+        <el-icon class="mr-1"><Operation /></el-icon>批量管理
+      </el-button>
+      <el-tooltip content="重新读取资产库(复用计数排序)" placement="bottom">
+        <el-button size="small" @click="refresh" :loading="loading">刷新</el-button>
+      </el-tooltip>
     </div>
 
     <div v-if="!list.length" class="panel empty-zone">

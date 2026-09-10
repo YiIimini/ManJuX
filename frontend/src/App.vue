@@ -129,6 +129,28 @@ const verLabel = computed(() => {
   const v = (G.status?.version || '').replace(/^v+/i, '')
   return v ? 'V' + v : 'V…'
 })
+// ---- 侧栏宽度拖动(180-320,localStorage 持久) ----
+function onSideResize(e) {
+  e.preventDefault()
+  const sidebar = document.querySelector('.sidebar')
+  const rect = sidebar.getBoundingClientRect()
+  const onMove = (ev) => {
+    const w = Math.min(320, Math.max(180, Math.round(ev.clientX - rect.left)))
+    document.documentElement.style.setProperty('--side-w', w + 'px')
+  }
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    const w = getComputedStyle(document.documentElement).getPropertyValue('--side-w').trim()
+    if (w) localStorage.setItem('mx-side-w', w)
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+}
+async function openAuthor() {
+  try { await fetch('/api/open-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://github.com/YiIimini/' }) }) }
+  catch { window.open('https://github.com/YiIimini/', '_blank') }
+}
 // 占用分级:60/85 双阈值 → 绿/琥珀/红
 const loadCls = (v) => v > 85 ? 'hot' : (v > 60 ? 'warm' : 'cool')
 // 传感器无数据([N/A])统一显示 —
@@ -136,6 +158,10 @@ const na = (s) => (s || '—').replaceAll('[N/A]', '—')
 
 onMounted(() => {
   applyTheme() // 主题与玻璃偏好(启动即恢复)
+  const savedW = localStorage.getItem('mx-side-w')
+  if (savedW && +savedW >= 180 && +savedW <= 320) {
+    document.documentElement.style.setProperty('--side-w', savedW + 'px')
+  }
   connectEvents()
   // 桌面模式原生文件拖放:wails 把拖入文件的绝对路径发到这里,
   // 转发给落点处带 --wails-drop-target:drop 标记的上传区(浏览器模式无此事件,
@@ -185,6 +211,7 @@ const env = computed(() => G.status?.env)
   <div class="shell">
     <!-- ▎左侧导航 -->
     <aside class="sidebar" :class="{ collapsed: collapse }">
+      <div v-if="!collapse" class="side-resizer" title="拖动调整导航栏宽度" @mousedown="onSideResize"></div>
       <div class="side-brand" @click="nav('home')">
         <svg width="30" height="30" viewBox="0 0 48 48" fill="none" class="flex-none">
           <rect x="3" y="3" width="42" height="42" rx="10" fill="#10141F" stroke="url(#g1)" stroke-width="2.5"/>
@@ -381,6 +408,7 @@ const env = computed(() => G.status?.env)
         </button>
         <div class="vdiv"></div>
         <span class="timecode verchip">{{ verLabel }}</span>
+        <a class="author-link" title="作者 GitHub 主页" @click.prevent="openAuthor">· YiIimini</a>
       </footer>
 
     </div>
