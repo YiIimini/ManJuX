@@ -267,9 +267,7 @@ function verCellCls(row, which) {
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="240">
           <template #default="{ row }">
-            <el-tooltip :content="row.repo ? '仓库:https://github.com/' + row.repo : '无远程仓库(本地目录)'" placement="top" :show-after="200">
-              <div class="text-xs cursor-help" style="text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--mx-text3);">{{ row.name }}</div>
-            </el-tooltip>
+            <div class="text-xs cursor-help" :title="row.repo ? '仓库:https://github.com/' + row.repo : '无远程仓库(本地目录)'" style="text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--mx-text3);">{{ row.name }}</div>
             <div style="font-size:10px;color:var(--mx-text3);line-height:1.4" v-if="row.desc">{{ row.desc }}</div>
           </template>
         </el-table-column>
@@ -294,11 +292,6 @@ function verCellCls(row, which) {
             <span class="ver-badge" :class="STATUS_META[row.status]?.cls">
               <i class="dot" :class="STATUS_META[row.status]?.cls || ''" v-if="row.status !== 'unknown'"></i>{{ STATUS_META[row.status]?.label || row.status }}
             </span>
-          </template>
-        </el-table-column>
-        <el-table-column prop="repo" label="仓库" width="200" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span class="text-xs" style="color:var(--mx-text3)">{{ row.repo || '—' }}</span>
           </template>
         </el-table-column>
       </el-table>
