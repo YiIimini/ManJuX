@@ -413,6 +413,15 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	// ——配合资产库按名复用,杜绝同角色跨集换脸(漂移)。实证:貔貅第01集
 	// 「貅满堂」到第02集被 LLM 写成「貅满仓」,一字之差即匹配失效重生成。
 	hint := composeStyleHint(p.Styles, p.StyleHint)
+	if strings.Contains(text, "【本集原文】") {
+		if hint != "" {
+			hint += "\n"
+		}
+		// 原文在场:分镜必须沿原文节拍逐段改编,覆盖全部关键情节——
+		// 跳段/断章取义的根治指令(2026-09-10 用户定调)
+		hint += "ADAPTATION SOURCE PRIORITY: 本集附有小说原文(【本集原文】)。分镜必须沿原文叙事节拍逐段改编:每个关键情节转折都必须有对应镜头,不得跳段、不得省略因果链、不得凭空压缩时空;原文对白优先原句使用。"
+		c.emit(proj.ID, PhaseScript, 0, "info", 10, "📖 本集附小说原文,分镜沿原文节拍逐段改编(不跳段)")
+	}
 	if roster, nChars := c.bookRoster(proj.ID); roster != "" {
 		if hint != "" {
 			hint += "\n"

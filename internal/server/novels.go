@@ -656,14 +656,15 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		}, true)
 	}
 	type epItem struct {
-		Ep    int    `json:"ep"`
-		Title string `json:"title"`
-		Brief string `json:"brief"`
+		Ep       int    `json:"ep"`
+		Title    string `json:"title"`
+		Chapters string `json:"chapters"` // 覆盖章节范围(定位原文用)
+		Brief    string `json:"brief"`
 	}
 	parsePlan := func(raw string) ([]epItem, string, string, error) {
 		var pl struct {
-			Book     string    `json:"book"`
-			Style    string    `json:"style"`
+			Book     string   `json:"book"`
+			Style    string   `json:"style"`
 			Episodes []epItem `json:"episodes"`
 		}
 		if err := jsonUnmarshalStrict(trimJSON(raw), &pl); err != nil {
@@ -708,11 +709,11 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		jobSet(series, "running", 0, "AI 拆集通读中…")
 	}
 	globalStyle := ""
-	var epsAll []string  // 全部集(含补缺命中的已有集)
-	var lastEp epItem    // 跨段前情(上一集概要,供 SaveSource 前情提要)
+	var epsAll []string // 全部集(含补缺命中的已有集)
+	var lastEp epItem   // 跨段前情(上一集概要,供 SaveSource 前情提要)
 	createFail := 0
 	createdTotal := 0
-	createSeg := func(segEps []epItem) {
+	createSeg := func(segEps []epItem, ck chunk) {
 		fixSeries(series)
 		var created []string
 		for _, ep := range segEps {
@@ -739,6 +740,11 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			}
 			src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
 				series, ep.Ep, ep.Title, globalStyle, prev, ep.Brief)
+			// 附本集覆盖章节的小说原文:分镜 LLM 直接看原文逐段改编,不再是大纲
+			// 的摘要——跳段/断章取义的根治(2026-09-10 用户定调)
+			if orig := extractEpOriginal(ck.body, ep.Chapters); orig != "" {
+				src += "\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n" + orig
+			}
 			_ = s.store.SaveSource(epName, src)
 			epsAll = append(epsAll, epName)
 			created = append(created, epName)
@@ -759,7 +765,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			if lastEp.Ep > 0 {
 				prev = fmt.Sprintf("上一段拆到第 %d 集《%s》:%s", lastEp.Ep, lastEp.Title, clampRunes(lastEp.Brief, 300))
 			}
-			user = fmt.Sprintf("【前情提要】%s\n【起始集号】第 %d 集(本段 episodes 从该集号起连续编号,不重复前情已拆内容;本段通常 8-15 集,每集 brief 300-500 字精炼但节拍完整)\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", prev, planned+1, ck.label, ck.body)
+			user = fmt.Sprintf("【前情提要】%s\n【起始集号】第 %d 集(本段 episodes 从该集号起连续编号,不重复前情已拆内容;本段通常 10-20 集,每集 brief 400-700 字逐拍列节拍)\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", prev, planned+1, ck.label, ck.body)
 		} else {
 			user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
 		}
@@ -794,7 +800,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			planned++
 			segEps[j].Ep = planned
 		}
-		createSeg(segEps)
+		createSeg(segEps, ck)
 		jobSet(series, "running", createdTotal, fmt.Sprintf("已建 %d 集(拆解进行中)", createdTotal))
 		if len(chunks) > 1 {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
@@ -898,4 +904,57 @@ func chunkNovelText(text string, limit int) []struct{ label, body string } {
 	}
 	flush()
 	return out
+}
+
+// extractEpOriginal 从分段正文中按章节范围("第X章 标题~第Y章 标题")提取
+// 本集覆盖的原文;匹配失败返回空(降级为仅大纲)。先整词前缀匹配,再退回
+// "第X章"序号词,容忍 LLM 措辞偏差。
+func extractEpOriginal(body, chapters string) string {
+	if strings.TrimSpace(chapters) == "" {
+		return ""
+	}
+	parts := strings.Split(chapters, "~")
+	startTok := strings.TrimSpace(parts[0])
+	endTok := strings.TrimSpace(parts[len(parts)-1])
+	re := regexp.MustCompile(`(?m)^\s{0,4}(第[0-9零〇一二三四五六七八九十百千两]+[章回节])[^\n]{0,50}`)
+	locs := re.FindAllStringSubmatchIndex(body, -1)
+	if len(locs) == 0 {
+		return ""
+	}
+	head := func(i int) string { return strings.TrimSpace(body[locs[i][2]:locs[i][3]]) }
+	find := func(tok string) int {
+		if tok == "" {
+			return -1
+		}
+		for i := range locs {
+			if strings.HasPrefix(head(i), tok) || strings.HasPrefix(tok, head(i)) {
+				return i
+			}
+		}
+		if m := regexp.MustCompile(`第[0-9零〇一二三四五六七八九十百千两]+[章回节]`).FindString(tok); m != "" {
+			for i := range locs {
+				if strings.HasPrefix(head(i), m) {
+					return i
+				}
+			}
+		}
+		return -1
+	}
+	si := find(startTok)
+	if si < 0 {
+		return ""
+	}
+	ei := find(endTok)
+	if ei < si {
+		ei = si
+	}
+	startAt, endAt := locs[si][0], len(body)
+	if ei+1 < len(locs) {
+		endAt = locs[ei+1][0]
+	}
+	orig := strings.TrimSpace(body[startAt:endAt])
+	if r := []rune(orig); len(r) > 9000 {
+		orig = string(r[:9000]) + "\n…(原文超长截断)"
+	}
+	return orig
 }
