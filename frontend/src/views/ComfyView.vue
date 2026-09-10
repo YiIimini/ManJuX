@@ -267,7 +267,9 @@ function verCellCls(row, which) {
         </el-table-column>
         <el-table-column prop="name" label="名称" min-width="240">
           <template #default="{ row }">
-            <div class="text-xs">{{ row.name }}</div>
+            <el-tooltip :content="row.repo ? '仓库:https://github.com/' + row.repo : '无远程仓库(本地目录)'" placement="top" :show-after="200">
+              <div class="text-xs cursor-help" style="text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: var(--mx-text3);">{{ row.name }}</div>
+            </el-tooltip>
             <div style="font-size:10px;color:var(--mx-text3);line-height:1.4" v-if="row.desc">{{ row.desc }}</div>
           </template>
         </el-table-column>
