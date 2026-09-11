@@ -4,6 +4,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -379,6 +380,19 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("小说正文过短(%d 字)", len([]rune(text))))
 		return
 	}
+	// 读取立项.json 的 art_style 作为视频渲染风格(2026-09-11 用户定调)
+	artStyle := ""
+	if fi.IsDir() {
+		if raw, e := os.ReadFile(filepath.Join(in.Path, "立项.json")); e == nil {
+			var proj json.RawMessage
+			var m map[string]any
+			if json.Unmarshal(raw, &proj) == nil && json.Unmarshal(raw, &m) == nil {
+				if v, ok := m["art_style"].(string); ok && strings.TrimSpace(v) != "" {
+					artStyle = strings.TrimSpace(v)
+				}
+			}
+		}
+	}
 	// 查重:同书系列/同名项目已存在
 	if s.novelProduced(name) {
 		// 已有系列:放行进入补缺模式——重拆按集号去重,已有分集不动,只建缺失
@@ -414,7 +428,7 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, _, err := s.splitNovelToProjects(context.Background(), name, text, maxEp, func(series string, newEps []string) {
+		_, _, err := s.splitNovelToProjects(context.Background(), name, text, maxEp, artStyle, func(series string, newEps []string) {
 			seriesFinal = series
 			if prodCh == nil {
 				prodCh = prodStart(series) // 注册生产者:产线耗尽已知集时会等新集
@@ -617,7 +631,8 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 }
 
 // splitNovelToProjects 拆集核心(与 /api/novel-split 共用):返回(系列名, 子项目列表)。
-func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, onEps func(series string, newEps []string)) (string, []string, error) {
+// artStyle 来自立项.json 的 art_style 字段(空=由 LLM 自定风格)。
+func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, artStyle string, onEps func(series string, newEps []string)) (string, []string, error) {
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 	// 拆集参数从设置读取(0=默认值;2026-09-11 用户定调:灵活配置)
@@ -828,7 +843,14 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		}
 		if ci == 0 {
 			fixSeries(res.book)
-			globalStyle = res.style
+			// art_style 优先(立项.json 指定的渲染风格);无则用 LLM 首段生成的风格
+			if artStyle != "" {
+				globalStyle = artStyle
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+					Message: "🎨 视频渲染风格锁定(立项.json art_style):" + clampRunes(artStyle, 80)})
+			} else {
+				globalStyle = res.style
+			}
 		}
 		for j := range res.eps {
 			planned++

@@ -62,7 +62,7 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 		// 注册键与拆集内部 safeSeries 规整键一致,防占位卡孤儿(同 novels.go)
 		name = safeSeries(name)
 		jobSet(name, "running", 0, "AI 拆集通读中…")
-		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, nil)
+		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, "", nil)
 		if err != nil {
 			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
 		}
