@@ -8,6 +8,7 @@ package server
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -51,29 +52,33 @@ func repairJSONStrings(raw string) string {
 	return b.String()
 }
 
-// salvageTruncatedJSON 抢救被 max_tokens 截断的 JSON:
-// 找到最后一个完整的 episode 对象(以 "}," 结尾),丢弃残余,
-// 手动闭合 episodes 数组和根对象。返回抢救后的完整 JSON(空串=无法抢救)。
-// 典型场景:每段 10-20 集×700 字 brief + thinking ≈ 50-60K token,
-// 偶尔撞 65536 上限(2026-09-11 实证第 8/14 段 unexpected end of JSON input)。
+// salvageTruncatedJSON 已废弃,由 extractEpisodes 替代(见 novels.go)。
+// 保留空函数避免编译报错,后续删除。
 func salvageTruncatedJSON(raw string) string {
-	// 先修控制字符
-	raw = repairJSONStrings(raw)
-	// 已完整闭合(JSON 尾部是 ]} 或 }) 不需要抢救
-	trimmed := strings.TrimSpace(raw)
-	if strings.HasSuffix(trimmed, "]}") || strings.HasSuffix(trimmed, "}") {
-		// 尾部有 } 但可能缺 ] → 尝试解析,能过就不动
-		var probe json.RawMessage
-		if json.Unmarshal([]byte(trimmed), &probe) == nil {
-			return raw // 完整 JSON,原样返回
+	return ""
+}
+
+// extractEpisodes 从 LLM 原始输出中逐集提取,完全绕过整体 JSON 解析。
+// 每个 episode 是一个独立的 {"ep":N,"title":"...","brief":"..."} 对象,
+// 用正则找到所有 `{...}` 块,逐个 json.Unmarshal,坏的丢好的留。
+// 这是对 JSON 结构错误(非法字符/截断/缺括号/多余文本)的终极免疫:
+// 不管 LLM 把 JSON 弄成什么样,只要单个集对象是完整的就能提取。
+func extractEpisodes(raw string) []map[string]any {
+	// 找所有 {"ep": 开头的对象块
+	// 用贪心匹配到对应的 } (处理嵌套引号内的 })
+	re := regexp.MustCompile(`\{"ep"\s*:\s*\d+[^{}]*(?:\{[^{}]*\}[^{}]*)*\}`)
+	matches := re.FindAllString(raw, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	var out []map[string]any
+	for _, m := range matches {
+		var ep map[string]any
+		if json.Unmarshal([]byte(repairJSONStrings(m)), &ep) == nil {
+			if _, ok := ep["brief"]; ok {
+				out = append(out, ep)
+			}
 		}
 	}
-	// 找最后一个完整的 "}," 作为 episode 对象结尾
-	last := strings.LastIndex(raw, `"},`)
-	if last < 0 {
-		return ""
-	}
-	salvaged := raw[:last+2]
-	salvaged += "]}"
-	return salvaged
+	return out
 }

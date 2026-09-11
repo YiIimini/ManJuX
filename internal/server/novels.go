@@ -706,27 +706,50 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		Brief    string `json:"brief"`
 	}
 	parsePlan := func(raw string) ([]epItem, string, string, error) {
+		// 第一优先:整体 JSON 解析(最快,正常情况下走这条路)
 		var pl struct {
 			Book     string   `json:"book"`
 			Style    string   `json:"style"`
 			Episodes []epItem `json:"episodes"`
 		}
-		if err := jsonUnmarshalStrict(trimJSON(repairJSONStrings(raw)), &pl); err != nil {
-			// 截断抢救:找到最后一个完整集,手动闭合 JSON(2026-09-11 根治)
-			salvaged := salvageTruncatedJSON(raw)
-			if salvaged != "" && salvaged != raw {
-				var spl struct {
-					Book     string   `json:"book"`
-					Style    string   `json:"style"`
-					Episodes []epItem `json:"episodes"`
-				}
-				if e2 := jsonUnmarshalStrict(salvaged, &spl); e2 == nil && len(spl.Episodes) > 0 {
-					return spl.Episodes, spl.Book, spl.Style, nil
-				}
-			}
-			return nil, "", "", err
+		if err := jsonUnmarshalStrict(trimJSON(repairJSONStrings(raw)), &pl); err == nil && len(pl.Episodes) > 0 {
+			return pl.Episodes, pl.Book, pl.Style, nil
 		}
-		return pl.Episodes, pl.Book, pl.Style, nil
+		// 整体解析失败 → 逐集正则提取(终极兜底,免疫一切结构错误:
+		// å/è 乱字、截断、缺括号、多余文本,只要单个集对象完整就能提取)
+		eps := extractEpisodes(raw)
+		if len(eps) == 0 {
+			return nil, "", "", fmt.Errorf("整体解析和逐集提取均失败")
+		}
+		// 从提取的 map 转回 epItem
+		out := make([]epItem, 0, len(eps))
+		for _, m := range eps {
+			ep := epItem{}
+			if v, ok := m["ep"].(float64); ok {
+				ep.Ep = int(v)
+			}
+			if v, ok := m["title"].(string); ok {
+				ep.Title = v
+			}
+			if v, ok := m["chapters"].(string); ok {
+				ep.Chapters = v
+			}
+			if v, ok := m["brief"].(string); ok {
+				ep.Brief = v
+			}
+			if ep.Brief != "" {
+				out = append(out, ep)
+			}
+		}
+		// 提取 book/style(从原始文本找)
+		book, style := "", ""
+		if m := regexp.MustCompile(`"book"\s*:\s*"([^"]*)"`).FindStringSubmatch(raw); len(m) > 1 {
+			book = m[1]
+		}
+		if m := regexp.MustCompile(`"style"\s*:\s*"([^"]*)"`).FindStringSubmatch(raw); len(m) > 1 {
+			style = m[1]
+		}
+		return out, book, style, nil
 	}
 
 	// ---- 分层拆解 + 流水线化 ----
