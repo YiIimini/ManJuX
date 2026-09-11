@@ -29,6 +29,16 @@ func repairJSONStrings(raw string) string {
 			b.WriteRune(r)
 			esc = false
 		case r == '\\' && inStr:
+			// 过度转义收尾:LLM 把字符串的收尾定界引号也转义成 \"
+			// (2026-09-11 实证:提示词禁半角引号诱发,字符串永不闭合,
+			// 尾部形态 …「按流程办。」\"}]})。若 \" 后面是终止符格局,
+			// 去掉反斜杠按正常收尾处理。
+			if i+1 < len(rs) && rs[i+1] == '"' && quoteCloses(rs, i+1) {
+				b.WriteRune('"')
+				inStr = false
+				i++
+				continue
+			}
 			b.WriteRune(r)
 			esc = true
 		case r == '"':

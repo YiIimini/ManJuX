@@ -81,3 +81,25 @@ func TestRepairMixedQuotes(t *testing.T) {
 		t.Fatalf("c 内容错误: %q", m["c"])
 	}
 }
+
+// 过度转义收尾(2026-09-11 16:17 实证:第 2/6 段,引号禁令提示词诱发,
+// LLM 把字符串收尾定界引号写成 \",字符串永不闭合,整体+逐集解析全灭)。
+func TestRepairOverescapedTerminator(t *testing.T) {
+	// 用户实炸尾部形态:…「按流程办。」\"}]}"})
+	raw := `{"book":"旧账","style":"s","episodes":[
+{"ep":1,"title":"一","chapters":"第1章","brief":"开局。"},
+{"ep":2,"title":"二","chapters":"第2章","brief":"雷九把木匣盖上:「办。」「按流程办。」\"}]}"})`
+	eps := extractEpisodes(raw)
+	if len(eps) != 2 {
+		t.Fatalf("逐集提取应抢救 2 集(收尾过度转义),实得 %d", len(eps))
+	}
+	if v, _ := eps[1]["brief"].(string); !strings.Contains(v, "「按流程办。」") {
+		t.Fatalf("第2集 brief 内容丢失: %q", v)
+	}
+	// 已有的合法转义 \\ 不受影响:路径 a\"b 后跟普通文字仍按内容保留
+	keep := `{"a":"x\"y 尾"}`
+	var m map[string]any
+	if err := json.Unmarshal([]byte(repairJSONStrings(keep)), &m); err != nil {
+		t.Fatalf("合法转义被改坏: %v", err)
+	}
+}

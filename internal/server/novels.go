@@ -697,18 +697,20 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	splitOnce := func(userText string) (string, error) {
 		cctx, cancel := context.WithTimeout(ctx, time.Duration(g.LLM.Timeout)*time.Second+2*time.Minute)
 		defer cancel()
+		// json_object 模式必须关:v0.33.16 起拆集走分节定界协议(非 JSON),
+		// json 模式会强制模型输出 JSON 与协议打架
 		return client.Chat(cctx, []llm.Message{
 			{Role: "system", Content: novelSplitSystem},
-			{Role: "user", Content: userText + maxLine + "\n输出拆集 JSON。"},
-		}, true)
-	}
-	type epItem struct {
-		Ep       int    `json:"ep"`
-		Title    string `json:"title"`
-		Chapters string `json:"chapters"` // 覆盖章节范围(定位原文用)
-		Brief    string `json:"brief"`
+			{Role: "user", Content: userText + maxLine + "\n按 ===EP=== 分节格式输出拆集结果(纯文本,不要 JSON)。"},
+		}, false)
 	}
 	parsePlan := func(raw string) ([]epItem, string, string, error) {
+		// 第一优先:分节定界协议(v0.33.16 起提示词要求的输出格式,
+		// 对引号/括号/截断等一切文本层错误免疫)
+		if eps, book, style, ok := parseEpBlocks(raw); ok {
+			return eps, book, style, nil
+		}
+		// 兜底:JSON 协议(模型偶发按旧习惯输出时仍能吃下)
 		// 第一优先:整体 JSON 解析(最快,正常情况下走这条路)
 		var pl struct {
 			Book     string   `json:"book"`
