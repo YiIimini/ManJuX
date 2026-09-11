@@ -153,9 +153,6 @@ async function testConn(target) {
               placeholder="选择或输入模型 ID" style="width:100%">
               <el-option-group label="DeepSeek(当前接入)">
                 <el-option value="deepseek-flash" label="deepseek-flash · V4.1-Flash,官方推荐(速度快/费用低/支持视觉),分镜 30-90 秒" />
-                <el-option value="deepseek-v4-pro" label="deepseek-v4-pro · ⚠ 即将退役(09-14 起路由到 V4.1 Flash),建议用 deepseek-flash" />
-                <el-option value="deepseek-chat" label="deepseek-chat · ⚠ 已退役" />
-                <el-option value="deepseek-reasoner" label="deepseek-reasoner · ⚠ 已退役" />
               </el-option-group>
               <el-option-group label="其它(需对应平台 Base URL)">
                 <el-option value="glm-4.6" label="glm-4.6 · 智谱" />
