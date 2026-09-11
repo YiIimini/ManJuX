@@ -13,7 +13,7 @@ import (
 type LLMSettings struct {
 	BaseURL string `json:"base_url"` // 例如 https://api.deepseek.com/v1
 	APIKey  string `json:"api_key"`
-	Model   string `json:"model"` // 例如 deepseek-v4-flash(旧 deepseek-chat/reasoner 已退役)
+	Model   string `json:"model"` // 官方推荐 deepseek-flash(V4.1-Flash;旧 v4-flash/v4-pro 均退役或即将退役)
 	Timeout int    `json:"timeout_seconds"`
 }
 
@@ -109,7 +109,7 @@ func Default() *Settings {
 		LLM: LLMSettings{
 			BaseURL: "https://api.deepseek.com/v1",
 			APIKey:  "",
-			Model:   "deepseek-v4-flash",
+			Model:   "deepseek-flash",
 			Timeout: 600,
 		},
 		Comfy: ComfySettings{
