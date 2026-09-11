@@ -658,7 +658,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	// 拆集参数从设置读取(0=默认值;2026-09-11 用户定调:灵活配置)
 	splitCfg := g.Split
 	dflt := func(v, d int) int { if v <= 0 { return d }; return v }
-	chunkSize := dflt(splitCfg.ChunkSize, 40000)
+	chunkSize := dflt(splitCfg.ChunkSize, 20000)
 	maxOrig := dflt(splitCfg.MaxOrigChars, 9000)
 	conc := dflt(splitCfg.Concurrency, 3)
 	prevSum := dflt(splitCfg.PrevSummary, 400)
@@ -712,6 +712,18 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			Episodes []epItem `json:"episodes"`
 		}
 		if err := jsonUnmarshalStrict(trimJSON(repairJSONStrings(raw)), &pl); err != nil {
+			// 截断抢救:找到最后一个完整集,手动闭合 JSON(2026-09-11 根治)
+			salvaged := salvageTruncatedJSON(raw)
+			if salvaged != "" && salvaged != raw {
+				var spl struct {
+					Book     string   `json:"book"`
+					Style    string   `json:"style"`
+					Episodes []epItem `json:"episodes"`
+				}
+				if e2 := jsonUnmarshalStrict(salvaged, &spl); e2 == nil && len(spl.Episodes) > 0 {
+					return spl.Episodes, spl.Book, spl.Style, nil
+				}
+			}
 			return nil, "", "", err
 		}
 		return pl.Episodes, pl.Book, pl.Style, nil
@@ -827,7 +839,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			defer func() { <-sem }()
 			var user string
 			if len(chunks) > 1 {
-				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;本段通常 10-20 集,每集 brief " + fmt.Sprint(briefMin) + "-" + fmt.Sprint(briefMax) + " 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, ck.label, ck.body)
+				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;本段通常 5-8 集(最多 8 集,超过则合并节拍;输出预算有限,宁精勿多),每集 brief " + fmt.Sprint(briefMin) + "-" + fmt.Sprint(briefMax) + " 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, ck.label, ck.body)
 			} else {
 				user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
 			}

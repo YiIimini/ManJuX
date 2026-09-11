@@ -75,7 +75,7 @@ type RenderSettings struct {
 
 // SplitSettings 小说拆集参数(设置页可调,2026-09-11 用户定调:灵活配置)。
 type SplitSettings struct {
-	ChunkSize    int `json:"chunk_size"`    // 分段大小(字/段,0=40000)
+	ChunkSize    int `json:"chunk_size"`    // 分段大小(字/段,0=20000;按输出预算倒推:每段最多8集×700字×1.5token+思考30K≈40K,须<65K)
 	MaxOrigChars int `json:"max_orig_chars"` // 每集附原文截断上限(字,0=9000)
 	Concurrency  int `json:"concurrency"`   // 并行拆集并发数(0=3)
 	PrevSummary  int `json:"prev_summary"`  // 前情提要截断(字,0=400)
@@ -153,7 +153,7 @@ func Default() *Settings {
 			ShotTimeout:   45,
 		},
 		Split: SplitSettings{
-			ChunkSize:     40000,
+			ChunkSize:     20000, // 按输出预算倒推(2026-09-11 根治截断:40K段→10-20集→50-60K token 撞 65K 上限;20K段→8集→40K token 安全)
 			MaxOrigChars:  9000,
 			Concurrency:   3,
 			PrevSummary:   400,
