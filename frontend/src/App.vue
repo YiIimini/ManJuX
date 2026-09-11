@@ -147,6 +147,19 @@ function onSideResize(e) {
   window.addEventListener('mousemove', onMove)
   window.addEventListener('mouseup', onUp)
 }
+// ---- 一键清理:ComfyUI 中间产物 + 失败现场 + 孤儿缓存 + 临时文件 ----
+const cleaning = ref(false)
+async function cleanup() {
+  try { await ElMessageBox.confirm('将清理:ComfyUI 中间产物(不影响已有项目成片)、失败合成现场、孤儿条件缓存、系统临时文件。确认执行?','一键清理', { confirmButtonText: '清理', cancelButtonText: '取消', type: 'info' }) } catch { return }
+  cleaning.value = true
+  try {
+    const r = await fetch('/api/cleanup', { method: 'POST' })
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error)
+    ElMessage.success(`清理完成:释放 ${(d.freedMB / 1024).toFixed(2)} GB`)
+  } catch (e) { ElMessage.error(e.message) } finally { cleaning.value = false }
+}
+
 async function openAuthor() {
   try { await fetch('/api/open-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://github.com/YiIimini/' }) }) }
   catch { window.open('https://github.com/YiIimini/', '_blank') }
@@ -341,6 +354,11 @@ const env = computed(() => G.status?.env)
           <el-tooltip content="设置" placement="bottom">
             <button class="topbtn" :class="{ on: G.view === 'settings' }" @click="nav('settings')">
               <el-icon :size="15"><Setting /></el-icon>
+            </button>
+          </el-tooltip>
+          <el-tooltip content="一键清理:ComfyUI 中间产物 + 项目失败现场 + 孤儿条件缓存 + 系统临时文件" placement="bottom">
+            <button class="topbtn" :class="{ on: cleaning }" @click="cleanup">
+              <el-icon :size="15"><Brush /></el-icon>
             </button>
           </el-tooltip>
           <span class="topctl-sep"></span>

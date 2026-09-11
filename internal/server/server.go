@@ -121,6 +121,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("POST /api/open", s.openInExplorer)
+	m.HandleFunc("POST /api/cleanup", s.handleCleanup)
 	m.HandleFunc("POST /api/open-url", s.openExternalURL)
 	m.HandleFunc("POST /api/quit", s.quitApp)
 	m.HandleFunc("POST /api/test", s.testConn)
