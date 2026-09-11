@@ -155,6 +155,7 @@ async function testConn(target) {
                 <el-option value="deepseek-flash" label="deepseek-flash · V4.1-Flash,官方推荐(速度快/费用低/支持视觉),分镜 30-90 秒" />
               </el-option-group>
               <el-option-group label="其它(需对应平台 Base URL)">
+                <el-option value="MiniMaxi-Text-01" label="MiniMaxi-Text-01 · MiniMax 文本模型" />
                 <el-option value="glm-4.6" label="glm-4.6 · 智谱" />
                 <el-option value="glm-4.5-air" label="glm-4.5-air · 智谱" />
                 <el-option value="qwen-plus" label="qwen-plus · 阿里" />
