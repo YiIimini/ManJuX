@@ -1,6 +1,6 @@
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { G } from '../store'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { G, api } from '../store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const st = ref(null)
