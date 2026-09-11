@@ -60,8 +60,9 @@ type AssembleParams struct {
 // DefaultStageParams 返回全局默认的阶段参数。
 func DefaultStageParams() StageParams {
 	return StageParams{
-		// 默认 8 镜(2026-09-10:解析更细+镜头更多→叙事不断层、衔接丝滑;3-12 可调)
-		Script: ScriptParams{MaxShots: 8, TotalSeconds: 56, StyleHint: ""},
+		// MaxShots=0:内容驱动(2026-09-11 用户定调「该多少就多少」)——LLM 看
+		// 原文自行决定镜头数,不人为钳制;Sanitize 上限 30 只作安全网
+		Script: ScriptParams{MaxShots: 0, TotalSeconds: 0, StyleHint: ""},
 		Assets: AssetsParams{Source: "krea2"}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,

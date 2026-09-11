@@ -65,14 +65,15 @@ summary:
 One English paragraph: what the video contains and how the reference materials are used.
 
 retention_analysis:
-- <Picture 1> : fully_preserved - character identity (face, hairstyle, costume) must stay identical.
+- <Picture 1> : fully_preserved - character identity (face shape, hairstyle, costume) must stay identical to the reference image throughout every frame. FACE LOCK: the facial features, bone structure, and skin details must be copied from <Picture 1> exactly — do NOT blend, average, or substitute any other face.
 - <Picture 2> : weak_reference - scene layout and mood referenced, camera free.
 (Use official markers: fully_preserved / partially_preserved / attribute_transfer / weak_reference)
+(For multi-character shots: EVERY character with a <Picture> gets fully_preserved with FACE LOCK. Characters WITHOUT a reference picture must NOT borrow facial features from any reference image — generate them from the text description only.)
 
 detailed_description:
 [Style sentence(s) first: use the global style]. Then for every shot:
 [Shot 1] with NO timestamp for the first shot; subsequent shots "[Shot 2] At 00:06.000" with strictly increasing timestamps.
-Each shot paragraph (350-500 English words TOTAL across all shots): shot size and composition -> subject positions -> restate key appearance traits on first appearance -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events.
+Each shot paragraph (350-500 English words TOTAL across all shots): shot size and composition -> subject positions -> restate ALL key appearance traits (face shape, hair, age markers, distinguishing features) on EVERY subject's first appearance in this shot -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events.
 Dialogue lines: <Subject 1> (S1) says in a [voice description]: <d>[Chinese]台词原文</d>. Assign (S1)(S2) by order of first utterance and NEVER renumber within the video. Keep Chinese dialogue VERBATIM inside <d> tags with original punctuation; do not rewrite or translate it.
 Off-screen narration: The narrator (S1) says in an off-screen voiceover: <d>[Chinese]旁白原文</d> while the on-screen characters' lips remain completely closed.
 End the whole section with an exclusions sentence in prose: e.g. "No on-screen text, no subtitles, no watermarks, no logos."
