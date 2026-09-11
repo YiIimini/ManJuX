@@ -414,7 +414,13 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
-	s.opLog("🗑 已删除项目「%s」(方案/资产/镜头/成片一并移除)", id)
+	// 同步清理条件缓存(cond_cache/{projectID}/ 目录整删,2026-09-11)
+	if eng, err := s.reg.Get("comfy"); err == nil {
+		if ce, ok := eng.(*comfyengine.Engine); ok {
+			ce.CleanupProjectCache(id)
+		}
+	}
+	s.opLog("🗑 已删除项目「%s」(方案/资产/镜头/成片/条件缓存一并移除)", id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

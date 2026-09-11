@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -198,7 +199,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 			refFPs = append(refFPs, ref.Path+":"+fileFingerprint(ref.Path))
 		}
 		cacheName := condCacheName(job.ProjectID, job.ShotID, job.Prompt, refFPs, w, h, length)
-		if e.condExists(c, cacheName) {
+		if e.condExists(c, job.ProjectID, cacheName) {
 			condRef = "cache:" + cacheName
 		} else {
 			if job.OnProgress != nil {
@@ -208,7 +209,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 			if _, err := e.submitAndWait(ctx, encGraph, nil); err != nil {
 				return nil, fmt.Errorf("预编码失败: %w", err)
 			}
-			markCondReady(c, cacheName)
+			markCondReady(c, job.ProjectID, cacheName)
 			condRef = "cache:" + cacheName
 		}
 	}
@@ -279,20 +280,38 @@ func condSidecarDir(c config.ComfySettings) string {
 	return filepath.Join(sidecarRoot(c), "cond_cache")
 }
 
-func (e *Engine) condExists(c config.ComfySettings, cacheName string) bool {
-	_, err := os.Stat(filepath.Join(condSidecarDir(c), cacheName+".ok"))
+// condProjectDir 某项目的条件缓存子目录(cond_cache/{projectID}/)。
+// 按项目分目录存放,删项目时整目录移除即可(2026-09-11 用户定调)。
+func condProjectDir(c config.ComfySettings, projectID string) string {
+	return filepath.Join(condSidecarDir(c), "manjux_"+projectID)
+}
+
+// CleanupProjectCache 删除某项目的全部条件缓存(cond_cache 子目录)。
+func (e *Engine) CleanupProjectCache(projectID string) {
+	c := e.cfg()
+	dir := condProjectDir(c, projectID)
+	if err := os.RemoveAll(dir); err == nil {
+		log.Printf("[comfy] 已清理项目条件缓存: %s", dir)
+	}
+}
+
+func (e *Engine) condExists(c config.ComfySettings, projectID, cacheName string) bool {
+	_, err := os.Stat(filepath.Join(condProjectDir(c, projectID), cacheName+".ok"))
 	return err == nil
 }
 
-func markCondReady(c config.ComfySettings, cacheName string) {
-	_ = os.MkdirAll(condSidecarDir(c), 0o755)
-	_ = os.WriteFile(filepath.Join(condSidecarDir(c), cacheName+".ok"),
+func markCondReady(c config.ComfySettings, projectID, cacheName string) {
+	dir := condProjectDir(c, projectID)
+	_ = os.MkdirAll(dir, 0o755)
+	_ = os.WriteFile(filepath.Join(dir, cacheName+".ok"),
 		[]byte(time.Now().Format(time.RFC3339)), 0o644)
 }
 
+// condCacheName 条件缓存键名(含项目子目录前缀)。
+// 文件落盘路径:cond_cache/{projectID}/s{shotID}_{hash}.ok
 func condCacheName(projectID string, shotID int, prompt string, refFPs []string, w, h, length int) string {
 	sum := md5.Sum([]byte(fmt.Sprint(projectID, shotID, prompt, refFPs, w, h, length)))
-	return "manjux_" + projectID + "_s" + strconv.Itoa(shotID) + "_" + hex.EncodeToString(sum[:])[:8]
+	return "s" + strconv.Itoa(shotID) + "_" + hex.EncodeToString(sum[:])[:8]
 }
 
 // fileFingerprint 文件内容指纹(md5 前 16 位);读失败退化为 mtime,保证键变化。
