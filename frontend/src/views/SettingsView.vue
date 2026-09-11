@@ -152,9 +152,11 @@ async function testConn(target) {
             <el-select v-model="form.llm.model" filterable allow-create default-first-option
               placeholder="选择或输入模型 ID" style="width:100%">
               <el-option-group label="DeepSeek(当前接入)">
-                <el-option value="deepseek-chat" label="deepseek-chat · 非推理,分镜直出约 30-60 秒(推荐)" />
-                <el-option value="deepseek-reasoner" label="deepseek-reasoner · 深度推理,质量高但需 2-6 分钟" />
-                <el-option value="deepseek-v4-flash" label="deepseek-v4-flash · 深度推理(当前),需 2-6 分钟" />
+                <el-option value="deepseek-v4-flash" label="deepseek-v4-flash · 快速推理,分镜直出约 30-90 秒(推荐)" />
+                <el-option value="deepseek-v4.1-flash" label="deepseek-v4.1-flash · 最新架构,速度与质量均衡" />
+                <el-option value="deepseek-v4-pro" label="deepseek-v4-pro · 旗舰深度推理,质量最高但需 2-6 分钟" />
+                <el-option value="deepseek-chat" label="deepseek-chat · ⚠ 已退役(2026-07-24 停服),请迁移到 v4 系列" />
+                <el-option value="deepseek-reasoner" label="deepseek-reasoner · ⚠ 已退役(2026-07-24 停服),请迁移到 v4 系列" />
               </el-option-group>
               <el-option-group label="其它(需对应平台 Base URL)">
                 <el-option value="glm-4.6" label="glm-4.6 · 智谱" />
