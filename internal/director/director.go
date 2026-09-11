@@ -31,9 +31,9 @@ Return STRICT JSON only (no markdown fences, no commentary):
 {
   "title": "剧名(中文,≤12字)",
   "logline": "一句话故事(中文,≤40字)",
-  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits, e.g. 'Chinese xianxia cinematic animation, soft volumetric lighting, rich color grading'",
+  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series.",
   "characters": [
-    {"id":"char_xiaofan","name":"小凡","description":"中文外貌/服装/气质,固定不变的关键特征","image_prompt":"ENGLISH half-body portrait prompt for a costume reference photo: gender, age, face, hair, costume, accessories, plain background, upper-body framing, front-facing","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
+    {"id":"char_xiaofan","name":"小凡","description":"中文外貌/服装/气质,固定不变的关键特征","image_prompt":"ENGLISH half-body portrait prompt IN THE SAME VISUAL STYLE as the global style field above: gender, age, face, hair, costume, accessories, plain background, upper-body framing, front-facing. If style says 'animation', portrait MUST be anime-style illustration; if style says 'realistic', portrait MUST be photorealistic. NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
   ],
   "scenes": [
     {"id":"scene_inn","name":"悦来客栈","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location"}
@@ -166,7 +166,20 @@ const batchMaxShots = 5          // 每批最多镜数
 // 双路径:小任务(≤6 镜且文本 ≤1500 字)单轮直出;大任务走「规划轮 + 分批
 // 出镜轮」——单次生成量随批拆分,推理模型单轮压回 1-3 分钟,远离超时与
 // max_tokens 截断(2026-09-08 长文超时治理)。
+// Generate 分镜入口。sourceText 若含【全局风格】,提取并锁定——跨集风格
+// 一致的代码级保障(不依赖 LLM 服从指令,直接覆写)。
 func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Options) (*project.Plan, error) {
+	// 提取 sourceText 中的全局风格行,锁进 ExtraHint 强制 LLM 沿用
+	if locked := extractGlobalStyle(sourceText); locked != "" {
+		lock := "STYLE LOCK (MANDATORY): The global visual style for this series is: " + locked +
+			". You MUST use this EXACT style in the 'style' field and in ALL character image_prompts. " +
+			"Do NOT invent a different style. Character portraits must be in the same art style as the video."
+		if strings.TrimSpace(opt.ExtraHint) != "" {
+			opt.ExtraHint = lock + "\n" + opt.ExtraHint
+		} else {
+			opt.ExtraHint = lock
+		}
+	}
 	if opt.MaxShots <= 0 {
 		opt.MaxShots = 6
 	}
@@ -174,9 +187,44 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 		opt.TotalSeconds = opt.MaxShots * 7
 	}
 	if opt.MaxShots > batchThresholdShots || len([]rune(sourceText)) > batchThresholdRunes {
-		return generateBatched(ctx, client, sourceText, opt)
+		plan, err := generateBatched(ctx, client, sourceText, opt)
+		if err != nil {
+			return nil, err
+		}
+		enforceStyleLock(plan, sourceText)
+		return plan, nil
 	}
-	return generateSingle(ctx, client, sourceText, opt)
+	plan, err := generateSingle(ctx, client, sourceText, opt)
+	if err != nil {
+		return nil, err
+	}
+	enforceStyleLock(plan, sourceText)
+	return plan, nil
+}
+
+// extractGlobalStyle 从 sourceText 提取「全局风格:」行的值(截到换行)。
+func extractGlobalStyle(sourceText string) string {
+	for _, line := range strings.Split(sourceText, "\n") {
+		if i := strings.Index(line, "全局风格:"); i >= 0 {
+			v := strings.TrimSpace(line[i+len("全局风格:"):])
+			if v != "" {
+				return v
+			}
+		}
+	}
+	return ""
+}
+
+// enforceStyleLock 代码级覆写:LLM 若无视 STYLE LOCK 指令自行发明风格,
+// 在此处强制回写为全局风格(跨集一致的最终保障)。
+func enforceStyleLock(plan *project.Plan, sourceText string) {
+	locked := extractGlobalStyle(sourceText)
+	if locked == "" || plan == nil {
+		return
+	}
+	if plan.Style != locked {
+		plan.Style = locked
+	}
 }
 
 // styleHint 组装附加要求(单轮/分批共用)。
