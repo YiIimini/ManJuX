@@ -105,6 +105,30 @@ async function openWebBrowser() {
   } catch (e) { ElMessage.error(e.message) }
 }
 
+// ---- 目录说明 ----
+const comfyRoot = computed(() => st.value?.root_dir || 'D:/Ai/ManJuX/comfyui')
+const dirInfo = computed(() => [
+  { label: '模型根目录', icon: 'Box', path: comfyRoot.value + '/ComfyUI/models',
+    desc: '所有 AI 模型文件(UNET/VAE/CLIP/LoRA 等)。设置页「ComfyUI」面板配置的模型名必须与这里的文件名一致。', color: 'var(--mx-amber)' },
+  { label: '模型 → UNet(扩散主干)', icon: 'Cpu', path: comfyRoot.value + '/ComfyUI/models/diffusion_models',
+    desc: 'H3 视频生成模型(Ref2VA/FL2VA int8 量化版)与 Krea-2 图像模型。体积最大(~20GB/个)。', color: 'var(--mx-purple)' },
+  { label: '模型 → VAE(编解码器)', icon: 'Film', path: comfyRoot.value + '/ComfyUI/models/vae',
+    desc: '视频/音频 VAE,负责 latent ↔ 像素转换。缺失会导致黑屏或无音轨。', color: 'var(--mx-cyan)' },
+  { label: '模型 → CLIP(文本编码)', icon: 'EditPen', path: comfyRoot.value + '/ComfyUI/models/clip',
+    desc: '文本理解模型(qwen3vl),把提示词编码为 latent 条件。影响提示词服从度。', color: 'var(--mx-green)' },
+  { label: '模型 → LoRA(加速补丁)', icon: 'Lightning', path: comfyRoot.value + '/ComfyUI/models/loras',
+    desc: 'Turbo LoRA(4 步出图加速补丁)。影响生成速度与质量的平衡。', color: 'var(--mx-yellow)' },
+  { label: '渲染输出目录', icon: 'FolderOpened', path: comfyRoot.value + '/ComfyUI/output',
+    desc: 'ComfyUI 的原始输出(中间视频/上传的参考图副本/接缝 latent)。可用「一键清理」按钮释放空间,不影响已有成片。', color: 'var(--mx-red)' },
+  { label: '自定义节点(插件)', icon: 'Grid', path: comfyRoot.value + '/ComfyUI/custom_nodes',
+    desc: 'H3 增强插件(条件缓存/接缝连续/加速节点)。版本管理器可对比在线最新版。', color: 'var(--mx-text2)' },
+  { label: 'ComfyUI 主程序', icon: 'Setting', path: comfyRoot.value + '/ComfyUI',
+    desc: 'ComfyUI 本体(Git 仓库)。版本管理器显示当前版本与在线最新对比。', color: 'var(--mx-text3)' },
+])
+async function openDir(path) {
+  try { await api.openExplorer(path) } catch (e) { ElMessage.error(e.message) }
+}
+
 const STATUS_META = {
   latest:  { label: '最新', cls: 'ok' },
   behind:  { label: '有更新', cls: 'warn' },
@@ -239,6 +263,28 @@ function verCellCls(row, which) {
         </div>
       </div>
       <div class="text-xs mt-3" style="color:var(--mx-text3)">配置在「设置 → ComfyUI」修改;未命中会导致渲染提交 400(模型名不在列表)。</div>
+    </div>
+
+    <!-- 目录说明 -->
+    <div class="panel p-5 mt-5">
+      <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
+        <el-icon color="var(--mx-cyan)"><FolderOpened /></el-icon>目录说明
+        <span class="text-xs font-normal" style="color:var(--mx-text3)">ComfyUI 相关存储路径;点路径可打开所在文件夹</span>
+      </h3>
+      <div class="grid gap-3" style="grid-template-columns:repeat(auto-fill,minmax(340px,1fr))">
+        <div v-for="d in dirInfo" :key="d.label" class="p-3 rounded-lg" style="border:1px solid var(--mx-line)">
+          <div class="flex items-center gap-2 mb-1">
+            <el-icon :size="14" :color="d.color || 'var(--mx-text3)'"><FolderOpened /></el-icon>
+            <span class="text-xs font-bold">{{ d.label }}</span>
+          </div>
+          <div class="text-xs cursor-pointer truncate font-mono p-1 rounded"
+               style="color:var(--mx-amber);background:rgba(255,180,84,.06)"
+               :title="'点击打开: ' + d.path"
+               @click="openDir(d.path)">{{ d.path }}</div>
+          <div class="text-xs mt-1.5" style="color:var(--mx-text3);line-height:1.5">{{ d.desc }}</div>
+          <div v-if="d.size" class="text-xs mt-1" :style="{ color: d.sizeColor || 'var(--mx-text2)' }">{{ d.size }}</div>
+        </div>
+      </div>
     </div>
 
     <!-- 版本管理器:本体 / 插件 / 模型 VS 在线最新 -->
