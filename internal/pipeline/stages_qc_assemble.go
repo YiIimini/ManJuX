@@ -9,8 +9,10 @@ import (
 	"strconv"
 
 	"strings"
-	"github.com/YiIimini/ManJuX/internal/llm"
+
 	"github.com/YiIimini/ManJuX/internal/compose"
+	"github.com/YiIimini/ManJuX/internal/fsutil"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
 )
@@ -34,6 +36,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	reports := map[string]qc.Report{}
 	failed := 0
 	checked := 0
+	vlmFlagged := 0 // VLM 审片未通过的镜头数(只标记,不自动重渲)
 
 	// VLM 智能审片(可选):抽帧判分 + 重渲建议
 	var vlmClient *llm.Client
@@ -69,6 +72,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			if vr, verr := qc.VLMJudge(ctx, vlmClient, c.ff.Ffmpeg, full, brief); verr == nil {
 				r.VLM = vr
 				if !vr.Pass {
+					vlmFlagged++
 					c.emit(proj.ID, PhaseQC, shot.ID, "warn", checked*100/max(1, len(plan.Shots)),
 						"镜头 %d VLM 判分 %d(%s)建议:%s", shot.ID, vr.Score, strings.Join(vr.Issues, ";"), vr.Advice)
 				}
@@ -87,20 +91,32 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio), score)
 		} else {
 			failed++
-			c.emit(proj.ID, PhaseQC, shot.ID, "error", pct, "✕ 镜头 %d 不合格:%s", shot.ID, joinStrings(r.Problems, ";"))
+			c.emit(proj.ID, PhaseQC, shot.ID, "error", pct, "✕ 镜头 %d 不合格:%s", shot.ID, strings.Join(r.Problems, ";"))
 		}
 		for _, w := range r.Warnings {
 			c.emit(proj.ID, PhaseQC, shot.ID, "warn", pct, "镜头 %d 警告:%s", shot.ID, w)
 		}
 	}
 	raw, _ := json.MarshalIndent(reports, "", "  ")
-	_ = os.MkdirAll(filepath.Join(c.store.Dir(proj.ID), "output"), 0o755)
-	_ = os.WriteFile(filepath.Join(c.store.Dir(proj.ID), "output", "qc_report.json"), raw, 0o644)
+	reportPath := filepath.Join(c.store.Dir(proj.ID), "output", "qc_report.json")
+	// 报告写入失败必须让用户看见:全流程模式下质检错误已被降级为 warn,若报告
+	// 再写不进去,用户就只剩一句「质检通过」可看,问题彻底隐形。
+	if werr := fsutil.WriteFileAtomic(reportPath, raw); werr != nil {
+		c.emit(proj.ID, PhaseQC, 0, "warn", 0, "⚠ 质检报告写入失败(%v),详细结果仅在本次会话可见", werr)
+	}
 	if checked == 0 {
 		return fmt.Errorf("没有已完成的镜头可质检:请先运行「渲染出片」")
 	}
 	if failed > 0 {
 		return fmt.Errorf("质检发现 %d 个不合格镜头(报告见 output/qc_report.json),请在故事板中单镜重渲", failed)
+	}
+	if vlmFlagged > 0 {
+		// 只标记、不自动重渲:同一 prompt 同一 seed 重跑大概率复现同样结果,
+		// 真正的返工要改提示词或换 seed,由用户看过标记后自行决定(2026-09-11 定调)。
+		c.emit(proj.ID, PhaseQC, 0, "warn", 100,
+			"⚠ 质检完成:%d 镜机械指标合格,其中 %d 镜 VLM 审片未通过(详情见 output/qc_report.json 或阶段详情),未自动重渲",
+			checked, vlmFlagged)
+		return nil
 	}
 	c.emit(proj.ID, PhaseQC, 0, "success", 100, "✔ 质检通过:%d 镜全部合格", checked)
 	return nil
@@ -113,23 +129,9 @@ func audioLabel(has bool) string {
 	return "无"
 }
 
-func joinStrings(ss []string, sep string) string {
-	out := ""
-	for i, s := range ss {
-		if i > 0 {
-			out += sep
-		}
-		out += s
-	}
-	return out
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
+// joinStrings / max 两个手写实现已移除:前者等价于 strings.Join(且原实现在
+// 循环内 += 拼接是 O(n²)),后者是 Go 1.21+ 的内建 max —— 项目用 Go 1.25,
+// 自己再定义一份只会遮蔽内建、并与其它包的同名实现分叉。
 
 // ---------- 阶段五:assemble ----------
 

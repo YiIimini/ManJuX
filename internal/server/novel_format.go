@@ -11,6 +11,7 @@ package server
 import (
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -73,7 +74,60 @@ func parseEpBlocks(raw string) ([]epItem, string, string, bool) {
 	if len(eps) == 0 {
 		return nil, book, style, false
 	}
+	normalizeEpisodeTitles(eps)
 	return eps, book, style, true
+}
+
+// epChapterTitleRe 从 CHAPTERS 字段里取「第一个章头 + 其标题」。
+// CHAPTERS 形如「第003章 器不可以成道」「第1章~第2章」,后者无标题。
+var epChapterTitleRe = regexp.MustCompile(`第\s*[0-9零〇一二三四五六七八九十百千两]+\s*[章回节]\s*([^\s~至到\-—<>]{1,24})`)
+
+// normalizeEpisodeTitles 集名兜底:**章名即集名**。
+//
+// 为什么不能只靠提示词:提示词已明确要求「TITLE 直接取章标题原文」,但 LLM 仍会
+// 自作主张起文艺标题 —— 实测第001章《第一万三千七百四十一号》被起成《七文一斤》。
+// 集名一旦脱离章名,「章→集」就失去可对账性,章节覆盖核对随之误报缺章
+// (2026-09-12 实测:误报缺第 1、2 章,而内容其实都在)。
+// 因此在 CHAPTERS 能解析出章标题时,一律用章名覆盖 TITLE;解析不出(如只写
+// 「第1章~第2章」)则保留 LLM 的标题,不强行清空。
+func normalizeEpisodeTitles(eps []epItem) {
+	for i := range eps {
+		if m := epChapterTitleRe.FindStringSubmatch(eps[i].Chapters); len(m) > 1 {
+			if title := strings.TrimSpace(m[1]); title != "" {
+				eps[i].Title = title
+			}
+		}
+	}
+}
+
+// checkOneChapterPerEpisode 检测「一章被拆成多集」(应为一章一集)。
+// 返回被拆分的章号列表(升序去重),仅用于告警 —— 不自动合并:
+// 合并要重排 Brief 与集号,风险高于收益,由用户决定是否重拆。
+func checkOneChapterPerEpisode(eps []epItem) []int {
+	numRe := regexp.MustCompile(`第\s*0*([0-9]{1,4})\s*[章回节]`)
+	seen := map[int]int{}
+	var dup []int
+	for _, ep := range eps {
+		nums := map[int]bool{}
+		for _, m := range numRe.FindAllStringSubmatch(ep.Chapters, -1) {
+			if v, e := strconv.Atoi(m[1]); e == nil {
+				nums[v] = true
+			}
+		}
+		// 单章集才计入计数;跨章集(如无标题的「第1章~第2章」)不参与
+		if len(nums) == 1 {
+			for v := range nums {
+				seen[v]++
+			}
+		}
+	}
+	for ch, n := range seen {
+		if n > 1 {
+			dup = append(dup, ch)
+		}
+	}
+	sort.Ints(dup)
+	return dup
 }
 
 // firstLineValue 取正则第一个匹配的捕获组;无匹配返回空。

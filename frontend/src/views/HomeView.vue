@@ -1,7 +1,10 @@
 <script setup>
-import { G, api, refreshProjects, refreshStatus, phaseLabel, fileToB64 } from '../store'
-import { ref, computed, onMounted, watch } from 'vue'
+import { G, api, refreshProjects, refreshStatus, fileToB64 } from '../store'
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import HomeProjectGrid from '../components/HomeProjectGrid.vue'
+import HomeCreateDialog from '../components/HomeCreateDialog.vue'
+import HomeSeriesDialog from '../components/HomeSeriesDialog.vue'
 
 const creating = ref(false)
 
@@ -16,19 +19,17 @@ async function comfyToggle() {
   comfyBusy.value = true
   try {
     const act = comfyLive.value ? 'stop' : 'start'
-    const r = await fetch(`/api/comfy/${act}`, { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.comfyAction(act)
     ElMessage.success(act === 'start' ? 'ComfyUI 启动指令已下发,引擎预热中…' : 'ComfyUI 已停止')
     setTimeout(refreshStatus, act === 'start' ? 12000 : 1500)
   } catch (e) { ElMessage.error(e.message) } finally { comfyBusy.value = false }
 }
 
 // 新建项目(带文件上传:txt/md 源文本,json 分镜方案)
+// 弹窗本体在 HomeCreateDialog(参数录入),此处只保留创建/拆集业务流程
 const dlg = ref(false)
 const newName = ref('')
 const pickedFile = ref(null)   // {name, text, kind: 'text'|'plan', plan?, preview}
-const fileInput = ref(null)
 const busy = ref(false)
 // AI 现场创作模式(曾漏定义三个 ref,致弹窗渲染崩溃/AI 开关失灵)
 const aiMode = ref(false)
@@ -38,59 +39,18 @@ const composing = ref(false)
 const novelMode = ref(false)
 const novelText = ref('')
 const splitting = ref(false)
-const novelInput = ref(null)
-const novelDirInput = ref(null)
 const novelCover = ref(null)   // File:系列封面(目录「封面」文件夹自动识别 或 手动选择)
 const novelCoverPath = ref('') // 桌面拖放(wails 原生)的本机封面路径
-const novelCoverInput = ref(null)
-const novelCoverURL = computed(() => novelCover.value ? URL.createObjectURL(novelCover.value) : (novelCoverPath.value ? '/api/thumb?path=' + encodeURIComponent(novelCoverPath.value) : ''))
-function onCoverNativeDrop(ev) {
-  const p = ev.detail?.[0]
-  if (!p) return
-  if (!/\.(png|jpe?g|webp)$/i.test(p)) { ElMessage.error('仅支持 png/jpg/webp'); return }
-  novelCoverPath.value = p
-  novelCover.value = null
-}
-function onPickNovel(ev) {
-  const f = ev.target.files?.[0]
-  ev.target.value = ''
-  if (!f) return
-  if (f.size > 20 << 20) { ElMessage.error('文件过大(>20MB)'); return }
-  const rd = new FileReader()
-  rd.onload = () => { novelText.value = String(rd.result || '') }
-  rd.readAsText(f, 'utf-8')
-}
-// 目录导入:合并目录内 txt/md 章节(按路径排序);
-// 路径含「封面」目录的图片自动识别为系列封面(选包含小说与封面文件夹的上层目录即可)。
-function onPickNovelDir(ev) {
-  const files = Array.from(ev.target.files || [])
-  ev.target.value = ''
-  if (!files.length) return
-  const chapters = files.filter(f => /\.(txt|md)$/i.test(f.name) && !f.webkitRelativePath.includes('封面'))
-  const cover = files.find(f => /\.(png|jpe?g|webp)$/i.test(f.name) && (f.webkitRelativePath || '').includes('封面'))
-  if (!chapters.length) { ElMessage.warning('所选目录中没有 txt/md 章节文件'); return }
-  chapters.sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, 'zh'))
-  if (cover) novelCover.value = cover
-  let done = 0
-  let text = ''
-  for (const ch of chapters) {
-    const rd = new FileReader()
-    rd.onload = () => {
-      text += (text ? '\n\n' : '') + String(rd.result || '')
-      if (++done === chapters.length) novelText.value = text
-    }
-    rd.readAsText(ch, 'utf-8')
-  }
-  ElMessage.info(`已读入 ${chapters.length} 个章节文件` + (cover ? ',并识别到封面' : ''))
-}
-function onPickNovelCover(ev) {
-  const f = ev.target.files?.[0]
-  ev.target.value = ''
-  if (!f) return
-  if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { ElMessage.error('仅支持 png/jpg/webp'); return }
-  novelCover.value = f
-  novelCoverPath.value = ''
-}
+// computed 里调 createObjectURL 是错的:computed 会在每次依赖变化时重新求值,
+// 于是每换一次封面就新建一个 blob URL 且永不释放。改为 watch 显式管理生命周期,
+// 换图时让旧 URL 失效。
+const novelCoverObjectURL = ref('')
+watch(novelCover, (f) => {
+  if (novelCoverObjectURL.value) URL.revokeObjectURL(novelCoverObjectURL.value)
+  novelCoverObjectURL.value = f ? URL.createObjectURL(f) : ''
+})
+const novelCoverURL = computed(() => novelCoverObjectURL.value || (novelCoverPath.value ? '/api/thumb?path=' + encodeURIComponent(novelCoverPath.value) : ''))
+
 async function doNovelSplit() {
   if (novelText.value.trim().length < 200) { ElMessage.warning('小说正文太短(至少 200 字)'); return }
   splitting.value = true
@@ -106,12 +66,8 @@ async function doNovelSplit() {
       if (payload) {
         for (const e of r.episodes) {
           try {
-            const cr = await fetch(`/api/projects/${encodeURIComponent(e.project)}/cover`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(payload),
-            })
-            if (cr.ok) okc++
+            await api.uploadCover(e.project, payload)
+            okc++
           } catch { /* 单集失败不阻塞 */ }
         }
       }
@@ -141,7 +97,7 @@ watch(() => G.logs.length, () => {
 })
 async function refreshJobs() {
   try {
-    const r = await fetch('/api/novel-jobs').then(x => x.json())
+    const r = await api.novelJobs()
     novelJobs.value = r.jobs || []
   } catch { /* */ }
 }
@@ -149,16 +105,15 @@ async function refreshJobs() {
 async function clearJob(j) {
   if (j.state !== 'failed') return
   try {
-    const r = await fetch('/api/novel-jobs?series=' + encodeURIComponent(j.series), { method: 'DELETE' })
-    const d = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    await api.novelJobDelete(j.series)
     ElMessage.success('已移除失败占位卡')
     refreshJobs()
   } catch (e) { ElMessage.error(e.message) }
 }
+let jobsTimer = null
 onMounted(() => {
   refreshJobs()
-  setInterval(refreshJobs, 8000)
+  jobsTimer = setInterval(refreshJobs, 8000)
 })
 
 // 剧集弹窗:点击分组卡打开,逐集管理(含单集独立删除)
@@ -262,6 +217,14 @@ async function pollBatch() {
   } catch { /* */ }
 }
 onMounted(pollBatch)
+// 统一清理。此前三处泄漏:jobsTimer 每次切回首页都会新增一个且永不回收
+// (累积 N 个 8s 轮询并发打后端),批量运行中离开页面会让 batchTimer 永久轮询,
+// 封面 blob URL 也从不释放。
+onUnmounted(() => {
+  if (jobsTimer) clearInterval(jobsTimer)
+  if (batchTimer) { clearInterval(batchTimer); batchTimer = null }
+  if (novelCoverObjectURL.value) URL.revokeObjectURL(novelCoverObjectURL.value)
+})
 async function startBatch(prefix) {
   try {
     const r = await api.novelBatchStart(prefix)
@@ -277,39 +240,6 @@ function openCreate() {
   newName.value = ''
   pickedFile.value = null
   dlg.value = true
-}
-
-function onDropFile(ev) {
-  const dt = ev.dataTransfer
-  if (!dt) return
-  const files = dt.files
-  if (files?.length) onPickFile({ target: { files, value: '' } })
-}
-
-function onPickFile(ev) {
-  const f = ev.target.files?.[0]
-  ev.target.value = ''
-  if (!f) return
-  if (f.size > 8 << 20) { ElMessage.error('文件过大(>8MB)'); return }
-  const reader = new FileReader()
-  reader.onload = () => {
-    const text = String(reader.result || '')
-    const ext = (f.name.split('.').pop() || '').toLowerCase()
-    if (ext === 'json') {
-      try {
-        const j = JSON.parse(text)
-        const plan = j.plan && Array.isArray(j.plan.shots) ? j.plan : (Array.isArray(j.shots) ? j : null)
-        if (plan) {
-          pickedFile.value = { name: f.name, text, kind: 'plan', plan,
-            preview: `《${plan.title || '未命名'}》${plan.shots.length} 镜 / ${(plan.characters || []).length} 角色 / ${(plan.scenes || []).length} 场景` }
-          return
-        }
-      } catch { /* 非 JSON 或结构不完整 → 当源文本 */ }
-    }
-    pickedFile.value = { name: f.name, text, kind: 'text',
-      preview: text.replace(/\s+/g, ' ').slice(0, 120) + (text.length > 120 ? '…' : '') }
-  }
-  reader.readAsText(f, 'utf-8')
 }
 
 async function doCreate() {
@@ -410,15 +340,7 @@ async function removeSeries(prefix, eps) {
   refreshProjects()
 }
 
-function stateChip(p) {
-  if (p.running) return { t: `${phaseLabel(p.phase)} · 运行中`, c: 'run' }
-  if (p.shots_total && p.shots_done >= p.shots_total) return { t: '已完成', c: 'ok' }
-  if (p.shots_done > 0) return { t: `渲染 ${p.shots_done}/${p.shots_total}`, c: 'warn' }
-  if (p.has_plan) return { t: '待渲染', c: '' }
-  return { t: '待创作', c: '' }
-}
 </script>
-
 <template>
   <div class="h-full overflow-y-auto p-6">
     <!-- Hero -->
@@ -489,259 +411,44 @@ function stateChip(p) {
       <p class="ez-desc">点击右上「新建项目」:粘贴故事文本、让 AI 现场创作,或导入整本小说一键拆集成多集短视频。</p>
     </div>
 
-    <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length
-             || (!batch && novelJobs.some(j => j.state === 'running' || j.state === 'failed'))"
-         class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
-      <!-- 拆集进行中:书级占位卡(提交即出现,分集陆续填充) -->
-      <div v-for="j in novelJobs.filter(x => x.state === 'running' || x.state === 'failed')"
-           :key="'job-' + j.series" class="shot-card proj-card" style="border-style:dashed">
-        <div class="proj-cover">
-          <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <el-icon :size="30" :color="j.state === 'running' ? 'var(--mx-amber)' : 'var(--mx-red)'">
-              <Loading v-if="j.state === 'running'" class="is-loading" /><CircleCloseFilled v-else />
-            </el-icon>
-            <span class="timecode">{{ j.state === 'running' ? 'AI 拆集中' : '拆集失败' }}</span>
-          </div>
-          <button v-if="j.state === 'failed'" class="cover-del" title="移除失败占位卡" @click.stop="clearJob(j)">
-            <el-icon :size="13"><Delete /></el-icon>
-          </button>
-        </div>
-        <div class="px-3.5 py-3 flex flex-col gap-2">
-          <div class="flex items-center gap-2">
-            <b class="truncate flex-1 text-sm">《{{ j.series }}》</b>
-            <span class="timecode" style="font-size:10px" :style="j.state === 'failed' ? 'color:var(--mx-red)' : ''">
-              {{ j.state === 'running' ? (j.created ? ('已建 ' + j.created + ' 集') : '通读中…') : '失败' }}
-            </span>
-          </div>
-          <div class="text-xs truncate" :style="{ color: j.state === 'failed' ? 'var(--mx-red)' : 'var(--mx-text3)' }">{{ j.message }}</div>
-        </div>
-      </div>
+    <!-- 项目卡网格:项目/剧集卡、批量勾选、拆集占位卡(子组件) -->
+    <HomeProjectGrid
+      :series-groups="seriesGroups"
+      :novel-jobs="novelJobs"
+      :batch="batch"
+      :sel="sel"
+      :batch-stat="batchStat"
+      :running="G.status?.running || {}"
+      @open-project="openProject"
+      @open-series="openSeries"
+      @toggle-sel="toggleSel"
+      @clear-job="clearJob"
+      @start-project-run="startProjectRun"
+      @stop-project-run="stopProjectRun"
+      @remove-project="removeProject"
+      @start-series-batch="startSeriesBatch"
+      @stop-series-batch="stopSeriesBatch"
+      @remove-series="removeSeries" />
 
-      <!-- 剧集系列卡(点击打开逐集弹窗) -->
-      <div v-if="!batch" v-for="(eps, prefix) in seriesGroups.groups" :key="'s-' + prefix"
-           class="shot-card proj-card cursor-pointer" :title="'打开《' + prefix + '》剧集管理(逐集进入/删除/批量产线)'" @click="openSeries(prefix, eps)">
-        <div class="proj-cover">
-          <template v-if="eps.find(e => e.cover)">
-            <img class="cover-fit" :src="api.fileURL(eps.find(e => e.cover).id, eps.find(e => e.cover).cover)" alt="" aria-hidden="true" />
-            <img class="cover-full" :src="api.fileURL(eps.find(e => e.cover).id, eps.find(e => e.cover).cover)" alt="" style="filter:saturate(1.06)" />
-          </template>
-          <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <el-icon :size="30" color="var(--mx-text3)"><Film /></el-icon>
-            <span class="timecode">{{ eps.length }} 集</span>
-          </div>
-          <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
-            <div class="px-3 py-1.5 rounded-lg flex items-center gap-2"
-                 style="background:rgba(6,8,14,.55);border:1px solid rgba(255,180,84,.4);backdrop-filter:blur(4px)">
-              <el-icon :size="16" color="var(--mx-amber-hi)"><Folder /></el-icon>
-              <span class="text-xs" style="color:var(--mx-amber-hi)">剧集合集</span>
-            </div>
-          </div>
-          <!-- 封面右上:批量运行灯(左)与删除整部(右),批量运行中禁用删除 -->
-          <i v-if="batchStat && batchStat.prefix === prefix" class="dot run"
-             style="position:absolute;top:12px;right:106px"></i>
-          <button class="cover-del" style="right:74px" title="开始:启动批量产线(从中断处续跑)"
-                  :disabled="!!(batchStat && batchStat.running)" @click.stop="startSeriesBatch(prefix)">
-            <el-icon :size="13"><VideoPlay /></el-icon>
-          </button>
-          <button class="cover-del" style="right:42px" title="停止:停止管线并释放显存"
-                  :disabled="!(batchStat && batchStat.prefix === prefix)" @click.stop="stopSeriesBatch()">
-            <el-icon :size="13"><VideoPause /></el-icon>
-          </button>
-          <button class="cover-del" title="删除整部系列(全部集)" :disabled="!!(batchStat && batchStat.prefix === prefix)"
-                  @click.stop="removeSeries(prefix, eps)">
-            <el-icon :size="13"><Delete /></el-icon>
-          </button>
-        </div>
-        <div class="px-3.5 py-3 flex flex-col gap-2">
-          <div class="flex items-center gap-2">
-            <b class="truncate flex-1 text-sm">《{{ prefix }}》</b>
-            <span class="timecode" style="font-size:10px">
-              {{ (batchStat && batchStat.prefix === prefix) ? ('批量中 ' + batchStat.current + '/' + batchStat.total) : (eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length + '/' + eps.length + ' 集') }}
-            </span>
-          </div>
-          <el-progress
-            :percentage="Math.round(eps.reduce((a, e) => a + (e.shots_done || 0), 0) * 100 / Math.max(1, eps.reduce((a, e) => a + (e.shots_total || 0), 0)))"
-            :stroke-width="5" :show-text="false" :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
-        </div>
-      </div>
+    <!-- 剧集合集弹窗(子组件) -->
+    <HomeSeriesDialog v-model:series-dlg="seriesDlg" :batch-stat="batchStat"
+      @open-project="openProject" @del-episode="delEpisode"
+      @start-batch="startBatch" @stop-batch="stopBatch" />
 
-      <!-- 批量模式:系列=一个管理单元(勾=整书删除) -->
-      <div v-if="batch" v-for="(eps, prefix) in seriesGroups.groups" :key="'bs-' + prefix"
-           class="shot-card proj-card cursor-pointer relative" @click="toggleSel('series:' + prefix)">
-        <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel('series:' + prefix)">
-          <el-checkbox :model-value="sel.has('series:' + prefix)" size="large" />
-        </div>
-        <div class="proj-cover">
-          <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <el-icon :size="30" color="var(--mx-text3)"><Folder /></el-icon>
-            <span class="timecode">{{ eps.length }} 集</span>
-          </div>
-        </div>
-        <div class="px-3.5 py-3 flex flex-col gap-2">
-          <div class="flex items-center gap-2">
-            <b class="truncate flex-1 text-sm">《{{ prefix }}》</b>
-            <span class="timecode" style="font-size:10px">整部系列</span>
-          </div>
-        </div>
-      </div>
 
-      <div v-for="p in (batch ? seriesGroups.singles : seriesGroups.singles)" :key="p.id" class="shot-card proj-card cursor-pointer relative"
-           :title="batch ? '勾选加入批量删除' : '进入「' + p.name + '」工作台'" @click="batch ? toggleSel(p.id) : openProject(p.id)">
-        <div v-if="batch" class="absolute top-2 left-2 z-10" @click.stop="toggleSel(p.id)">
-          <el-checkbox :model-value="sel.has(p.id)" size="large" />
-        </div>
-        <div class="proj-cover">
-          <template v-if="p.cover">
-            <img class="cover-fit" :src="api.fileURL(p.id, p.cover)" alt="" aria-hidden="true" />
-            <img class="cover-full" :src="api.fileURL(p.id, p.cover)" alt="" style="filter:saturate(1.06)" />
-          </template>
-          <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2">
-            <el-icon :size="30" color="var(--mx-text3)"><Film /></el-icon>
-            <span class="timecode">{{ p.has_plan ? p.shots_total + ' 镜' : 'NEW' }}</span>
-          </div>
-          <!-- 封面右上:状态灯(左)与删除(右)保持间距,不重叠 -->
-          <i class="dot" :class="stateChip(p).c" style="position:absolute;top:12px;right:106px"></i>
-          <button class="cover-del" style="right:74px" title="开始:启动管线(开始/续跑)"
-                  :disabled="!!G.status?.running?.[p.id]" @click.stop="startProjectRun(p)">
-            <el-icon :size="13"><VideoPlay /></el-icon>
-          </button>
-          <button class="cover-del" style="right:42px" title="停止:停止管线并释放显存"
-                  :disabled="!G.status?.running?.[p.id]" @click.stop="stopProjectRun(p)">
-            <el-icon :size="13"><VideoPause /></el-icon>
-          </button>
-          <button v-if="!batch" class="cover-del" title="删除项目" @click.stop="removeProject(p)">
-            <el-icon :size="13"><Delete /></el-icon>
-          </button>
-        </div>
-        <div class="px-3.5 py-3 flex flex-col gap-2">
-          <div class="flex items-center gap-2">
-            <b class="truncate flex-1 text-sm">{{ p.name }}</b>
-            <span class="timecode" style="font-size:10px">{{ stateChip(p).t }}</span>
-          </div>
-          <el-progress v-if="p.shots_total" :percentage="Math.round(p.shots_done * 100 / p.shots_total)"
-                       :stroke-width="5" :show-text="false"
-                       :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
-        </div>
-      </div>
-    </div>
-
-    <!-- 剧集合集弹窗:逐集管理 -->
-    <el-dialog :model-value="!!seriesDlg" :title="seriesDlg ? ('《' + seriesDlg.prefix + '》· 剧集合集(' + seriesDlg.eps.length + ' 集)') : ''"
-               width="640px" @update:model-value="seriesDlg = null">
-      <template v-if="seriesDlg">
-        <div class="flex items-center gap-3 mb-3">
-          <el-progress style="flex:1"
-            :percentage="Math.round(seriesDlg.eps.reduce((a, e) => a + (e.shots_done || 0), 0) * 100 / Math.max(1, seriesDlg.eps.reduce((a, e) => a + (e.shots_total || 0), 0)))"
-            :stroke-width="6" :color="'linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep))'" />
-          <span class="timecode">{{ seriesDlg.eps.filter(e => e.shots_total && e.shots_done >= e.shots_total).length }}/{{ seriesDlg.eps.length }} 集完成</span>
-        </div>
-        <div class="flex flex-col gap-2" style="max-height:46vh;overflow-y:auto">
-          <div v-for="e in seriesDlg.eps" :key="e.id"
-               class="flex items-center gap-3 p-2.5 rounded-lg cursor-pointer ep-row"
-               @click="seriesDlg = null; openProject(e.id)">
-            <span class="timecode" style="width:44px">{{ (e.name.match(/·第(\d+)集/) || [])[1] || '—' }}</span>
-            <i class="dot" :class="e.running ? 'run' : (e.shots_total && e.shots_done >= e.shots_total) ? 'ok' : (e.shots_done > 0 ? 'warn' : '')"></i>
-            <div class="flex-1 min-w-0">
-              <div class="text-sm truncate">{{ e.name.split('·').slice(2).join('·') || e.name }}</div>
-              <div class="text-xs" style="color:var(--mx-text3)">{{ e.running ? (phaseLabel(e.phase) + ' · 运行中') : (e.shots_total ? ('镜头 ' + e.shots_done + '/' + e.shots_total) : '待创作') }}</div>
-            </div>
-            <el-tooltip content="删除本集(仅这一集)" placement="top">
-              <el-button size="small" text type="danger" @click.stop="delEpisode(e)"><el-icon><Delete /></el-icon></el-button>
-            </el-tooltip>
-            <el-button size="small" text type="primary" @click.stop="seriesDlg = null; openProject(e.id)"><el-icon><ArrowRight /></el-icon>进入</el-button>
-          </div>
-        </div>
-      </template>
-      <template #footer>
-        <template v-if="batchStat && seriesDlg && batchStat.prefix === seriesDlg.prefix">
-          <span class="text-xs mr-2 flex items-center gap-1.5" style="color:var(--mx-amber)"><i class="dot run"></i>批量中 第 {{ batchStat.current }}/{{ batchStat.total }} 集(已成片自动跳过,支持中断续跑)</span>
-          <el-button type="danger" plain @click="stopBatch"><el-icon class="mr-1"><VideoPause /></el-icon>停止批量</el-button>
-        </template>
-        <el-button v-else type="primary" plain :disabled="!seriesDlg || !!batchStat" @click="seriesDlg && startBatch(seriesDlg.prefix)">
-          <el-icon class="mr-1"><VideoCameraFilled /></el-icon>{{ batchStat ? '批量运行中…' : '批量产线(断点续跑)' }}
-        </el-button>
-        <el-button @click="seriesDlg = null">关闭</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 新建项目:可选上传 txt / md / json -->
-    <el-dialog v-model="dlg" title="新建短视频项目" width="560px"
-               :close-on-click-modal="!composing" :close-on-press-escape="!composing" :show-close="!composing"
-               v-loading="composing" element-loading-text="AI 创作中(1-3 分钟),日志有实时心跳…">
-      <el-form label-position="top">
-        <el-form-item label="项目名(中文 / 字母 / 数字 / _-)">
-          <el-input v-model="newName" maxlength="40" :placeholder="novelMode ? '书名(可留空,AI 自动从小说识别)' : '如:天庭外卖员-第二集'" @keyup.enter="doCreate" />
-        </el-form-item>
-        <el-form-item v-if="!novelMode" label="AI 现场创作(只给需求,LLM 即时发挥写完整故事)">
-          <div class="w-full flex flex-col gap-2">
-            <el-switch v-model="aiMode" :disabled="novelMode" active-text="由 AI 创作" inactive-text="自己提供文本" />
-            <el-input v-if="aiMode" v-model="aiPrompt" type="textarea" :rows="3" maxlength="300" show-word-limit
-              placeholder="一句话或一个点子,如:外卖员送餐到天庭,玉帝当场包下他所有订单,搞笑爽文" />
-          </div>
-        </el-form-item>
-        <el-form-item label="整本小说批量(拆成多集短视频,逐集产线)">
-          <div class="w-full flex flex-col gap-2">
-            <el-switch v-model="novelMode" :disabled="aiMode" active-text="整本小说模式" inactive-text="单集模式" />
-            <template v-if="novelMode">
-              <div class="flex gap-2 items-center">
-                <el-input v-model="novelText" type="textarea" :rows="5" placeholder="粘贴整本小说/长文…&#10;LLM 将按叙事节拍拆成多集,每集一个短视频项目(同名角色自动复用定妆照)"
-                  style="flex:1" />
-                <div class="flex flex-col gap-2">
-                  <input ref="novelInput" type="file" accept=".txt,.md" hidden @change="onPickNovel" />
-                  <input ref="novelDirInput" type="file" webkitdirectory hidden @change="onPickNovelDir" />
-                  <input ref="novelCoverInput" type="file" accept="image/png,image/jpeg,image/webp" hidden @change="onPickNovelCover" />
-                  <el-button size="small" @click="novelInput?.click()"><el-icon class="mr-1"><Upload /></el-icon>导入 txt / md</el-button>
-                  <el-button size="small" @click="novelDirInput?.click()"><el-icon class="mr-1"><FolderOpened /></el-icon>导入目录</el-button>
-                  <span class="text-xs" style="color:var(--mx-text3)">{{ novelText.length ? novelText.length + ' 字' : '' }}</span>
-                </div>
-              </div>
-              <div class="flex items-center gap-3" style="--wails-drop-target: drop" @mx-filedrop="onCoverNativeDrop">
-                <div v-if="novelCover || novelCoverPath" class="flex items-center gap-2 p-1.5 rounded-lg" style="border:1px solid var(--mx-line-hi)">
-                  <img v-if="novelCoverURL" :src="novelCoverURL" style="width:34px;height:46px;object-fit:cover;border-radius:5px" />
-                  <el-button text size="small" @click="novelCover = null; novelCoverPath = ''"><el-icon><Close /></el-icon></el-button>
-                </div>
-                <el-button v-else size="small" plain @click="novelCoverInput?.click()">
-                  <el-icon class="mr-1"><Picture /></el-icon>选择封面(可选,可拖入)
-                </el-button>
-                <span class="text-xs" style="color:var(--mx-text3)">封面应用为每集项目封面</span>
-              </div>
-              <div class="text-xs" style="color:var(--mx-text3)">「导入目录」合并章节;若所选目录(或其上层)含「封面」文件夹,其中的图片自动识别为系列封面;书名留空 AI 自动识别;拆集 2-6 分钟(日志有实时心跳)</div>
-            </template>
-          </div>
-        </el-form-item>
-        <el-form-item label="导入文件(可选)" v-if="!aiMode && !novelMode">
-          <div v-if="!pickedFile" class="upload-zone" @click="fileInput?.click()" @dragover.prevent @drop.prevent="onDropFile">
-            <el-icon :size="26" color="var(--mx-text3)"><UploadFilled /></el-icon>
-            <div class="text-xs mt-1" style="color:var(--mx-text2)">点击或拖入 <b>.txt / .md / .json</b></div>
-            <div class="text-xs" style="color:var(--mx-text3)">txt/md 作为剧本源文本;json 识别为分镜方案直接导入</div>
-          </div>
-          <div v-else class="upload-zone picked">
-            <div class="flex items-center gap-2 w-full">
-              <el-icon :size="18" :color="pickedFile.kind === 'plan' ? 'var(--mx-green)' : 'var(--mx-cyan)'">
-                <Tickets v-if="pickedFile.kind === 'plan'" /><Document v-else />
-              </el-icon>
-              <div class="flex-1 min-w-0">
-                <div class="text-xs font-bold">{{ pickedFile.name }}
-                  <el-tag size="small" :type="pickedFile.kind === 'plan' ? 'success' : 'info'" class="ml-1">
-                    {{ pickedFile.kind === 'plan' ? '分镜方案' : '源文本' }}
-                  </el-tag>
-                </div>
-                <div class="text-xs truncate" style="color:var(--mx-text3)">{{ pickedFile.preview }}</div>
-              </div>
-              <el-button text size="small" @click="pickedFile = null"><el-icon><Close /></el-icon></el-button>
-            </div>
-          </div>
-          <input ref="fileInput" type="file" accept=".txt,.md,.json" hidden @change="onPickFile" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dlg = false">取消</el-button>
-        <el-button type="primary" :loading="busy || composing || splitting"
-          :disabled="(!newName.trim() && !novelMode) || (aiMode && !aiPrompt.trim()) || (novelMode && novelText.trim().length < 200)"
-          @click="doCreate">
-          {{ splitting ? '拆集中(2-6 分钟)…' : composing ? 'AI 创作中(1-3 分钟)…' : novelMode ? '拆集并创建多集项目' : '创建项目' }}
-        </el-button>
-      </template>
-    </el-dialog>
+    <!-- 新建项目弹窗(子组件:三模式参数录入) -->
+    <HomeCreateDialog
+      v-model:dlg="dlg"
+      v-model:new-name="newName"
+      v-model:picked-file="pickedFile"
+      v-model:ai-mode="aiMode"
+      v-model:ai-prompt="aiPrompt"
+      v-model:novel-mode="novelMode"
+      v-model:novel-text="novelText"
+      v-model:novel-cover="novelCover"
+      v-model:novel-cover-path="novelCoverPath"
+      :novel-cover-url="novelCoverURL"
+      :busy="busy" :composing="composing" :splitting="splitting"
+      @create="doCreate" />
   </div>
 </template>

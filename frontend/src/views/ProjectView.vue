@@ -181,9 +181,7 @@ const exporting = ref(false)
 async function exportPack() {
   exporting.value = true
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(pj.value.project.id)}/export-pack`, { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.exportPack(pj.value.project.id)
     ElMessage.success(`素材包已生成(${d.size_mb?.toFixed(1) || '?'}MB),见项目 output 目录`)
     openDir()
   } catch (e) { ElMessage.error(e.message) } finally { exporting.value = false }
@@ -217,7 +215,7 @@ const doneShots = computed(() =>
           </el-button>
           <h2 class="text-base font-bold m-0">{{ pj.project.name }}</h2>
           <el-tag v-if="plan" size="small" effect="plain">《{{ plan.title }}》</el-tag>
-          <span v-if="running" class="flex items-center gap-1.5 text-xs" style="color:var(--mx-orange)">
+          <span v-if="running" class="flex items-center gap-1.5 text-xs" style="color:var(--mx-amber)">
             <i class="dot run"></i>{{ phaseLabel(pj.project.phase) }}运行中
           </span>
           <div class="flex-1"></div>
@@ -249,7 +247,7 @@ const doneShots = computed(() =>
           <div class="grid gap-4" style="grid-template-columns: 1fr 340px">
             <div class="panel p-4 flex flex-col" style="min-height: 420px">
               <div class="flex items-center gap-2 mb-2">
-                <b>源文本</b><span class="text-xs" style="color:var(--mx-text-2)">故事 / 创意 / 剧本大纲(中文)</span>
+                <b>源文本</b><span class="text-xs" style="color:var(--mx-text2)">故事 / 创意 / 剧本大纲(中文)</span>
                 <div class="flex-1"></div>
                 <input ref="importInput" type="file" accept=".txt,.md" hidden @change="onImportFile" />
                 <el-button size="small" @click="importInput?.click()">
@@ -269,7 +267,7 @@ const doneShots = computed(() =>
             <div class="flex flex-col gap-4">
               <div class="panel p-4">
                 <b class="text-sm">运行「剧本分镜」</b>
-                <p class="text-xs mt-2 mb-3" style="color:var(--mx-text-2)">
+                <p class="text-xs mt-2 mb-3" style="color:var(--mx-text2)">
                   LLM 直出:角色卡 / 场景卡 / 分镜表 + 每镜完整 H3 提示词(对白逐字保留、原生配音)。
                 </p>
                 <el-tooltip content="LLM 直出角色卡/场景卡/分镜表与每镜 H3 提示词(已有方案会被跳过)" placement="top">
@@ -279,8 +277,8 @@ const doneShots = computed(() =>
                 </el-tooltip>
               </div>
               <div v-if="plan" class="panel p-4 text-sm flex flex-col gap-2">
-                <div><b style="color:var(--mx-orange)">《{{ plan.title }}》</b></div>
-                <div style="color:var(--mx-text-2)">{{ plan.logline }}</div>
+                <div><b style="color:var(--mx-amber)">《{{ plan.title }}》</b></div>
+                <div style="color:var(--mx-text2)">{{ plan.logline }}</div>
                 <div class="timecode" style="word-break:break-all">{{ plan.style }}</div>
               </div>
             </div>
@@ -301,7 +299,7 @@ const doneShots = computed(() =>
             <section>
               <h3 class="text-sm font-bold mb-3 flex items-center gap-2">
                 <el-icon><User /></el-icon>角色定妆照
-                <span class="text-xs font-normal" style="color:var(--mx-text-2)">半身正脸构图 · 锁脸参考(Ref2VA &lt;Picture 1&gt;)</span>
+                <span class="text-xs font-normal" style="color:var(--mx-text2)">半身正脸构图 · 锁脸参考(Ref2VA &lt;Picture 1&gt;)</span>
               </h3>
               <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">
                 <div v-for="c in charsWithAsset" :key="c.id" class="shot-card p-3 flex flex-col gap-2">
@@ -311,11 +309,11 @@ const doneShots = computed(() =>
                     <el-tag v-else-if="c.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="c.asset ? 'ok' : 'warn'"></i>
                   </div>
-                  <div style="aspect-ratio:3/4;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
+                  <div style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
                        :title="'点击上传「' + c.name + '」定妆照(png/jpg/webp);同名资产自动复用库'" @click="upload('characters', 'char:'+c.id, c.name)">
                     <img v-if="c.asset" :src="api.fileURL(pj.project.id, c.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
-                    <div v-else class="text-center text-xs p-2" style="color:var(--mx-text-2)">
+                    <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传定妆照</div>
                     </div>
                     <div v-if="c.asset" class="cover-acts">
@@ -333,14 +331,14 @@ const doneShots = computed(() =>
                       </button>
                     </div>
                   </div>
-                  <div class="text-xs" style="color:var(--mx-text-2)">{{ c.description }}</div>
+                  <div class="text-xs" style="color:var(--mx-text2)">{{ c.description }}</div>
                 </div>
               </div>
             </section>
             <section>
               <h3 class="text-sm font-bold mb-3 flex items-center gap-2">
                 <el-icon><MapLocation /></el-icon>场景参考图
-                <span class="text-xs font-normal" style="color:var(--mx-text-2)">空镜锚定 &amp; 氛围参考(&lt;Picture 2&gt;)</span>
+                <span class="text-xs font-normal" style="color:var(--mx-text2)">空镜锚定 &amp; 氛围参考(&lt;Picture 2&gt;)</span>
               </h3>
               <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(220px,1fr))">
                 <div v-for="s in scenesWithAsset" :key="s.id" class="shot-card p-3 flex flex-col gap-2">
@@ -350,11 +348,11 @@ const doneShots = computed(() =>
                     <el-tag v-else-if="s.asset?.source === 'krea2'" size="small" type="warning" effect="plain">Krea-2</el-tag>
                     <i class="dot" :class="s.asset ? 'ok' : 'warn'"></i>
                   </div>
-                  <div style="aspect-ratio:16/9;background:var(--mx-bg-2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
+                  <div style="aspect-ratio:16/9;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
                        :title="'点击上传「' + s.name + '」场景参考图(png/jpg/webp)'" @click="upload('scenes', 'scene:'+s.id, s.name)">
                     <img v-if="s.asset" :src="api.fileURL(pj.project.id, s.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
-                    <div v-else class="text-center text-xs p-2" style="color:var(--mx-text-2)">
+                    <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传场景图</div>
                     </div>
                     <div v-if="s.asset" class="cover-acts">
@@ -366,7 +364,7 @@ const doneShots = computed(() =>
                       </button>
                     </div>
                   </div>
-                  <div class="text-xs" style="color:var(--mx-text-2)">{{ s.description }}</div>
+                  <div class="text-xs" style="color:var(--mx-text2)">{{ s.description }}</div>
                 </div>
               </div>
             </section>
@@ -391,14 +389,14 @@ const doneShots = computed(() =>
                   <el-tag v-else size="small" effect="plain">768P 标准版</el-tag>
                 </div>
               </div>
-              <div v-else class="text-xs p-10 text-center" style="color:var(--mx-text-2)">
+              <div v-else class="text-xs p-10 text-center" style="color:var(--mx-text2)">
                 渲染完成后,运行「合成成片」阶段即可在此预览与导出
               </div>
             </div>
             <div class="flex flex-col gap-4">
               <div class="panel p-4">
                 <b class="text-sm">合成参数</b>
-                <p class="text-xs mt-2" style="color:var(--mx-text-2)">
+                <p class="text-xs mt-2" style="color:var(--mx-text2)">
                   转场 / 字幕 / 响度可在管线卡片「质检」「合成成片」的 ⚙ 调优入口修改(项目级独立生效)。
                 </p>
                 <div class="flex gap-2 mt-3 flex-wrap">
@@ -433,7 +431,7 @@ const doneShots = computed(() =>
                   <div v-for="(r, k) in pj.qc" :key="k" class="flex items-center gap-2">
                     <i class="dot" :class="r.ok ? 'ok' : 'bad'"></i>
                     <span>镜头 {{ k }}</span>
-                    <span style="color:var(--mx-text-2)">{{ r.duration.toFixed(1) }}s · 暗像素 {{ (r.dark_ratio*100).toFixed(0) }}% · {{ r.has_audio ? '有音轨' : '无音轨' }}</span>
+                    <span style="color:var(--mx-text2)">{{ r.duration.toFixed(1) }}s · 暗像素 {{ (r.dark_ratio*100).toFixed(0) }}% · {{ r.has_audio ? '有音轨' : '无音轨' }}</span>
                     <span v-if="!r.ok" style="color:var(--mx-red)">{{ (r.problems||[]).join(';') }}</span>
                   </div>
                 </div>
@@ -469,7 +467,7 @@ const doneShots = computed(() =>
     <!-- 视频截帧定妆 -->
     <el-dialog v-model="frameDlg.open" :title="`视频截帧定妆 · ${frameDlg.name}`" width="560px" append-to-body>
       <div class="flex items-center gap-3 mb-4">
-        <span class="text-xs" style="color:var(--mx-text-2)">选择镜头</span>
+        <span class="text-xs" style="color:var(--mx-text2)">选择镜头</span>
         <el-select v-model="frameDlg.shot" size="small" style="width:180px" @change="loadFramePreview">
           <el-option v-for="s in frameDlg.shots" :key="s.id" :value="s.id" :label="s.label" />
         </el-select>
@@ -478,7 +476,7 @@ const doneShots = computed(() =>
       <div v-loading="frameDlg.busy" class="grid gap-3" style="grid-template-columns:repeat(3,1fr);min-height:200px">
         <div v-for="(f, i) in frameDlg.frames" :key="i"
              class="cursor-pointer rounded-lg overflow-hidden relative" style="border:2px solid var(--mx-line)"
-             :style="frameDlg.pick === i ? 'border-color:var(--mx-accent)' : ''" @click="frameDlg.pick = i">
+             :style="frameDlg.pick === i ? 'border-color:var(--mx-accent, var(--mx-amber))' : ''" @click="frameDlg.pick = i">
           <img :src="f.url + '?t=' + Date.now()" style="width:100%;aspect-ratio:3/4;object-fit:cover;display:block" />
           <div class="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5" style="background:rgba(0,0,0,.5);color:#fff">{{ Math.round(f.ratio * 100) }}%</div>
         </div>

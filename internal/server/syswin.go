@@ -3,8 +3,8 @@ package server
 
 import (
 	"errors"
-	"strconv"
 	"net/http"
+	"strconv"
 
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/sysmon"
@@ -44,7 +44,6 @@ func (s *Server) handleWindowAction(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
-
 
 // handleLogs 轮询增量日志:GET /api/logs?after=N(桌面 webview 的 SSE 兜底)。
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {

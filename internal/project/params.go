@@ -10,10 +10,14 @@ type StageParams struct {
 	Assemble AssembleParams `json:"assemble"`
 }
 
+// MaxShotsCeiling 镜头数安全网上限。0 是合法值(=内容驱动,镜头数由 LLM 按
+// 原文节拍自行决定),此处只防手改 JSON 写出天文数字把渲染成本打爆。
+const MaxShotsCeiling = 120
+
 // ScriptParams 剧本/分镜阶段(script)参数。
 type ScriptParams struct {
-	MaxShots     int      `json:"max_shots"`     // 目标镜头数(3-12)
-	TotalSeconds int      `json:"total_seconds"` // 目标总时长(秒)
+	MaxShots     int      `json:"max_shots"`     // 目标镜头数:0=内容驱动,1-120=指定值(>6 走分批生成)
+	TotalSeconds int      `json:"total_seconds"` // 目标总时长(秒);0=由镜头数推算
 	Styles       []string `json:"styles"`        // 渲染风格预设 key(可多选组合)
 	StyleHint    string   `json:"style_hint"`    // 附加风格要求(自由文本)
 	Chibi        bool     `json:"chibi"`         // 定妆时同步生成 Q 版形象(内心活动表达)
@@ -86,14 +90,23 @@ func DefaultStageParams() StageParams {
 }
 
 // Sanitize 钳制参数到合法区间(防手改 JSON 打崩管线)。
+//
+// 注意 MaxShots/TotalSeconds 的 0 必须原样保留 —— 它们不是「未填」,而是
+// 「内容驱动」这一显式语义(2026-09-11 用户定调「该多少就多少」)。旧实现把
+// MaxShots<1 一律钳成 1,于是首跑正常的十余镜分镜在用户点过一次参数抽屉保存后
+// 就退化成「1 镜 / 7 秒」,而下方注释却写着「不人为钳制」,代码与设计相悖。
 func (p *StageParams) Sanitize() {
-	if p.Script.MaxShots < 1 {
-		p.Script.MaxShots = 1
+	if p.Script.MaxShots < 0 {
+		p.Script.MaxShots = 0
 	}
-	if p.Script.MaxShots > 20 {
-		p.Script.MaxShots = 20
+	if p.Script.MaxShots > MaxShotsCeiling {
+		p.Script.MaxShots = MaxShotsCeiling
 	}
-	if p.Script.TotalSeconds < p.Script.MaxShots*4 {
+	// 时长同样允许 0(=交给镜头数推算)。仅当用户既指定了镜头数、又给了明显
+	// 过短的时长时,才回退到默认节拍(每镜约 7 秒)。
+	if p.Script.TotalSeconds < 0 {
+		p.Script.TotalSeconds = 0
+	} else if p.Script.TotalSeconds > 0 && p.Script.MaxShots > 0 && p.Script.TotalSeconds < p.Script.MaxShots*4 {
 		p.Script.TotalSeconds = p.Script.MaxShots * 7
 	}
 	if p.Assets.Source != "upload" && p.Assets.Source != "krea2" && p.Assets.Source != "skip" {

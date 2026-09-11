@@ -35,12 +35,12 @@ const dirty = computed(() =>
 async function save() {
   saving.value = true
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(pj.value.project.id)}/shot`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shot_id: shot.value.id, h3_prompt: form.h3_prompt, duration: form.duration, mode: form.mode }),
+    // api.putShot 的第二个参数就是请求体本身(api 层内部已带 method/headers);
+    // 此前这里把整份 fetch options 塞了进去,后端只收到 method/headers/body 三个键,
+    // shot_id 缺失 → 400「参数错误(shot_id 必填)」,微调保存实际从未成功过。
+    await api.putShot(pj.value.project.id, {
+      shot_id: shot.value.id, h3_prompt: form.h3_prompt, duration: form.duration, mode: form.mode,
     })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
     ElMessage.success(`镜头 ${shot.value.id} 微调已保存(该镜指纹已变,重渲生效)`)
     refreshProject()
   } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }

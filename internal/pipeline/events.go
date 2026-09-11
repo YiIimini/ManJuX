@@ -11,11 +11,11 @@ import (
 
 // Event 一条管线事件。
 type Event struct {
-	Seq       int       `json:"seq"`     // 全局递增序号(轮询增量拉取用)
+	Seq       int       `json:"seq"` // 全局递增序号(轮询增量拉取用)
 	ProjectID string    `json:"project_id"`
-	Phase     string    `json:"phase"`  // script/assets/render/qc/assemble/pipeline
-	ShotID    int       `json:"shot_id"` // 0=非镜头级
-	Level     string    `json:"level"`  // info/success/warn/error
+	Phase     string    `json:"phase"`    // script/assets/render/qc/assemble/pipeline
+	ShotID    int       `json:"shot_id"`  // 0=非镜头级
+	Level     string    `json:"level"`    // info/success/warn/error
 	Progress  int       `json:"progress"` // 当前阶段进度 0-100
 	Message   string    `json:"message"`
 	At        time.Time `json:"at"`
@@ -23,13 +23,13 @@ type Event struct {
 
 // Bus 事件总线:广播 + 环形历史(新订阅者先回放历史再接增量)。
 type Bus struct {
-	mu       sync.Mutex
-	subs     map[int]chan Event
-	nextSub  int
-	nextSeq  int
-	history  []Event
-	maxHist  int
-	closed   bool
+	mu      sync.Mutex
+	subs    map[int]chan Event
+	nextSub int
+	nextSeq int
+	history []Event
+	maxHist int
+	closed  bool
 }
 
 // NewBus 创建事件总线。
@@ -104,7 +104,6 @@ func (b *Bus) SnapshotJSON() string {
 	raw, _ := json.Marshal(b.history)
 	return string(raw)
 }
-
 
 // Recent 返回 seq 大于 after 的历史事件(轮询增量)与最新 seq。
 func (b *Bus) Recent(after int) ([]Event, int) {

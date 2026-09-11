@@ -40,25 +40,25 @@ type NodeCheck struct {
 // Admin 聚合管理状态(不触发代管启动)。
 func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	c := e.cfg()
-	e.cli = NewClient(c.BaseURL)
-	st := &AdminStatus{Alive: false, RootDir: c.RootDir, BaseURL: c.BaseURL, Owned: e.proc != nil}
-	if !e.cli.Alive(ctx) {
+	e.setClient(NewClient(c.BaseURL))
+	st := &AdminStatus{Alive: false, RootDir: c.RootDir, BaseURL: c.BaseURL, Owned: e.ownedProc() != nil}
+	if !e.client().Alive(ctx) {
 		clearPidFile(c) // 引擎已死(含托盘/任务管理器手杀):清残留 pid
 		return st, nil
 	}
 	st.Alive = true
-	if e.proc == nil {
+	if e.ownedProc() == nil {
 		// 上实例代管启动的引擎:按 pid 文件接管,恢复停止/退出管理权
 		st.Owned = e.adoptFromPidFile()
 	}
-	if ver, err := e.cli.Version(ctx); err == nil {
+	if ver, err := e.client().Version(ctx); err == nil {
 		st.Version = ver
 	}
-	if run, pend, err := e.cli.Queue(ctx); err == nil {
+	if run, pend, err := e.client().Queue(ctx); err == nil {
 		st.Running, st.Pending = len(run), len(pend)
 	}
 	// GPU(从 system_stats devices)
-	if raw, err := e.cli.get(ctx, "/system_stats"); err == nil {
+	if raw, err := e.client().get(ctx, "/system_stats"); err == nil {
 		var out struct {
 			Devices []struct {
 				Name string `json:"name"`
@@ -105,7 +105,7 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 		case "image_vae":
 			mc.Name = c.ImageVAE
 		}
-		if list, ok := e.cli.ComboList(ctx, ck.node, ck.field); ok {
+		if list, ok := e.client().ComboList(ctx, ck.node, ck.field); ok {
 			if mc.Name != "" {
 				for _, v := range list {
 					if v == mc.Name {
@@ -122,11 +122,11 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	}
 	// H3 关键节点检测
 	for _, ncd := range []struct{ label, class string }{
-		{"条件缓存 · ConditioningCache", "MiniMaxH3CondSave"},
-		{"镜间接缝 · MotionContext", "MiniMaxH3MotionContext"},
+		{"条件缓存 · ConditioningCache", classCondSave},
+		{"镜间接缝 · MotionContext", classMotionCtx},
 	} {
 		nc := NodeCheck{Label: ncd.label, Class: ncd.class}
-		nc.OK = e.cli.HasNode(ctx, nc.Class)
+		nc.OK = e.client().HasNode(ctx, nc.Class)
 		st.Nodes = append(st.Nodes, nc)
 	}
 	return st, nil
@@ -135,7 +135,7 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 // StartAdmin 手动代管启动。
 func (e *Engine) StartAdmin(ctx context.Context) error {
 	touchBusy()
-	if e.cli.Alive(ctx) {
+	if e.client().Alive(ctx) {
 		return fmt.Errorf("ComfyUI 已在运行")
 	}
 	return e.launch(ctx, e.cfg())
@@ -147,7 +147,7 @@ func (e *Engine) StartAdmin(ctx context.Context) error {
 // 引擎本来就没在运行 → 幂等成功;清完进程但端口仍活 → 提示核对根目录配置。
 func (e *Engine) StopAdmin() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	alive := e.cli.Alive(ctx)
+	alive := e.client().Alive(ctx)
 	cancel()
 	n := e.killAllComfy("手动停止")
 	notifyLifecycle(false, "手动停止")
@@ -158,10 +158,10 @@ func (e *Engine) StopAdmin() error {
 }
 
 // QueueClear 清空待执行队列。
-func (e *Engine) QueueClear(ctx context.Context) { e.cli.ClearPending(ctx) }
+func (e *Engine) QueueClear(ctx context.Context) { e.client().ClearPending(ctx) }
 
 // Interrupt 中断当前执行。
-func (e *Engine) Interrupt(ctx context.Context) { e.cli.Interrupt(ctx) }
+func (e *Engine) Interrupt(ctx context.Context) { e.client().Interrupt(ctx) }
 
 // FreeVRAM 释放显存;失败上报(引擎未运行/请求异常都返回 error)。
-func (e *Engine) FreeVRAM(ctx context.Context) error { return e.cli.Free(ctx) }
+func (e *Engine) FreeVRAM(ctx context.Context) error { return e.client().Free(ctx) }

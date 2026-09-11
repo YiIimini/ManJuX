@@ -4,11 +4,18 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
+
+// ErrRenderTimeout 渲染超时哨兵。管线据此决定「释放显存后原地重试一次」,
+// 不再依赖错误文案里是否含「超时」二字 —— 调整文案不该悄悄改掉重试行为。
+// 各引擎的超时错误都必须用 %w 包装本哨兵。
+var ErrRenderTimeout = errors.New("渲染超时")
 
 // RefImage 一张参考图(本地绝对路径)。
 type RefImage struct {
@@ -37,6 +44,16 @@ type Job struct {
 	// 加载上一镜保存的 AV latent 钉入条件,产物自动裁掉 pinned 头。
 	Seam     bool
 	PrevShot int
+
+	// Timeout 单镜渲染超时;<=0 时各引擎回退自身默认值(本地 45 分钟 / 云端 20 分钟)。
+	// 由管线从设置页「单镜渲染超时」透传 —— 此前该配置项被写死忽略,用户在设置页
+	// 怎么改都不生效。
+	Timeout time.Duration
+
+	// Audios 音频参考(本地绝对路径)。H3 Ref2V 原生支持音频条件:喂入定稿配音后,
+	// 人物的口型与动作节奏会跟随音频 —— 这是「音频驱动」(Audio Drive)的入口,
+	// 对应精确台词路线:先把配音做成确定资产,再用它驱动画面。
+	Audios []string
 }
 
 // Result 渲染结果。
@@ -53,6 +70,14 @@ type Engine interface {
 	// Available 探测可用性:不可用时返回带修复指引的错误。
 	Available(ctx context.Context) error
 	Render(ctx context.Context, job Job) (*Result, error)
+
+	// —— 通用可选能力:本地引擎实现,云端引擎给出安全空实现 ——
+	// 它们原本要调用方断言 *comfyengine.Engine 才能调用,把具体引擎的能力
+	// 泄漏到了管线层与 HTTP 层。提升为接口方法后调用方不再依赖具体类型。
+	FreeVRAM(ctx context.Context) error
+	ClearQueue(ctx context.Context)
+	Interrupt(ctx context.Context)
+	GenerateImage(ctx context.Context, prompt, neg string, seed int64, w, h int, outPath string) (string, error)
 }
 
 // Registry 引擎注册表。

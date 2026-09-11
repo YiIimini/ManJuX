@@ -4,10 +4,10 @@ package server
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -102,7 +102,6 @@ func (s *Server) handleComposeStory(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, 200, map[string]any{"ok": true, "chars": n})
 }
-
 
 // uploadCover 项目自定义封面:multipart 字段 file(png/jpg/webp)→ assets/cover.<ext>。
 // 项目封面优先级:自定义封面 > 角色定妆照(整本小说导入时取同级「封面」文件夹的图)。

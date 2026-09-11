@@ -20,6 +20,22 @@ if (-not $ver) { $ver = "dev" }
 if ($ver -notmatch '^v') { $ver = "v$ver" }
 Write-Host "==> ManJuX 构建版本: $ver" -ForegroundColor Cyan
 
+# 版本号单一真源 = git tag。构建前把同一版本同步进 wails.json 与
+# frontend/package.json,否则 exe 文件属性与安装包名会永远停在旧值
+# (此前三处长期不一致:源码默认 1.0.0、wails.json 1.0.0、实际 tag 已是 v0.33.20)。
+# 用 UTF8Encoding($false) 写入,规避 Windows PowerShell 5.1 的 BOM 问题
+# (package.json 带 BOM 会让 pnpm 解析失败)。
+$verNum = $ver.TrimStart('v')
+foreach ($vf in @("$root/wails.json", "$root/frontend/package.json")) {
+  if (-not (Test-Path $vf)) { continue }
+  $raw = [IO.File]::ReadAllText($vf, [Text.Encoding]::UTF8)
+  $new = $raw -replace '("(?:product)?version":\s*")[^"]*(")', ('${1}' + $verNum + '${2}')
+  if ($new -ne $raw) {
+    [IO.File]::WriteAllText($vf, $new, (New-Object Text.UTF8Encoding($false)))
+    Write-Host "    -> 版本已同步: $vf = $verNum" -ForegroundColor DarkGray
+  }
+}
+
 # 0) 静默清理运行中的实例(exe 被锁会导致复制失败;构建过程零弹窗零打扰)
 Get-Process ManJuX -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 600

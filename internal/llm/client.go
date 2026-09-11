@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/YiIimini/ManJuX/internal/textutil"
 )
 
 // Message 一条对话消息。
@@ -159,7 +161,7 @@ func (c *Client) do(ctx context.Context, body []byte) (string, error) {
 		return "", err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &statusError{code: resp.StatusCode, body: truncate(string(raw), 500)}
+		return "", &statusError{code: resp.StatusCode, body: textutil.Truncate(string(raw), 500)}
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(raw, &cr); err != nil {
@@ -258,7 +260,7 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 			continue
 		}
 		defer resp.Body.Close()
-		return "", fmt.Errorf("VLM HTTP %d: %s", resp.StatusCode, truncate(string(out), 300))
+		return "", fmt.Errorf("VLM HTTP %d: %s", resp.StatusCode, textutil.Truncate(string(out), 300))
 	}
 	defer resp.Body.Close()
 	var cr chatResponse
@@ -273,12 +275,4 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 		return "", fmt.Errorf("VLM 返回空内容(finish=%s)", cr.Choices[0].FinishReason)
 	}
 	return stripReasoning(content), nil
-}
-
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }

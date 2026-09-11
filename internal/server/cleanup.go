@@ -15,8 +15,8 @@ import (
 )
 
 type cleanupResult struct {
-	Items    []string `json:"items"`
-	FreedMB  float64  `json:"freedMB"`
+	Items   []string `json:"items"`
+	FreedMB float64  `json:"freedMB"`
 }
 
 func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +105,16 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ⑤ 条件缓存**数据文件**(ComfyUI 侧 models/conditioning/*.pt)。
+	// ③ 只清了 sidecar 记账,而 .pt 数据在 ComfyUI 侧、文件名又只有 s{shot}_{hash}
+	// (项目号只参与 hash、不进文件名)—— 只清一侧会让数据永久滞留。实测该目录曾
+	// 堆到 227 个文件 / 4.9GB,其中 206 个是早期 manjux_ 命名格式留下的孤儿。
+	// 判据:仍被某个现存 sidecar(.ok)引用的保留,其余一律清理。
+	ptDir := filepath.Join(g.Comfy.RootDir, "ComfyUI", "models", "conditioning")
+	if ptCount, ptSize, err := cleanCondCacheFiles(ptDir, collectLiveCondNames(condDir)); err == nil && ptCount > 0 {
+		add(fmt.Sprintf("条件缓存数据文件 %d 个(.pt)", ptCount), ptSize)
+	}
+
 	// ④ 系统临时文件(mx-* 前缀,应用自身产生的)
 	tmpDir := os.TempDir()
 	if ents, err := os.ReadDir(tmpDir); err == nil {
@@ -133,4 +143,63 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 // dataDir 返回数据根目录。
 func (s *Server) dataDir() string {
 	return s.cfg.Get().DataDir
+}
+
+// collectLiveCondNames 收集所有项目 sidecar 中仍在使用的缓存名(.ok 文件名去扩展名)。
+// 这些名字对应的 .pt 是"活的",清理时必须保留。
+func collectLiveCondNames(condDir string) map[string]bool {
+	live := map[string]bool{}
+	projs, err := os.ReadDir(condDir)
+	if err != nil {
+		return live
+	}
+	for _, pj := range projs {
+		if !pj.IsDir() {
+			continue
+		}
+		oks, err := os.ReadDir(filepath.Join(condDir, pj.Name()))
+		if err != nil {
+			continue
+		}
+		for _, ok := range oks {
+			if !ok.IsDir() && strings.HasSuffix(ok.Name(), ".ok") {
+				live[strings.TrimSuffix(ok.Name(), ".ok")] = true
+			}
+		}
+	}
+	return live
+}
+
+// cleanCondCacheFiles 删除条件缓存数据目录中**不再被任何 sidecar 引用**的 .pt。
+//
+// 为什么必须单独做这一步:sidecar 记账在本应用侧(data/cond_cache),而 .pt 数据
+// 在 ComfyUI 侧(models/conditioning),且 .pt 文件名只有 s{shot}_{hash} —— 项目号
+// 只参与 hash 计算、不体现在文件名里,所以**无法按项目名匹配**,只能靠 sidecar 的
+// .ok 文件名反查。旧实现只清 sidecar,导致数据文件永久滞留(实测 227 个 / 4.9GB,
+// 其中 206 个是早期 manjux_ 命名格式的孤儿)。
+//
+// 目录不存在或不可读返回错误,由调用方决定是否提示(不影响其它清理项)。
+// 返回 (删除数, 释放字节, 错误)。
+func cleanCondCacheFiles(ptDir string, live map[string]bool) (int, int64, error) {
+	ents, err := os.ReadDir(ptDir)
+	if err != nil {
+		return 0, 0, err
+	}
+	var count int
+	var size int64
+	for _, e := range ents {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".pt") {
+			continue
+		}
+		if live[strings.TrimSuffix(e.Name(), ".pt")] {
+			continue // 仍被某个现存项目引用
+		}
+		if fi, ierr := e.Info(); ierr == nil {
+			size += fi.Size()
+		}
+		if os.Remove(filepath.Join(ptDir, e.Name())) == nil {
+			count++
+		}
+	}
+	return count, size, nil
 }

@@ -17,9 +17,14 @@ type LLMSettings struct {
 	Timeout int    `json:"timeout_seconds"`
 }
 
+// DefaultComfyBaseURL ComfyUI 服务的默认地址。设置默认值、引擎启动的端口兜底
+// 与文档引用共用同一处 —— 此前该端口以字面量散落在 config 两处 + 引擎一处,
+// 改端口时漏改任何一处都会让渲染连不上引擎。
+const DefaultComfyBaseURL = "http://127.0.0.1:8190"
+
 // ComfySettings 本地 ComfyUI 引擎设置。
 type ComfySettings struct {
-	BaseURL  string `json:"base_url"`  // 例如 http://127.0.0.1:8190
+	BaseURL  string `json:"base_url"`  // 例如 http://127.0.0.1:8190(默认见 DefaultComfyBaseURL)
 	RootDir  string `json:"root_dir"`  // ComfyUI 环境根目录(含 ComfyUI/ 与 standalone-env/)
 	AutoStart bool  `json:"auto_start"` // 渲染前未运行时自动启动
 	IdleStopMin int  `json:"idle_stop_min"` // 空闲自动退出(分钟):管线结束后无任务则停掉代管引擎释放显存;0=常驻
@@ -113,7 +118,7 @@ func Default() *Settings {
 			Timeout: 600,
 		},
 		Comfy: ComfySettings{
-			BaseURL:         "http://127.0.0.1:8190",
+			BaseURL:         DefaultComfyBaseURL,
 			RootDir:         "", // 由 Manager 自动探测填充
 			AutoStart:       true,
 			IdleStopMin:     10,

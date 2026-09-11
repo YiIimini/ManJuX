@@ -15,7 +15,7 @@ const checking = ref(false)
 
 async function refresh() {
   loading.value = true
-  try { st.value = await fetch('/api/comfy/admin').then(r => r.json()) }
+  try { st.value = await api.comfyAdmin() }
   catch (e) { ElMessage.error('状态获取失败') }
   loading.value = false
 }
@@ -23,9 +23,7 @@ async function refreshVersions(online = false, manual = false) {
   if (online) checking.value = true
   else verLoading.value = true
   try {
-    const r = await fetch(`/api/comfy/versions${online ? '?online=1' : ''}`)
-    vers.value = await r.json()
-    if (!r.ok) throw new Error(vers.value?.error || `HTTP ${r.status}`)
+    vers.value = await api.comfyVersions(online)
     if (online && manual) {
       const core = vers.value?.core?.[0] || {}
       const rows = [...(vers.value.core || []), ...(vers.value.nodes || [])]
@@ -80,9 +78,7 @@ async function act(action, tip) {
   }
   acting.value = action
   try {
-    const r = await fetch(`/api/comfy/${action}`, { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.comfyAction(action)
     ElMessage.success(d.note || '已执行')
     setTimeout(refresh, action === 'start' ? 1500 : 400)
   } catch (e) { ElMessage.error(e.message) } finally { acting.value = '' }
@@ -91,17 +87,13 @@ async function act(action, tip) {
 // WEB 窗口:独立 App 窗口(Chrome/Edge --app 无地址栏桌面观感)/ 系统默认浏览器
 async function openWebApp() {
   try {
-    const r = await fetch('/api/comfy/open-appwin', { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    await api.comfyOpenAppWin()
     ElMessage.success('已打开 ComfyUI 独立窗口')
   } catch (e) { ElMessage.error(e.message) }
 }
 async function openWebBrowser() {
   try {
-    const r = await fetch('/api/comfy/open-web', { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    await api.comfyOpenWeb()
     ElMessage.success('已在系统默认浏览器打开')
   } catch (e) { ElMessage.error(e.message) }
 }
@@ -176,9 +168,7 @@ async function openDir(path) {
   browseDlg.loading = true
   browseDlg.entries = []
   try {
-    const r = await fetch('/api/browse?path=' + encodeURIComponent(path))
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.browse(path)
     browseDlg.entries = d.entries || []
     browseDlg.total = d.total || 0
   } catch (e) {

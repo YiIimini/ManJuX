@@ -1,7 +1,7 @@
 {
   "name": "manjux-frontend",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.33.20",
   "type": "module",
   "scripts": {
     "dev": "vite",

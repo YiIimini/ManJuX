@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/llm"
 )
 
@@ -171,14 +170,48 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 }
 
 // genLibraryPortrait 用本地 ComfyUI(Krea-2)生成资产库定妆照,返回临时文件路径。
+// libraryRegen 重抽库资产:用条目自带的提示词重新生成定妆照(随机 seed)并覆盖入库。
+//
+// 与"抽卡"的区别:抽卡是抽一个**全新角色**(LLM 现编题材与外貌);重抽是**同一个角色
+// 换一张** —— 描述与提示词原样不动,只换随机种子,不满意就再抽一次。
+// 重抽会同时清掉旧的多视角原图与转台图(它们对应的是上一张定妆照,已经失效)。
+func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	kind, name := r.PathValue("kind"), r.PathValue("name")
+	e, _, ok := s.lib.Match(kind, name)
+	if !ok {
+		writeErr(w, 404, fmt.Errorf("库资产不存在"))
+		return
+	}
+	if strings.TrimSpace(e.ImagePrompt) == "" {
+		writeErr(w, 400, fmt.Errorf("该条目没有提示词,无法重抽(上传入库的条目请改用「自定义新建」)"))
+		return
+	}
+	seed := time.Now().UnixNano() & 0x7fffffff // 随机种子:每次抽到不同的图
+	tmp, err := s.genLibraryPortrait(r.Context(), e.ImagePrompt, seed)
+	if err != nil {
+		writeErr(w, 503, fmt.Errorf("重抽失败(需要本地 ComfyUI):%w", err))
+		return
+	}
+	defer os.Remove(tmp)
+
+	s.lib.ClearRelated(kind, name) // 旧角度图对应上一张定妆照,已失效
+	if _, err := s.lib.Put(kind, name, e.Description, e.ImagePrompt, tmp, e.SourceProject, e.Source); err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	s.opLog("🎲 库资产重抽:%s「%s」", kind, name)
+	updated, _, _ := s.lib.Match(kind, name)
+	writeJSON(w, 200, updated)
+}
+
 func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int64) (string, error) {
 	eng, err := s.reg.Get("comfy")
 	if err != nil {
 		return "", err
-	}
-	ce, ok := eng.(*comfyengine.Engine)
-	if !ok {
-		return "", fmt.Errorf("引擎类型错误")
 	}
 	tmp, err := os.CreateTemp("", "mx-lib-*.png")
 	if err != nil {
@@ -186,7 +219,7 @@ func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int
 	}
 	tmp.Close()
 	out := tmp.Name()
-	if _, err := ce.GenerateImage(ctx, prompt, "", seed, 832, 1248, out); err != nil {
+	if _, err := eng.GenerateImage(ctx, prompt, "", seed, 832, 1248, out); err != nil {
 		os.Remove(out)
 		return "", err
 	}

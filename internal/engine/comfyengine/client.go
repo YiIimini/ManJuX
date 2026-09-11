@@ -16,6 +16,9 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/textutil"
 )
 
 // Client ComfyUI HTTP API 客户端。
@@ -173,7 +176,7 @@ func extractNodeErrors(body string) string {
 		} `json:"node_errors"`
 	}
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
-		return truncate(body, 400)
+		return textutil.Truncate(body, 400)
 	}
 	var msgs []string
 	if e, ok := out.Error["message"]; ok {
@@ -185,7 +188,7 @@ func extractNodeErrors(body string) string {
 		}
 	}
 	if len(msgs) == 0 {
-		return truncate(body, 400)
+		return textutil.Truncate(body, 400)
 	}
 	return strings.Join(msgs, "; ")
 }
@@ -391,14 +394,25 @@ func (c *Client) Queue(ctx context.Context) (running, pending []string, err erro
 	return extract(out.QueueRunning), extract(out.QueuePending), nil
 }
 
+// defaultShotTimeout 单镜渲染兜底上限(作业未显式指定 Timeout 时使用)。
+const defaultShotTimeout = 45 * time.Minute
+
+// defaultImageTimeout 定妆图生成的兜底上限。图像生成没有单镜作业可依,
+// 取一个明显短于整镜渲染的值,避免 Krea-2 卡死时白等 45 分钟。
+const defaultImageTimeout = 10 * time.Minute
+
 // WaitForDone 轮询直到完成/出错。onProgress 收到 0-100 进度。
-func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress func(pct int, note string)) (*HistoryEntry, error) {
+// timeout<=0 时回退 defaultShotTimeout。
+func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.Duration, onProgress func(pct int, note string)) (*HistoryEntry, error) {
+	if timeout <= 0 {
+		timeout = defaultShotTimeout
+	}
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
-	deadline := time.Now().Add(45 * time.Minute) // 单镜兜底上限
-	missCount := 0                               // 连续不在队列且无 history 的次数
-	started := time.Now()                        // 执行计时(真实感知,不用假百分比)
-	lastNote := ""                               // 进度文案去重:同文案不重复上报
+	deadline := time.Now().Add(timeout)
+	missCount := 0        // 连续不在队列且无 history 的次数
+	started := time.Now() // 执行计时(真实感知,不用假百分比)
+	lastNote := ""        // 进度文案去重:同文案不重复上报
 	report := func(pct int, note string) {
 		if note == lastNote {
 			return
@@ -421,7 +435,7 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, onProgress fu
 			return nil, ctx.Err()
 		case <-ticker.C:
 			if time.Now().After(deadline) {
-				return nil, fmt.Errorf("渲染超时(45 分钟)")
+				return nil, fmt.Errorf("%w(单镜上限 %v)", engine.ErrRenderTimeout, timeout)
 			}
 			h, err := c.History(ctx, promptID)
 			if err != nil {
@@ -526,7 +540,7 @@ func execError(h *HistoryEntry) string {
 				msg = "[" + data.NodeType + "] " + msg
 			}
 			if msg != "" {
-				return truncate(msg, 500)
+				return textutil.Truncate(msg, 500)
 			}
 		}
 	}
@@ -544,14 +558,6 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 	}
 	defer resp.Body.Close()
 	return io.ReadAll(io.LimitReader(resp.Body, 16<<20))
-}
-
-func truncate(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
 }
 
 // HTTP 暴露内部 http.Client(引擎内探测用)。

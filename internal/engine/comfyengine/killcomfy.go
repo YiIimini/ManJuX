@@ -101,8 +101,9 @@ func procAlive(pid int) bool {
 func (e *Engine) killAllComfy(why string) int {
 	c := e.cfg()
 	managed := 0
-	if e.proc != nil {
-		managed = e.proc.Pid
+	// 取一次快照并立刻固化成 int:避免两次读之间代管状态被其它 goroutine 改写
+	if p := e.ownedProc(); p != nil {
+		managed = p.Pid
 	}
 	pids := comfyCandidates(c, managed)
 	for _, pid := range pids {
@@ -115,7 +116,7 @@ func (e *Engine) killAllComfy(why string) int {
 			time.Sleep(120 * time.Millisecond)
 		}
 	}
-	e.proc = nil
+	e.setOwnedProc(nil)
 	clearPidFile(c)
 	log.Printf("[comfy] %s:已结束 %d 个 ComfyUI 相关进程", why, len(pids))
 	return len(pids)
@@ -123,16 +124,21 @@ func (e *Engine) killAllComfy(why string) int {
 
 // stopManagedOnly 仅停代管进程树(空闲自动退出用;外部同安装实例不碰)。
 func (e *Engine) stopManagedOnly() error {
-	if e.proc == nil && !e.adoptFromPidFile() {
+	p := e.ownedProc()
+	if p == nil && !e.adoptFromPidFile() {
 		return fmt.Errorf("ComfyUI 非本应用启动,不做空闲退出接管")
 	}
-	pid := e.proc.Pid
+	// 认领成功后进程句柄已重新写入,必须再取一次 —— 沿用上面的 nil 快照会空指针
+	if p = e.ownedProc(); p == nil {
+		return fmt.Errorf("ComfyUI 代管进程句柄丢失,无法停止")
+	}
+	pid := p.Pid
 	killTree(pid)
 	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) && procAlive(pid) {
 		time.Sleep(120 * time.Millisecond)
 	}
-	e.proc = nil
+	e.setOwnedProc(nil)
 	clearPidFile(e.cfg())
 	notifyLifecycle(false, "空闲自动退出")
 	return nil

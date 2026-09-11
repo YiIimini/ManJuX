@@ -49,19 +49,19 @@ func (s *Server) projectCover(id string) string {
 // outputsList 作品库:聚合全部项目的成片(含 2K 版本/素材包状态)。
 func (s *Server) outputsList(w http.ResponseWriter, r *http.Request) {
 	type OutputItem struct {
-		Project   string `json:"project"`
-		Title     string `json:"title"`
-		Cover     string `json:"cover"`      // 项目封面(角色定妆照/场景图相对路径)
-		Final     string `json:"final"`      // 相对路径 output/final.mp4(可能空)
-		Final2K   string `json:"final_2k"`   // 相对路径(可能空)
-		SRT       bool   `json:"srt"`
-		Pack      bool   `json:"pack"`       // 剪辑素材包是否已生成
+		Project   string  `json:"project"`
+		Title     string  `json:"title"`
+		Cover     string  `json:"cover"`    // 项目封面(角色定妆照/场景图相对路径)
+		Final     string  `json:"final"`    // 相对路径 output/final.mp4(可能空)
+		Final2K   string  `json:"final_2k"` // 相对路径(可能空)
+		SRT       bool    `json:"srt"`
+		Pack      bool    `json:"pack"` // 剪辑素材包是否已生成
 		SizeMB    float64 `json:"size_mb"`
 		Size2KMB  float64 `json:"size_2k_mb"`
-		Shots     int    `json:"shots"`
-		ShotsDone int    `json:"shots_done"`
+		Shots     int     `json:"shots"`
+		ShotsDone int     `json:"shots_done"`
 		Duration  float64 `json:"duration"`
-		UpdatedAt string `json:"updated_at"`
+		UpdatedAt string  `json:"updated_at"`
 	}
 	out := []OutputItem{}
 	for _, p := range s.store.List() {

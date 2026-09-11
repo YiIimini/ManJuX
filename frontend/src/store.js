@@ -17,6 +17,8 @@ export const G = reactive({
   logPanelOpen: false,
   logSeq: 0,                // 日志轮询游标(seq 去重)
   tick: { library: 0, outputs: 0, comfy: 0, settings: 0, novels: 0 }, // 顶栏「刷新」触发各视图自刷新
+  metaStyles: [],          // /api/meta 的风格清单(key+name);空=用内置兜底
+  metaPhases: [],          // /api/meta 的阶段清单
 })
 
 export const PHASES = [
@@ -62,6 +64,13 @@ export const api = {
   comfyFree: () => req('POST', '/api/comfy/free'),
   upgrade2k: (id, shot) => req('POST', `/api/projects/${encodeURIComponent(id)}/upgrade2k`, { shot }),
   regenAsset: (id, assetId) => req('POST', `/api/projects/${encodeURIComponent(id)}/assets/regen`, { asset_id: assetId }),
+  // 视频截帧定妆:此前 api 层漏了这两个方法(后端路由与后端实现一直都在),
+  // ProjectView 调用即抛 TypeError,又被 catch 吞成一句英文报错 ——
+  // 整条「从已渲染镜头截帧替换定妆」的链路实际不可用。
+  assetFramePreview: (id, assetId, shot) =>
+    req('POST', `/api/projects/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}/frame-preview`, { shot_id: shot }),
+  assetFrameApply: (id, assetId, shot, ratio) =>
+    req('POST', `/api/projects/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}/frame-apply`, { shot_id: shot, ratio }),
   importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
   novelProduce: (path, max) => req('POST', '/api/novels/produce', { path, max_episodes: max }),
   novelSplit: (name, text, max) => req('POST', '/api/novel-split', { name, text, max_episodes: max }),
@@ -84,6 +93,54 @@ export const api = {
   sysmon: () => req('GET', '/api/sysmon'),
   window: (action) => req('POST', `/api/window/${encodeURIComponent(action)}`),
   quit: () => req('POST', '/api/quit'),
+
+  // ── 以下为原先散落在各视图里的裸 fetch,统一收口到 api 层 ──
+  // 收口的意义:错误处理、URL 编码、请求头三件事只写一遍;
+  // 之前每处各写各的(有的查 r.ok、有的只 .then(r=>r.json())、有的静默 catch)。
+  comfyAdmin: () => req('GET', '/api/comfy/admin'),
+  comfyVersions: (online) => req('GET', `/api/comfy/versions${online ? '?online=1' : ''}`),
+  // 引擎动作入口(后端路由 POST /api/comfy/{action},支持 start/stop/queue-clear/interrupt/free)。
+  // 此前 api 层漏了 comfyAction,首页与「引擎管理」页的启停按钮一调用就抛
+  // TypeError: api.comfyAction is not a function,又被 catch 吞成含糊报错 —— 引擎启停实际不可用。
+  comfyAction: (action) => req('POST', `/api/comfy/${encodeURIComponent(action)}`),
+  comfyOpenAppWin: () => req('POST', '/api/comfy/open-appwin'),
+  comfyOpenWeb: () => req('POST', '/api/comfy/open-web'),
+  browse: (path) => req('GET', '/api/browse?path=' + encodeURIComponent(path)),
+  cleanup: () => req('POST', '/api/cleanup'),
+  openUrl: (url) => req('POST', '/api/open-url', { url }),
+  library: () => req('GET', '/api/library'),
+  libraryDetail: (kind, name) => req('GET', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
+  libraryRegen: (kind, name) => req('POST', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/regen`),
+  libraryDelete: (kind, name) => req('DELETE', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
+  libraryGacha: () => req('POST', '/api/library/gacha'),
+  libraryCreateCharacter: (payload) => req('POST', '/api/library/characters', payload),
+  putShot: (id, shot) => req('PUT', `/api/projects/${encodeURIComponent(id)}/shot`, shot),
+  deleteShot: (id, shotID) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}`),
+  maskFix: (id, shotID) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`, {}),
+  audioDrive: (id, shotID, audioPath) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/audio-drive`, { audio_path: audioPath }),
+  uploadCover: (id, payload) => req('POST', `/api/projects/${encodeURIComponent(id)}/cover`, payload),
+  exportPack: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/export-pack`),
+  deleteOutput: (projectID) => req('DELETE', `/api/projects/${encodeURIComponent(projectID)}/output`),
+  novelJobs: () => req('GET', '/api/novel-jobs'),
+  novelJobDelete: (series) => req('DELETE', '/api/novel-jobs?series=' + encodeURIComponent(series)),
+  novels: () => req('GET', '/api/novels'),
+  novelDetail: (path) => req('GET', '/api/novels/detail?path=' + encodeURIComponent(path)),
+  novelRead: (path) => req('GET', '/api/novels/read?path=' + encodeURIComponent(path)),
+  novelDelete: (path) => req('DELETE', '/api/novels?path=' + encodeURIComponent(path)),
+  openPath: (payload) => req('POST', '/api/open', payload),
+  outputs: () => req('GET', '/api/outputs'),
+  testConn: (target) => req('POST', '/api/test', { target }),
+}
+
+// ---------- 后端元信息(阶段 / 风格清单的单一真源) ----------
+// 有哪些阶段与哪些风格由后端决定;前端只保留颜色、描述这类纯展示信息。
+// 拉取失败时静默回退内置清单 —— 后端未就绪不该让参数抽屉不可用。
+export async function loadMeta() {
+  try {
+    const m = await req('GET', '/api/meta')
+    if (Array.isArray(m?.styles)) G.metaStyles = m.styles
+    if (Array.isArray(m?.phases)) G.metaPhases = m.phases
+  } catch { /* 用内置兜底 */ }
 }
 
 // ---------- 图片上传载荷(wails 管对 multipart 有截断,改 JSON+base64) ----------
@@ -133,6 +190,9 @@ export function connectEvents() {
     } catch { /* ignore */ }
   })
   es.onerror = () => {
+    // 必须先 close:EventSource 自身在断开后会自动重连,这里再手动新建一个,
+    // 两条重连路径就会叠加 —— 每 error 一次多一条连接,长跑会话连接数持续累积。
+    es.close()
     G.eventsOpen = false
     setTimeout(connectEvents, 3000)
   }

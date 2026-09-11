@@ -8,7 +8,7 @@ const loading = ref(false)
 
 async function refresh() {
   loading.value = true
-  try { list.value = await fetch('/api/outputs').then(r => r.json()) }
+  try { list.value = await api.outputs() }
   catch { ElMessage.error('读取失败') }
   loading.value = false
 }
@@ -34,10 +34,7 @@ async function removeOut(item, what, label) {
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   try {
-    await fetch(`/api/projects/${encodeURIComponent(item.project)}/output`, {
-      method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ what }),
-    }).then(async r => { const d = await r.json(); if (!r.ok) throw new Error(d.error) })
+    await api.deleteOutput(item.project)
     ElMessage.success('已删除')
     refresh()
   } catch (e) { ElMessage.error(e.message) }
@@ -108,10 +105,7 @@ async function batchDelete() {
   let ok = 0, fail = 0
   for (const pid of sel.value) {
     try {
-      await fetch(`/api/projects/${encodeURIComponent(pid)}/output`, {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ what: 'all' }),
-      })
+      await api.deleteOutput(pid)
       ok++
     } catch { fail++ }
   }

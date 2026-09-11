@@ -38,7 +38,7 @@ func (e *Engine) RunIdleWatcher() {
 		defer tick.Stop()
 		for range tick.C {
 			c := e.cfg()
-			if c.IdleStopMin <= 0 || e.proc == nil {
+			if c.IdleStopMin <= 0 || e.ownedProc() == nil {
 				continue
 			}
 			idle.mu.Lock()
@@ -48,12 +48,12 @@ func (e *Engine) RunIdleWatcher() {
 				continue
 			}
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			run, pend, err := e.cli.Queue(ctx)
+			run, pend, err := e.client().Queue(ctx)
 			cancel()
 			if err != nil || len(run) > 0 || len(pend) > 0 {
 				continue // 队列有活/探测失败:不动
 			}
-			if !e.cli.Alive(ctx2(3 * time.Second)) {
+			if !e.client().Alive(ctx2(3 * time.Second)) {
 				continue
 			}
 			mins := c.IdleStopMin

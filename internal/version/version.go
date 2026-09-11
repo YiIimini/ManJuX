@@ -7,8 +7,11 @@ import "runtime"
 // AppName 应用名称。
 const AppName = "ManJuX"
 
-// Version 当前版本。构建时可通过 -ldflags "-X .../version.Version=vX.Y.Z" 注入。
-var Version = "v1.0.0"
+// Version 当前版本。构建时由 scripts/build.ps1 按 git tag 通过
+// -ldflags "-X .../version.Version=vX.Y.Z" 注入;这里的默认值仅用于
+// go run / 未注入场景,应与最新 tag 保持一致(构建脚本同时会把它同步进
+// wails.json 与 frontend/package.json,三处同源)。
+var Version = "v0.33.20"
 
 // BuildInfo 返回完整版本描述。
 func BuildInfo() string {

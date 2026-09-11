@@ -39,6 +39,20 @@ const STYLE_PRESETS = [
   { key: 'film_noir',     name: '黑色电影',    sw: ['#f2f4f8', '#33333c'] },
   { key: 'claymation',    name: '黏土定格',    sw: ['#ff9ecf', '#ffd166'] },
 ]
+
+// 显示用清单:以后端 /api/meta 为准 —— 后端新增风格会自动出现在这里(用默认色),
+// 后端删掉的风格也随之消失,不再需要两侧手工同步。颜色属纯展示信息,仍由前端决定。
+// 后端未就绪(metaStyles 为空)时回退内置清单,保证抽屉始终可用。
+const styleList = computed(() => {
+  const meta = G.metaStyles || []
+  if (!meta.length) return STYLE_PRESETS
+  const byKey = new Map(STYLE_PRESETS.map(s => [s.key, s]))
+  return meta.map(m => {
+    const local = byKey.get(m.key)
+    return { key: m.key, name: m.name || local?.name || m.key, sw: local?.sw || ['#8a93a8', '#c9d4e8'] }
+  })
+})
+
 const hasStyle = (k) => (form.script.styles || []).includes(k)
 function toggleStyle(k) {
   if (!Array.isArray(form.script.styles)) form.script.styles = []
@@ -62,11 +76,11 @@ async function save() {
   <el-drawer v-model="visible" :title="titles[stageId] || '参数调优'" size="400px" append-to-body>
     <div v-if="stageId === 'script'" class="flex flex-col gap-4">
       <el-form label-position="top">
-        <el-form-item label="目标镜头数(3-12)">
-          <el-input-number v-model="form.script.max_shots" :min="1" :max="20" style="width:100%" />
+        <el-form-item label="目标镜头数(0=按内容自动,最多 120)">
+          <el-input-number v-model="form.script.max_shots" :min="0" :max="120" style="width:100%" />
         </el-form-item>
-        <el-form-item label="目标总时长(秒)">
-          <el-input-number v-model="form.script.total_seconds" :min="12" :max="180" :step="6" style="width:100%" />
+        <el-form-item label="目标总时长(秒,0=按镜头数自动)">
+          <el-input-number v-model="form.script.total_seconds" :min="0" :max="300" :step="6" style="width:100%" />
         </el-form-item>
       </el-form>
       <div>
@@ -75,7 +89,7 @@ async function save() {
           <span style="color:var(--mx-text3)">(可多选组合,决定全片视觉基调;已选 {{ (form.script.styles || []).length }} 项)</span>
         </div>
         <div class="style-chip-grid">
-          <button v-for="st in STYLE_PRESETS" :key="st.key" class="style-chip" :class="{ on: hasStyle(st.key) }" @click="toggleStyle(st.key)">
+          <button v-for="st in styleList" :key="st.key" class="style-chip" :class="{ on: hasStyle(st.key) }" @click="toggleStyle(st.key)">
             <span class="sw"><i :style="{ background: st.sw[0] }"></i><i :style="{ background: st.sw[1] }"></i></span>
             {{ st.name }}
           </button>

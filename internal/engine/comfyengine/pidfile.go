@@ -27,7 +27,7 @@ func clearPidFile(c config.ComfySettings) { _ = os.Remove(pidFile(c)) }
 // adoptFromPidFile 尝试按 pid 文件接管引擎:PID 存活且映像名为 python*
 // 才认领(托盘/任务管理器杀掉后残留文件不误接管)。成功返回 true。
 func (e *Engine) adoptFromPidFile() bool {
-	if e.proc != nil {
+	if e.ownedProc() != nil {
 		return true
 	}
 	raw, err := os.ReadFile(pidFile(e.cfg()))
@@ -52,7 +52,7 @@ func (e *Engine) adoptFromPidFile() bool {
 	}
 	// 认领:os.FindProcess 拿句柄供 Kill 用
 	if osP, err := os.FindProcess(pid); err == nil {
-		e.proc = osP
+		e.setOwnedProc(osP)
 		return true
 	}
 	return false

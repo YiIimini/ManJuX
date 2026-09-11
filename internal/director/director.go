@@ -44,7 +44,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 }`
 
 const sysShotRules = `## SHOT PLAN RULES
-- 3-12 shots total (target 8-12 for a full episode beat; prefer MORE, smaller shots over fewer overloaded ones). Each shot 4-10 seconds (integer). Hook in shot 1, payoff at the end.
+- Shot count is driven by the CONTENT, with NO upper limit: cover this episode's story completely and clearly. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot 4-10 seconds (integer). Hook in shot 1, payoff at the end.
 - CONTINUITY (critical, 2026-09-10): consecutive shots must read as ONE continuous flow. Each shot's action must BEGIN where the previous shot ENDED — same location (unless a deliberate scene change), carried-over posture/emotion/props, coherent time-of-day and lighting. NEVER skip a narrative beat the audience needs; if a beat needs two camera moments, split it into two shots with one clear action each. On scene changes, bridge with narration or a matching visual anchor, never jump-cut blind.
 - shot_size 景别用中文:远景/全景/中景/近景/特写。Emotional beats and dialogue MUST use 近景/特写 (H3 face tokens are scarce; closer framing beats wider framing).
 - One camera move per shot, chosen from official motion vocabulary ONLY: Push In / Pull Out / Pan / Truck / Tilt / Pedestal / Arc / Tracking / Static / POV / Roll / Shake, plus amplitude (small/large amplitude) and speed (slow/fast) in natural English. NEVER use jargon like dolly, crane, whip pan.
@@ -56,19 +56,24 @@ const sysH3Format = `## H3 PROMPT FORMAT (critical - follow EXACTLY)
 mode=ref2va => SIX sections in this exact order, separated by one blank line:
 
 subject_definitions:
-<Subject 1> is [full character description in English] in <Picture 1>.
-<Subject 2> is [full scene description in English] in <Picture 2>.
-(Add <Subject 3> for a key prop in <Picture 3> if essential. Scenes and props are also Subjects; Picture tags appear ONLY here as the source of a Subject, never standalone.)
+REFERENCE ORDER (strict, but a character may occupy ONE OR TWO pictures, so the scene index is NOT fixed): pictures are attached in this order — for each character listed in the shot's "characters" array, in array order, FIRST that character's character sheet, and THEN, only if that character has a multi-view turnaround sheet, ONE extra turnaround picture of the SAME character (a turnaround shows one character from several angles in a single image). After all character pictures comes exactly ONE scene picture, always LAST. Props never get a <Picture> — describe props in text only.
+Locate every subject by PICTURE CONTENT, not by index: a character sheet and its turnaround are the SAME subject and the same individual. NEVER reason "N characters, therefore the scene is <Picture N+1>", and never assume <Picture 2> is the scene or the second character — for a one-character shot <Picture 2> is the scene when that character has no turnaround, otherwise <Picture 2> is that character's turnaround and the scene starts at <Picture 3>.
+<Subject 1> is [full description of the FIRST character listed in "characters"]; its character sheet is the first attached picture.
+<Subject 2> is [full description of the SECOND listed character, or the scene description when the shot has only one character] — identify it by its picture content, never by counting indexes.
+The scene is the LAST attached picture; with N characters it is <Picture N+1> when no character has a turnaround, and a LATER index when any character does.
+Every <Subject> must map to a picture that exists in the order above; never invent <Picture> tags beyond that count. Picture tags appear ONLY here as a Subject's source, never standalone. A turnaround picture is never a separate subject: the character and its turnaround share one description (the character's) — the turnaround only supplies the other viewing angles.
 
 summary:
 [reference generation]
 One English paragraph: what the video contains and how the reference materials are used.
 
 retention_analysis:
-- <Picture 1> : fully_preserved - character identity (face shape, hairstyle, costume) must stay identical to the reference image throughout every frame. FACE LOCK: the facial features, bone structure, and skin details must be copied from <Picture 1> exactly — do NOT blend, average, or substitute any other face.
-- <Picture 2> : weak_reference - scene layout and mood referenced, camera free.
+- One line per reference picture, numbered EXACTLY as in subject_definitions. The scene index is NOT fixed: a character with a multi-view turnaround contributes TWO pictures, so in a one-character shot with a turnaround the scene is <Picture 3>, not <Picture 2>. Decide what each picture is from its CONTENT; never assume the scene is <Picture 2> and never derive indexes by counting characters.
+- A turnaround picture belongs to the character it depicts: give it the character's fully_preserved line (one line per picture) and never describe it as a different or additional character.
+- Every character picture: fully_preserved - character identity (face shape, hairstyle, costume) must stay identical to the reference image throughout every frame. FACE LOCK on that character's own <Picture>: the facial features, bone structure, and skin details must be copied from it exactly — do NOT blend, average, or substitute another face.
+- The scene picture: weak_reference - scene layout and mood referenced, camera free.
 (Use official markers: fully_preserved / partially_preserved / attribute_transfer / weak_reference)
-(For multi-character shots: EVERY character with a <Picture> gets fully_preserved with FACE LOCK. Characters WITHOUT a reference picture must NOT borrow facial features from any reference image — generate them from the text description only.)
+(For multi-character shots: EVERY character gets its own fully_preserved line with FACE LOCK. Characters WITHOUT a reference picture must NOT borrow facial features from any reference image — generate them from the text description only.)
 
 detailed_description:
 [Style sentence(s) first: use the global style]. Then for every shot:
@@ -140,8 +145,8 @@ Produce the STRICT JSON plan now.`
 
 // Options 直出选项。
 type Options struct {
-	MaxShots     int    // 期望镜头数(3-12)
-	TotalSeconds int    // 期望总时长
+	MaxShots     int    // 期望镜头数;0=内容驱动(不预设,LLM 按原文节拍自行决定)
+	TotalSeconds int    // 期望总时长(秒);0=由镜头数推算
 	ExtraHint    string // 用户附加要求(风格/题材)
 	Chibi        bool   // 生成 Q 版形象(内心活动用;分镜提示词指引 Q 版 cameo)
 	// OnBatch 分批生成进度(批 i/n,负责镜号区间);仅分批路径触发。
@@ -173,6 +178,11 @@ const batchThresholdShots = 6    // 超过 → 分批
 const batchThresholdRunes = 1500 // 源文本超长(字)→ 分批
 const batchMaxShots = 5          // 每批最多镜数
 
+// defaultContentDrivenShots 内容驱动(MaxShots=0)时的内部兜底镜头数。它仅用于
+// 分批阈值判断与每段秒数换算,不会被写进提示词 —— 提示词走
+// buildSingleUserPrompt 的内容驱动分支,不预设镜头数。
+const defaultContentDrivenShots = 12
+
 // Generate 调用 LLM 直出分镜方案并做结构校验与修复。
 //
 // 双路径:小任务(≤6 镜且文本 ≤1500 字)单轮直出;大任务走「规划轮 + 分批
@@ -192,21 +202,27 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 			opt.ExtraHint = lock
 		}
 	}
+	// 内容驱动语义:MaxShots=0 表示「镜头数由原文节拍决定」,不能简单换成
+	// 一个具体数字了事 —— 否则提示词里那句 "(%d shots)" 又把数量写死了,与
+	// 用户「该多少就多少」的定调相悖。这里先记下原始意图供提示词分支使用,
+	// 下面的兜底值只服务分批阈值判断与每段秒数换算。
+	contentDriven := opt.MaxShots <= 0
+	secondsGiven := opt.TotalSeconds > 0
 	if opt.MaxShots <= 0 {
-		opt.MaxShots = 6
+		opt.MaxShots = defaultContentDrivenShots
 	}
 	if opt.TotalSeconds <= 0 {
 		opt.TotalSeconds = opt.MaxShots * 7
 	}
 	if opt.MaxShots > batchThresholdShots || len([]rune(sourceText)) > batchThresholdRunes {
-		plan, err := generateBatched(ctx, client, sourceText, opt)
+		plan, err := generateBatched(ctx, client, sourceText, opt, contentDriven)
 		if err != nil {
 			return nil, err
 		}
 		enforceStyleLock(plan, sourceText)
 		return plan, nil
 	}
-	plan, err := generateSingle(ctx, client, sourceText, opt)
+	plan, err := generateSingle(ctx, client, sourceText, opt, contentDriven, secondsGiven)
 	if err != nil {
 		return nil, err
 	}
@@ -254,8 +270,36 @@ func styleHint(opt Options) string {
 	return hint
 }
 
-func generateSingle(ctx context.Context, client *llm.Client, sourceText string, opt Options) (*project.Plan, error) {
-	user := fmt.Sprintf(UserPromptFmt, sourceText, opt.TotalSeconds, opt.MaxShots, styleHint(opt))
+// contentDrivenPromptFmt 内容驱动模板(MaxShots=0)。与 UserPromptFmt 的关键
+// 区别是不写死镜头数:只给总时长,或连时长也交给内容决定,镜头数交由
+// sysShotRules 的「镜头数由内容决定、不设上限」
+// 按原文节拍自行判定。
+const contentDrivenPromptFmt = `Source text (Chinese):
+"""
+%s
+"""
+
+Additional requirements:
+%s
+%s
+Produce the STRICT JSON plan now.`
+
+// buildSingleUserPrompt 组装单批直出的用户提示词。contentDriven 时不预设镜头
+// 数;secondsGiven 决定要不要给时长约束(用户没给时长则连时长也交给内容决定)。
+func buildSingleUserPrompt(sourceText string, opt Options, contentDriven, secondsGiven bool) string {
+	hint := styleHint(opt)
+	if !contentDriven {
+		return fmt.Sprintf(UserPromptFmt, sourceText, opt.TotalSeconds, opt.MaxShots, hint)
+	}
+	target := "- Target: short video. Decide BOTH the shot count and the total duration YOURSELF from the source text's natural story beats."
+	if secondsGiven {
+		target = fmt.Sprintf("- Target: short video, total duration about %d seconds. Decide the shot count YOURSELF from the source text's natural story beats.", opt.TotalSeconds)
+	}
+	return fmt.Sprintf(contentDrivenPromptFmt, sourceText, target, hint)
+}
+
+func generateSingle(ctx context.Context, client *llm.Client, sourceText string, opt Options, contentDriven, secondsGiven bool) (*project.Plan, error) {
+	user := buildSingleUserPrompt(sourceText, opt, contentDriven, secondsGiven)
 	plan, err := chatPlan(ctx, client, SystemPrompt, user)
 	if err != nil {
 		return nil, err
@@ -487,11 +531,26 @@ Return STRICT JSON only (no markdown fences, no commentary):
 
 // generateBatched 分批路径:轮1 规划(轻量)→ 轮 2..k 逐批出镜(每批 ≤5 镜,
 // 单轮生成量小,推理模型压回 1-3 分钟)。
-func generateBatched(ctx context.Context, client *llm.Client, sourceText string, opt Options) (*project.Plan, error) {
+func generateBatched(ctx context.Context, client *llm.Client, sourceText string, opt Options, contentDriven bool) (*project.Plan, error) {
 	hint := styleHint(opt)
 
 	// ---- 轮 1:规划 ----
-	planUser := fmt.Sprintf(`Source text (Chinese):
+	// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,只保留
+	// 「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出),不是数量上限。
+	var planUser string
+	if contentDriven {
+		planUser = fmt.Sprintf(`Source text (Chinese):
+"""
+%s
+"""
+
+Additional requirements:
+- Target: short video. Decide the TOTAL shot count YOURSELF from the source text's natural story beats — there is NO upper limit; cover the story completely and clearly.
+- Then split it into consecutive segments of 3-%d shots each, so the segments continuously cover shot ids 1..N where N is the total you decided.
+%s
+Produce the STRICT BATCH PLAN JSON now.`, sourceText, batchMaxShots, hint)
+	} else {
+		planUser = fmt.Sprintf(`Source text (Chinese):
 """
 %s
 """
@@ -501,6 +560,7 @@ Additional requirements:
 - Split the story into segments of 3-%d shots each (segments must continuously cover shot ids 1..%d).
 %s
 Produce the STRICT BATCH PLAN JSON now.`, sourceText, opt.MaxShots, opt.TotalSeconds, batchMaxShots, opt.MaxShots, hint)
+	}
 
 	raw, err := client.Chat(ctx, []llm.Message{
 		{Role: "system", Content: planSystemPrompt},
@@ -513,7 +573,21 @@ Produce the STRICT BATCH PLAN JSON now.`, sourceText, opt.MaxShots, opt.TotalSec
 	if err := json.Unmarshal([]byte(repairJSONStrings(trimJSONBlock(raw))), &head); err != nil || head.Title == "" || len(head.Segments) == 0 {
 		return nil, fmt.Errorf("规划轮输出解析失败(缺少 title/segments)")
 	}
-	normalizeSegments(&head, opt.MaxShots)
+	// 段规范化上限:内容驱动时不能用人为此限 —— 否则 LLM 决定拍 20 镜会被截到
+	// 内部兜底值,「不设上限」就成了空话。这里取规划轮自己给出的最大镜号。
+	segMax := opt.MaxShots
+	if contentDriven {
+		segMax = 0
+		for _, s := range head.Segments {
+			if s.To > segMax {
+				segMax = s.To
+			}
+		}
+		if segMax <= 0 {
+			segMax = opt.MaxShots
+		}
+	}
+	normalizeSegments(&head, segMax)
 
 	total := len(head.Segments)
 	plan := &project.Plan{

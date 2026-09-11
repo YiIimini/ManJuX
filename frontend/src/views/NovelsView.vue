@@ -13,10 +13,10 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    const r = await fetch('/api/novels').then(x => x.json())
-    root.value = r.root || ''
-    hint.value = r.hint || ''
-    novels.value = r.novels || []
+    const d = await api.novels()
+    root.value = d.root || ''
+    hint.value = d.hint || ''
+    novels.value = d.novels || []
   } catch (e) { ElMessage.error(e.message) }
   loading.value = false
 }
@@ -107,7 +107,7 @@ function prettyName(n) {
 }
 async function openDetail(n) {
   try {
-    const r = await fetch('/api/novels/detail?path=' + encodeURIComponent(n.path)).then(x => x.json())
+    const r = await api.novelDetail(n.path)
     if (!r.novel) throw new Error(r.error || '读取失败')
     dlg.value = r
     reading.value = null
@@ -128,7 +128,7 @@ function toggleDir(key) {
 async function readChapter(ch) {
   readBusy.value = true
   try {
-    const r = await fetch('/api/novels/read?path=' + encodeURIComponent(ch.path)).then(x => x.json())
+    const r = await api.novelRead(ch.path)
     reading.value = { name: ch.name, ...r }
   } catch (e) { ElMessage.error(e.message) } finally { readBusy.value = false }
 }
@@ -157,10 +157,7 @@ async function produce(n) {
 // 打开小说所在目录(资源管理器)
 async function openDir(n) {
   try {
-    await fetch('/api/open', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ path: n.type === 'file' ? n.path : n.path, project: '' , absolute: true }),
-    })
+    await api.openPath({ path: n.path, project: '', absolute: true })
   } catch { /* /api/open 需要 project——后端走 DataDir 白名单;小说目录默认就在 data/Novel 下 */ }
 }
 
@@ -174,9 +171,7 @@ async function removeNovel(n) {
       '删除小说', { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   try {
-    const r = await fetch('/api/novels?path=' + encodeURIComponent(n.path), { method: 'DELETE' })
-    const d = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    await api.novelDelete(n.path)
     ElMessage.success(`《${n.name}》已删除`)
     if (dlg.value && dlg.value.novel.path === n.path) dlg.value = null
     refresh()

@@ -25,17 +25,22 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/YiIimini/ManJuX/internal/fsutil"
 )
 
 // ShotStatus 镜头渲染状态。
 type ShotStatus string
 
+// 实际会被写入的状态只有 Rendering / Done / Failed 三种,按「用不到的枚举
+// 不保留」清理掉了此前的 pending / stale 两个空定义:
+//   - 没有 pending 阶段:镜头条目在首次渲染前根本不存在;
+//   - 没有 stale 阶段:输入指纹变化是靠 manifest 的 InputFP 比对直接判定重渲,
+//     不需要单独的状态标记(见 pipeline.renderFingerprint)。
 const (
-	ShotPending   ShotStatus = "pending"
 	ShotRendering ShotStatus = "rendering"
 	ShotDone      ShotStatus = "done"
 	ShotFailed    ShotStatus = "failed"
-	ShotStale     ShotStatus = "stale" // 输入指纹变化,产物过期
 )
 
 // Line 一句台词。
@@ -452,13 +457,8 @@ func FingerprintText(parts ...string) string {
 	return hex.EncodeToString(h[:])[:16]
 }
 
+// atomicWrite 原子写。实现收敛到 fsutil,包内 5 个调用点保持原样。
+// 跨项目资产库(library)也需要同一条保证,故做成公共工具而非各包各写一份。
 func atomicWrite(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return fsutil.WriteFileAtomic(path, data)
 }

@@ -73,8 +73,7 @@ async function upgrade2K() {
 }
 async function exportPack() {
   try {
-    const r = await fetch(`/api/projects/${encodeURIComponent(pj.value.project.id)}/export-pack`, { method: 'POST' })
-    const d = await r.json(); if (!r.ok) throw new Error(d.error)
+    const d = await api.exportPack(pj.value.project.id)
     ElMessage.success(`素材包 ${d.size_mb.toFixed(1)}MB 已生成`)
   } catch (e) { ElMessage.error(e.message) }
 }

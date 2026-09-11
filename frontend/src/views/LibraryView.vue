@@ -10,9 +10,7 @@ const loading = ref(false)
 async function refresh() {
   loading.value = true
   try {
-    const r = await fetch('/api/library')
-    const d = await r.json().catch(() => ({}))
-    if (!r.ok) throw new Error(d.error || `服务响应 ${r.status}`)
+    const d = await api.library()
     lib.value = d.characters || d.scenes ? d : { characters: [], scenes: [] }
   } catch (e) { ElMessage.error('资产库读取失败:' + e.message) }
   loading.value = false
@@ -21,6 +19,95 @@ onMounted(refresh)
 watch(() => G.tick.library, refresh)
 
 const list = computed(() => lib.value[kind.value] || [])
+
+// ---------- 资产详情弹窗 ----------
+// 展示该角色的**全部图片**(定妆照 + 多视角原图 + 转台图)、中文描述与英文提示词,
+// 并提供管理操作。图片清单由后端 /api/library/{kind}/{name} 给出。
+const detail = ref(null)
+const detailBusy = ref(false)
+const detailOpen = computed({
+  get: () => !!detail.value,
+  set: (v) => { if (!v) detail.value = null },
+})
+
+async function openDetail(e) {
+  if (batch.value) return // 批量选择模式下,点击卡片是勾选而不是看详情
+  detailBusy.value = true
+  try {
+    const d = await api.libraryDetail(e.kind, e.name)
+    detail.value = { ...e, ...d }
+  } catch (err) {
+    ElMessage.error('读取资产详情失败:' + err.message)
+  }
+  detailBusy.value = false
+}
+
+// imgURL 拼库内图片地址;file 为空取主图,否则取指定图(只传基名,后端会校验)
+function imgURL(e, file) {
+  const base = `/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`
+  if (!file) return base
+  return `${base}?file=${encodeURIComponent(String(file).split('/').pop())}`
+}
+
+// labelOf 按文件名推断图片用途,便于一眼看出哪张是定妆照、哪张是转台图
+function labelOf(file) {
+  const b = String(file).split('/').pop() || ''
+  if (b.includes('_turnaround')) return '转台图'
+  if (b.includes('_view_threequarter')) return '四分之三'
+  if (b.includes('_view_side')) return '侧面'
+  if (b.includes('_view_back')) return '背面'
+  if (b.includes('_view_')) return '多视角'
+  return '定妆照'
+}
+
+// 重抽:同一角色换一张(提示词与描述不变,只换随机种子)。与顶部「抽卡」的区别是
+// 抽卡抽的是全新角色,重抽是对当前这个不满意再摇一次。
+const regenBusy = ref(false)
+async function regenDetail() {
+  const d = detail.value
+  if (!d) return
+  regenBusy.value = true
+  try {
+    const j = await api.libraryRegen(d.kind, d.name)
+    detail.value = { ...d, ...j }
+    ElMessage.success('已重抽:定妆照已更新(旧的多视角图已一并清除)')
+    refresh()
+  } catch (e) {
+    ElMessage.error('重抽失败:' + e.message)
+  }
+  regenBusy.value = false
+}
+
+// detailImages 详情弹窗要展示的图片清单(老条目没有 images 时退回主图)
+const detailImages = computed(() => {
+  const d = detail.value
+  if (!d) return []
+  return (d.images && d.images.length) ? d.images : (d.image ? [d.image] : [])
+})
+
+function previewDetail(i) {
+  const d = detail.value
+  if (!d) return
+  G.viewer = {
+    index: i,
+    items: detailImages.value.map((f) => ({
+      type: 'image', src: imgURL(d, f),
+      title: `${d.name} · ${labelOf(f)}`,
+      meta: labelOf(f), kindLabel: 'LIBRARY',
+    })),
+  }
+}
+
+async function removeDetail() {
+  const d = detail.value
+  if (!d) return
+  try {
+    await ElMessageBox.confirm(`删除库资产「${d.name}」?引用它的项目不受影响,只是后续不再复用。`,
+      '确认删除', { type: 'warning' })
+  } catch { return }
+  await remove(d)
+  detail.value = null
+}
 
 // 批量删除
 const batch = ref(false)
@@ -43,7 +130,7 @@ async function batchDelete() {
   let ok = 0, fail = 0
   for (const n of sel.value) {
     try {
-      await fetch(`/api/library/${kind.value}/${encodeURIComponent(n)}`, { method: 'DELETE' })
+      await api.libraryDelete(kind.value, n)
       ok++
     } catch { fail++ }
   }
@@ -62,9 +149,7 @@ async function gacha() {
   gachaBusy.value = true
   gachaResult.value = null
   try {
-    const r = await fetch('/api/library/gacha', { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.libraryGacha()
     gachaResult.value = d
     ElMessage.success(`抽到「${d.entry.name}」!题材:${d.theme}`)
     refresh()
@@ -121,13 +206,7 @@ async function doCreate() {
       if (!createForm.image_prompt.trim()) { ElMessage.warning('请填写生成提示词'); createBusy.value = false; return }
       body.image_prompt = createForm.image_prompt.trim()
     }
-    const r = await fetch('/api/library/characters', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.libraryCreateCharacter(body)
     ElMessage.success(`角色「${d.entry.name}」已入库`)
     createOpen.value = false
     createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null; createNativePath.value = null
@@ -143,7 +222,7 @@ async function remove(e) {
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   try {
-    await fetch(`/api/library/${kind.value}/${encodeURIComponent(e.name)}`, { method: 'DELETE' })
+    await api.libraryDelete(kind.value, e.name)
     ElMessage.success('已删除')
     refresh()
   } catch (err) { ElMessage.error(err.message) }
@@ -154,8 +233,8 @@ async function remove(e) {
   <div class="h-full overflow-y-auto p-6">
     <div class="panel p-5 mb-5 relative overflow-hidden">
       <h1 class="text-lg font-bold m-0 mb-1">资产库 <span class="timecode">ASSET LIBRARY</span></h1>
-      <p class="text-sm m-0" style="color:var(--mx-text-2)">
-        角色/场景一次定妆,<b style="color:var(--mx-orange)">全项目复用</b>——新项目遇到同名资产自动引用(免生成、天然形象一致)。
+      <p class="text-sm m-0" style="color:var(--mx-text2)">
+        角色/场景一次定妆,<b style="color:var(--mx-amber)">全项目复用</b>——新项目遇到同名资产自动引用(免生成、天然形象一致)。
         Krea-2 生成与手动上传的资产都会自动入库;复用计数排序。
       </p>
     </div>
@@ -227,7 +306,7 @@ async function remove(e) {
         <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(e.name)">
           <el-checkbox :model-value="sel.has(e.name)" size="large" />
         </div>
-        <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="G.viewer={index:0,items:[{type:'image',src:`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`,title:e.name,meta:(e.source==='krea2'?'Krea-2':'上传')+` · 复用 ${e.used_count} 次`,kindLabel:'LIBRARY'}]}">
+        <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="openDetail(e)">
           <img :src="`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`"
                style="width:100%;height:100%;object-fit:cover" loading="lazy"
                @error="$event.target.style.display='none'"
@@ -245,7 +324,7 @@ async function remove(e) {
             {{ e.source === 'krea2' ? 'Krea-2' : '上传' }}
           </el-tag>
         </div>
-        <div class="text-xs" style="color:var(--mx-text-2)">
+        <div class="text-xs" style="color:var(--mx-text2)">
           ♻ 复用 {{ e.used_count }} 次 · 来自「{{ e.source_project || '-' }}」
         </div>
       </div>
@@ -291,6 +370,49 @@ async function remove(e) {
         <el-button @click="createOpen = false">取消</el-button>
         <el-button type="primary" :loading="createBusy" @click="doCreate">
           {{ createForm.mode === 'upload' ? '上传入库' : '生成并入库(约 1 分钟)' }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 资产详情:全部图片(定妆照/多视角/转台图) + 中文描述 + 英文提示词 + 管理 -->
+    <el-dialog v-model="detailOpen" width="780px" append-to-body :title="detail ? `资产详情 · ${detail.name}` : '资产详情'">
+      <div v-if="detail" class="flex flex-col gap-4">
+        <div>
+          <div class="text-xs mb-2" style="color:var(--mx-text3)">
+            全部图片({{ detailImages.length }} 张)· 点击可放大
+          </div>
+          <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(112px,1fr))">
+            <div v-for="(f, i) in detailImages" :key="f"
+                 class="cursor-zoom-in relative rounded-lg overflow-hidden"
+                 style="aspect-ratio:3/4;background:var(--mx-bg2);border:1px solid var(--mx-line)"
+                 @click="previewDetail(i)">
+              <img :src="imgURL(detail, f)" style="width:100%;height:100%;object-fit:cover" loading="lazy" />
+              <span class="absolute text-xs px-1 py-0.5"
+                    style="left:0;right:0;bottom:0;background:rgba(0,0,0,.5);color:#fff">{{ labelOf(f) }}</span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <div class="text-xs mb-1" style="color:var(--mx-text3)">中文描述</div>
+          <div class="text-sm p-2 rounded-lg" style="background:var(--mx-bg2);white-space:pre-wrap">{{ detail.description || '(无)' }}</div>
+        </div>
+        <div>
+          <div class="text-xs mb-1" style="color:var(--mx-text3)">英文提示词(定妆照)</div>
+          <div class="text-xs p-2 rounded-lg" style="background:var(--mx-bg2);word-break:break-word;line-height:1.6">{{ detail.image_prompt || '(无)' }}</div>
+        </div>
+        <div class="text-xs" style="color:var(--mx-text3)">
+          来源:{{ detail.source === 'krea2' ? 'Krea-2 生成' : '上传' }} ·
+          首次入库:{{ detail.source_project || '-' }} ·
+          已被 {{ detail.used_count }} 个项目复用
+        </div>
+      </div>
+      <template #footer>
+        <el-button plain @click="detailOpen = false">关闭</el-button>
+        <el-button type="primary" :loading="regenBusy" @click="regenDetail">
+          <el-icon class="mr-1"><Trophy /></el-icon>{{ regenBusy ? '重抽中(约 1 分钟)…' : '重抽(同角色换一张)' }}
+        </el-button>
+        <el-button type="danger" plain @click="removeDetail">
+          <el-icon class="mr-1"><Delete /></el-icon>删除该资产
         </el-button>
       </template>
     </el-dialog>

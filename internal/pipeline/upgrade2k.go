@@ -83,16 +83,9 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 			fmt.Sprintf("shot_%03d_2k.mp4", shotID))
 		prompt = shot.H3Prompt
 		label = fmt.Sprintf("镜头 %d", shotID)
-		// 参考图沿用渲染期资产(重新组装,与 render 阶段同规则)
+		// 参考图沿用渲染期资产(与 render 阶段共用 AssembleShotRefs,防止两处漂移)
 		assets, _ := c.store.LoadAssets(projectID)
-		for _, cid := range shot.Characters {
-			if a, ok := assets["char:"+cid]; ok && a.File != "" {
-				refs = append(refs, engine.RefImage{Kind: "character", Path: filepath.Join(c.store.Dir(projectID), a.File)})
-			}
-		}
-		if a, ok := assets["scene:"+shot.Scene]; ok && a.File != "" {
-			refs = append(refs, engine.RefImage{Kind: "scene", Path: filepath.Join(c.store.Dir(projectID), a.File)})
-		}
+		refs, _ = AssembleShotRefs(c.store.Dir(projectID), *shot, assets)
 	} else {
 		base = filepath.Join(c.store.Dir(projectID), "output", "final.mp4")
 		out = filepath.Join(c.store.Dir(projectID), "output", "final_2k.mp4")

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/config"
@@ -25,9 +26,37 @@ import (
 
 // Engine 本地 ComfyUI 渲染引擎(H3-Base 768p,音视频一体直出)。
 type Engine struct {
-	cfg  func() config.ComfySettings // 设置快照 provider(热更新)
-	cli  *Client
-	proc *os.Process // 代管启动的 ComfyUI 进程
+	cfg func() config.ComfySettings // 设置快照 provider(热更新)
+
+	// cliRef 当前 ComfyUI 客户端。地址变更时整体替换。读多写少(渲染路径每次
+	// 调用都要取),用原子指针避免给它加锁形成热点。
+	cliRef atomic.Pointer[Client]
+
+	// procMu 保护 procRef。它是三方并发触碰的共享状态:常驻的空闲巡检
+	// goroutine(60s 一轮,可能停进程)、管理页操作、渲染路径的探测 ——
+	// 此前无任何同步,构成真实数据竞争(go test -race 可复现)。
+	procMu  sync.Mutex
+	procRef *os.Process // 代管启动的 ComfyUI 进程
+}
+
+// client 取当前客户端快照。
+func (e *Engine) client() *Client { return e.cliRef.Load() }
+
+// setClient 替换客户端(设置中的地址变化时重建)。
+func (e *Engine) setClient(c *Client) { e.cliRef.Store(c) }
+
+// ownedProc 取本应用代管的 ComfyUI 进程(外部启动的实例返回 nil)。
+func (e *Engine) ownedProc() *os.Process {
+	e.procMu.Lock()
+	defer e.procMu.Unlock()
+	return e.procRef
+}
+
+// setOwnedProc 记录或清除代管进程。
+func (e *Engine) setOwnedProc(p *os.Process) {
+	e.procMu.Lock()
+	e.procRef = p
+	e.procMu.Unlock()
 }
 
 // lifecycleNotice 引擎生命周期通知:启动成功 / 停止完成即回调
@@ -57,7 +86,9 @@ func notifyLifecycle(alive bool, why string) {
 
 // New 创建引擎;cfg 返回最新设置快照。
 func New(cfg func() config.ComfySettings) *Engine {
-	return &Engine{cfg: cfg, cli: NewClient(cfg().BaseURL)}
+	e := &Engine{cfg: cfg}
+	e.setClient(NewClient(cfg().BaseURL))
+	return e
 }
 
 // Name 引擎名。
@@ -68,8 +99,8 @@ func (e *Engine) Cfg() config.ComfySettings { return e.cfg() }
 
 // Available 探测:不可达时按设置尝试代管启动。
 func (e *Engine) Available(ctx context.Context) error {
-	e.cli = NewClient(e.cfg().BaseURL)
-	if e.cli.Alive(ctx) {
+	e.setClient(NewClient(e.cfg().BaseURL))
+	if e.client().Alive(ctx) {
 		return nil
 	}
 	c := e.cfg()
@@ -89,9 +120,12 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	if _, err := os.Stat(main); err != nil {
 		return fmt.Errorf("未找到 %s:请在设置中确认 ComfyUI 根目录", main)
 	}
-	port := "8190"
-	if p, err := parsePort(c.BaseURL); err == nil {
-		port = p
+	// 端口:优先从设置解析;设置本身异常时回退到配置层的默认地址 ——
+	// 不再各写一份 "8190" 字面量,避免改端口时漏改此处导致启动的引擎与
+	// 客户端指向不同端口。
+	port, perr := parsePort(c.BaseURL)
+	if perr != nil {
+		port, _ = parsePort(config.DefaultComfyBaseURL)
 	}
 	logPath := filepath.Join(sidecarRoot(c), "logs", "comfyui.log")
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
@@ -118,7 +152,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 		}
 		return fmt.Errorf("启动 ComfyUI 失败: %w", err)
 	}
-	e.proc = cmd.Process
+	e.setOwnedProc(cmd.Process)
 	writePidFile(c, cmd.Process.Pid) // 代管状态持久化:重启后可接管
 	// 渲染引擎提为高优先级:分镜渲染是最重的生产任务,不应被桌面/其它进程
 	// 抢 CPU(GPU 等待时自然让出,不会饿死系统;2026-09-10 用户定调)。
@@ -134,7 +168,7 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 			return ctx.Err()
 		case <-time.After(4 * time.Second):
 		}
-		if e.cli.Alive(ctx) {
+		if e.client().Alive(ctx) {
 			notifyLifecycle(true, "启动") // 就绪即通知:各状态点即时点亮
 			return nil
 		}
@@ -164,7 +198,7 @@ func parsePort(baseURL string) (string, error) {
 // 清掉上次异常退出遗留的任务;不放在每镜 Render 里 —— fail-continue 链会误清
 // 前镜仍在排队的任务(2026-09-08 事故根因之一)。
 func (e *Engine) ClearQueue(ctx context.Context) {
-	e.cli.ClearPending(ctx)
+	e.client().ClearPending(ctx)
 }
 
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
@@ -183,7 +217,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	// 参考图上传(ComfyUI input 目录)
 	uploaded := make([]string, 0, len(job.RefImages))
 	for _, ref := range job.RefImages {
-		name, err := e.cli.UploadImage(ctx, ref.Path)
+		name, err := e.client().UploadImage(ctx, ref.Path)
 		if err != nil {
 			return nil, fmt.Errorf("参考图上传失败(%s): %w", filepath.Base(ref.Path), err)
 		}
@@ -192,7 +226,16 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 
 	condRef := "" // ""=单图直跑内联编码;"cache:<name>"=两阶段加载缓存
 
-	if c.CondCache && e.cli.HasNode(ctx, "MiniMaxH3CondSave") {
+	// 音频参考上传(音频驱动):H3 的 ref_audios 收服务器端文件名,先传再拼图。
+	var uploadedAudios []string
+	for _, a := range job.Audios {
+		an, aerr := e.client().UploadImage(ctx, a)
+		if aerr != nil {
+			return nil, fmt.Errorf("上传音频参考失败: %w", aerr)
+		}
+		uploadedAudios = append(uploadedAudios, an)
+	}
+	if c.CondCache && e.client().HasNode(ctx, "MiniMaxH3CondSave") {
 		// 缓存键含参考图内容指纹:换定妆照(同名覆盖)后自动失效,防旧条件隐性复用
 		var refFPs []string
 		for _, ref := range job.RefImages {
@@ -205,8 +248,8 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 			if job.OnProgress != nil {
 				job.OnProgress(2, "预编码(Qwen3-VL 条件)")
 			}
-			encGraph := buildEncodeGraph(job, c, uploaded, w, h, length, cacheName)
-			if _, err := e.submitAndWait(ctx, encGraph, nil); err != nil {
+			encGraph := buildEncodeGraph(job, c, uploaded, uploadedAudios, w, h, length, cacheName)
+			if _, err := e.submitAndWait(ctx, encGraph, job.Timeout, nil); err != nil {
 				return nil, fmt.Errorf("预编码失败: %w", err)
 			}
 			markCondReady(c, job.ProjectID, cacheName)
@@ -226,8 +269,8 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 			job.PrevShot = 0
 		}
 	}
-	graph := buildRenderGraph(job, c, condRef, uploaded, w, h, length)
-	hist, err := e.submitAndWait(ctx, graph, func(p int, note string) {
+	graph := buildRenderGraph(job, c, condRef, uploaded, uploadedAudios, w, h, length)
+	hist, err := e.submitAndWait(ctx, graph, job.Timeout, func(p int, note string) {
 		if job.OnProgress != nil {
 			job.OnProgress(16+p*84/100, note)
 		}
@@ -255,19 +298,19 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	dest := filepath.Join(job.OutputDir, job.OutputName+ext)
 	dlCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	if err := e.cli.Download(dlCtx, *video, dest); err != nil {
+	if err := e.client().Download(dlCtx, *video, dest); err != nil {
 		return nil, fmt.Errorf("产物下载失败: %w", err)
 	}
-	e.cli.Free(context.Background())
+	e.client().Free(context.Background())
 	return &engine.Result{VideoPath: dest, Engine: e.Name()}, nil
 }
 
-func (e *Engine) submitAndWait(ctx context.Context, graph map[string]any, onProgress func(int, string)) (*HistoryEntry, error) {
-	pid, err := e.cli.Submit(ctx, graph)
+func (e *Engine) submitAndWait(ctx context.Context, graph map[string]any, timeout time.Duration, onProgress func(int, string)) (*HistoryEntry, error) {
+	pid, err := e.client().Submit(ctx, graph)
 	if err != nil {
 		return nil, err
 	}
-	return e.cli.WaitForDone(ctx, pid, onProgress)
+	return e.client().WaitForDone(ctx, pid, timeout, onProgress)
 }
 
 // ---------- 条件缓存记账 ----------
@@ -286,12 +329,45 @@ func condProjectDir(c config.ComfySettings, projectID string) string {
 	return filepath.Join(condSidecarDir(c), "manjux_"+projectID)
 }
 
-// CleanupProjectCache 删除某项目的全部条件缓存(cond_cache 子目录)。
+// condPtDir H3 条件缓存的数据目录:插件把 CONDITIONING 序列化为 .pt 存于此。
+// 与 sidecar 记账目录是**两个不同的位置** —— 数据在 ComfyUI 侧,记账在本应用侧。
+func condPtDir(c config.ComfySettings) string {
+	if strings.TrimSpace(c.RootDir) == "" {
+		return ""
+	}
+	return filepath.Join(c.RootDir, "ComfyUI", "models", "conditioning")
+}
+
+// CleanupProjectCache 删除某项目的全部条件缓存(数据 + 记账)。
+//
+// 两个目录必须一起清:
+//   - 数据:models/conditioning/*.pt —— 文件名只有 s{shot}_{hash}(projectID 只参与
+//     hash 计算,不体现在文件名里),因此**必须靠 sidecar 的 .ok 文件名反查**,
+//     无法按项目名匹配;
+//   - 记账:data/cond_cache/manjux_<projectID>/。
+//
+// 旧实现只清后者,导致 .pt 永久滞留 —— 实测该目录已堆积 4.9GB 且只增不减。
 func (e *Engine) CleanupProjectCache(projectID string) {
 	c := e.cfg()
-	dir := condProjectDir(c, projectID)
-	if err := os.RemoveAll(dir); err == nil {
-		log.Printf("[comfy] 已清理项目条件缓存: %s", dir)
+	sidecar := condProjectDir(c, projectID)
+
+	removed := 0
+	if ptDir := condPtDir(c); ptDir != "" {
+		if entries, err := os.ReadDir(sidecar); err == nil {
+			for _, ent := range entries {
+				name := ent.Name()
+				if ent.IsDir() || !strings.HasSuffix(name, ".ok") {
+					continue
+				}
+				// .ok 的文件名就是 cacheName(不含扩展名),据此定位同名 .pt
+				if os.Remove(filepath.Join(ptDir, strings.TrimSuffix(name, ".ok")+".pt")) == nil {
+					removed++
+				}
+			}
+		}
+	}
+	if err := os.RemoveAll(sidecar); err == nil {
+		log.Printf("[comfy] 已清理项目条件缓存:%s(连带 %d 个 .pt 数据文件)", sidecar, removed)
 	}
 }
 
@@ -337,7 +413,21 @@ func link(node string, slot int) []any { return []any{node, slot} }
 
 // addConditionNode 向 g 加入条件节点(R2V 或 I2V/T2VA)。
 // 返回 (条件节点id, latent节点id)。
-func addConditionNode(g map[string]any, job engine.Job, uploaded []string, w, h, length int) (string, string) {
+// loadAudioNode 加入音频加载节点(ref 音频),返回节点 id。
+// id 从 95x 段取并在冲突时自动退避,避免与模型链/采样链的固定 id 撞车。
+func loadAudioNode(g map[string]any, i int, name string) string {
+	id := fmt.Sprintf("95%d", i)
+	for {
+		if _, exists := g[id]; !exists {
+			break
+		}
+		id += "x"
+	}
+	g[id] = nd("LoadAudio", map[string]any{"audio": name})
+	return id
+}
+
+func addConditionNode(g map[string]any, job engine.Job, uploaded []string, audios []string, w, h, length int) (string, string) {
 	base := map[string]any{
 		"clip":   link("1", 0),
 		"vae":    link("2", 0),
@@ -346,7 +436,8 @@ func addConditionNode(g map[string]any, job engine.Job, uploaded []string, w, h,
 		"height": h,
 		"length": length,
 	}
-	if job.Mode == "ref2va" && len(uploaded) > 0 {
+	// 有图或**有音频**即走 Ref2V:纯音频驱动也是合法用法(音频驱动口型/节奏)
+	if job.Mode == "ref2va" && (len(uploaded) > 0 || len(audios) > 0) {
 		inputs := copyMap(base)
 		inputs["audio_vae"] = link("3", 0)
 		// 官方指南:max 保留最高 2048 短边编码,identity fidelity 更强
@@ -358,6 +449,16 @@ func addConditionNode(g map[string]any, job engine.Job, uploaded []string, w, h,
 			refs = append(refs, link(loadImageNode(g, i, name), 0))
 		}
 		inputs["ref_images"] = refs
+		// 音频参考(音频驱动 Audio Drive):H3 Ref2V 原生支持音频条件 —— 喂入定稿
+		// 配音后,人物的口型与动作节奏会跟随音频。这是"精确台词"路线的入口:
+		// 先把配音做成确定资产,再用它驱动画面,而不是让模型自由发挥台词。
+		if len(audios) > 0 {
+			auds := make([]any, 0, len(audios))
+			for i, name := range audios {
+				auds = append(auds, link(loadAudioNode(g, i, name), 0))
+			}
+			inputs["ref_audios"] = auds
+		}
 		g["20"] = nd("MiniMaxH3ReferenceToVideo", inputs)
 		return "20", "20"
 	}
@@ -381,9 +482,9 @@ func copyMap(m map[string]any) map[string]any {
 }
 
 // buildEncodeGraph encode 子图:条件节点 → CondSave(输出节点)。
-func buildEncodeGraph(job engine.Job, c config.ComfySettings, uploaded []string, w, h, length int, cacheName string) map[string]any {
+func buildEncodeGraph(job engine.Job, c config.ComfySettings, uploaded, audios []string, w, h, length int, cacheName string) map[string]any {
 	g := loaders(c, job.Accel)
-	cond, _ := addConditionNode(g, job, uploaded, w, h, length)
+	cond, _ := addConditionNode(g, job, uploaded, audios, w, h, length)
 	g["60"] = nd("MiniMaxH3CondSave", map[string]any{
 		"conditioning": link(cond, 0),
 		"cache_name":   cacheName,
@@ -425,7 +526,7 @@ func modelFileExists(c config.ComfySettings, name string, subs []string) bool {
 }
 
 // buildRenderGraph 采样图:条件(内联或缓存)+ latent → 采样链 → 解码 → SaveVideo。
-func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, uploaded []string, w, h, length int) map[string]any {
+func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, uploaded, audios []string, w, h, length int) map[string]any {
 	g := loaders(c, job.Accel)
 
 	var condNode, latentNode string
@@ -438,7 +539,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 		condNode, latentNode = "24", "25"
 		latentSlot = 0 // EmptyLatentAV 单输出
 	} else {
-		condNode, latentNode = addConditionNode(g, job, uploaded, w, h, length)
+		condNode, latentNode = addConditionNode(g, job, uploaded, audios, w, h, length)
 	}
 
 	// 模型链:UNET → (加速 LoRA) → SigmaShift(官方默认 12/3)
@@ -603,11 +704,11 @@ func (e *Engine) seamPrevExists(ctx context.Context, projectID string, prevShot 
 	name := fmt.Sprintf("clip_%05d.safetensors", prevShot)
 	sub := fmt.Sprintf("manjux/%s_seam", sanitizePrefix(projectID))
 	q := fmt.Sprintf("/view?filename=%s&subfolder=%s&type=output", url.QueryEscape(name), url.QueryEscape(sub))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.cli.BaseURL+q, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, e.client().BaseURL+q, nil)
 	if err != nil {
 		return false
 	}
-	resp, err := e.cli.HTTP().Do(req)
+	resp, err := e.client().HTTP().Do(req)
 	if err != nil {
 		return false
 	}

@@ -19,7 +19,11 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/textutil"
 )
+
+// defaultAPITimeout 云端任务轮询兜底上限(作业未指定 Timeout 时使用)。
+const defaultAPITimeout = 20 * time.Minute
 
 // Engine 云端 H3 引擎。
 type Engine struct {
@@ -42,6 +46,22 @@ func (e *Engine) Available(ctx context.Context) error {
 }
 
 // Render 提交任务 → 轮询 → 下载。
+// ── interface.Engine 的通用可选能力:云端引擎没有本地显存/队列概念 ──
+
+// FreeVRAM 云端无本地显存可释放。
+func (e *Engine) FreeVRAM(ctx context.Context) error { return nil }
+
+// ClearQueue 云端任务由服务端排队,本地无队列可清。
+func (e *Engine) ClearQueue(ctx context.Context) {}
+
+// Interrupt 云端任务的取消在 Render 内部尽力完成,此处无需额外动作。
+func (e *Engine) Interrupt(ctx context.Context) {}
+
+// GenerateImage 云端引擎不提供本地图像生成:定妆照走本地 Krea-2。
+func (e *Engine) GenerateImage(ctx context.Context, prompt, neg string, seed int64, w, h int, outPath string) (string, error) {
+	return "", fmt.Errorf("云端引擎不支持本地图像生成,请改用本地 ComfyUI 引擎")
+}
+
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
 	c := e.cfg()
 	if err := e.Available(ctx); err != nil {
@@ -87,8 +107,12 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		job.OnProgress(3, "云端任务已提交 "+taskID)
 	}
 
-	// 轮询(官方建议 10s 间隔;上限 20 分钟)
-	deadline := time.Now().Add(20 * time.Minute)
+	// 轮询(官方建议 10s 间隔;上限由作业超时决定,未指定时 defaultAPITimeout)
+	timeout := job.Timeout
+	if timeout <= 0 {
+		timeout = defaultAPITimeout
+	}
+	deadline := time.Now().Add(timeout)
 	tick := time.NewTicker(10 * time.Second)
 	defer tick.Stop()
 	for {
@@ -100,7 +124,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		case <-tick.C:
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("云端任务超时(20 分钟): %s", taskID)
+			return nil, fmt.Errorf("%w(云端任务 %s 超过 %v)", engine.ErrRenderTimeout, taskID, timeout)
 		}
 		st, url, err := e.query(ctx, c, taskID)
 		if err != nil {
@@ -155,7 +179,7 @@ func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("提交失败 HTTP %d: %s", resp.StatusCode, trunc(string(out), 400))
+		return "", fmt.Errorf("提交失败 HTTP %d: %s", resp.StatusCode, textutil.Truncate(string(out), 400))
 	}
 	var r struct {
 		TaskID string `json:"task_id"`
@@ -171,7 +195,7 @@ func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[
 		if r.BaseResp != nil {
 			msg = r.BaseResp.StatusMsg
 		}
-		return "", fmt.Errorf("响应缺少 task_id: %s %s", trunc(string(out), 200), msg)
+		return "", fmt.Errorf("响应缺少 task_id: %s %s", textutil.Truncate(string(out), 200), msg)
 	}
 	return r.TaskID, nil
 }
@@ -304,10 +328,3 @@ func ratioFor(w, h int) string {
 	}
 }
 
-func trunc(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n]) + "…"
-}

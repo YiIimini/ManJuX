@@ -74,13 +74,8 @@ async function testAll() {
   for (const t of ['llm', 'comfy', 'minimax', 'vlm']) {
     testing.value = t
     try {
-      const r = await fetch('/api/test', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ target: t })
-      })
-      const d = await r.json()
-      if (!r.ok) { fail++; ElMessage.error(d.error || `HTTP ${r.status}`) }
-    } catch { fail++ }
+      await api.testConn(t)
+    } catch (e) { fail++; ElMessage.error(e.message) }
   }
   testing.value = ''
   if (!fail) ElMessage.success('全部依赖连接正常 ✓')
@@ -91,12 +86,7 @@ async function testAll() {
 async function testConn(target) {
   testing.value = target
   try {
-    const r = await fetch('/api/test', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ target })
-    })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`)
+    const d = await api.testConn(target)
     ElMessage.success(d.message || '连接正常')
   } catch (e) { ElMessage.error(e.message) } finally { testing.value = '' }
 }
@@ -181,7 +171,7 @@ async function testConn(target) {
 
       <div class="panel p-5">
         <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
-          <el-icon color="var(--mx-orange)"><Cpu /></el-icon>本地 ComfyUI 引擎(H3-Base)
+          <el-icon color="var(--mx-amber)"><Cpu /></el-icon>本地 ComfyUI 引擎(H3-Base)
         </h3>
         <el-form label-position="top" class="grid gap-x-6" style="grid-template-columns:1fr 1fr">
           <el-form-item label="服务地址">
@@ -203,7 +193,7 @@ async function testConn(target) {
             <el-tooltip content="探测 ComfyUI 服务地址连通性(未运行时显示离线属正常)" placement="top">
               <el-button :loading="testing==='comfy'" @click="testConn('comfy')">测试 ComfyUI 连接</el-button>
             </el-tooltip>
-            <span class="text-xs ml-2" style="color:var(--mx-text-2)">模型文件配置已移至「ComfyUI → 模型清单核对」</span>
+            <span class="text-xs ml-2" style="color:var(--mx-text2)">模型文件配置已移至「ComfyUI → 模型清单核对」</span>
           </el-form-item>
         </el-form>
       </div>
@@ -276,7 +266,7 @@ async function testConn(target) {
           <el-form-item label="单镜渲染超时(分钟;超时自动释放显存重试)">
             <el-input-number v-model="form.render.shot_timeout" :min="10" :max="120" style="width:100%" />
           </el-form-item>
-          <div class="text-xs flex items-end pb-2" style="color:var(--mx-text-2)">
+          <div class="text-xs flex items-end pb-2" style="color:var(--mx-text2)">
             已有项目的引擎不受影响,可在项目内「渲染出片 ⚙」单独调整。
           </div>
         </el-form>

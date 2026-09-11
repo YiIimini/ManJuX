@@ -20,7 +20,7 @@ type comfyProbe struct {
 	lastURL  string
 	live     bool // 最近一次有效结论
 	at       time.Time
-	flipFail int  // 连续失败计数(用于从在线翻转为离线)
+	flipFail int // 连续失败计数(用于从在线翻转为离线)
 	inFlight bool
 	gen      uint64 // 代际:手动启停置位后作废进行中的旧探测,防旧结论回写
 }

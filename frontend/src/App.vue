@@ -1,6 +1,6 @@
 <script setup>
 import { onMounted, onUnmounted, computed, ref, reactive } from 'vue'
-import { G, api, connectEvents, refreshStatus, refreshProjects, refreshProject, logDot } from './store'
+import { G, api, connectEvents, loadMeta, refreshStatus, refreshProjects, refreshProject, logDot } from './store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { applyTheme } from './themes'
 import HomeView from './views/HomeView.vue'
@@ -19,6 +19,8 @@ import ShotTuneDialog from './components/ShotTuneDialog.vue'
 
 let timer = null
 let sysTimer = null
+let offFileDrop = null // wails 事件解绑函数(此前注册后从不解绑)
+let offConfirmQuit = null
 const sysmon = reactive({ cpu: 0, cores: [], ramPct: 0, ramUsed: 0, ramTotal: 0, ramAvail: 0, gpu: null, coreN: 0 })
 const maxed = ref(false)
 const collapse = ref(localStorage.getItem('mx-side') === '1')
@@ -153,15 +155,13 @@ async function cleanup() {
   try { await ElMessageBox.confirm('将清理:ComfyUI 中间产物(不影响已有项目成片)、失败合成现场、孤儿条件缓存、系统临时文件。确认执行?','一键清理', { confirmButtonText: '清理', cancelButtonText: '取消', type: 'info' }) } catch { return }
   cleaning.value = true
   try {
-    const r = await fetch('/api/cleanup', { method: 'POST' })
-    const d = await r.json()
-    if (!r.ok) throw new Error(d.error)
+    const d = await api.cleanup()
     ElMessage.success(`清理完成:释放 ${(d.freedMB / 1024).toFixed(2)} GB`)
   } catch (e) { ElMessage.error(e.message) } finally { cleaning.value = false }
 }
 
 async function openAuthor() {
-  try { await fetch('/api/open-url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: 'https://github.com/YiIimini/' }) }) }
+  try { await api.openUrl('https://github.com/YiIimini/') }
   catch { window.open('https://github.com/YiIimini/', '_blank') }
 }
 // 占用分级:60/85 双阈值 → 绿/琥珀/红
@@ -176,10 +176,11 @@ onMounted(() => {
     document.documentElement.style.setProperty('--side-w', savedW + 'px')
   }
   connectEvents()
+  loadMeta() // 阶段/风格清单以后端为准(拉取失败自动回退内置清单)
   // 桌面模式原生文件拖放:wails 把拖入文件的绝对路径发到这里,
   // 转发给落点处带 --wails-drop-target:drop 标记的上传区(浏览器模式无此事件,
   // 上传区自身的 @drop 仍然生效)
-  window.runtime?.EventsOn?.('wails:file-drop', (x, y, paths) => {
+  offFileDrop = window.runtime?.EventsOn?.('wails:file-drop', (x, y, paths) => {
     if (!Array.isArray(paths) || !paths.length) return
     try {
       const els = document.elementsFromPoint(x, y) || []
@@ -195,6 +196,7 @@ onMounted(() => {
   refreshProjects()
   timer = setInterval(() => { refreshStatus(); refreshProjects() }, 15000)
   sysTimer = setInterval(async () => {
+    if (document.hidden) return // 窗口不可见时跳过,避免后台空转轮询
     try {
       const s = await api.sysmon()
       sysmon.cpu = s.cpu; sysmon.cores = s.cores || []; sysmon.ramPct = s.ramPct
@@ -204,7 +206,7 @@ onMounted(() => {
   }, 2000)
   // 桌面模式:管线运行中拦截关窗(Alt+F4 / 后端事件)→ 二次确认
   if (window.runtime?.EventsOn) {
-    window.runtime.EventsOn('confirm-quit', async () => {
+    offConfirmQuit = window.runtime.EventsOn('confirm-quit', async () => {
       try {
         await ElMessageBox.confirm(
           '有项目管线正在运行,退出将中止渲染。确定退出吗?',
@@ -215,7 +217,12 @@ onMounted(() => {
     })
   }
 })
-onUnmounted(() => { clearInterval(timer); clearInterval(sysTimer) })
+onUnmounted(() => {
+  clearInterval(timer); clearInterval(sysTimer)
+  // wails 原生事件此前注册后从不解绑;根组件虽少卸载,但规范上必须回收
+  if (offFileDrop) offFileDrop()
+  if (offConfirmQuit) offConfirmQuit()
+})
 
 const env = computed(() => G.status?.env)
 </script>

@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -38,18 +37,17 @@ func main() {
 	exeDir := mustExeDir()
 
 	// 1) 单实例(Wails 内建锁:第二实例自动唤起已有窗口后退出)
-	// 2) 日志(文件 + 控制台);超 10MB 归档轮转
+	// 2) 日志(文件 + 控制台):写入器按 10MB 在**运行期**自动归档,保留最近 5 份。
+	//    旧实现只在启动时判一次大小并固定归档成 .old(仅一份且被下次启动覆盖),
+	//    长会话跑到中途文件仍会无限增长。
 	logDir := filepath.Join(exeDir, "data", "logs")
 	_ = os.MkdirAll(logDir, 0o755)
 	logPath := filepath.Join(logDir, "manjux.log")
-	if st, err := os.Stat(logPath); err == nil && st.Size() > 10<<20 {
-		_ = os.Rename(logPath, logPath+".old")
-	}
-	logFile, err := os.OpenFile(logPath,
-		os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err == nil {
-		log.SetOutput(newTee(logFile, os.Stdout))
-		defer logFile.Close()
+	if lw, lerr := newTee(logPath, 10<<20, os.Stdout); lerr == nil {
+		log.SetOutput(lw)
+		defer func() { _ = lw.Close() }()
+	} else {
+		log.Printf("[manjux] 日志文件不可用(%v),仅输出到控制台", lerr)
 	}
 	log.Printf("[manjux] %s 启动(桌面模式)", version.BuildInfo())
 
@@ -186,8 +184,6 @@ func main() {
 	})
 	fatalIf(err, "桌面窗口启动失败")
 }
-
-func itoa(n int) string { return fmt.Sprintf("%d", n) }
 
 func mustExeDir() string {
 	exe, err := os.Executable()
