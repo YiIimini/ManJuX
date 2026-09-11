@@ -200,41 +200,11 @@ async function testConn(target) {
           <el-form-item label="两阶段渲染(条件缓存 .pt)">
             <el-switch v-model="form.comfy.cond_cache" />
           </el-form-item>
-          <el-form-item label="UNET(Ref2VA)" class="col-span-2">
-            <el-input v-model="form.comfy.unet_ref2va" />
-          </el-form-item>
-          <el-form-item label="UNET(FL2VA / T2VA)" class="col-span-2">
-            <el-input v-model="form.comfy.unet_fl2va" />
-          </el-form-item>
-          <el-form-item label="Turbo LoRA(Ref2VA)">
-            <el-input v-model="form.comfy.turbo_lora_ref2va" />
-          </el-form-item>
-          <el-form-item label="Turbo LoRA(FL2VA)">
-            <el-input v-model="form.comfy.turbo_lora_fl2va" />
-          </el-form-item>
-          <el-form-item label="文本编码器(CLIP · qwen3vl)">
-            <el-input v-model="form.comfy.clip" />
-          </el-form-item>
-          <el-form-item label="视频 VAE">
-            <el-input v-model="form.comfy.video_vae" />
-          </el-form-item>
-          <el-form-item label="音频 VAE(缺失=黑屏)">
-            <el-input v-model="form.comfy.audio_vae" />
-          </el-form-item>
-          <el-form-item label="定妆照模型(Krea-2 UNet)">
-            <el-input v-model="form.comfy.image_unet" />
-          </el-form-item>
-          <el-form-item label="定妆照编码器(CLIPLoader type=krea2)">
-            <el-input v-model="form.comfy.image_clip" />
-          </el-form-item>
-          <el-form-item label="定妆照 VAE">
-            <el-input v-model="form.comfy.image_vae" />
-          </el-form-item>
           <el-form-item label="连通性" class="col-span-2">
             <el-tooltip content="探测 ComfyUI 服务地址连通性(未运行时显示离线属正常)" placement="top">
               <el-button :loading="testing==='comfy'" @click="testConn('comfy')">测试 ComfyUI 连接</el-button>
             </el-tooltip>
-            <span class="text-xs ml-2" style="color:var(--mx-text-2)">未运行时渲染阶段会自动代管启动</span>
+            <span class="text-xs ml-2" style="color:var(--mx-text-2)">模型文件配置已移至「ComfyUI → 模型清单核对」</span>
           </el-form-item>
         </el-form>
       </div>

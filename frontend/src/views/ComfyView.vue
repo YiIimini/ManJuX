@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { G, api } from '../store'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -66,7 +66,8 @@ refreshVersions = async (online = false, manual = false) => {
 }
 onMounted(() => {
   refresh()
-  refreshVersions(true) // 挂载即自动联网对比(有 10 分钟缓存,不重复查)
+  refreshVersions(true)
+  loadModels()
   pollTimer = setInterval(refresh, 8000)
 })
 onUnmounted(() => { if (pollTimer) clearInterval(pollTimer); if (retryTimer) clearTimeout(retryTimer) })
@@ -103,6 +104,29 @@ async function openWebBrowser() {
     if (!r.ok) throw new Error(d.error)
     ElMessage.success('已在系统默认浏览器打开')
   } catch (e) { ElMessage.error(e.message) }
+}
+
+// ---- 模型文件配置(从设置页移入,引擎管理页更内聚) ----
+const modelForm = reactive({})
+const modelSaving = ref(false)
+const modelSaved = ref(false)
+async function loadModels() {
+  try {
+    const d = await api.getSettings()
+    Object.keys(modelForm).forEach(k => delete modelForm[k])
+    Object.assign(modelForm, d.comfy || {})
+  } catch { /* 静默 */ }
+}
+async function saveModels() {
+  modelSaving.value = true
+  try {
+    const cur = await api.getSettings()
+    const next = { ...cur, comfy: { ...cur.comfy, ...modelForm } }
+    await api.putSettings(next)
+    modelSaved.value = true
+    setTimeout(() => modelSaved.value = false, 2000)
+    refresh()
+  } catch (e) { ElMessage.error(e.message) } finally { modelSaving.value = false }
 }
 
 // ---- 目录说明 ----
@@ -262,7 +286,44 @@ function verCellCls(row, which) {
           </div>
         </div>
       </div>
-      <div class="text-xs mt-3" style="color:var(--mx-text3)">配置在「设置 → ComfyUI」修改;未命中会导致渲染提交 400(模型名不在列表)。</div>
+      <div class="text-xs mt-3" style="color:var(--mx-text3)">未命中会导致渲染提交 400(模型名不在列表);在下方修改配置。</div>
+      <!-- 模型文件配置(原设置页,移到引擎管理页更内聚) -->
+      <el-form label-position="top" class="grid gap-x-6 mt-4" style="grid-template-columns:1fr 1fr">
+        <el-form-item label="UNET(Ref2VA)" class="col-span-2">
+          <el-input v-model="modelForm.unet_ref2va" />
+        </el-form-item>
+        <el-form-item label="UNET(FL2VA / T2VA)" class="col-span-2">
+          <el-input v-model="modelForm.unet_fl2va" />
+        </el-form-item>
+        <el-form-item label="Turbo LoRA(Ref2VA)">
+          <el-input v-model="modelForm.turbo_lora_ref2va" />
+        </el-form-item>
+        <el-form-item label="Turbo LoRA(FL2VA)">
+          <el-input v-model="modelForm.turbo_lora_fl2va" />
+        </el-form-item>
+        <el-form-item label="文本编码器(CLIP · qwen3vl)">
+          <el-input v-model="modelForm.clip" />
+        </el-form-item>
+        <el-form-item label="视频 VAE">
+          <el-input v-model="modelForm.video_vae" />
+        </el-form-item>
+        <el-form-item label="音频 VAE(缺失=黑屏)">
+          <el-input v-model="modelForm.audio_vae" />
+        </el-form-item>
+        <el-form-item label="定妆照模型(Krea-2 UNet)">
+          <el-input v-model="modelForm.image_unet" />
+        </el-form-item>
+        <el-form-item label="定妆照编码器(CLIPLoader type=krea2)">
+          <el-input v-model="modelForm.image_clip" />
+        </el-form-item>
+        <el-form-item label="定妆照 VAE">
+          <el-input v-model="modelForm.image_vae" />
+        </el-form-item>
+        <el-form-item class="col-span-2">
+          <el-button type="primary" :loading="modelSaving" @click="saveModels">保存模型配置</el-button>
+          <span v-if="modelSaved" class="text-xs ml-2" style="color:var(--mx-green)">已保存</span>
+        </el-form-item>
+      </el-form>
     </div>
 
     <!-- 目录说明 -->
