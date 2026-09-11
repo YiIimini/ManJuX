@@ -620,6 +620,15 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, onEps func(series string, newEps []string)) (string, []string, error) {
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
+	// 拆集参数从设置读取(0=默认值;2026-09-11 用户定调:灵活配置)
+	splitCfg := g.Split
+	dflt := func(v, d int) int { if v <= 0 { return d }; return v }
+	chunkSize := dflt(splitCfg.ChunkSize, 40000)
+	maxOrig := dflt(splitCfg.MaxOrigChars, 9000)
+	conc := dflt(splitCfg.Concurrency, 3)
+	prevSum := dflt(splitCfg.PrevSummary, 400)
+	briefMin := dflt(splitCfg.BriefMin, 400)
+	briefMax := dflt(splitCfg.BriefMax, 700)
 	if !client.Configured() {
 		return "", nil, fmt.Errorf("LLM 未配置")
 	}
@@ -681,10 +690,10 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	var chunks []chunk
 	// 阈值 4 万(原 12 万):8-10 万字的书单段拆解时 brief+chapters+思考链
 	// 仍会撞输出上限截断(2026-09-10 实证 ep12 处 JSON 腰斩);分段输出才可控
-	if len([]rune(text)) > 40000 {
+	if len([]rune(text)) > chunkSize {
 		// 4 万字/段:更大的段输出(30-45 集大纲+思考链)会撞 completion 上限
 		// (2026-09-10 实证第 1/8 段 JSON 截断);缩小段=缩输出。
-		for _, ck := range chunkNovelText(text, 40000) {
+		for _, ck := range chunkNovelText(text, chunkSize) {
 			chunks = append(chunks, chunk(ck))
 		}
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
@@ -738,13 +747,13 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			}
 			var prev string
 			if lastEp.Ep > 0 {
-				prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", lastEp.Ep, lastEp.Title, clampRunes(lastEp.Brief, 400))
+				prev = fmt.Sprintf("\n【前情提要】第%02d集《%s》:%s\n", lastEp.Ep, lastEp.Title, clampRunes(lastEp.Brief, prevSum))
 			}
 			src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
 				series, ep.Ep, ep.Title, globalStyle, prev, ep.Brief)
 			// 附本集覆盖章节的小说原文:分镜 LLM 直接看原文逐段改编,不再是大纲
 			// 的摘要——跳段/断章取义的根治(2026-09-10 用户定调)
-			if orig := extractEpOriginal(ck.body, ep.Chapters); orig != "" {
+			if orig := extractEpOriginal(ck.body, ep.Chapters, maxOrig); orig != "" {
 				src += "\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n" + orig
 			}
 			_ = s.store.SaveSource(epName, src)
@@ -773,7 +782,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解 %d 段,3 路并行解析(互不影响)", len([]rune(text)), len(chunks))})
 	}
-	sem := make(chan struct{}, 3)
+	sem := make(chan struct{}, conc)
 	var wg sync.WaitGroup
 	for ci, ck := range chunks {
 		wg.Add(1)
@@ -783,7 +792,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			defer func() { <-sem }()
 			var user string
 			if len(chunks) > 1 {
-				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;本段通常 10-20 集,每集 brief 400-700 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, ck.label, ck.body)
+				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;本段通常 10-20 集,每集 brief " + fmt.Sprint(briefMin) + "-" + fmt.Sprint(briefMax) + " 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, ck.label, ck.body)
 			} else {
 				user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
 			}
@@ -934,7 +943,10 @@ func chunkNovelText(text string, limit int) []struct{ label, body string } {
 // extractEpOriginal 从分段正文中按章节范围("第X章 标题~第Y章 标题")提取
 // 本集覆盖的原文;匹配失败返回空(降级为仅大纲)。先整词前缀匹配,再退回
 // "第X章"序号词,容忍 LLM 措辞偏差。
-func extractEpOriginal(body, chapters string) string {
+func extractEpOriginal(body, chapters string, maxOrig int) string {
+	if maxOrig <= 0 {
+		maxOrig = 9000
+	}
 	if strings.TrimSpace(chapters) == "" {
 		return ""
 	}
@@ -978,8 +990,8 @@ func extractEpOriginal(body, chapters string) string {
 		endAt = locs[ei+1][0]
 	}
 	orig := strings.TrimSpace(body[startAt:endAt])
-	if r := []rune(orig); len(r) > 9000 {
-		orig = string(r[:9000]) + "\n…(原文超长截断)"
+	if r := []rune(orig); len(r) > maxOrig {
+		orig = string(r[:maxOrig]) + "\n…(原文超长截断)"
 	}
 	return orig
 }

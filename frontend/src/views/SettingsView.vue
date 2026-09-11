@@ -1,12 +1,13 @@
 <script setup>
 import { G, api, refreshStatus } from '../store'
+import { Reading } from '@element-plus/icons-vue'
 import { THEMES, loadPrefs, applyTheme } from '../themes'
 import { reactive, onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const form = reactive({
   server_port: 8790, data_dir: '', auto_open_ui: true,
-  llm: {}, comfy: {}, minimax: {}, ff: {}, render: {},
+  llm: {}, comfy: {}, minimax: {}, ff: {}, render: {}, split: {},
 })
 const testing = ref('')
 // ---- 自动保存:任何字段变更即标记 dirty;离开页面(切导航/关窗)自动落盘 ----
@@ -300,9 +301,44 @@ async function testConn(target) {
               <el-option value="api" label="MiniMax 云端 API(纯云端,按量计费)" />
             </el-select>
           </el-form-item>
+          <el-form-item label="转场时长(秒;cut/fade/dissolve 叠化)">
+            <el-input-number v-model="form.render.fade_sec" :min="0.1" :max="3" :step="0.1" :precision="1" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="单镜渲染超时(分钟;超时自动释放显存重试)">
+            <el-input-number v-model="form.render.shot_timeout" :min="10" :max="120" style="width:100%" />
+          </el-form-item>
           <div class="text-xs flex items-end pb-2" style="color:var(--mx-text-2)">
             已有项目的引擎不受影响,可在项目内「渲染出片 ⚙」单独调整。
           </div>
+        </el-form>
+      </div>
+
+      <div class="panel p-5">
+        <h3 class="text-sm font-bold m-0 mb-4 flex items-center gap-2">
+          <el-icon><Reading /></el-icon>小说拆集
+        </h3>
+        <el-form label-position="top" class="grid gap-x-6" style="grid-template-columns:1fr 1fr">
+          <el-form-item label="分段大小(字/段;全书超此值按章节切段并行拆解)">
+            <el-input-number v-model="form.split.chunk_size" :min="10000" :max="80000" :step="5000" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="并行拆集并发数(同时调 LLM 的段数)">
+            <el-input-number v-model="form.split.concurrency" :min="1" :max="6" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="每集附原文上限(字;附原文给分镜 LLM 看全文改编)">
+            <el-input-number v-model="form.split.max_orig_chars" :min="3000" :max="20000" :step="1000" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="前情提要截断(字;给下集的上集剧情摘要长度)">
+            <el-input-number v-model="form.split.prev_summary" :min="100" :max="1000" :step="50" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="每集大纲字数下限">
+            <el-input-number v-model="form.split.brief_min" :min="200" :max="1000" :step="50" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="每集大纲字数上限">
+            <el-input-number v-model="form.split.brief_max" :min="400" :max="1500" :step="100" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="镜头数安全上限(0=LLM 按内容自决)">
+            <el-input-number v-model="form.split.shot_limit" :min="0" :max="50" style="width:100%" />
+          </el-form-item>
         </el-form>
       </div>
 

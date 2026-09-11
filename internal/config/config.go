@@ -69,6 +69,19 @@ type RenderSettings struct {
 	BurnSubtitles bool   `json:"burn_subtitles"` // 合成时烧录字幕
 	Transition    string `json:"transition"`     // cut / fade / dissolve
 	MaxShots      int    `json:"max_shots"`      // 单次分镜上限(成本护栏)
+	FadeSec       float64 `json:"fade_sec"`      // 转场时长(秒)
+	ShotTimeout   int    `json:"shot_timeout"`  // 单镜渲染超时(分钟)
+}
+
+// SplitSettings 小说拆集参数(设置页可调,2026-09-11 用户定调:灵活配置)。
+type SplitSettings struct {
+	ChunkSize    int `json:"chunk_size"`    // 分段大小(字/段,0=40000)
+	MaxOrigChars int `json:"max_orig_chars"` // 每集附原文截断上限(字,0=9000)
+	Concurrency  int `json:"concurrency"`   // 并行拆集并发数(0=3)
+	PrevSummary  int `json:"prev_summary"`  // 前情提要截断(字,0=400)
+	BriefMin      int `json:"brief_min"`     // 每集大纲最短(字,0=400)
+	BriefMax      int `json:"brief_max"`     // 每集大纲最长(字,0=700)
+	ShotLimit     int `json:"shot_limit"`    // 镜头数安全网上限(0=30)
 }
 
 // Settings 全局设置根。
@@ -79,9 +92,10 @@ type Settings struct {
 	LLM        LLMSettings    `json:"llm"`
 	Comfy      ComfySettings  `json:"comfy"`
 	MiniMax    MiniMaxSettings `json:"minimax"`
-	FF         FFSettings      `json:"ff"`
-	VLM        VLMSettings     `json:"vlm"`
-	Render     RenderSettings  `json:"render"`
+	FF         FFSettings     `json:"ff"`
+	VLM        VLMSettings    `json:"vlm"`
+	Render     RenderSettings `json:"render"`
+	Split      SplitSettings  `json:"split"`
 	NovelDir   string        `json:"novel_dir"` // 小说库目录(小说管理页扫描)
 }
 
@@ -133,8 +147,19 @@ func Default() *Settings {
 			Steps:         8,
 			Seed:          0,
 			BurnSubtitles: true,
-			Transition:    "dissolve",
-			MaxShots:      24,
+			Transition:    "fade",
+			MaxShots:      0, // 0=内容驱动(LLM 按原文自行决定)
+			FadeSec:       0.5,
+			ShotTimeout:   45,
+		},
+		Split: SplitSettings{
+			ChunkSize:     40000,
+			MaxOrigChars:  9000,
+			Concurrency:   3,
+			PrevSummary:   400,
+			BriefMin:      400,
+			BriefMax:      700,
+			ShotLimit:     30,
 		},
 	}
 }
