@@ -376,8 +376,11 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		}
 		text = string(b)
 	}
+	// 文本预处理:不管源文件什么编码/格式,统一转干净 UTF-8 纯文本
+	// (编码检测/BOM/不可见字符/智能引号/Markdown 装饰/空行压缩)
+	text = NormalizeNovelText([]byte(text))
 	if len([]rune(text)) < 200 {
-		writeErr(w, 400, fmt.Errorf("小说正文过短(%d 字)", len([]rune(text))))
+		writeErr(w, 400, fmt.Errorf("小说正文过短(%d 字,预处理后)", len([]rune(text))))
 		return
 	}
 	// 读取立项.json 的 art_style 作为视频渲染风格(2026-09-11 用户定调)
