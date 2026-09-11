@@ -823,11 +823,22 @@ func (s *Server) openInExplorer(w http.ResponseWriter, r *http.Request) {
 		target = filepath.Join(allow, filepath.FromSlash(rel))
 	} else {
 		target = filepath.Clean(in.Path)
+		// 允许 DataDir 或 ComfyUI 根目录(引擎管理页的目录说明需要打开模型/输出等子目录)
 		allow = s.cfg.Get().DataDir
 	}
-	if allow == "" || !strings.HasPrefix(target, filepath.Clean(allow)) {
+	if allow == "" {
 		writeErr(w, 403, fmt.Errorf("路径超出允许范围"))
 		return
+	}
+	if !strings.HasPrefix(target, filepath.Clean(allow)) {
+		// 不在 DataDir 下 → 检查是否在 ComfyUI 根目录内
+		comfyRoot := filepath.Clean(s.cfg.Get().Comfy.RootDir)
+		if comfyRoot != "" && comfyRoot != "." && strings.HasPrefix(target, comfyRoot) {
+			// 在 ComfyUI 根下,放行
+		} else {
+			writeErr(w, 403, fmt.Errorf("路径超出允许范围"))
+			return
+		}
 	}
 	if _, err := os.Stat(target); err != nil {
 		writeErr(w, 404, err)
