@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -410,8 +411,8 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	}
 	// 查重:同书系列/同名项目已存在
 	if s.novelProduced(name) {
-		// 已有系列:放行进入补缺模式——重拆按集号去重,已有分集不动,只建缺失
-		// (2026-09-10:分集 47 因标题符号创建失败后无补建通道,用户被查重挡死)
+		// 已有系列:放行进入补缺模式——重拆按集号去重,已有分集不动,只建缺失;
+		// 中间缺章由 autoGapFillTrim 自动补(删插入点后分集+尾部重拆续接)
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 			Message: "《" + name + "》已有系列,进入补缺模式:已有分集保持不动,仅补建缺失的集"})
 	}
@@ -769,6 +770,18 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		return out, book, style, nil
 	}
 
+	// ---- 章节感知自动补缺(2026-09-11 用户定调:管线自动补,不靠人工)----
+	// 重拆已有系列时检出中间缺章 → 删除插入点之后的分集,文本截断到首个
+	// 缺章处,重拆尾部续接集号(原「按集号去重」对中间缺章无效:新拆集号
+	// 与已有撞车全被跳过,缺章永远补不上)。
+	gapStartEp, gapStyle := 0, ""
+	var gapPrev epItem
+	if s.novelProduced(name) {
+		var okFill bool
+		text, gapStartEp, gapPrev, gapStyle, okFill = s.autoGapFillTrim(name, text)
+		_ = okFill
+	}
+
 	// ---- 分层拆解 + 流水线化 ----
 	// 全本(如 240 章 39 万字)单次调用输出上限装不下完整拆集;按章节切块
 	// 逐段拆解,且**逐段建项**:onEps 回调让产线在首段就绪时即启动,后续段
@@ -809,6 +822,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	globalStyle := ""
 	var epsAll []string // 全部集(含补缺命中的已有集)
 	var lastEp epItem   // 跨段前情(上一集概要,供 SaveSource 前情提要)
+	if gapPrev.Ep > 0 { // 自动补缺:前情从保留区末集续
+		lastEp = gapPrev
+	}
 	createFail := 0
 	createdTotal := 0
 	createSeg := func(segEps []epItem, ck chunk) {
@@ -931,7 +947,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	}
 	wg.Wait()
 	// 按段序统一建项(集号全局连续;建项顺序 = 段顺序,产线流式推送不变)
-	planned := 0
+	planned := gapStartEp // 自动补缺时从保留区末集续接编号
 	var plannedEps []epItem // 全部已规划集(覆盖核对用,含创建失败的)
 	for ci, ck := range chunks {
 		res := results[ci]
@@ -951,6 +967,11 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				globalStyle = artStyle
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 					Message: "🎨 视频渲染风格锁定(立项.json art_style):" + clampRunes(artStyle, 80)})
+			} else if gapStyle != "" {
+				// 自动补缺:风格沿用保留集,防重拆尾部风格漂移
+				globalStyle = gapStyle
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+					Message: "🎨 视频渲染风格沿用保留分集(补缺模式防漂移)"})
 			} else {
 				globalStyle = res.style
 			}
@@ -1022,7 +1043,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				Message: fmt.Sprintf("✔ 章节覆盖核对:%d/%d 章全部有对应分集", len(headNums), len(headNums))})
 		case len(missing) <= 20:
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-				Message: fmt.Sprintf("⚠ 章节覆盖核对:缺 %d 章未拆入任何分集(第 %v 章),可重拆补缺", len(missing), missing)})
+				Message: fmt.Sprintf("⚠ 章节覆盖核对:缺 %d 章未拆入任何分集(第 %v 章)——重新提交一键创作即可自动补缺(删除缺章位置之后的分集并重拆续接)", len(missing), missing)})
 		default:
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
 				Message: fmt.Sprintf("⚠ 章节覆盖核对:仅覆盖 %d/%d 章,chapters 字段可能失准,建议重拆", len(headNums)-len(missing), len(headNums))})
@@ -1045,6 +1066,169 @@ func chapterNumSet(text string) map[int]bool {
 		}
 	}
 	return out
+}
+
+// chapterHeadOffset 返回指定章号的章头行在文本中的字节偏移(未找到=-1)。
+func chapterHeadOffset(text string, ch int) int {
+	numRe := regexp.MustCompile(`第\s*0*([0-9]{1,4})\s*[章回节]`)
+	for _, loc := range chapterHeadRe.FindAllStringIndex(text, -1) {
+		if m := numRe.FindStringSubmatch(text[loc[0]:loc[1]]); m != nil {
+			if v, e := strconv.Atoi(m[1]); e == nil && v == ch {
+				return loc[0]
+			}
+		}
+	}
+	return -1
+}
+
+// epCoveredChapters 解析分集 source.txt【本集原文】块的章头 → 覆盖章号(升序)。
+// 无原文附着的分集返回 nil(覆盖未知)。
+func (s *Server) epCoveredChapters(id string) []int {
+	src, err := s.store.LoadSource(id)
+	if err != nil {
+		return nil
+	}
+	i := strings.Index(src, "【本集原文】")
+	if i < 0 {
+		return nil
+	}
+	numRe := regexp.MustCompile(`第\s*0*([0-9]{1,4})\s*[章回节]`)
+	var out []int
+	for _, line := range chapterHeadRe.FindAllString(src[i:], -1) {
+		if m := numRe.FindStringSubmatch(line); m != nil {
+			if v, e := strconv.Atoi(m[1]); e == nil {
+				out = append(out, v)
+			}
+		}
+	}
+	sort.Ints(out)
+	return out
+}
+
+// autoGapFillTrim 章节感知自动补缺:重拆已有系列时检出中间缺章——删除
+// 缺章插入点之后的分集(条件缓存同步清理,资产库不动),文本截断到首个
+// 缺章处重拆尾部;起始集号与保留区续接、全局风格沿用保留集、前情取自
+// 保留区末集。原「按集号去重」对中间缺章无效:重拆新集与已有集号撞车
+// 全被跳过,缺章永远补不上(2026-09-11 用户定调:管线自动补,不靠人工)。
+// ok=false:无缺章/缺章在末尾(普通补缺可续建)/产线运行中/无法定位。
+func (s *Server) autoGapFillTrim(name, text string) (string, int, epItem, string, bool) {
+	heads := chapterNumSet(text)
+	if len(heads) == 0 {
+		return text, 0, epItem{}, "", false
+	}
+	reEp := regexp.MustCompile(`^` + regexp.QuoteMeta(name) + `·第(\d+)集`)
+	type epCov struct {
+		id    string
+		num   int
+		chMin int // 覆盖的最小章号;-1=未知(无原文附着)
+	}
+	var covs []epCov
+	covered := map[int]bool{}
+	for _, p := range s.store.List() {
+		m := reEp.FindStringSubmatch(p.ID)
+		if m == nil {
+			continue
+		}
+		n, _ := strconv.Atoi(m[1])
+		chs := s.epCoveredChapters(p.ID)
+		c := epCov{id: p.ID, num: n, chMin: -1}
+		if len(chs) > 0 {
+			c.chMin = chs[0]
+			for _, x := range chs {
+				covered[x] = true
+			}
+		}
+		covs = append(covs, c)
+	}
+	if len(covs) == 0 {
+		return text, 0, epItem{}, "", false
+	}
+	var missing []int
+	for c := range heads {
+		if !covered[c] {
+			missing = append(missing, c)
+		}
+	}
+	if len(missing) == 0 {
+		return text, 0, epItem{}, "", false
+	}
+	sort.Ints(missing)
+	c0 := missing[0]
+	sort.Slice(covs, func(i, j int) bool { return covs[i].num < covs[j].num })
+	// 插入点:第一个「覆盖起点晚于首缺章 或 覆盖未知」的集,它起全部删除重拆
+	cut := 0
+	for _, c := range covs {
+		if c.chMin > c0 || c.chMin < 0 {
+			cut = c.num
+			break
+		}
+	}
+	if cut == 0 {
+		return text, 0, epItem{}, "", false // 缺章在全部已知覆盖之后:普通补缺续建新集即可
+	}
+	// 产线运行中不许删集(运行项目目录被删,渲染中途炸)
+	for _, c := range covs {
+		if c.num >= cut && s.pipe.Running(c.id) != nil {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+				Message: fmt.Sprintf("⚠ 检出缺章(第 %v 章)但批量产线运行中:请先停止产线再重新提交,自动补缺将删除第 %d 集起的分集并重拆续接", missing, cut)})
+			return text, 0, epItem{}, "", false
+		}
+	}
+	offset := chapterHeadOffset(text, c0)
+	if offset < 0 {
+		return text, 0, epItem{}, "", false
+	}
+	// 保留区末集 → 前情提要
+	var prev epItem
+	for _, c := range covs {
+		if c.num == cut-1 {
+			if src, err := s.store.LoadSource(c.id); err == nil {
+				prev.Ep = c.num
+				if m := regexp.MustCompile(`·第\d+集·(.+)$`).FindStringSubmatch(c.id); m != nil {
+					prev.Title = m[1]
+				}
+				if i := strings.Index(src, "【本集剧情】"); i >= 0 {
+					b := src[i+len("【本集剧情】"):]
+					if j := strings.Index(b, "\n\n【本集原文】"); j >= 0 {
+						b = b[:j]
+					}
+					prev.Brief = strings.TrimSpace(b)
+				}
+			}
+			break
+		}
+	}
+	// 全局风格沿用保留集(防重拆尾部风格漂移)
+	style := ""
+	if len(covs) > 0 {
+		if src, err := s.store.LoadSource(covs[0].id); err == nil {
+			if m := regexp.MustCompile(`(?m)^全局风格[:：](.+)$`).FindStringSubmatch(src); m != nil {
+				style = strings.TrimSpace(m[1])
+			}
+		}
+	}
+	// 删除插入点起的分集
+	removed := 0
+	for _, c := range covs {
+		if c.num < cut {
+			continue
+		}
+		if err := s.store.Delete(c.id); err == nil {
+			removed++
+			if eng, err := s.reg.Get("comfy"); err == nil {
+				if ce, ok := eng.(*comfyengine.Engine); ok {
+					ce.CleanupProjectCache(c.id)
+				}
+			}
+		}
+	}
+	if removed == 0 {
+		return text, 0, epItem{}, "", false
+	}
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+		Message: fmt.Sprintf("🔧 检出缺章 第 %v 章:自动补缺——删除第 %d 集起的 %d 个分集,从第 %d 章起重拆续接(保留分集与资产库不动)", missing, cut, removed, c0)})
+	s.opLog("自动补缺:缺章 %v,删除第 %d 集起 %d 个分集,从第 %d 章重拆续接", missing, cut, removed, c0)
+	return text[offset:], cut - 1, prev, style, true
 }
 
 // failNote 创建失败数附注。
