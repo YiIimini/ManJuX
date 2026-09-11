@@ -176,10 +176,14 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	}
 	// Q 版(chibi)方形画幅,其余竖版半身
 	isChibi := strings.HasSuffix(assetID, "_chibi")
-	// 同剧对比注入:重生成同样带上全剧班底,保住面部差异化(与产线生成
-	// 同规则);已含对比块的提示词(资产表回写的)不重复追加
-	if kind == "characters" && !isChibi && !strings.Contains(prompt, "CAST DISTINCTNESS") {
-		prompt += castContrastBlock(plan, name)
+	// 同剧对比+风格具象化注入:重生成与产线生成同规则;已含的块不重复追加
+	if kind == "characters" && !isChibi {
+		if !strings.Contains(prompt, "RENDER STYLE") {
+			prompt += styleExpand(plan.Style)
+		}
+		if !strings.Contains(prompt, "CAST DISTINCTNESS") {
+			prompt += castContrastBlock(plan, name)
+		}
 	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
@@ -567,7 +571,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+castContrastBlock(plan, ch.Name))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
@@ -587,7 +591,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
 			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
 			chibiPrompt := "cute chibi SD figure of the same character, big head, tiny body, full body, simple pastel background, " +
-				"expressive face, figure product photography, " + ch.ImagePrompt + castContrastBlock(plan, ch.Name)
+				"expressive face, figure product photography, " + ch.ImagePrompt + styleExpand(plan.Style) + castContrastBlock(plan, ch.Name)
 			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
@@ -1030,6 +1034,53 @@ func nameSeed(kind, name string) int64 {
 	return int64(h.Sum32())
 }
 
+// styleExpand 风格英文具象化:用户的 art_style 多为中文速记(如「次世代
+// 3D·BJD 虚拟人+半写实国漫AI漫剧质感」),STYLE LOCK 让 image_prompt 逐
+// 字照搬中文——Krea-2 缺具体英文视觉词汇时照片先验胜出,人类角色生成
+// 写实真人(2026-09-11 实证:同一本书木偶系角色因自带"wooden android"
+// 描述正常,人类系全部照片质感)。按关键词展开确定性英文渲染词汇追加;
+// 中文原风格保留(跨集一致性锚),真人剧关键词放行写实(合法风格)。
+func styleExpand(style string) string {
+	if strings.TrimSpace(style) == "" {
+		return ""
+	}
+	s := strings.ToLower(style)
+	has3D := strings.Contains(s, "3d") || strings.Contains(s, "bjd") || strings.Contains(style, "虚拟人") || strings.Contains(style, "虚拟偶像")
+	hasAnime := strings.Contains(style, "国漫") || strings.Contains(style, "动漫") || strings.Contains(style, "动画") || strings.Contains(s, "anime") || strings.Contains(s, "donghua")
+	hasComic := strings.Contains(style, "美漫") || strings.Contains(s, "comic")
+	hasInk := strings.Contains(style, "水墨") || strings.Contains(style, "国画")
+	hasReal := strings.Contains(style, "真人") || strings.Contains(style, "写实电影") || strings.Contains(s, "photoreal")
+	hasQ := strings.Contains(style, "q版") || strings.Contains(style, "呆萌")
+	var terms []string
+	stylized := true
+	switch {
+	case has3D:
+		terms = append(terms, "next-generation 3D CG character render, BJD ball-jointed doll aesthetic, smooth poreless synthetic skin, large glossy stylized eyes, collectible virtual figure look")
+		if hasAnime {
+			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
+		}
+	case hasAnime:
+		terms = append(terms, "Chinese donghua (animation) character design, anime-influenced stylized features, clean cel shading")
+	case hasComic:
+		terms = append(terms, "American comic-book illustration, bold ink outlines, saturated flat colors, halftone dots")
+	case hasInk:
+		terms = append(terms, "Chinese ink-wash painting style, expressive brush outlines, negative space")
+	case hasReal:
+		terms = append(terms, "photorealistic cinematic portrait, realistic skin texture") // 真人剧是合法风格
+		stylized = false
+	default:
+		return "" // 无已知关键词:不强行改写用户自定义风格
+	}
+	if hasQ {
+		terms = append(terms, "cute chibi proportions")
+	}
+	tail := ". Render strictly in this exact art style."
+	if stylized {
+		tail = ". The output must read as a stylized character render in this exact art style."
+	}
+	return "\n\nRENDER STYLE (mandatory): " + strings.TrimSpace(style) + " — " + strings.Join(terms, "; ") + tail
+}
+
 // castContrastBlock 同剧班底对比块:列出本剧其它角色的关键形象,追加到
 // Krea-2 提示词尾部,强制与同剧角色拉开面部差异(2026-09-11 用户定调
 // 「不同角色脸不能相似」)。实证:LLM 已写了 fat/scar/narrow face 等
@@ -1087,7 +1138,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		list = append(list, miss{kind, id, name, desc, prompt})
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+castContrastBlock(plan, ch.Name))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
