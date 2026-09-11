@@ -86,3 +86,42 @@ BRIEF:
 		t.Fatalf("截断尾段应抢救: ok=%v len=%d", ok, len(eps))
 	}
 }
+
+// 章界工具:文件名注入 + 章头计数(2026-09-11 实证全本 md 无章头断链)。
+func TestChapterHeadHelpers(t *testing.T) {
+	if h := chapterHeadFromFilename("第001章_叁佰玖拾玖.md"); h != "第001章 叁佰玖拾玖" {
+		t.Fatalf("文件名解析错误: %q", h)
+	}
+	if h := chapterHeadFromFilename("随便什么.md"); h != "" {
+		t.Fatalf("非章文件应返回空: %q", h)
+	}
+	// 内容无章头 → 注入;有 → 不动
+	injected := ensureChapterHead("第002章_雷泽集.md", "雷泽集的清晨\n")
+	if !strings.HasPrefix(injected, "第002章 雷泽集\n") {
+		t.Fatalf("应注入章头: %q", injected[:30])
+	}
+	kept := ensureChapterHead("第002章_雷泽集.md", "第002章 雷泽集\n\n正文")
+	if kept != "第002章 雷泽集\n\n正文" {
+		t.Fatalf("已有章头不应重复注入: %q", kept)
+	}
+	if n := countChapterHeads("第001章 甲\n正文\n第002章 乙\n第003章_丙\n普通行"); n != 3 {
+		t.Fatalf("章头计数错误: %d", n)
+	}
+}
+
+// 目录剥离:全本 md 目录区(≥6 行列表)整块删除,正文不受影响。
+func TestStripChapterTOC(t *testing.T) {
+	src := "# 书\n\n## 目录\n\n- 第001章 甲\n- 第002章 乙\n- 第003章 丙\n- 第004章 丁\n- 第005章 戊\n- 第006章 己\n\n## 正文\n\n第001章 甲\n\n正文开始。\n"
+	got := stripChapterTOC(src)
+	if strings.Contains(got, "- 第00") {
+		t.Fatalf("目录区应被剥除: %q", got)
+	}
+	if !strings.Contains(got, "第001章 甲\n\n正文开始") {
+		t.Fatalf("正文章头应保留: %q", got)
+	}
+	// 少于 6 行的类似列表不误删
+	keep := "引言:\n- 第一章 起点\n- 第二章 转折\n\n正文"
+	if stripChapterTOC(keep) != keep {
+		t.Fatalf("短列表不应误删: %q", stripChapterTOC(keep))
+	}
+}

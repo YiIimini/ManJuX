@@ -24,6 +24,7 @@ func NormalizeNovelText(raw []byte) string {
 	text = normalizeLineEndings(text)
 	text = stripInvisible(text)
 	text = stripMarkdown(text)
+	text = stripChapterTOC(text)
 	text = compressBlankLines(text)
 	return strings.TrimSpace(text)
 }
@@ -120,6 +121,37 @@ func stripMarkdown(s string) string {
 	// 水平线 --- → 删除
 	s = regexp.MustCompile(`(?m)^-{3,}\s*$`).ReplaceAllString(s, "")
 	return s
+}
+
+// stripChapterTOC 剥除 markdown 目录区:连续 ≥6 行「- 第N章 …」章节列表。
+// 全本 md 常见形态:目录 56 行 + 正文无章头——目录若不剥,既污染拆集输入
+// 又干扰章界识别(2026-09-11 实证:仙人渡劫 56 章 49 集+原文附着断链)。
+func stripChapterTOC(s string) string {
+	re := regexp.MustCompile(`(?m)^[ \t]*(?:[-*+]|\d+[.、)])[ \t]+第[0-9零〇一二三四五六七八九十百千两]+[章回节][^\n]{0,60}[ \t]*$`)
+	lines := strings.Split(s, "\n")
+	var out []string
+	for i := 0; i < len(lines); {
+		if re.MatchString(lines[i]) {
+			j, hits := i, 0
+			for j < len(lines) {
+				if re.MatchString(lines[j]) {
+					hits++
+					j++
+				} else if strings.TrimSpace(lines[j]) == "" && j+1 < len(lines) && re.MatchString(lines[j+1]) {
+					j++ // 目录组之间的空行(后面还有目录行才算块内)
+				} else {
+					break
+				}
+			}
+			if hits >= 6 {
+				i = j // 整块目录删除
+				continue
+			}
+		}
+		out = append(out, lines[i])
+		i++
+	}
+	return strings.Join(out, "\n")
 }
 
 // compressBlankLines 连续空行压缩为一个。

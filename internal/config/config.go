@@ -153,7 +153,7 @@ func Default() *Settings {
 			ShotTimeout:   45,
 		},
 		Split: SplitSettings{
-			ChunkSize:     20000, // 按输出预算倒推(2026-09-11 根治截断:40K段→10-20集→50-60K token 撞 65K 上限;20K段→8集→40K token 安全)
+			ChunkSize:     12000, // 细拆目标段:≈3-4 章/段→每段 4-8 集,集数密度按段内章数动态上限(2026-09-11「细中细」定调;输出预算:24集上限×700字×1.5+思考≈55K<65K)
 			MaxOrigChars:  9000,
 			Concurrency:   3,
 			PrevSummary:   400,
@@ -188,27 +188,33 @@ func NewManager(path, exeDir string) (*Manager, error) {
 	if def.NovelDir == "" {
 		def.NovelDir = filepath.Join(def.DataDir, "Novel")
 	}
-	raw, err := os.ReadFile(path)
-	if err == nil && len(raw) > 0 {
-		s := Default()
-		s.DataDir = def.DataDir
-		s.Comfy.RootDir = def.Comfy.RootDir
-		if err := json.Unmarshal(raw, s); err != nil {
-			return nil, err
-		}
-		// 已有文件但字段为空时回落到推导值
-		if s.DataDir == "" {
+		raw, err := os.ReadFile(path)
+		if err == nil && len(raw) > 0 {
+			s := Default()
 			s.DataDir = def.DataDir
-		}
-		if s.Comfy.RootDir == "" {
 			s.Comfy.RootDir = def.Comfy.RootDir
+			if err := json.Unmarshal(raw, s); err != nil {
+				return nil, err
+			}
+			// 已有文件但字段为空时回落到推导值
+			if s.DataDir == "" {
+				s.DataDir = def.DataDir
+			}
+			if s.Comfy.RootDir == "" {
+				s.Comfy.RootDir = def.Comfy.RootDir
+			}
+			if s.NovelDir == "" {
+				s.NovelDir = def.NovelDir
+			}
+			// 旧默认值迁移:v0.32 时代落盘的 chunk_size=40000 是截断防治
+			// 期的默认(8 集/段上限配套),细拆定调后段目标 12000
+			// (2026-09-11 用户定调「细中细」:56 章 49 集即此残留所致)
+			if s.Split.ChunkSize == 40000 {
+				s.Split.ChunkSize = 12000
+			}
+			m.settings = s
+			return m, nil
 		}
-		if s.NovelDir == "" {
-			s.NovelDir = def.NovelDir
-		}
-		m.settings = s
-		return m, nil
-	}
 	// 文件缺失/为空:落一份默认文件(此时没有可覆盖的用户值)
 	m.settings = def
 	if err := m.saveLocked(); err != nil {

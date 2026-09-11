@@ -9,6 +9,7 @@
 package server
 
 import (
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -81,4 +82,41 @@ func firstLineValue(re *regexp.Regexp, s string) string {
 		return m[1]
 	}
 	return ""
+}
+
+// chapterHeadRe 章头行(预处理后为裸行)。切块/章计数/覆盖核对共用。
+var chapterHeadRe = regexp.MustCompile(`(?m)^[ \t]{0,4}第[0-9零〇一二三四五六七八九十百千两]+[章回节][^\n]{0,50}\s*$`)
+
+// countChapterHeads 统计文本中的章头行数(≥8 视为章节结构可信)。
+func countChapterHeads(s string) int {
+	return len(chapterHeadRe.FindAllString(s, -1))
+}
+
+// chapterHeadFromFilename 从分章文件名解析标准章头行:
+// 第001章_叁佰玖拾玖.md → "第001章 叁佰玖拾玖"。解析失败返回空。
+func chapterHeadFromFilename(base string) string {
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	m := regexp.MustCompile(`^(第[0-9零〇一二三四五六七八九十百千两]+[章回节])[_. \t-]+(.+)$`).
+		FindStringSubmatch(strings.TrimSpace(base))
+	if m == nil {
+		return ""
+	}
+	return m[1] + " " + m[2]
+}
+
+// ensureChapterHead 分章文件内容若开头无章头行,从文件名注入:
+// 合并正文时保证每册有章界(2026-09-11 实证:全本 md 正文无章头导致
+// 章界识别失败→硬切大段→CHAPTERS 失准→【本集原文】附着断链)。
+func ensureChapterHead(base, body string) string {
+	head := body
+	if r := []rune(head); len(r) > 300 {
+		head = string(r[:300])
+	}
+	if countChapterHeads(head) > 0 {
+		return body
+	}
+	if h := chapterHeadFromFilename(base); h != "" {
+		return h + "\n\n" + body
+	}
+	return body
 }

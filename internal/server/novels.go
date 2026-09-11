@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -333,18 +334,16 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	if fi.IsDir() {
 		it := s.scanNovelDir(in.Path, filepath.Base(in.Path))
 		name, coverSrc = it.Name, it.Cover
-		var src string
-		if fbs, _ := filepath.Glob(filepath.Join(in.Path, "全本", "*")); len(fbs) > 0 && hasTxtExt(fbs[0]) {
-			src = fbs[0]
-		} else {
-			// 合并正文章节
+		// 合并正文章节(分册文件);内容无章头的册从文件名注入章头,
+		// 保证章界(切块/CHAPTERS/【本集原文】附着全依赖章头)
+		readMerged := func() (string, int) {
 			var paths []string
 			_ = filepath.WalkDir(in.Path, func(p string, e os.DirEntry, err error) error {
 				if err != nil || e.IsDir() || !hasTxtExt(p) {
 					return nil
 				}
 				rel := strings.ToLower(p)
-				if strings.Contains(rel, "素材") || strings.Contains(rel, "设定") || strings.Contains(rel, "docs") || strings.Contains(rel, "封面") {
+				if strings.Contains(rel, "素材") || strings.Contains(rel, "设定") || strings.Contains(rel, "docs") || strings.Contains(rel, "封面") || strings.Contains(rel, "全本") {
 					return nil
 				}
 				paths = append(paths, p)
@@ -354,18 +353,31 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			var sb strings.Builder
 			for _, p := range paths {
 				b, _ := os.ReadFile(p)
-				sb.WriteString(string(b))
+				sb.WriteString(ensureChapterHead(filepath.Base(p), string(b)))
 				sb.WriteString("\n\n")
 			}
-			text = sb.String()
+			return sb.String(), len(paths)
 		}
-		if src != "" {
-			b, err := os.ReadFile(src)
+		if fbs, _ := filepath.Glob(filepath.Join(in.Path, "全本", "*")); len(fbs) > 0 && hasTxtExt(fbs[0]) {
+			b, err := os.ReadFile(fbs[0])
 			if err != nil {
 				writeErr(w, 500, err)
 				return
 			}
-			text = string(b)
+			full := NormalizeNovelText(b)
+			merged, nFiles := readMerged()
+			// 全本无有效章结构而正文/有足够分章文件时,弃全本用分章合并
+			// (2026-09-11 实证:全本 md 正文无章头仅目录,章界识别失败→
+			// 硬切大段→CHAPTERS 失准→原文附着断链→拆集粒度失控)
+			if countChapterHeads(full) >= 8 || nFiles < 8 {
+				text = full
+			} else {
+				text = NormalizeNovelText([]byte(merged))
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+					Message: fmt.Sprintf("📖 全本文件无章节结构,改用正文分章合并(%d 册,已按文件名注入章头)", nFiles)})
+			}
+		} else {
+			text, _ = readMerged()
 		}
 	} else {
 		name = strings.TrimSuffix(filepath.Base(in.Path), filepath.Ext(in.Path))
@@ -867,7 +879,23 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			defer func() { <-sem }()
 			var user string
 			if len(chunks) > 1 {
-				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;本段通常 5-8 集(最多 8 集,超过则合并节拍;输出预算有限,宁精勿多),每集 brief " + fmt.Sprint(briefMin) + "-" + fmt.Sprint(briefMax) + " 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, ck.label, ck.body)
+				// 集数密度按段内章数动态定(2026-09-11 用户定调「细中细」:
+				// 原固定「最多 8 集/段」把 56 章压成 49 集,节拍被强制合并)。
+				// 上限=章数×1.5+2,钳制 [8,24](输出预算:24 集×700 字×1.5
+				// token+思考 ≈ 55K < 65K,24 为安全顶)
+				nCh := countChapterHeads(ck.body)
+				maxEps := nCh + nCh/2 + 2
+				if maxEps > 24 {
+					maxEps = 24
+				}
+				if maxEps < 8 {
+					maxEps = 8
+				}
+				epsHint := "本段通常 5-8 集(最多 8 集,超过则合并节拍;输出预算有限,宁精勿多)"
+				if nCh > 0 {
+					epsHint = fmt.Sprintf("本段覆盖 %d 章:每 1-2 章拆 1 集,信息密集的单章拆 2-3 集,禁止把不同剧情节拍合并进同一集(细拆:不注水也不压缩);本段最多 %d 集", nCh, maxEps)
+				}
+				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;%s,每集 brief "+fmt.Sprint(briefMin)+"-"+fmt.Sprint(briefMax)+" 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, epsHint, ck.label, ck.body)
 			} else {
 				user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
 			}
@@ -903,6 +931,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	wg.Wait()
 	// 按段序统一建项(集号全局连续;建项顺序 = 段顺序,产线流式推送不变)
 	planned := 0
+	var plannedEps []epItem // 全部已规划集(覆盖核对用,含创建失败的)
 	for ci, ck := range chunks {
 		res := results[ci]
 		if res.err != nil {
@@ -929,6 +958,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			planned++
 			res.eps[j].Ep = planned
 		}
+		plannedEps = append(plannedEps, res.eps...)
 		createSeg(res.eps, ck)
 		jobSet(series, "running", createdTotal, fmt.Sprintf("已建 %d 集(拆解进行中)", createdTotal))
 		if len(chunks) > 1 {
@@ -944,8 +974,76 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 		Message: fmt.Sprintf("✔ 拆集完成:《%s》共 %d 集,已创建 %d 个子项目%s", series, planned, createdTotal,
 			failNote(createFail))})
+	// 章节覆盖核对(细拆质检):各集 chapters 覆盖的章号 vs 全书章头集合,
+	// 缺章即报——LLM 跳章不再静默(2026-09-11 用户定调「细中细是否有做到」)
+	if headNums := chapterNumSet(text); len(headNums) > 0 {
+		cov := map[int]bool{}
+		numRe := regexp.MustCompile(`第\s*0*([0-9]{1,4})\s*[章回节]`)
+		for _, ep := range plannedEps {
+			var vals []int
+			for _, m := range numRe.FindAllStringSubmatch(ep.Chapters, -1) {
+				if v, e := strconv.Atoi(m[1]); e == nil {
+					vals = append(vals, v)
+				}
+			}
+			if len(vals) == 0 {
+				continue
+			}
+			lo, hi := vals[0], vals[0]
+			for _, v := range vals {
+				if v < lo {
+					lo = v
+				}
+				if v > hi {
+					hi = v
+				}
+			}
+			if hi-lo <= 30 { // 区间异常大视为脏数据,只记出现的号
+				for c := lo; c <= hi; c++ {
+					cov[c] = true
+				}
+			} else {
+				for _, v := range vals {
+					cov[v] = true
+				}
+			}
+		}
+		var missing []int
+		for c := range headNums {
+			if !cov[c] {
+				missing = append(missing, c)
+			}
+		}
+		sort.Ints(missing)
+		switch {
+		case len(missing) == 0:
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+				Message: fmt.Sprintf("✔ 章节覆盖核对:%d/%d 章全部有对应分集", len(headNums), len(headNums))})
+		case len(missing) <= 20:
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+				Message: fmt.Sprintf("⚠ 章节覆盖核对:缺 %d 章未拆入任何分集(第 %v 章),可重拆补缺", len(missing), missing)})
+		default:
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+				Message: fmt.Sprintf("⚠ 章节覆盖核对:仅覆盖 %d/%d 章,chapters 字段可能失准,建议重拆", len(headNums)-len(missing), len(headNums))})
+		}
+	}
 	jobSet(series, "done", createdTotal, fmt.Sprintf("拆集完成:%d 集", createdTotal))
 	return series, epsAll, nil
+}
+
+// chapterNumSet 从文本章头行提取全书章号集合(目录已剥,正文章头为准;
+// 不直接全文找「第N章」避免正文引用误收)。
+func chapterNumSet(text string) map[int]bool {
+	numRe := regexp.MustCompile(`第\s*0*([0-9]{1,4})\s*[章回节]`)
+	out := map[int]bool{}
+	for _, line := range chapterHeadRe.FindAllString(text, -1) {
+		if m := numRe.FindStringSubmatch(line); m != nil {
+			if v, e := strconv.Atoi(m[1]); e == nil {
+				out[v] = true
+			}
+		}
+	}
+	return out
 }
 
 // failNote 创建失败数附注。
