@@ -168,8 +168,30 @@ const dirInfo = computed(() => [
   { label: 'ComfyUI 主程序', icon: 'Setting', path: comfyRoot.value + '/ComfyUI',
     desc: 'ComfyUI 本体(Git 仓库)。版本管理器显示当前版本与在线最新对比。', color: 'var(--mx-text3)' },
 ])
+// ---- 应用内目录浏览(不依赖系统资源管理器) ----
+const browseDlg = reactive({ open: false, path: '', entries: [], total: 0, loading: false })
 async function openDir(path) {
-  try { await api.openExplorer(path) } catch (e) { ElMessage.error(e.message) }
+  browseDlg.open = true
+  browseDlg.path = path
+  browseDlg.loading = true
+  browseDlg.entries = []
+  try {
+    const r = await fetch('/api/browse?path=' + encodeURIComponent(path))
+    const d = await r.json()
+    if (!r.ok) throw new Error(d.error)
+    browseDlg.entries = d.entries || []
+    browseDlg.total = d.total || 0
+  } catch (e) {
+    ElMessage.error(e.message)
+    browseDlg.open = false
+  } finally { browseDlg.loading = false }
+}
+function fmtSize(b) {
+  if (b <= 0) return ''
+  if (b < 1024) return b + ' B'
+  if (b < 1048576) return (b / 1024).toFixed(1) + ' KB'
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB'
+  return (b / 1073741824).toFixed(2) + ' GB'
 }
 
 const STATUS_META = {
@@ -403,5 +425,29 @@ function verCellCls(row, which) {
         模型文件无统一在线版本源,按本地文件(大小/日期)管理,见上方「模型清单核对」;更新模型请在设置中更换文件。
       </div>
     </div>
+
+    <!-- 应用内目录浏览弹窗 -->
+    <el-dialog v-model="browseDlg.open" :title="'📁 ' + browseDlg.path" width="680px" append-to-body>
+      <div v-loading="browseDlg.loading" style="min-height:200px;max-height:480px;overflow-y:auto">
+        <div v-if="!browseDlg.loading && !browseDlg.entries.length" class="text-center text-xs py-10" style="color:var(--mx-text3)">空目录</div>
+        <div v-for="(e, i) in browseDlg.entries" :key="i"
+             class="flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer"
+             style="border-bottom:1px solid var(--mx-line)"
+             :style="i % 2 === 0 ? '' : 'background:rgba(255,255,255,.02)'"
+             @click="e.isDir && openDir(browseDlg.path + '/' + e.name)">
+          <el-icon :size="14" :color="e.isDir ? 'var(--mx-amber)' : 'var(--mx-text3)'">
+            <FolderOpened v-if="e.isDir" /><Document v-else />
+          </el-icon>
+          <span class="text-xs flex-1 truncate" :style="{ color: e.isDir ? 'var(--mx-text)' : 'var(--mx-text2)' }">{{ e.name }}</span>
+          <span v-if="!e.isDir" class="text-xs" style="color:var(--mx-text3)">{{ fmtSize(e.size) }}</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-3 mt-3">
+        <span class="text-xs" style="color:var(--mx-text3)">{{ browseDlg.total }} 项</span>
+        <div class="flex-1"></div>
+        <el-button size="small" @click="browseDlg.path && browseDlg.path.split('/').slice(0,-1).join('/') && openDir(browseDlg.path.split('/').slice(0,-1).join('/'))">上级</el-button>
+        <el-button size="small" @click="browseDlg.open = false">关闭</el-button>
+      </div>
+    </el-dialog>
   </div>
 </template>
