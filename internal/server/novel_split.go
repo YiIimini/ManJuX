@@ -112,6 +112,8 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 		batch.mu.Lock()
 		batch.stop = true
 		batch.mu.Unlock()
+		// 同步取消所有拆集生产者的 LLM 调用(2026-09-11:停止=拆集+产线全停)
+		prodCancelAll()
 		writeJSON(w, 200, map[string]any{"ok": true})
 		return
 	}

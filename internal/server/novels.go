@@ -410,11 +410,14 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		// (2026-09-09 实证:「天庭把我裁员，我在人间爆红」占位卡不退场)。
 		name = safeSeries(name)
 		jobSet(name, "running", 0, "AI 拆集通读中…(提交即注册,首页占位卡立即可见)")
+		// 可取消上下文:停止按钮可中断 LLM 拆集调用(2026-09-11 用户定调)
+		splitCtx, splitCancel := context.WithCancel(context.Background())
+		defer splitCancel()
 		// 流水线化(2026-09-10 用户定调):首段拆集就绪即启动批量产线,
 		// LLM 静默持续分段解析补集,产线消费到哪追到哪,日志双流同步。
 		var started bool
 		var seriesFinal string
-		var prodCh chan struct{}
+		var prodP *novelProducer
 		applyCover := func(newEps []string) {
 			if cover == "" {
 				return
@@ -428,10 +431,10 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, _, err := s.splitNovelToProjects(context.Background(), name, text, maxEp, artStyle, func(series string, newEps []string) {
+		_, _, err := s.splitNovelToProjects(splitCtx, name, text, maxEp, artStyle, func(series string, newEps []string) {
 			seriesFinal = series
-			if prodCh == nil {
-				prodCh = prodStart(series) // 注册生产者:产线耗尽已知集时会等新集
+			if prodP == nil {
+				prodP = prodStart(series, splitCancel) // 注册生产者(含 cancel:停止按钮可中断拆集)
 			}
 			applyCover(newEps)
 			if !started {
@@ -446,8 +449,8 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				s.batchAppend(series, newEps)
 			}
 		})
-		if prodCh != nil {
-			prodDone(seriesFinal, prodCh) // 拆集结束:产线跑完已知集自然收尾
+		if prodP != nil {
+			prodDone(seriesFinal, prodP) // 拆集结束:产线跑完已知集自然收尾
 		}
 		if err != nil {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
@@ -463,24 +466,30 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 // ---------- 流式拆集生产者注册表(产线据此判断还有没有新分集要来) ----------
 var novelProducers = struct {
 	sync.Mutex
-	m map[string]chan struct{} // series → done 通道(close=拆集结束)
-}{m: map[string]chan struct{}{}}
+	m map[string]*novelProducer // series → 生产者(done+cancel)
+}{m: map[string]*novelProducer{}}
 
-func prodStart(series string) chan struct{} {
-	ch := make(chan struct{})
-	novelProducers.Lock()
-	novelProducers.m[series] = ch
-	novelProducers.Unlock()
-	return ch
+// novelProducer 流式拆集生产者:done=结束信号,cancel=取消拆集 LLM 调用。
+type novelProducer struct {
+	done   chan struct{}
+	cancel context.CancelFunc
 }
-func prodDone(series string, ch chan struct{}) {
+
+func prodStart(series string, cancel context.CancelFunc) *novelProducer {
+	p := &novelProducer{done: make(chan struct{}), cancel: cancel}
+	novelProducers.Lock()
+	novelProducers.m[series] = p
+	novelProducers.Unlock()
+	return p
+}
+func prodDone(series string, p *novelProducer) {
 	novelProducers.Lock()
 	delete(novelProducers.m, series)
 	novelProducers.Unlock()
 	select {
-	case <-ch:
+	case <-p.done:
 	default:
-		close(ch)
+		close(p.done)
 	}
 }
 func prodAlive(series string) bool {
@@ -488,6 +497,17 @@ func prodAlive(series string) bool {
 	defer novelProducers.Unlock()
 	_, ok := novelProducers.m[series]
 	return ok
+}
+
+// prodCancelAll 取消所有拆集生产者(停止按钮调用,终止 LLM 拆集)。
+func prodCancelAll() {
+	novelProducers.Lock()
+	defer novelProducers.Unlock()
+	for _, p := range novelProducers.m {
+		if p.cancel != nil {
+			p.cancel()
+		}
+	}
 }
 
 // batchAppend 向运行中的批量产线追加新分集(流式拆集逐段推送)。
