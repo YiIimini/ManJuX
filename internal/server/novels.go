@@ -879,21 +879,22 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			defer func() { <-sem }()
 			var user string
 			if len(chunks) > 1 {
-				// 集数密度按段内章数动态定(2026-09-11 用户定调「细中细」:
-				// 原固定「最多 8 集/段」把 56 章压成 49 集,节拍被强制合并)。
-				// 上限=章数×1.5+2,钳制 [8,24](输出预算:24 集×700 字×1.5
-				// token+思考 ≈ 55K < 65K,24 为安全顶)
+				// 集粒度铁律:一集=一个完整剧情事件(2026-09-11 晚用户实证
+				// 「前后不知道说的什么」:每章强拆 2-3 集,一集只剩半件事,
+				// 42 秒 4 角色流水账,核心冲突被推到下集——碎拆比粗拆更废)。
+				// 密度回归:默认 1 章 1 集,信息极密集章最多 2 集,且必须在
+				// 自然剧情转折处切;上限=章数+章数/4+1(约 1.25 集/章)
 				nCh := countChapterHeads(ck.body)
-				maxEps := nCh + nCh/2 + 2
-				if maxEps > 24 {
-					maxEps = 24
+				maxEps := nCh + nCh/4 + 1
+				if maxEps > 16 {
+					maxEps = 16
 				}
-				if maxEps < 8 {
-					maxEps = 8
+				if maxEps < 4 {
+					maxEps = 4
 				}
-				epsHint := "本段通常 5-8 集(最多 8 集,超过则合并节拍;输出预算有限,宁精勿多)"
+				epsHint := "本段通常 3-6 集,一集必须讲完一个完整剧情事件"
 				if nCh > 0 {
-					epsHint = fmt.Sprintf("本段覆盖 %d 章:每 1-2 章拆 1 集,信息密集的单章拆 2-3 集,禁止把不同剧情节拍合并进同一集(细拆:不注水也不压缩);本段最多 %d 集", nCh, maxEps)
+					epsHint = fmt.Sprintf("本段覆盖 %d 章:默认每章正好 1 集(一集从该章的开场钩子讲到结尾悬念,事件弧完整);只有信息密度确实极高的章才拆 2 集,且必须在自然剧情转折处切开;严禁为凑集数把一个事件拆碎到多集、也严禁把两章的完整事件压进一集;本段最多 %d 集", nCh, maxEps)
 				}
 				user = fmt.Sprintf("【全书分段】本段是全书 %d 段中的第 %d 段:各段章界不重叠、剧情独立,集号由系统统一编排,无需关心全局编号;%s,每集 brief "+fmt.Sprint(briefMin)+"-"+fmt.Sprint(briefMax)+" 字逐拍列节拍\n【本段正文·%s 起】\n\"\"\"\n%s\n\"\"\"\n", len(chunks), ci+1, epsHint, ck.label, ck.body)
 			} else {
