@@ -1,8 +1,11 @@
 // textnormalize.go 小说文本预处理:不管源文件什么编码/格式,先统一转成
 // 干净 UTF-8 纯文本再喂 LLM(2026-09-11 用户定调:根源解决)。
 // 处理:①编码检测(UTF-8/GBK/GB18030 自动识别)②BOM 剥除③行尾统一 LF
-// ④不可见字符清理(零宽/控制符)⑤智能引号→直引号(防 LLM 输出串格式)
-// ⑥Markdown 装饰符号剥离(标题 #/粗体 **/斜体 *)⑦连续空行压缩。
+// ④不可见字符清理(零宽/控制符)⑤Markdown 装饰符号剥离(标题 #/粗体 **/斜体 *)
+// ⑥连续空行压缩。
+// 注意:引号一律不动——全角弯引号 "" 在 JSON 字符串里是合法字符,LLM 沿用
+// 反而安全;曾把弯引号压平成半角 " 喂 LLM,brief 照抄对话台词时未转义
+// 半角引号导致拆集 JSON 必炸(2026-09-11 实证第 6/13 段,已回撤)。
 package server
 
 import (
@@ -20,7 +23,6 @@ func NormalizeNovelText(raw []byte) string {
 	text = stripBOM(text)
 	text = normalizeLineEndings(text)
 	text = stripInvisible(text)
-	text = normalizeQuotes(text)
 	text = stripMarkdown(text)
 	text = compressBlankLines(text)
 	return strings.TrimSpace(text)
@@ -104,17 +106,6 @@ func stripInvisible(s string) string {
 		}
 	}
 	return b.String()
-}
-
-// normalizeQuotes 智能引号→直引号(防 LLM 在 JSON 输出中沿用弯引号导致解析失败)。
-func normalizeQuotes(s string) string {
-	s = strings.ReplaceAll(s, "\u201C", "\"") // "
-	s = strings.ReplaceAll(s, "\u201D", "\"") // "
-	s = strings.ReplaceAll(s, "\u2018", "'")  // '
-	s = strings.ReplaceAll(s, "\u2019", "'")  // '
-	s = strings.ReplaceAll(s, "\u300C", "「")  // 『→「
-	s = strings.ReplaceAll(s, "\u300D", "」")  // 』→」
-	return s
 }
 
 // stripMarkdown 剥离 Markdown 装饰符号(标题#/粗体**/斜体*/链接[])。
