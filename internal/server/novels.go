@@ -811,7 +811,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			} else {
 				user = "小说正文:\n\"\"\"\n" + text + "\n\"\"\"\n"
 			}
-			// 段级自动重试一次:思考模型大 JSON 偶发截断/串格式,重试多可过
+			// 段级自动重试:思考模型大 JSON 偶发截断/串格式/空集,重试多可过
 			var eps []epItem
 			var book, style string
 			var err error
@@ -820,12 +820,19 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				raw, err = splitOnce(user)
 				if err == nil {
 					eps, book, style, err = parsePlan(raw)
-					if err == nil && len(eps) > 0 {
+					if err == nil {
+						if len(eps) > 0 {
+							break // 正常:有集
+						}
+						// 合法 JSON 但 episodes 为空——LLM 认为该段无独立剧情节拍
+						// 不是错误,跳过该段(比报错重试更合理:内容太少确实拆不出)
+						err = nil
 						break
 					}
-					err = fmt.Errorf("解析失败(%v;输出尾部:…%s)", err, tailRunes(raw, 120))
+					// 解析失败:带具体错误(不再是 nil)
+					err = fmt.Errorf("JSON 解析失败:%v(输出尾部:…%s)", err, tailRunes(raw, 120))
 				}
-				if attempt == 1 {
+				if attempt == 1 && err != nil {
 					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
 						Message: fmt.Sprintf("⚠ 第 %d/%d 段拆集结果异常,自动重试一次:%v", ci+1, len(chunks), err)})
 				}
@@ -838,8 +845,14 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	planned := 0
 	for ci, ck := range chunks {
 		res := results[ci]
-		if res.err != nil || len(res.eps) == 0 {
+		if res.err != nil {
 			return series, epsAll, fmt.Errorf("拆集失败(第 %d/%d 段):%v", ci+1, len(chunks), res.err)
+		}
+		if len(res.eps) == 0 {
+			// 该段内容太少 LLM 拆不出独立集(合法空结果),跳过并记录
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+				Message: fmt.Sprintf("📚 第 %d/%d 段内容较少,无独立剧情节拍,跳过", ci+1, len(chunks))})
+			continue
 		}
 		if ci == 0 {
 			fixSeries(res.book)

@@ -11,14 +11,19 @@ import (
 	"unicode"
 )
 
-// repairJSONStrings 修复 LLM 输出 JSON 中字符串内的裸控制字符。
+// repairJSONStrings 修复 LLM 输出 JSON 中字符串内的裸控制字符 + 非法 UTF-8。
+// 三层防御:①清洗非法 UTF-8 字节序列(API 代理/编码抖动产生的 è 等乱字,
+// 2026-09-11 实证 invalid character 'è');②字符串内控制字符→合法转义;
+// ③已有转义不双重。
 func repairJSONStrings(raw string) string {
+	// 先清洗非法 UTF-8(替换为 U+FFFD,json.Unmarshal 不再报 invalid character)
+	raw = strings.ToValidUTF8(raw, "\uFFFD")
 	var b strings.Builder
 	b.Grow(len(raw) + 64)
 	inStr, esc := false, false
 	for _, r := range raw {
 		switch {
-		case esc: // 上一字符是反斜杠:本字符原样,转义态结束
+		case esc:
 			b.WriteRune(r)
 			esc = false
 		case r == '\\' && inStr:
@@ -36,8 +41,8 @@ func repairJSONStrings(raw string) string {
 			case '\t':
 				b.WriteString(`\t`)
 			default:
-				if unicode.IsControl(r) { // 其它控制字符(罕见)替换为空格
-					b.WriteRune(' ')
+				if unicode.IsControl(r) || r == '\uFFFD' {
+					b.WriteRune(' ') // 控制字符和乱码替换符→空格
 				} else {
 					b.WriteRune(r)
 				}
