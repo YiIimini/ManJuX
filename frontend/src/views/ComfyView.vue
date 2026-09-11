@@ -110,6 +110,25 @@ async function openWebBrowser() {
 const modelForm = reactive({})
 const modelSaving = ref(false)
 const modelSaved = ref(false)
+// 模型字段定义(下拉选择用)
+const modelFields = [
+  { key: 'unet_ref2va', label: 'UNET(Ref2VA)', span2: true },
+  { key: 'unet_fl2va', label: 'UNET(FL2VA / T2VA)', span2: true },
+  { key: 'turbo_lora_ref2va', label: 'Turbo LoRA(Ref2VA)' },
+  { key: 'turbo_lora_fl2va', label: 'Turbo LoRA(FL2VA)' },
+  { key: 'clip', label: '文本编码器(CLIP · qwen3vl)' },
+  { key: 'video_vae', label: '视频 VAE' },
+  { key: 'audio_vae', label: '音频 VAE(缺失=黑屏)' },
+  { key: 'image_unet', label: '定妆照模型(Krea-2 UNet)' },
+  { key: 'image_clip', label: '定妆照编码器(CLIPLoader type=krea2)' },
+  { key: 'image_vae', label: '定妆照 VAE' },
+]
+// 从 st.models 里拿 ComfyUI 实际注册的文件名清单(下拉选项)
+function modelOptions(key) {
+  const m = (st.value?.models || []).find(x => x.key === key)
+  return m?.list || []
+}
+
 async function loadModels() {
   try {
     const d = await api.getSettings()
@@ -286,38 +305,14 @@ function verCellCls(row, which) {
           </div>
         </div>
       </div>
-      <div class="text-xs mt-3" style="color:var(--mx-text3)">未命中会导致渲染提交 400(模型名不在列表);在下方修改配置。</div>
-      <!-- 模型文件配置(原设置页,移到引擎管理页更内聚) -->
+      <div class="text-xs mt-3" style="color:var(--mx-text3)">未命中会导致渲染提交 400(模型名不在列表);在下方下拉选择(列表来自 ComfyUI 实际注册,避免手输错名)。</div>
+      <!-- 模型文件配置:下拉选择(选项来自 ComfyUI 实际注册,防手输错名) -->
       <el-form label-position="top" class="grid gap-x-6 mt-4" style="grid-template-columns:1fr 1fr">
-        <el-form-item label="UNET(Ref2VA)" class="col-span-2">
-          <el-input v-model="modelForm.unet_ref2va" />
-        </el-form-item>
-        <el-form-item label="UNET(FL2VA / T2VA)" class="col-span-2">
-          <el-input v-model="modelForm.unet_fl2va" />
-        </el-form-item>
-        <el-form-item label="Turbo LoRA(Ref2VA)">
-          <el-input v-model="modelForm.turbo_lora_ref2va" />
-        </el-form-item>
-        <el-form-item label="Turbo LoRA(FL2VA)">
-          <el-input v-model="modelForm.turbo_lora_fl2va" />
-        </el-form-item>
-        <el-form-item label="文本编码器(CLIP · qwen3vl)">
-          <el-input v-model="modelForm.clip" />
-        </el-form-item>
-        <el-form-item label="视频 VAE">
-          <el-input v-model="modelForm.video_vae" />
-        </el-form-item>
-        <el-form-item label="音频 VAE(缺失=黑屏)">
-          <el-input v-model="modelForm.audio_vae" />
-        </el-form-item>
-        <el-form-item label="定妆照模型(Krea-2 UNet)">
-          <el-input v-model="modelForm.image_unet" />
-        </el-form-item>
-        <el-form-item label="定妆照编码器(CLIPLoader type=krea2)">
-          <el-input v-model="modelForm.image_clip" />
-        </el-form-item>
-        <el-form-item label="定妆照 VAE">
-          <el-input v-model="modelForm.image_vae" />
+        <el-form-item v-for="f in modelFields" :key="f.key" :label="f.label" :class="f.span2 ? 'col-span-2' : ''">
+          <el-select v-model="modelForm[f.key]" filterable allow-create default-first-option
+                     placeholder="从 ComfyUI 已注册文件中选择" style="width:100%">
+            <el-option v-for="v in modelOptions(f.key)" :key="v" :value="v" :label="v" />
+          </el-select>
         </el-form-item>
         <el-form-item class="col-span-2">
           <el-button type="primary" :loading="modelSaving" @click="saveModels">保存模型配置</el-button>
