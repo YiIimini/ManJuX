@@ -176,6 +176,11 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	}
 	// Q 版(chibi)方形画幅,其余竖版半身
 	isChibi := strings.HasSuffix(assetID, "_chibi")
+	// 同剧对比注入:重生成同样带上全剧班底,保住面部差异化(与产线生成
+	// 同规则);已含对比块的提示词(资产表回写的)不重复追加
+	if kind == "characters" && !isChibi && !strings.Contains(prompt, "CAST DISTINCTNESS") {
+		prompt += castContrastBlock(plan, name)
+	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
 		return err
@@ -562,7 +567,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt)
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+castContrastBlock(plan, ch.Name))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
@@ -582,7 +587,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
 			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
 			chibiPrompt := "cute chibi SD figure of the same character, big head, tiny body, full body, simple pastel background, " +
-				"expressive face, figure product photography, " + ch.ImagePrompt
+				"expressive face, figure product photography, " + ch.ImagePrompt + castContrastBlock(plan, ch.Name)
 			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
@@ -1025,6 +1030,41 @@ func nameSeed(kind, name string) int64 {
 	return int64(h.Sum32())
 }
 
+// castContrastBlock 同剧班底对比块:列出本剧其它角色的关键形象,追加到
+// Krea-2 提示词尾部,强制与同剧角色拉开面部差异(2026-09-11 用户定调
+// 「不同角色脸不能相似」)。实证:LLM 已写了 fat/scar/narrow face 等
+// 差异化特征,但逐字相同的巨型风格前缀+模型帅哥先验把特征吞掉(肥胖
+// →清瘦、疤→无疤)。生成时给模型看全剧班底,它才知道"要和谁不同"。
+// 注入的提示词随资产入库,库内重生成/跨集复用自带对比上下文。
+func castContrastBlock(plan *project.Plan, selfName string) string {
+	if plan == nil {
+		return ""
+	}
+	self := strings.TrimSpace(selfName)
+	var parts []string
+	for _, ch := range plan.Characters {
+		n := strings.TrimSpace(ch.Name)
+		if n == "" || n == self {
+			continue
+		}
+		d := strings.TrimSpace(ch.Description)
+		if r := []rune(d); len(r) > 60 {
+			d = string(r[:60]) + "…"
+		}
+		parts = append(parts, fmt.Sprintf("%s(%s)", n, d))
+		if len(parts) >= 6 {
+			break
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "\n\nCAST DISTINCTNESS — other cast members of this series: " + strings.Join(parts, "; ") +
+		". The character depicted here (「" + self + "」) must be clearly distinguishable from every one of them: " +
+		"different face shape, age, build, skin tone and unique markers; these identity traits MUST dominate the image; " +
+		"never average them into a generic handsome/pretty face."
+}
+
 // backfillAssets 渲染前自动补齐缺失的参考图:资产阶段未跑/未生成全时,
 // 就地用本地 Krea-2 生成,绝不静默降级纯文生(2026-09-08 逻辑重构:
 // 「定妆照没生成就渲染」被用户点名的反直觉行为根治)。
@@ -1047,7 +1087,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		list = append(list, miss{kind, id, name, desc, prompt})
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt)
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+castContrastBlock(plan, ch.Name))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)

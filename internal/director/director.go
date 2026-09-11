@@ -33,7 +33,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "logline": "一句话故事(中文,≤40字)",
   "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series.",
   "characters": [
-    {"id":"char_xiaofan","name":"小凡","description":"中文外貌/服装/气质,固定不变的关键特征","image_prompt":"ENGLISH half-body portrait prompt IN THE SAME VISUAL STYLE as the global style field above: gender, age, face, hair, costume, accessories, plain background, upper-body framing, front-facing. If style says 'animation', portrait MUST be anime-style illustration; if style says 'realistic', portrait MUST be photorealistic. NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
+    {"id":"char_xiaofan","name":"小凡","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt, IDENTITY FIRST per CAST DISTINCTNESS: [distinctive physical identity: age, face shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style field above EXACTLY — same art style as the series]' then 'plain background, upper-body framing, front-facing'. NEVER open with style words; NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
   ],
   "scenes": [
     {"id":"scene_inn","name":"悦来客栈","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location"}
@@ -104,6 +104,16 @@ const sysHard = `## HARD CONSTRAINTS
 - Sound: dialogue only via <d> tags; ambience in overall_soundscape; music in non_diegetic_music; never duplicate.
 - Screen-visible text must be quoted exactly and kept in original language.`
 
+// sysCastRules 选角差异化(2026-09-11 用户定调「不同角色脸不能相似」):
+// 实证 LLM 写了 fat/scar/narrow face 等差异化特征,但 image_prompt 以巨型
+// 统一风格前缀开头、身份特征挤尾部,Krea-2 渲染时全部丢弃(肥胖→清瘦、
+// 疤→无疤,三张脸收敛成同一款标准帅哥)。规则:身份特征前置主导渲染,
+// 全剧角色脸型/年龄/体格/记号互不相同,原文写明的外貌禁止美化抹平。
+const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same series must NEVER look alike)
+- Every named character gets a UNIQUE physical identity. No two characters may share the same face template: vary face shape (round / square / long / narrow / heart), age (child / teen / young adult / middle-aged / elderly), build (slim / average / stocky / burly), skin tone, hairstyle & hair color, and give each at least ONE signature marker (scar, mole, freckles, glasses, beard, tooth gap, dyed streak, bandage, tattoo...).
+- image_prompt STRUCTURE (identity first): open with this character's distinctive physical identity (age, face shape, build, hair, eyes, skin, signature marker), then costume, then "in [COPY the global style EXACTLY]", end with "plain background, upper-body framing, front-facing". Do NOT open the portrait prompt with style words — identity traits must LEAD the prompt so they dominate the render.
+- If the source states a character's appearance (age, build, hair color, scars...), follow it EXACTLY; never beautify or average it away. A fat character stays fat, an old character stays old, a scarred character keeps the scar.`
+
 // SystemPrompt 单轮直出(完整 schema + 全部规则)。
 const SystemPrompt = sysHeader + `
 
@@ -113,7 +123,9 @@ const SystemPrompt = sysHeader + `
 
 ` + sysH3Format + `
 
-` + sysHard
+` + sysHard + `
+
+` + sysCastRules
 
 // UserPromptFmt 用户提示模板。
 const UserPromptFmt = `Source text (Chinese):
@@ -437,7 +449,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "logline": "一句话故事(中文,≤40字)",
   "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits",
   "characters": [
-    {"id":"char_xxx","name":"中文名","description":"中文外貌/服装/气质,固定不变的关键特征","image_prompt":"ENGLISH half-body portrait prompt for a costume reference photo: gender, age, face, hair, costume, accessories, plain background, upper-body framing, front-facing","voice":"ENGLISH voice description"}
+    {"id":"char_xxx","name":"中文名","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt, IDENTITY FIRST per CAST DISTINCTNESS: [distinctive physical identity: age, face shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style EXACTLY]' then 'plain background, upper-body framing, front-facing'","voice":"ENGLISH voice description"}
   ],
   "scenes": [
     {"id":"scene_xxx","name":"中文名","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location"}
@@ -451,7 +463,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 - segments 的 from/to 是分镜镜号区间:从 1 开始连续覆盖到总镜数,不重叠不留空。
 - 每段 3-6 镜;段与段之间是清晰的故事节拍(开场钩子/升级/转折/高潮/收尾)。
 - brief 必须自足:仅凭 brief(不看全文)就能写好本段每一镜。关键台词必须原文引用。
-- characters/scenes 覆盖全片所有出场者;角色外貌描述具体可画,全片复用。`
+- characters/scenes 覆盖全片所有出场者;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules
 
 // batchSystemPrompt 分镜轮:按已定头部与本段 brief,只产出指定区间的 shots。
 const batchSystemPrompt = sysHeader + `
