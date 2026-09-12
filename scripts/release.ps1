@@ -76,6 +76,9 @@ $ErrorActionPreference = "Stop"
 if (-not $remote) {
   git remote add origin https://github.com/YiIimini/ManJuX.git
 }
+# 推送:常规 → 失败则禁用代理直连重试(本机代理常挂,实测 SSL handshake 失败)
+# 注意不能写成 `git push ... | tail`:管道的退出码是 tail 的(0),回退分支永远不会执行
+# —— 2026-09-12 实测就因此"看起来推送了、其实没推"。
 git push -u origin main --tags
 if ($LASTEXITCODE -ne 0) {
   Write-Host "==> 常规推送失败,尝试禁用代理直连重试…" -ForegroundColor Yellow
