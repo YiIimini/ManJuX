@@ -50,10 +50,25 @@ git add -A
 $hasChange = (& git status --porcelain)
 if ($hasChange) {
   $msg = if ($Note) { "release: $Version $Note" } else { "release: $Version" }
-  git commit -m $msg
+  # 用 -F 读消息文件,而不是 -m $msg:多行中文 note 经 PowerShell 命令行传参会被
+  # 拆成多个参数,git 把多余的行当成 pathspec 报 "did not match any file(s)",
+  # **提交随之失败而脚本继续打 tag** —— 2026-09-12 实测把 v0.34.1 的 tag 打到了
+  # 上一个提交上(已修正)。消息文件写成无 BOM 的 UTF-8,避免中文提交信息变乱码。
+  $msgFile = Join-Path ([IO.Path]::GetTempPath()) ("manjux-release-msg-" + [Guid]::NewGuid().ToString("N") + ".txt")
+  [IO.File]::WriteAllText($msgFile, $msg, (New-Object Text.UTF8Encoding($false)))
+  git commit -F $msgFile
+  if ($LASTEXITCODE -ne 0) { throw "提交失败(release 中止,未打 tag)" }
+  Remove-Item $msgFile -ErrorAction SilentlyContinue
+  # 校验:提交必须真的发生(HEAD 变化),否则打 tag 会指向旧提交
+  $headNow = (& git rev-parse HEAD)
+  if (-not $headNow) { throw "无法读取 HEAD" }
 }
 
 # 4) tag + 推送
+$ErrorActionPreference = "Continue"
+$tagExists = (& git tag -l $Version 2>$null)
+$ErrorActionPreference = "Stop"
+if ($tagExists) { throw "tag $Version 已存在:请换版本号或先删除该 tag(git tag -d $Version)" }
 git tag $Version
 $ErrorActionPreference = "Continue"
 $remote = (& git remote get-url origin 2>$null | Select-Object -First 1)
