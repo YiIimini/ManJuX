@@ -215,9 +215,15 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 		batch.mu.Unlock()
 		return false
 	}
-	batch.prefix, batch.projects, batch.cur, batch.stop, batch.running = prefix, eps, 0, false, true
+	// 入口去重:同一集只排队一次(重复入队会让整本书跑两轮,白烧 GPU)
+	uniq, dropped := dedupEps(eps)
+	if dropped > 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 批量产线启动去重:丢弃 %d 个重复的集", dropped)})
+	}
+	batch.prefix, batch.projects, batch.cur, batch.stop, batch.running = prefix, uniq, 0, false, true
 	batch.mu.Unlock()
-	go s.runNovelBatch(prefix, eps)
+	go s.runNovelBatch(prefix, uniq)
 	return true
 }
 

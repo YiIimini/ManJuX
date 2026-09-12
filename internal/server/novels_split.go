@@ -163,7 +163,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 
 	type chunk struct{ label, body string }
 
-	createSeg := func(segEps []epItem, ck chunk) {
+	createSeg := func(segEps []epItem, ck chunk) int {
 		fixSeries(series)
 		var created []string
 		for _, ep := range segEps {
@@ -220,6 +220,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		if onEps != nil && len(created) > 0 {
 			onEps(series, created)
 		}
+		return len(created)
 	}
 
 	// ---- 一章一档快路径(2026-09-12 用户定调「一章一档还需要慢慢拆集?」)----
@@ -235,10 +236,14 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			num++
 			eps[i].Ep = num
 		}
-		createSeg(eps, chunk{})
+		createdN := createSeg(eps, chunk{}) // 内部已通知产线(传的是**本次新建**的集)
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-			Message: fmt.Sprintf("⚡ 一章一档:已按章节文件直接建集 %d 集(章名即集名,原文逐章附着);各集剧情 brief 后台并行补写中", len(eps))})
-		if onEps != nil && len(epsAll) > 0 {
+			Message: fmt.Sprintf("⚡ 一章一档:已按章节文件直接建集 %d 集(新建 %d,其余已存在;章名即集名、原文逐章附着);各集剧情 brief 后台并行补写中", len(eps), createdN)})
+		// 一集都没新建(重跑同一本书)时,createSeg 不会回调(它只在新建>0 时通知),
+		// 但产线仍需要拿到这批已存在的集去消费 —— 这里补一次。
+		// 注意不能无条件再通知一次:上一版就是这么把 64 集入队两遍变成 128 集的
+		// (用户 2026-09-12 实证「那来的 128 集」)。
+		if createdN == 0 && onEps != nil && len(epsAll) > 0 {
 			onEps(series, epsAll)
 		}
 		go s.fillEpisodeBriefs(ctx, series, eps, artStyle, briefMin, briefMax, prevSum)

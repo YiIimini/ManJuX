@@ -237,15 +237,42 @@ func prodCancelAll() {
 }
 
 // batchAppend 向运行中的批量产线追加新分集(流式拆集逐段推送)。
+//
+// **按集名去重**(2026-09-12 用户实证「那来的 128 集」):入队不去重时,同一批集被
+// 通知两次就会排两遍(64 → 128),产线会把整本书跑两轮 —— 白烧几个小时 GPU。
+// 去重保序(首次出现者保留),被丢掉的重复项如实播报,便于查出调用方问题。
 func (s *Server) batchAppend(prefix string, newEps []string) {
 	batch.mu.Lock()
 	defer batch.mu.Unlock()
 	if !batch.running || batch.prefix != prefix {
 		return
 	}
-	batch.projects = append(batch.projects, newEps...)
+	before := len(batch.projects)
+	batch.projects, _ = dedupEps(append(batch.projects, newEps...))
+	added := len(batch.projects) - before
+	dropped := len(newEps) - added
+	if dropped > 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 批量产线入队去重:丢弃 %d 个重复入队的集(当前共 %d 集)", dropped, len(batch.projects))})
+	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-		Message: fmt.Sprintf("📥 拆集新段就绪 +%d 集,已加入批量产线队列(当前共 %d 集)", len(newEps), len(batch.projects))})
+		Message: fmt.Sprintf("📥 拆集新段就绪 +%d 集,已加入批量产线队列(当前共 %d 集)", added, len(batch.projects))})
+}
+
+// dedupEps 按集名去重并保序;返回(去重后列表, 丢弃个数)。
+func dedupEps(in []string) ([]string, int) {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	dropped := 0
+	for _, e := range in {
+		if seen[e] {
+			dropped++
+			continue
+		}
+		seen[e] = true
+		out = append(out, e)
+	}
+	return out, dropped
 }
 
 // ---------- 进行中拆集任务注册表(首页占位卡数据源) ----------

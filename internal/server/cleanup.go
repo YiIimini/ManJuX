@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type cleanupResult struct {
@@ -136,6 +137,86 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// ⑥ ComfyUI input 里的参考图上传副本(2026-09-12 用户「清理掉各环节产生的垃圾」)。
+	// 每次渲染/定妆都会把参考图上传到 ComfyUI 的 input 目录留一份,实测积到
+	// 252.8 MB / 202 个文件而从不清理。这些副本是可再生的(下一次渲染会重新上传),
+	// 所以安全;只删**超过 24 小时**的图片文件,且不动任何子目录(用户可能有自己的素材目录)。
+	inputDir := filepath.Join(g.Comfy.RootDir, "ComfyUI", "input")
+	if ents, err := os.ReadDir(inputDir); err == nil {
+		var n int
+		var sz int64
+		cut := time.Now().Add(-24 * time.Hour)
+		for _, e := range ents {
+			if e.IsDir() {
+				continue // 子目录一律不动(可能是用户自己的素材)
+			}
+			ext := strings.ToLower(filepath.Ext(e.Name()))
+			if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" {
+				continue
+			}
+			info, ierr := e.Info()
+			if ierr != nil || info.ModTime().After(cut) {
+				continue
+			}
+			if os.Remove(filepath.Join(inputDir, e.Name())) == nil {
+				n++
+				sz += info.Size()
+			}
+		}
+		if n > 0 {
+			add(fmt.Sprintf("ComfyUI 参考图上传副本 %d 个(24 小时前的)", n), sz)
+		}
+	}
+
+	// ⑦ 资产阶段的转身视频中间产物(<base>_views/ 目录):抽帧后视频本身不再作参考,
+	// 单个 5-30MB(2026-09-12 实测)。**只删视频与目录**,同目录的
+	// <base>_view_*.png / <base>_turnaround.png 是渲染真正要用的参考图,必须保留。
+	var viewDirs int
+	var viewSize int64
+	for _, p := range s.store.List() {
+		pat := filepath.Join(s.store.Dir(p.ID), "assets", "characters", "*_views")
+		for _, d := range globOrEmpty(pat) {
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				viewSize += dirSize(d)
+				viewDirs++
+				_ = os.RemoveAll(d)
+			}
+		}
+	}
+	if viewDirs > 0 {
+		add(fmt.Sprintf("转身视频中间目录 %d 个(多视角参考图已保留)", viewDirs), viewSize)
+	}
+
+	// ⑧ 本次迭代留下的临时对照目录与诊断日志(应用自身产物)
+	if st, err := os.Stat(filepath.Join(s.dataDir(), "_scratch")); err == nil && st.IsDir() {
+		sz := dirSize(filepath.Join(s.dataDir(), "_scratch"))
+		_ = os.RemoveAll(filepath.Join(s.dataDir(), "_scratch"))
+		add("临时对照目录 data/_scratch", sz)
+	}
+	if st, err := os.Stat(filepath.Join(s.dataDir(), "_sb_build")); err == nil && st.IsDir() {
+		sz := dirSize(filepath.Join(s.dataDir(), "_sb_build"))
+		_ = os.RemoveAll(filepath.Join(s.dataDir(), "_sb_build"))
+		add("临时构建目录 data/_sb_build", sz)
+	}
+
+	// ⑨ 日志膨胀:应用日志与引擎日志在超过 8MB 时归档为 <名字>.1(保留上一份,便于回溯),
+	// 避免长期运行后 manjux.log / comfyui.log 无限增长(实测单机已 4.5MB 且无轮转)。
+	for _, lg := range []string{
+		filepath.Join(s.dataDir(), "logs", "manjux.log"),
+		filepath.Join(g.Comfy.RootDir, "logs", "comfyui.log"),
+	} {
+		st, err := os.Stat(lg)
+		if err != nil || st.Size() < 8<<20 {
+			continue
+		}
+		sz := st.Size()
+		_ = os.Remove(lg + ".1")
+		if os.Rename(lg, lg+".1") == nil {
+			_ = os.WriteFile(lg, []byte{}, 0o644)
+			add(fmt.Sprintf("日志轮转 %s(%.1fMB → 归档 .1)", filepath.Base(lg), float64(sz)/1024/1024), 0)
+		}
+	}
+
 	s.opLog("🧹 一键清理完成:%d 项,释放 %.1f MB", len(res.Items), res.FreedMB)
 	writeJSON(w, 200, res)
 }
@@ -202,4 +283,28 @@ func cleanCondCacheFiles(ptDir string, live map[string]bool) (int, int64, error)
 		}
 	}
 	return count, size, nil
+}
+
+// globOrEmpty 容错的 Glob(模式非法/无权限时返回空列表而不是 nil 恐慌)。
+func globOrEmpty(pattern string) []string {
+	m, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil
+	}
+	return m
+}
+
+// dirSize 递归统计目录占用(用于清理前如实上报释放量)。
+func dirSize(dir string) int64 {
+	var total int64
+	_ = filepath.WalkDir(dir, func(_ string, e os.DirEntry, err error) error {
+		if err != nil || e.IsDir() {
+			return nil
+		}
+		if fi, ierr := e.Info(); ierr == nil {
+			total += fi.Size()
+		}
+		return nil
+	})
+	return total
 }
