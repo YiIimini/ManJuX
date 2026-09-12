@@ -28,12 +28,71 @@ type Entry struct {
 	Image       string `json:"image"` // 主图相对库根路径(characters/x/portrait.png)
 	// Images 全部图片(主图在前,随后是多视角原图与转台图)。定妆照只是角色的
 	// 一个视角,视频渲染靠的是整套参考图 —— 库作为跨项目真源必须收全。
-	Images        []string  `json:"images,omitempty"`
+	Images []string `json:"images,omitempty"`
+	// Aliases 同一角色的其它叫法。分集分镜由 LLM 独立撰写,同一角色会换个称呼
+	// (机关人 / 阿枢(一三七四一号) / 机关人(一三七四一)),按名字精确匹配就会为
+	// "同一个角色"反复生成定妆照(2026-09-12 用户报「相同角色无中生有多产生出定妆照」,
+	// 名称一致与不一致都有)。首次命中后把新叫法记在这里,之后按名秒级复用。
+	Aliases       []string  `json:"aliases,omitempty"`
 	Fingerprint   string    `json:"fingerprint"`    // 内容指纹
 	SourceProject string    `json:"source_project"` // 首次入库项目
 	Source        string    `json:"source"`         // krea2 / upload
 	CreatedAt     time.Time `json:"created_at"`
 	UsedCount     int       `json:"used_count"` // 复用计数
+}
+
+// normName 名字归一化:去掉空格/常见标点/「的」,并把「一三七四一号」这类序号尾
+// 的「号」也去掉 —— 同一个角色的两种写法归一后应当相等。
+func normName(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		switch {
+		case r == ' ' || r == '\u3000' || r == '·' || r == '・' || r == '-' || r == '_':
+			continue
+		case r == '（' || r == '(': // 括号内容整体丢弃(序号等)
+			return strings.TrimSuffix(sb.String(), "的")
+		case r == '「' || r == '」' || r == '“' || r == '”' || r == '、' || r == ',':
+			continue
+		case r == '的':
+			continue
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	out := strings.TrimSuffix(sb.String(), "号")
+	return out
+}
+
+// bigrams 中文文本切双字组,用于描述相似度(对"多一字少一字"的改写不敏感)。
+func bigrams(s string) map[string]bool {
+	r := []rune(s)
+	out := map[string]bool{}
+	for i := 0; i+1 < len(r); i++ {
+		out[string(r[i:i+2])] = true
+	}
+	return out
+}
+
+// descSimilar 两段角色描述是否指向同一个人(双字组 Jaccard)。
+// 阈值 0.6:同一角色跨集复述几乎逐字相同(实测 Jaccard ≈ 0.95),而不同角色
+// (哪怕同类型:都是老差役)通常低于 0.4 —— 中间留足余量。
+func descSimilar(a, b string) float64 {
+	na, nb := normName(a), normName(b)
+	if len([]rune(na)) < 12 || len([]rune(nb)) < 12 {
+		return 0 // 描述太短不足以判断,宁可新生成也不误并
+	}
+	ba, bb := bigrams(na), bigrams(nb)
+	if len(ba) == 0 || len(bb) == 0 {
+		return 0
+	}
+	inter := 0
+	for k := range ba {
+		if bb[k] {
+			inter++
+		}
+	}
+	union := len(ba) + len(bb) - inter
+	return float64(inter) / float64(union)
 }
 
 // relatedImages 找出主图同目录的关联图:多视角原图(<base>_view_*.png)与
@@ -53,6 +112,22 @@ func relatedImages(masterPath string) []string {
 	turn := filepath.Join(dir, base+"_turnaround.png")
 	if _, err := os.Stat(turn); err == nil {
 		outs = append(outs, turn)
+	}
+	sort.Strings(outs)
+	return outs
+}
+
+// entryRelatedImages 条目目录内**已存在**的多视角图与转台图(不限主名)。//
+// 与 relatedImages 的区别:那个按「主图主名」拼文件名(用于从项目侧收集),
+// 这个只按目录内文件名模式匹配 —— 库里的关联图主名来自入库时的项目侧命名
+// (如 characters_char_张三_view_side.png),与主图 portrait.png 的主名并不相同。
+// 重新入库(Put)时必须靠它把既有角度图保住,否则 Images 会退化成只剩主图。
+func entryRelatedImages(dir string) []string {
+	outs := []string{}
+	for _, pat := range []string{"*_view_*.png", "*_turnaround.png"} {
+		if m, err := filepath.Glob(filepath.Join(dir, pat)); err == nil {
+			outs = append(outs, m...)
+		}
 	}
 	sort.Strings(outs)
 	return outs
@@ -217,32 +292,71 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 	if err := fsutil.WriteFileAtomic(filepath.Join(dir, imgName), raw); err != nil {
 		return nil, err
 	}
-	// 保留已有 UsedCount
+	// 保留已有 UsedCount 与指纹
 	used := 0
+	prevFP := ""
 	if prev, err := os.ReadFile(filepath.Join(dir, "asset.json")); err == nil {
 		var p Entry
 		if json.Unmarshal(prev, &p) == nil {
 			used = p.UsedCount
+			prevFP = p.Fingerprint
 		}
 	}
 	e := Entry{
 		Kind: kind, Name: strings.TrimSpace(name),
 		Description: description, ImagePrompt: imagePrompt,
-		Image: filepath.ToSlash(filepath.Join(kind, safeName(name), imgName)),
+		Image:         filepath.ToSlash(filepath.Join(kind, safeName(name), imgName)),
 		SourceProject: sourceProject, Source: source,
 		CreatedAt: time.Now(), UsedCount: used,
 	}
 	// 关联图入库:多视角原图与转台图(由资产阶段生成,与定妆照同目录同主名)。
 	// 一并收进来,资产库才是一个角色的**完整**参考集合,而不只是正面一张。
-	imgs := []string{e.Image}
-	for _, r := range relatedImages(imgPath) {
+	srcRelated := relatedImages(imgPath)
+	// 角度图必须与当前主图对得上,否则详情弹窗与渲染都会拿"上一张脸"的侧面:
+	//   ① 源图自带角度图 → 它们是为主图新生成的,目录里**同名之外**的(上一张脸的、
+	//      别的项目命名规则留下的重复视角)让位清掉。注意不能整目录清空再拷 ——
+	//      资产库自己生成多视角时(源图与条目目录就是同一个目录),清空会把刚生成
+	//      的三帧连同转台图一起删掉,再拷贝时源文件已不存在,条目最终只剩一张定妆照
+	//      (2026-09-12 真机实证,本测试即为此而加)。
+	//   ② 主图换了(指纹变化)而源图没带角度图 → 目录里的旧角度图已过期,清掉。
+	keep := map[string]bool{}
+	for _, r := range srcRelated {
+		keep[filepath.Base(r)] = true
+	}
+	if len(srcRelated) > 0 {
+		for _, f := range entryRelatedImages(dir) {
+			if !keep[filepath.Base(f)] {
+				_ = os.Remove(f)
+			}
+		}
+	} else if prevFP != "" && prevFP != md5hex(raw) {
+		clearRelatedFiles(dir)
+	}
+	rest := []string{}
+	seen := map[string]bool{e.Image: true}
+	addRel := func(bname string) {
+		rel := filepath.ToSlash(filepath.Join(kind, safeName(name), bname))
+		if !seen[rel] {
+			rest = append(rest, rel)
+			seen[rel] = true
+		}
+	}
+	for _, r := range srcRelated {
 		bname := filepath.Base(r)
 		if raw, err := os.ReadFile(r); err == nil {
 			if fsutil.WriteFileAtomic(filepath.Join(dir, bname), raw) == nil {
-				imgs = append(imgs, filepath.ToSlash(filepath.Join(kind, safeName(name), bname)))
+				addRel(bname)
 			}
 		}
 	}
+	// 条目目录里已存在的角度图同样保留:本次入库的源图可能只是单张定妆照
+	// (手动上传/重抽/从库复用回来的项目),若只按源图收集,Images 会退化成
+	// 只剩主图 —— 详情弹窗的多视角与渲染的第二张参考都会凭空消失。
+	for _, r := range entryRelatedImages(dir) {
+		addRel(filepath.Base(r))
+	}
+	sort.Strings(rest)
+	imgs := append([]string{e.Image}, rest...)
 	e.Images = imgs
 	// 指纹
 	sum := md5hex(raw)
@@ -252,6 +366,153 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 		return nil, err
 	}
 	return &e, nil
+}
+
+// clearRelatedFiles 删除条目目录内的角度图(调用方须持有锁)。
+func clearRelatedFiles(dir string) {
+	for _, f := range entryRelatedImages(dir) {
+		_ = os.Remove(f)
+	}
+}
+
+// EntryDir 条目目录绝对路径(供调用方在库内落地新生成的角度图/转台图)。
+func (l *Library) EntryDir(kind, name string) (string, error) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.entryDir(kind, name)
+}
+
+// RelatedFiles 条目目录内已存在的多视角图与转台图绝对路径(按主图在前之外的
+// 文件名排序)。库复用时靠它把整套角度图一并带进项目 —— 只带主图的话,项目里
+// 的角色就只剩一张正面照,渲染拿不到第二张参考(2026-09-12 用户实证)。
+func (l *Library) RelatedFiles(kind, name string) []string {
+	dir, err := l.EntryDir(kind, name)
+	if err != nil {
+		return nil
+	}
+	return entryRelatedImages(dir)
+}
+
+// SetMeta 只更新中文描述与英文提示词(图片、来源、复用计数原样保留)。
+// 详情弹窗里手动补全/编辑描述与提示词走这里 —— 用 Put 覆盖会把主图重新写一遍,
+// 也可能因为源图路径变化丢掉角度图。
+func (l *Library) SetMeta(kind, name, description, imagePrompt string) (*Entry, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	dir, err := l.entryDir(kind, name)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "asset.json"))
+	if err != nil {
+		return nil, fmt.Errorf("库资产不存在")
+	}
+	var e Entry
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(description) != "" {
+		e.Description = strings.TrimSpace(description)
+	}
+	if strings.TrimSpace(imagePrompt) != "" {
+		e.ImagePrompt = strings.TrimSpace(imagePrompt)
+	}
+	out, _ := json.MarshalIndent(&e, "", "  ")
+	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// Find 按名字找到库条目,找不到时尝试"同一角色的另一种叫法"。
+//
+// 匹配顺序(命中即记录别名并返回):
+//  1. 名字精确匹配(原有行为);
+//  2. 名字归一化后相等(去空格/标点/「的」/「号」);
+//  3. 别名表命中(之前已登记过的叫法);
+//  4. 名字互为前后缀 **且** 描述相似度 ≥ 0.6(肩上小人 / 阿枢肩上小人 / 机关人的肩上小人);
+//  5. 描述相似度 ≥ 0.8(名字完全不同但形象描述逐字相同:机关人 / 阿枢(一三七四一号))。
+//
+// 为什么必须做这一层:分集分镜由 LLM 独立撰写,同一角色换个称呼很常见,而"按名
+// 精确匹配"会把同一个角色当成新角色,再生成一张定妆照 —— 用户看到的就是"相同角色
+// 无中生有又多出一张定妆照"(2026-09-12 报障,名称一致与不一致都有)。
+// 置信度不够(描述太短/相似度不足)时一律不合并:宁可多生成一张,也不能把两个
+// 不同角色并成一个(那会让两个人共用一张脸)。
+func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
+	if e, img, ok := l.Match(kind, name); ok {
+		return e, img, true
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	base := filepath.Join(l.root, kind)
+	dirs, err := os.ReadDir(base)
+	if err != nil {
+		return nil, "", false
+	}
+	nn := normName(name)
+	type cand struct {
+		entry *Entry
+		img   string
+		score float64
+	}
+	var best *cand
+	for _, de := range dirs {
+		if !de.IsDir() {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(base, de.Name(), "asset.json"))
+		if err != nil {
+			continue
+		}
+		var e Entry
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		img := filepath.Join(l.root, filepath.FromSlash(e.Image))
+		if _, err := os.Stat(img); err != nil {
+			continue
+		}
+		sim := 0.0
+		hit := false
+		switch {
+		case normName(e.Name) == nn && nn != "":
+			hit, sim = true, 1
+		default:
+			for _, al := range e.Aliases {
+				if normName(al) == nn && nn != "" {
+					hit, sim = true, 1
+					break
+				}
+			}
+		}
+		if !hit {
+			ne := normName(e.Name)
+			contain := len([]rune(nn)) >= 3 && ne != "" &&
+				(strings.HasSuffix(ne, nn) || strings.HasSuffix(nn, ne) ||
+					strings.Contains(ne, nn) || strings.Contains(nn, ne))
+			d := descSimilar(e.Description, description)
+			if contain && d >= 0.6 {
+				hit, sim = true, 0.6+d
+			} else if d >= 0.8 {
+				hit, sim = true, d
+			}
+		}
+		if hit && (best == nil || sim > best.score) {
+			cp := e
+			best = &cand{entry: &cp, img: img, score: sim}
+		}
+	}
+	if best == nil {
+		return nil, "", false
+	}
+	// 记下这次的新叫法(下次按名即可命中),并写回条目
+	if nn != normName(best.entry.Name) && strings.TrimSpace(name) != "" {
+		best.entry.Aliases = append(best.entry.Aliases, strings.TrimSpace(name))
+		out, _ := json.MarshalIndent(best.entry, "", "  ")
+		_ = fsutil.WriteFileAtomic(filepath.Join(base, safeName(best.entry.Name), "asset.json"), append(out, '\n'))
+		log.Printf("[library] 角色「%s」判定为已有条目「%s」的同一人(相似度 %.2f),已登记别名", name, best.entry.Name, best.score)
+	}
+	return best.entry, best.img, true
 }
 
 // BumpUsed 复用计数 +1。

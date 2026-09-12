@@ -18,7 +18,7 @@ func TestAssembleShotRefsOrder(t *testing.T) {
 		"char:char_b":     {File: "assets/characters/b.png"},
 		"scene:scene_inn": {File: "assets/scenes/inn.png"},
 	}
-	refs, missing := AssembleShotRefs("proj", shot, assets)
+	refs, missing := AssembleShotRefs("proj", shot, assets, true)
 	if len(missing) != 0 {
 		t.Fatalf("不应有缺失,实际 %v", missing)
 	}
@@ -39,7 +39,7 @@ func TestAssembleShotRefsMissingCharacter(t *testing.T) {
 		"char:char_b":     {File: "assets/characters/b.png"},
 		"scene:scene_inn": {File: "assets/scenes/inn.png"},
 	}
-	refs, missing := AssembleShotRefs("proj", shot, assets)
+	refs, missing := AssembleShotRefs("proj", shot, assets, true)
 	if len(missing) != 1 || missing[0] != "char_a" {
 		t.Fatalf("应报出缺失角色 char_a,实际 %v", missing)
 	}
@@ -52,7 +52,7 @@ func TestAssembleShotRefsMissingCharacter(t *testing.T) {
 func TestAssembleShotRefsSingleCharacter(t *testing.T) {
 	shot := project.Shot{Scene: "s", Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: "a.png"}, "scene:s": {File: "s.png"}}
-	refs, missing := AssembleShotRefs("proj", shot, assets)
+	refs, missing := AssembleShotRefs("proj", shot, assets, true)
 	if len(refs) != 2 || len(missing) != 0 {
 		t.Fatalf("单角色 + 场景应为 2 张且无缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -63,7 +63,7 @@ func TestAssembleShotRefsSingleCharacter(t *testing.T) {
 func TestAssembleShotRefsEmptyFileTreatedMissing(t *testing.T) {
 	shot := project.Shot{Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: ""}}
-	refs, missing := AssembleShotRefs("proj", shot, assets)
+	refs, missing := AssembleShotRefs("proj", shot, assets, true)
 	if len(refs) != 0 || len(missing) != 1 {
 		t.Fatalf("空 File 应视为缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -107,8 +107,77 @@ func TestTurnaroundPath(t *testing.T) {
 func TestAssembleShotRefsNoScene(t *testing.T) {
 	shot := project.Shot{Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: "a.png"}}
-	refs, missing := AssembleShotRefs("proj", shot, assets)
+	refs, missing := AssembleShotRefs("proj", shot, assets, true)
 	if len(refs) != 1 || len(missing) != 0 {
 		t.Fatalf("无场景不应报缺失,实际 refs=%d missing=%v", len(refs), missing)
+	}
+}
+
+// TestAssembleShotRefsCompactDropsRedundantPortrait 参考图去冗余契约。
+//
+// 回归 2026-09-12(用户「合理分配资源」):转台图是把「正面定妆照 + 三个转身角度」
+// 横向拼成的一张图,左起第一格**就是**定妆照本身。旧实现把定妆照与转台图两张都喂,
+// 一半信息重复、每个角色的参考图却翻倍 —— 多模态上下文变长,每步注意力更贵、显存与
+// 内存占用更高。新行为:有转台图就只喂转台图;没有才退回单张定妆照;显式关闭
+// (compact=false)时逐字复现旧行为,用于需要复现历史指纹的场景。
+func TestAssembleShotRefsCompactDropsRedundantPortrait(t *testing.T) {
+	dir := t.TempDir()
+	// 角色甲:有转台图;角色乙:只有定妆照
+	for _, f := range []string{
+		"a.png", "a_turnaround.png", "b.png", "scene.png",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("png"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shot := project.Shot{Scene: "s", Characters: []string{"a", "b"}}
+	assets := map[string]project.Asset{
+		"char:a": {File: "a.png"}, "char:b": {File: "b.png"}, "scene:s": {File: "scene.png"},
+	}
+
+	compact, missing := AssembleShotRefs(dir, shot, assets, true)
+	if len(missing) != 0 {
+		t.Fatalf("不应缺失:%v", missing)
+	}
+	if len(compact) != 3 {
+		t.Fatalf("去冗余后应 2 角色 + 1 场景 = 3 张,实际 %d:%v", len(compact), compact)
+	}
+	if filepath.Base(compact[0].Path) != "a_turnaround.png" {
+		t.Errorf("有转台图的角色应只喂转台图(含正面),实际 %s", filepath.Base(compact[0].Path))
+	}
+	if filepath.Base(compact[1].Path) != "b.png" {
+		t.Errorf("无转台图的角色应喂定妆照,实际 %s", filepath.Base(compact[1].Path))
+	}
+	if compact[2].Kind != "scene" {
+		t.Errorf("场景必须最后,实际 %s", compact[2].Kind)
+	}
+
+	legacy, _ := AssembleShotRefs(dir, shot, assets, false)
+	if len(legacy) != 4 {
+		t.Fatalf("关闭去冗余应逐字复现旧行为(4 张),实际 %d:%v", len(legacy), legacy)
+	}
+	if filepath.Base(legacy[0].Path) != "a.png" || filepath.Base(legacy[1].Path) != "a_turnaround.png" {
+		t.Errorf("旧行为应为 定妆照→转台图,实际 %s→%s",
+			filepath.Base(legacy[0].Path), filepath.Base(legacy[1].Path))
+	}
+}
+
+// TestCompactRefsDefaultOff 未表态(nil)时按**关闭**处理。
+//
+// 回归 2026-09-12:曾把去冗余设成默认开,结果渲染出"服装对、脸变了"的另一个人 ——
+// 转台图是 4 格拼合图,模型缩放入口时每格只剩约 1/4 像素,锐利的脸被摊薄。默认必须
+// 两张都喂(定妆照锁脸 + 转台图补角度),去冗余只在显式开启时生效。
+func TestCompactRefsDefaultOff(t *testing.T) {
+	var a project.AssetsParams
+	if a.CompactRefsOn() {
+		t.Error("未表态应视为关闭参考图去冗余(默认两张都喂)")
+	}
+	on := true
+	a.CompactRefs = &on
+	if !a.CompactRefsOn() {
+		t.Error("显式开启时应视为开启")
+	}
+	if project.DefaultStageParams().Assets.CompactRefsOn() {
+		t.Error("新建项目默认不应开启去冗余")
 	}
 }

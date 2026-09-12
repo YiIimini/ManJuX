@@ -32,17 +32,17 @@ function stateChip(p) {
   <div v-if="batch || seriesGroups.singles.length || Object.keys(seriesGroups.groups).length
            || (!batch && novelJobs.some(j => j.state === 'running' || j.state === 'failed'))"
        class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(252px,1fr))">
-    <!-- 拆集进行中:书级占位卡(提交即出现,分集陆续填充) -->
-    <div v-for="j in novelJobs.filter(x => x.state === 'running' || x.state === 'failed')"
+    <!-- 拆集失败:书级提示卡(不再有「AI 拆集中」运行态占位 —— 一章一档下建集是秒级的,
+         占位卡只会一闪而过甚至挡住真正的书卡;2026-09-12 用户定调) -->
+    <div v-for="j in novelJobs.filter(x => x.state === 'failed')"
          :key="'job-' + j.series" class="shot-card proj-card" style="border-style:dashed">
       <div class="proj-cover">
         <div class="absolute inset-0 flex flex-col items-center justify-center gap-2">
-          <el-icon :size="30" :color="j.state === 'running' ? 'var(--mx-amber)' : 'var(--mx-red)'">
-            <Loading v-if="j.state === 'running'" class="is-loading" /><CircleCloseFilled v-else />
-          </el-icon>
-          <span class="timecode">{{ j.state === 'running' ? 'AI 拆集中' : '拆集失败' }}</span>
+          <el-icon :size="30" :color="'var(--mx-red)'"><CircleCloseFilled /></el-icon>
+          <span class="timecode">拆集失败</span>
         </div>
-        <button v-if="j.state === 'failed'" class="cover-del" title="移除失败占位卡" @click.stop="$emit('clear-job', j)">
+        <button v-if="j.state === 'failed'"
+ class="cover-del" title="移除失败占位卡" @click.stop="$emit('clear-job', j)">
           <el-icon :size="13"><Delete /></el-icon>
         </button>
       </div>

@@ -55,7 +55,10 @@ func New(cfg *config.Manager, store *project.Store, reg *engine.Registry,
 }
 
 // Start 启动独立 HTTP 服务(浏览器/App 窗口模式,端口占用自动 +1)。
+// 同时起一个后台 Sage 自检:升级 ComfyUI/torch 后轮子失配要能自己装回来
+// (用户 2026-09-12 把环境升级交给本应用负责:每次处理到位,而不是靠人记得)。
 func (s *Server) Start(basePort int) (int, error) {
+	go s.startupSageCheck()
 	port := basePort
 	for i := 0; i < 20; i++ {
 		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
@@ -127,12 +130,18 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/projects/{id}/assets/regen", s.regenAsset)
 	m.HandleFunc("GET /api/comfy/admin", s.comfyAdmin)
 	m.HandleFunc("POST /api/comfy/{action}", s.comfyAction)
+	m.HandleFunc("GET /api/comfy/sage", s.comfySageStatus)
+	m.HandleFunc("POST /api/comfy/sage-install", s.comfySageInstall)
 	m.HandleFunc("GET /api/outputs", s.outputsList)
 	m.HandleFunc("DELETE /api/projects/{id}/output", s.projectOutputDelete)
 	m.HandleFunc("GET /api/meta", s.meta)
 	m.HandleFunc("GET /api/sysmon", s.handleSysmon)
 	m.HandleFunc("GET /api/logs", s.handleLogs)
 	m.HandleFunc("POST /api/library/{kind}/{name}/regen", s.libraryRegen)
+	// 库资产运营:补全多视角转台图 / AI 生成描述与提示词 / 手动编辑描述与提示词
+	m.HandleFunc("POST /api/library/{kind}/{name}/views", s.libraryViews)
+	m.HandleFunc("POST /api/library/{kind}/{name}/describe", s.libraryDescribe)
+	m.HandleFunc("PUT /api/library/{kind}/{name}", s.librarySetMeta)
 	m.HandleFunc("POST /api/library/gacha", s.handleLibraryGacha)
 	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)

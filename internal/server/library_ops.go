@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -13,7 +14,18 @@ import (
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/llm"
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
+
+// genOuterTimeout 手动生成类操作(抽卡/自定义新建/补全多视角)的外层 ctx 上限。
+//
+// 它**不是**生成本身的超时:生成超时由引擎按"真正在执行"的时间判定(定妆图 10 分钟
+// 执行上限 + 90 分钟排队上限,见 comfyengine.DecideWait)。这个外层值只是防止
+// 请求永久挂着;定太长没意义,定太短则会把"排队"误当失败 ——
+// 实测教训:原值 4 分钟,一次抽卡正好排在 4.5 分钟的转身视频后面,被 ctx 直接掐死,
+// 报「定妆生成失败(Krea-2):context deadline exceeded」,用户看到的就是"角色生成失败"
+// (2026-09-12)。故取一个能覆盖长任务本身 + 排队余地的值。
+const genOuterTimeout = 45 * time.Minute
 
 // 抽卡题材池:随机世界观 × 气质,一次一签,抽到什么全看命。
 var gachaThemes = []string{
@@ -33,7 +45,7 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 	trait := gachaTraits[rand.Intn(len(gachaTraits))]
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
-	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
 	defer cancel()
 
 	sys := "你是角色设计师。输出严格 JSON(无 markdown 包裹):" +
@@ -70,6 +82,7 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	s.pipe.ReleaseVRAMIfIdle("抽卡完成")
 	writeJSON(w, 200, map[string]any{"entry": entry, "theme": theme, "trait": trait})
 }
 
@@ -147,7 +160,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 			writeErr(w, 400, fmt.Errorf("请上传参考图片,或填写生成提示词"))
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), 4*time.Minute)
+		ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
 		defer cancel()
 		p, err := s.genLibraryPortrait(ctx, prompt, time.Now().UnixNano()&0x7fffffff)
 		if err != nil {
@@ -166,15 +179,21 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		writeErr(w, 500, err)
 		return
 	}
+	s.pipe.ReleaseVRAMIfIdle("自定义新建完成")
 	writeJSON(w, 200, map[string]any{"entry": entry})
 }
 
-// genLibraryPortrait 用本地 ComfyUI(Krea-2)生成资产库定妆照,返回临时文件路径。
 // libraryRegen 重抽库资产:用条目自带的提示词重新生成定妆照(随机 seed)并覆盖入库。
 //
 // 与"抽卡"的区别:抽卡是抽一个**全新角色**(LLM 现编题材与外貌);重抽是**同一个角色
 // 换一张** —— 描述与提示词原样不动,只换随机种子,不满意就再抽一次。
-// 重抽会同时清掉旧的多视角原图与转台图(它们对应的是上一张定妆照,已经失效)。
+//
+// 重抽会同时清掉旧的多视角原图与转台图(它们对应的是上一张定妆照,已经失效);
+// 清掉之后可点「补全多视角」重建,渲染前也会自动补。
+//
+// 提示词为空的条目(手动上传/gacha 之前的存量)不再直接拒绝:先让 LLM 依
+// 描述/名字补一条英文提示词再抽 —— 「这条不能抽」等于抽卡功能对这类条目不存在,
+// 而用户要的正是"点进去就能再抽一张"。
 func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
 	if s.lib == nil {
 		writeErr(w, 500, fmt.Errorf("资产库未启用"))
@@ -186,12 +205,16 @@ func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, fmt.Errorf("库资产不存在"))
 		return
 	}
-	if strings.TrimSpace(e.ImagePrompt) == "" {
-		writeErr(w, 400, fmt.Errorf("该条目没有提示词,无法重抽(上传入库的条目请改用「自定义新建」)"))
-		return
+	prompt := strings.TrimSpace(e.ImagePrompt)
+	if prompt == "" {
+		prompt = s.deriveImagePrompt(r.Context(), name, e.Description)
+		if prompt == "" {
+			writeErr(w, 400, fmt.Errorf("该条目没有提示词,且无法从描述推导(请先补全中文描述)"))
+			return
+		}
 	}
 	seed := time.Now().UnixNano() & 0x7fffffff // 随机种子:每次抽到不同的图
-	tmp, err := s.genLibraryPortrait(r.Context(), e.ImagePrompt, seed)
+	tmp, err := s.genLibraryPortrait(r.Context(), prompt, seed)
 	if err != nil {
 		writeErr(w, 503, fmt.Errorf("重抽失败(需要本地 ComfyUI):%w", err))
 		return
@@ -199,15 +222,239 @@ func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
 	defer os.Remove(tmp)
 
 	s.lib.ClearRelated(kind, name) // 旧角度图对应上一张定妆照,已失效
-	if _, err := s.lib.Put(kind, name, e.Description, e.ImagePrompt, tmp, e.SourceProject, e.Source); err != nil {
+	if _, err := s.lib.Put(kind, name, e.Description, prompt, tmp, e.SourceProject, e.Source); err != nil {
 		writeErr(w, 500, err)
 		return
 	}
 	s.opLog("🎲 库资产重抽:%s「%s」", kind, name)
+	s.pipe.ReleaseVRAMIfIdle("库资产重抽完成")
 	updated, _, _ := s.lib.Match(kind, name)
 	writeJSON(w, 200, updated)
 }
 
+// deriveImagePrompt 没有提示词时,让 LLM 依据中文描述/名字补一条英文定妆照提示词。
+// 失败不致命(返回空串由调用方决定文案),但要在日志里留下线索 —— 否则用户只看到
+// 「抽不了」而不知道是 LLM 没配还是描述太短。
+func (s *Server) deriveImagePrompt(ctx context.Context, name, description string) string {
+	g := s.cfg.Get()
+	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, 120)
+	if !client.Configured() {
+		if strings.TrimSpace(description) != "" {
+			return strings.TrimSpace(description)
+		}
+		return ""
+	}
+	rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	out, err := client.Chat(rctx, []llm.Message{
+		{Role: "system", Content: "你是提示词工程师。把角色设定写成一条英文文生图提示词(半身定妆照:面部特征+发型+服装+气质+光线),120 词内。只输出提示词本身,不要任何说明或引号。"},
+		{Role: "user", Content: "角色名:" + name + "\n中文设定:" + description},
+	}, false)
+	if err != nil {
+		s.opLog("⚠ 库资产提示词推导失败(LLM):%v", err)
+		if strings.TrimSpace(description) != "" {
+			return strings.TrimSpace(description)
+		}
+		return ""
+	}
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(out), "`"))
+}
+
+// libraryViews 补全多视角:定妆照 → H3 原地转身视频 → 抽帧 → 转台图,落在库条目
+// 目录内并刷新 asset.json 的图片清单。已有角度图时直接返回,不做重复渲染。
+//
+// 这是"角色在渲染里只有一张正面照"的手动解法;渲染前 backfillAssetViews 也会
+// 自动补同样的东西,两者共用 pipeline.GenerateTurnaround 的实现与产物命名。
+func (s *Server) libraryViews(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	kind, name := r.PathValue("kind"), r.PathValue("name")
+	e, master, ok := s.lib.Match(kind, name)
+	if !ok {
+		writeErr(w, 404, fmt.Errorf("库资产不存在"))
+		return
+	}
+	if kind != "characters" {
+		writeErr(w, 400, fmt.Errorf("多视角转台图仅对角色有意义(场景无需转身参考)"))
+		return
+	}
+	if n := len(s.lib.RelatedFiles(kind, name)); n > 0 {
+		writeJSON(w, 200, map[string]any{"entry": e, "skipped": true, "views": n,
+			"message": fmt.Sprintf("该资产已有多视角图(%d 张),无需重复生成", n)})
+		return
+	}
+	eng, err := s.reg.Get("comfy")
+	if err != nil {
+		writeErr(w, 503, fmt.Errorf("补全多视角需要本地 ComfyUI:%w", err))
+		return
+	}
+	if err := eng.Available(r.Context()); err != nil {
+		writeErr(w, 503, fmt.Errorf("补全多视角需要本地 ComfyUI:%w", err))
+		return
+	}
+	dir, err := s.lib.EntryDir(kind, name)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	// 转身视频是一次完整单镜渲染(数分钟)+ 抽帧拼接,给足上限;不做"假进度",
+	// 完成后一次性回结果,期间前端按钮保持 loading。外层上限同样要给排队留余地
+	// (见 genOuterTimeout):排在别的长任务后面时,等待时间与任务本身无关。
+	ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
+	defer cancel()
+	prompt := strings.TrimSpace(e.ImagePrompt)
+	if prompt == "" {
+		prompt = name
+	}
+	g := s.cfg.Get()
+	steps := g.Render.Steps
+	if steps <= 0 {
+		steps = 8
+	}
+	// 起始与逐段进度都由 GenerateTurnaround 的 Emit 转出(引擎每 30 秒报一次):
+	// 数分钟的操作不能全程无反馈,也不在这里再补一条重复的"开始"日志。
+	_, err = pipeline.GenerateTurnaround(ctx, eng, s.ff, pipeline.TurnaroundOptions{
+		MasterPath: master,
+		Dir:        dir,
+		TempVideo:  true, // 视频不如库,库目录只留参考图
+		Name:       name,
+		Prompt:     prompt,
+		Steps:      steps,
+		Emit:       func(f string, a ...any) { s.opLog("🎥 "+f, a...) },
+	})
+	if err != nil {
+		writeErr(w, 500, fmt.Errorf("多视角生成失败:%w", err))
+		return
+	}
+	// 重新入库刷新图片清单(主图仍是原来的定妆照)
+	entry, err := s.lib.Put(kind, name, e.Description, e.ImagePrompt, master, e.SourceProject, e.Source)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	s.opLog("✔ 补全多视角完成:角色「%s」(%d 张图)", name, len(entry.Images))
+	s.pipe.ReleaseVRAMIfIdle("补全多视角完成")
+	writeJSON(w, 200, map[string]any{"entry": entry})
+}
+
+// librarySetMeta 手动编辑中文描述与英文提示词(图片与复用计数不动)。
+func (s *Server) librarySetMeta(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	var in struct {
+		Description string `json:"description"`
+		ImagePrompt string `json:"image_prompt"`
+	}
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	e, err := s.lib.SetMeta(r.PathValue("kind"), r.PathValue("name"), in.Description, in.ImagePrompt)
+	if err != nil {
+		writeErr(w, 404, err)
+		return
+	}
+	writeJSON(w, 200, e)
+}
+
+// libraryDescribe AI 生成中文描述与英文提示词:优先用视觉模型**看图**写
+// (VLM 配置在设置页,智谱 glm-4.6v-flash 免费),VLM 不可用/失败时退回文本模型
+// 依名字与现有描述扩写。结果直接落库并回传,前端可再编辑后保存。
+func (s *Server) libraryDescribe(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	kind, name := r.PathValue("kind"), r.PathValue("name")
+	e, master, ok := s.lib.Match(kind, name)
+	if !ok {
+		writeErr(w, 404, fmt.Errorf("库资产不存在"))
+		return
+	}
+	g := s.cfg.Get()
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+
+	var card struct {
+		Description string `json:"description"`
+		ImagePrompt string `json:"image_prompt"`
+	}
+	via := ""
+
+	// ① 视觉模型看图(最准:描述的是这张图里的角色,而不是名字听起来的样子)
+	vlm := llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 180)
+	if vlm.Configured() {
+		if dataURL, err := s.imageDataURL(ctx, master); err == nil {
+			const sys = `你是角色设定师。看参考图,输出严格 JSON(无 markdown 包裹):` +
+				`{"description":"中文外貌/服装/气质描述,80-120字,具体可画,包含发型发色","image_prompt":"英文文生图提示词,半身定妆照(面部特征+发型+服装+气质+光线),120词内"}`
+			out, err := vlm.ChatVision(ctx, sys, []llm.VisionContent{
+				{Role: "user", Text: "角色名:" + name + "。请据此图输出设定。", Images: []string{dataURL}},
+			}, true)
+			if err == nil {
+				if json.Unmarshal([]byte(trimJSON(out)), &card) == nil && card.ImagePrompt != "" {
+					via = "vlm"
+				}
+			} else {
+				s.opLog("⚠ 视觉模型描述失败,退回文本模型:%v", err)
+			}
+		}
+	}
+	// ② 文本模型兜底(无视觉能力/未配置 VLM)
+	if via == "" {
+		client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, 180)
+		if !client.Configured() {
+			writeErr(w, 400, fmt.Errorf("需要配置 LLM(或 VLM)才能自动生成描述与提示词"))
+			return
+		}
+		out, err := client.Chat(ctx, []llm.Message{
+			{Role: "system", Content: "你是角色设定师。输出严格 JSON(无 markdown 包裹):" +
+				`{"description":"中文外貌/服装/气质描述,80-120字","image_prompt":"英文文生图提示词,半身定妆照(面部+发型+服装+光线),120词内"}`},
+			{Role: "user", Content: "角色名:" + name + "\n现有描述(可为空,可扩写):" + e.Description},
+		}, true)
+		if err != nil {
+			writeErr(w, 500, fmt.Errorf("生成失败:%w", err))
+			return
+		}
+		if err := json.Unmarshal([]byte(trimJSON(out)), &card); err != nil || card.ImagePrompt == "" {
+			writeErr(w, 500, fmt.Errorf("生成结果解析失败(模型返回异常)"))
+			return
+		}
+		via = "llm"
+	}
+	updated, err := s.lib.SetMeta(kind, name, card.Description, card.ImagePrompt)
+	if err != nil {
+		writeErr(w, 500, err)
+		return
+	}
+	s.opLog("🪄 库资产「%s」描述与提示词已生成(%s)", name, map[string]string{"vlm": "视觉模型看图", "llm": "文本模型"}[via])
+	writeJSON(w, 200, map[string]any{"entry": updated, "via": via})
+}
+
+// imageDataURL 把本地图片压成 data URL 供视觉模型使用。原图 832×1248 PNG 约 2MB,
+// 直接 base64 近 3MB —— 缩到 540 宽既省额度也避开部分平台的单图体积上限。
+func (s *Server) imageDataURL(ctx context.Context, path string) (string, error) {
+	tmp, err := os.CreateTemp("", "mx-desc-*.jpg")
+	if err != nil {
+		return "", err
+	}
+	tmp.Close()
+	defer os.Remove(tmp.Name())
+	if _, err := s.ff.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
+		"-i", path, "-vf", "scale=540:-2", "-frames:v", "1", "-q:v", "3", tmp.Name()); err != nil {
+		return "", err
+	}
+	raw, err := os.ReadFile(tmp.Name())
+	if err != nil || len(raw) == 0 {
+		return "", fmt.Errorf("图片压缩失败")
+	}
+	return "data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(raw), nil
+}
+
+// genLibraryPortrait 用本地 ComfyUI(Krea-2)生成资产库定妆照,返回临时文件路径。
 func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int64) (string, error) {
 	eng, err := s.reg.Get("comfy")
 	if err != nil {

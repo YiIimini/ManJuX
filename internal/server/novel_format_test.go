@@ -125,3 +125,56 @@ func TestStripChapterTOC(t *testing.T) {
 		t.Fatalf("短列表不应误删: %q", stripChapterTOC(keep))
 	}
 }
+
+// TestSplitChaptersAcceptsMarkdownHeads 章头识别必须认 markdown 的 `# 第NNN章`。
+//
+// 回归 2026-09-12(用户实证「为什么还是解析的全本」+ 缺章 9/10/11):全本 md 的章头
+// 写作 `# 第009章 洗出来的字`,而旧正则要求章头是**裸行**,于是一本 64 章的书只认出
+// 3 个章头 —— 切块/章计数/覆盖核对/原文提取四个环节同时失准,最终"自动补缺"误判缺章、
+// 删掉了本来正确的分集(64 集 → 63 集,第 009 章内容真丢)。
+func TestSplitChaptersAcceptsMarkdownHeads(t *testing.T) {
+	text := "# 第008章 夜市最后一夜\n\n第三天上午九点。\n\n# 第009章 洗出来的字\n\n灯下看字。\n\n第010章 万宝行\n\n柜台很高。\n\n## 第011章 死当\n\n封条。\n"
+	ch := SplitChapters(text)
+	if len(ch) != 4 {
+		t.Fatalf("应认出 4 章(markdown 与裸章头混排),实际 %d:%+v", len(ch), ch)
+	}
+	want := []struct {
+		num   int
+		title string
+	}{
+		{8, "夜市最后一夜"}, {9, "洗出来的字"}, {10, "万宝行"}, {11, "死当"},
+	}
+	for i, w := range want {
+		if ch[i].Num != w.num || ch[i].Title != w.title {
+			t.Errorf("第 %d 章切片不符: got num=%d title=%q, want num=%d title=%q",
+				i+1, ch[i].Num, ch[i].Title, w.num, w.title)
+		}
+	}
+	// 正文必须带上章头行(分镜 LLM 需要看到章界)且不含下一章内容
+	if !strings.Contains(ch[1].Text, "第009章") || strings.Contains(ch[1].Text, "万宝行") {
+		t.Errorf("第 9 章正文边界不对:%q", ch[1].Text)
+	}
+}
+
+// TestChapterTitlesFromFiles 一章一档的文件名解析(第001章_三百块的活儿.md)。
+func TestChapterTitlesFromFiles(t *testing.T) {
+	got := ChapterTitlesFromFiles([]string{
+		"第001章_三百块的活儿.md", "第009章_洗出来的字.md", "第010章 万宝行.md", "不是章节.md",
+	})
+	if got[1] != "三百块的活儿" || got[9] != "洗出来的字" || got[10] != "万宝行" {
+		t.Fatalf("文件名解析不符:%v", got)
+	}
+	if _, ok := got[0]; ok {
+		t.Error("非章节文件不应被解析")
+	}
+}
+
+// TestChineseNum 章号解析(阿拉伯与中文数字)。
+func TestChineseNum(t *testing.T) {
+	cases := map[string]int{"001": 1, "9": 9, "九": 9, "十": 10, "十一": 11, "二十三": 23, "一百二十": 120, "": 0, "abc": 0}
+	for in, want := range cases {
+		if got := chineseNum(in); got != want {
+			t.Errorf("chineseNum(%q) = %d, want %d", in, got, want)
+		}
+	}
+}

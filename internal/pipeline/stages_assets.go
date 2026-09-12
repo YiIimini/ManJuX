@@ -6,10 +6,12 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/fsutil"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -44,10 +46,21 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	missing := 0
 	total := 0
 	reused := 0
+	stopped := 0 // 被停止(而非"生成失败")的资产数:停止是用户动作,不能记成失败
 	onlySet := map[string]bool{}
 	for _, id := range onlyAssets {
 		onlySet[id] = true
 	}
+	// pendingViews 攒到定妆照全部出完后**统一**生成多视角转台图。
+	//
+	// 为什么不边出定妆照边出多视角(旧写法):多视角走 H3(约 20GB),定妆照走
+	// Krea-2 —— 一个角色一次来回,10 个角色就是 20 次模型换入换出,显存反复腾挪
+	// (代码里记过的"每步 150 秒"就是这种挤压)。攒起来先跑完所有 Krea-2 再跑所有
+	// H3,模型各加载一次,资产阶段整体快得多(2026-09-12「管线生产需要合理化」)。
+	type pendingView struct {
+		id, name, prompt, master, description string
+	}
+	var pendingViews []pendingView
 	check := func(kind, id, name, description, imagePrompt string) {
 		if len(onlySet) > 0 && !onlySet[id] {
 			return
@@ -71,14 +84,25 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				return
 			}
 		}
-		// ① 资产库复用(名称精确匹配):跨项目同一角色/场景直接复用,不重复生成
+		if ctx.Err() != nil { // 已停止:不再尝试生成,剩下的交给续跑
+			stopped++
+			return
+		}
+		// ① 资产库复用:名称精确匹配之外还认"同一角色的另一种叫法"(别名/描述指纹),
+		//    否则 LLM 换个称呼就要重出一张定妆照 —— 用户看到的正是"相同角色无中生有
+		//    多产生出定妆照"(2026-09-12 报障)。判定为同一人时库里会记下别名。
 		if c.lib != nil {
-			if _, img, ok := c.lib.Match(kind, name); ok {
+			if e, img, ok := c.lib.Find(kind, name, description); ok {
 				destDir := filepath.Join(c.store.Dir(proj.ID), "assets", kind)
 				_ = os.MkdirAll(destDir, 0o755)
 				dest := filepath.Join(destDir, director.SanitizeForCache(kind+"_"+id)+filepath.Ext(img))
 				if raw, err := os.ReadFile(img); err == nil {
 					_ = os.WriteFile(dest, raw, 0o644)
+					// 多视角图/转台图一并带进项目(按项目侧命名):只带主图的话,
+					// 复用回来的角色在 H3 渲染里就只有一张正面照,多视角参考形同虚设
+					// —— 而"库里有、项目没有"正是 2026-09-12 用户实证的根因。
+					copied := copyAssetRelated(c.lib.RelatedFiles(kind, name), destDir,
+						director.SanitizeForCache(kind+"_"+id))
 					rel, _ := filepath.Rel(c.store.Dir(proj.ID), dest)
 					assets[id] = project.Asset{
 						ID: id, Kind: kind, Name: name,
@@ -87,7 +111,15 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					}
 					c.lib.BumpUsed(kind, name)
 					reused++
-					c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」(跨项目共享,免生成)", kindLabel(kind), name)
+					via := ""
+					if e != nil && strings.TrimSpace(e.Name) != name {
+						via = fmt.Sprintf("(同一角色,已按「%s」的定妆照复用)", e.Name)
+					}
+					if copied > 0 {
+						c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成;含 %d 张多视角)", kindLabel(kind), name, via, copied)
+					} else {
+						c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成)", kindLabel(kind), name, via)
+					}
 					return
 				}
 			}
@@ -102,15 +134,23 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					Source: "krea2", Fingerprint: project.FingerprintFile(path),
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」", kindLabel(kind), name)
-				// 角色定妆照生成后顺带产出多视角转台图(增强项,失败不阻断)
-				if kind == "characters" {
-					c.genCharacterViews(ctx, proj, comfyGen, id, name, imagePrompt, path)
+				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
+				if kind == "characters" && p.ViewsOn() {
+					pendingViews = append(pendingViews, pendingView{
+						id: "char:" + id, name: name, prompt: imagePrompt,
+						master: path, description: description,
+					})
 				}
 				if c.lib != nil {
 					if _, err := c.lib.Put(kind, name, description, imagePrompt, path, proj.ID, "krea2"); err == nil {
 						c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(后续项目自动复用)", kindLabel(kind), name)
 					}
 				}
+				return
+			} else if ctx.Err() != nil {
+				// 停止导致的取消:不是"生成失败",别在界面上刷一排红字
+				c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已停止:%s「%s」未生成(续跑时自动补齐)", kindLabel(kind), name)
+				stopped++
 				return
 			} else {
 				c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "生成失败:%s「%s」:%v", kindLabel(kind), name, err)
@@ -122,7 +162,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, normalizeUniformWording(ch.ImagePrompt)+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name)+uniformCivilianClarify(ch.Description))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
@@ -142,7 +182,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
 			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
 			chibiPrompt := "cute chibi SD figure of the same character, big head, tiny body, full body, simple pastel background, " +
-				"expressive face, figure product photography, " + ch.ImagePrompt + styleExpand(plan.Style) + castContrastBlock(plan, ch.Name)
+				"expressive face, figure product photography, " + normalizeUniformWording(ch.ImagePrompt) + styleExpand(plan.Style) + castContrastBlock(plan, ch.Name) + uniformCivilianClarify(ch.Description)
 			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
@@ -159,15 +199,48 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 
+	// ---------- 第二阶段:多视角转台图(H3 一次加载,批量出完) ----------
+	// 与定妆照分阶段跑:本段全部是 H3 作业,模型只需加载一次(见 pendingViews 注释)。
+	if len(pendingViews) > 0 && ctx.Err() == nil {
+		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "阶段②:多视角转台图 %d 个角色(H3 原地转身,每个约数分钟)…", len(pendingViews))
+		viewsDone := 0
+		for _, v := range pendingViews {
+			if ctx.Err() != nil {
+				break
+			}
+			c.genCharacterViews(ctx, proj, comfyGen, strings.TrimPrefix(v.id, "char:"), v.name, v.prompt, v.master)
+			viewsDone++
+			// 多视角写回资产库:同一个角色全局只付一次转身成本,后续项目复用直接带走
+			if c.lib != nil {
+				if _, err := c.lib.Put("characters", v.name, v.description, v.prompt, v.master, proj.ID, "krea2"); err != nil {
+					c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角写回资产库失败:角色「%s」:%v", v.name, err)
+				}
+			}
+		}
+		if viewsDone < len(pendingViews) {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⏹ 多视角转台图已停止:%d/%d 完成,其余将在续跑时补齐(定妆照已就绪,不受影响)",
+				viewsDone, len(pendingViews))
+		}
+	}
+
 	if err := c.store.SaveAssets(proj.ID, assets); err != nil {
 		return err
+	}
+	if p.Source == "skip" {
+		c.emit(proj.ID, PhaseAssets, 0, "success", 100, "✔ 资产策略=跳过(全部镜头纯文生 t2va)")
+		return nil
 	}
 	pct := 100
 	if total > 0 {
 		pct = (total - missing) * 100 / total
 	}
-	if p.Source == "skip" {
-		c.emit(proj.ID, PhaseAssets, 0, "success", 100, "✔ 资产策略=跳过(全部镜头纯文生 t2va)")
+	// 停止语义:只要本次运行被取消,就如实说"停在哪、剩下的怎么办",不要报 ✔,
+	// 也不要预告"将降级纯文生" —— 未生成的资产在续跑时会自动补齐。
+	// (2026-09-12 用户反馈「场景也有失败」:其中 8 条其实是停止时被取消的任务,
+	// 旧文案把 context canceled 记成"生成失败"、还补一句"将以 t2va 渲染",误导。)
+	if stopped > 0 || ctx.Err() != nil {
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⏹ 资产阶段已停止:定妆照已就绪 %d/%d,其余 %d 个未生成(续跑时自动补齐,不会降级纯文生)",
+			total-missing-stopped, total, stopped)
 		return nil
 	}
 	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产就绪:%d/%d(库复用 %d)", total-missing, total, reused)
@@ -207,175 +280,146 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	return ce.GenerateImage(ctx, imagePrompt, krea2Negative, seed, w, h, out)
 }
 
-// genCharacterViews 用 H3 Ref2V 生成"角色原地转身"的短视频,再抽帧横向拼成
-// 多视角转台图。返回转台图路径(失败返回空串)。
+// genCharacterViews 资产阶段的多视角产出:定妆照 → H3 Ref2V 转身视频 → 抽帧 →
+// 横向拼转台图。返回转台图路径(失败返回空串)。
 //
-// 为什么不用 Krea-2 img2img 直接出多张:实测行不通 —— Krea-2 是**纯文生图模型,
-// 没有身份条件注入机制**,只能靠 denoise 在"改动幅度"与"保住身份"之间猜:
-// denoise 0.7 会把人整个换掉(木偶角色被改写成人类),0.55 则身份勉强保住但
-// 角度几乎不变。这条路是模型的固有限制,不是参数调优能解决的。
-//
-// 正解是让**有身份参考机制**的 H3 Ref2V 来完成:以定妆照为参考生成一段转身视频,
-// 身份由 ref 图锁住、角度由提示词驱动,两者不再互斥(这正是 ComfyUI-ALLinONE
-// 的 Character Sheet 模式的做法)。成本是"一次单镜渲染"(数分钟),换来的是
-// 真正可用的多视角参考。
-//
-// 产物(**全部落在 assets/characters/ 下,与定妆照同目录同主名**):
-//   - assets/characters/<base>_view_threequarter|side|back.png  多视角原图
-//   - assets/characters/<base>_turnaround.png   横向拼接的转台图(渲染时作额外参考;
-//     合成一张是为了只占 1 个参考槽,多图并列容易把模型绕晕)
-//   - assets/characters/<base>_views/turnaround.mp4  转身视频本身(体积大且不作参考,
-//     留在子目录里,不参与入库)
-//
-// 抽帧必须落在**定妆照同目录**(而不是 _views/ 子目录):资产库的
-// relatedImages/ClearRelated 用 `filepath.Glob(<dir>/<base>_view_*.png)` 收集与
-// 清理,glob 不递归 —— 帧放子目录里的结果是「多视角原图既收不进库、也清不掉」。
-// 文件名里的 tag 与前端 LibraryView 的 labelOf() 标签(threequarter/side/back)
-// 逐字对齐,标签才能显示成「四分之三/侧面/背面」而不是笼统的「多视角」。
-//
-// 这是增强项:任何一步失败都只告警、不阻断资产阶段,退回单张定妆照继续。
+// 具体实现与产物命名契约见 turnaround.go 的 GenerateTurnaround(资产库详情弹窗的
+// 「补全多视角」与渲染前自动补齐共用同一份实现)。本函数只负责"项目侧上下文":
+// 产物目录取项目资产目录,失败只告警不阻断资产阶段(增强项)。
 func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Project, ce engine.Engine, id, name, imagePrompt, masterPath string) string {
-	safe := director.SanitizeForCache("characters_" + id)
-	dir := filepath.Join(c.store.Dir(proj.ID), "assets", "characters")
-	// base 取给定妆照的文件主名 —— 与 genAssetImage 落盘的 <safe>.png 一致,
-	// 也让资产库的 glob 一定能命中(不依赖两处 safe 拼法永远同步)。
-	base := strings.TrimSuffix(filepath.Base(masterPath), filepath.Ext(masterPath))
-	viewsDir := filepath.Join(dir, safe+"_views")
-	if err := os.MkdirAll(viewsDir, 0o755); err != nil {
+	turn, err := GenerateTurnaround(ctx, ce, c.ff, TurnaroundOptions{
+		MasterPath: masterPath,
+		Name:       name,
+		Prompt:     imagePrompt,
+		Steps:      proj.Config.Params.Render.Steps,
+		Accel:      proj.Config.Params.Render.Accel,
+		Emit:       func(f string, a ...any) { c.emit(proj.ID, PhaseAssets, 0, "info", 0, f, a...) },
+	})
+	if err != nil {
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角生成失败(不影响定妆照):%v", err)
 		return ""
 	}
-	clip := filepath.Join(viewsDir, "turnaround.mp4")
-
-	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "多视角:「%s」转身视频生成中(H3 Ref2V,约数分钟)…", name)
-	job := engine.Job{
-		ProjectID: proj.ID, ShotID: 0,
-		Prompt:    turnaroundPrompt(name, imagePrompt),
-		Mode:      "ref2va",
-		RefImages: []engine.RefImage{{Kind: "character", Path: masterPath}},
-		Width:     832, Height: 1248,
-		Length:    124, // 17k+5 网格,约 5.2 秒
-		Seed:      nameSeed("turnaround", name),
-		Steps:     proj.Config.Params.Render.Steps,
-		Accel:     proj.Config.Params.Render.Accel,
-		OutputDir: viewsDir, OutputName: "turnaround",
-		OnProgress: func(p int, note string) {
-			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "多视角「%s」:%s(%d%%)", name, note, p)
-		},
-	}
-	if _, err := ce.Render(ctx, job); err != nil {
-		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角转身视频生成失败(不影响定妆照):%v", err)
-		return ""
-	}
-
-	// 从转身视频按时间点抽帧:1.3s 四分之三 → 2.6s 侧面 → 3.9s 背面。
-	// 0s 的正面帧**刻意不抽**:它与定妆照本就是同一张脸同一角度,拼转台图时直接
-	// 用定妆照作第一格(库里也已经有 portrait.png),不必再占一份磁盘与一个 glob 名额。
-	stamps := []struct{ at, tag string }{
-		{"1.3", "threequarter"},
-		{"2.6", "side"},
-		{"3.9", "back"},
-	}
-	views := []string{}
-	for _, s := range stamps {
-		f := filepath.Join(dir, base+"_view_"+s.tag+".png")
-		if _, err := c.ff.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
-			"-ss", s.at, "-i", clip, "-map", "0:v:0", "-frames:v", "1", "-update", "1", f); err != nil {
-			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角抽帧失败(%ss):%v", s.at, err)
-			continue
-		}
-		if st, err := os.Stat(f); err == nil && st.Size() > 0 {
-			views = append(views, f)
-		}
-	}
-	if len(views) < 2 {
-		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角可用帧不足(仅 %d 张),跳过转台图", len(views))
-		return ""
-	}
-
-	// 转台图 = 正面定妆照 + 抽到的各角度帧(顺序即 正面→四分之三→侧面→背面)
-	frames := make([]string, 0, len(views)+1)
-	if _, err := os.Stat(masterPath); err == nil {
-		frames = append(frames, masterPath)
-	}
-	frames = append(frames, views...)
-
-	turn := filepath.Join(dir, base+"_turnaround.png")
-	if err := c.hstackImages(ctx, frames, turn); err != nil {
-		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "转台图拼接失败(各角度帧已保留在 %s):%v", dir, err)
-		return ""
-	}
-	c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔「%s」转台图已生成(%d 个视角)", name, len(frames))
 	return turn
 }
 
-// turnaroundPrompt 组装 H3 Ref2V 的转身视频提示词(六段式,与 director 的
-// sysH3Format 同构)。身份由参考图锁定,提示词只需驱动"原地缓慢转身"这一动作,
-// 因此不写任何可能诱发换脸的风格化词汇。
-func turnaroundPrompt(name, imagePrompt string) string {
-	desc := stripComposition(imagePrompt)
-	if strings.TrimSpace(desc) == "" {
-		desc = name
-	}
-	return `subject_definitions:
-<Subject 1> is ` + desc + ` in <Picture 1>.
-
-summary:
-[reference generation]
-A character turnaround reference: the character stands still in the centre of frame and slowly rotates in place, showing the front view first, then turning through three-quarter and full profile to the back view. Plain seamless background, even studio lighting, the character never leaves the frame and never changes appearance.
-
-retention_analysis:
-- <Picture 1> : fully_preserved - character identity (face shape, hairstyle, hair colour, costume, accessories, body proportions) must stay identical to the reference image in every frame. FACE LOCK: copy the facial features, bone structure and skin details from <Picture 1> exactly; do NOT blend, average, or substitute any other face.
-
-detailed_description:
-Character turnaround on a plain seamless background, soft even studio lighting, no props, no text.
-[Shot 1] The character stands centred, facing the camera directly, arms relaxed at the sides, neutral expression; the camera is static and the framing is an upper-body medium shot.
-[Shot 2] At 00:01.300 The character has rotated about forty-five degrees, now seen from a three-quarter angle; facial features, hair and costume remain unchanged.
-[Shot 3] At 00:02.600 The character has rotated about ninety degrees, now in full profile; the silhouette of the hairstyle and costume stays identical.
-[Shot 4] At 00:03.900 The character has rotated about one hundred and eighty degrees, now seen from behind; the back of the hairstyle and the costume are visible, still identical.
-The whole clip is one continuous slow rotation with no cuts, no camera movement and no background change. No on-screen text, no subtitles, no watermarks, no logos. Subjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.
-
-overall_soundscape:
-Quiet room tone, no speech, no music, no sound effects.
-
-non_diegetic_music:
-N/A`
-}
-
-// stripComposition 剥掉定妆照提示词里的**构图要求**。
+// copyAssetRelated 把库条目的多视角图/转台图按**项目侧命名**复制到定妆照同目录。
 //
-// 必须剥:定妆照提示词含 front-facing / plain background / upper-body framing,
-// 而多视角要的正是"不朝正面" —— 两组指令直接打架,实测是身份漂移的主因之一。
-// 只保留身份与服装描述,让角度指令说了算。
-func stripComposition(p string) string {
-	for _, w := range []string{
-		"front-facing", "plain background", "upper-body framing", "upper body framing",
-		"upper-body", "upper body", "full body", "portrait",
-	} {
-		p = strings.ReplaceAll(p, w, "")
+// 为什么必须改名:渲染时 turnaroundPath() 按主图主名拼 `<base>_turnaround.png`
+// 找第二张参考,而库里的关联图文件名来自最初入库那个项目的命名
+// (characters_char_张三_view_side.png)。照抄文件名的话,项目里就有转台图却永远
+// 匹配不上 —— 角色在 H3 渲染里依旧只有一张正面照。
+//
+// 返回复制成功的张数;单项失败只跳过,不影响主图(角色仍可用,只是少一个视角)。
+func copyAssetRelated(related []string, destDir, destBase string) int {
+	n := 0
+	for _, r := range related {
+		raw, err := os.ReadFile(r)
+		if err != nil || len(raw) == 0 {
+			continue
+		}
+		dest := filepath.Join(destDir, RelatedSuffixName(destBase, r))
+		if err := fsutil.WriteFileAtomic(dest, raw); err == nil {
+			n++
+		}
 	}
-	return strings.Join(strings.Fields(p), " ") // 压缩多余空格
+	return n
 }
 
-// hstackImages 横向拼接多张图(ffmpeg hstack):统一缩放到同一高度后并排,
-// 得到一张转台图。
-func (c *Coordinator) hstackImages(ctx context.Context, inputs []string, out string) error {
-	if len(inputs) < 2 {
-		return fmt.Errorf("至少需要两张图才能拼接")
+// backfillAssetViews 渲染前补齐角色的多视角转台图(缺失才补)。
+//
+// 为什么放在渲染前:多视角图是"该角色在 H3 里的第二张参考",价值只在渲染阶段
+// 兑现;而它恰好只会在三种情况下缺失 —— ①角色来自资产库复用(库里可能只有正面
+// 照)②手动上传的定妆照 ③多视角功能上线前跑出来的存量项目。这三类的共同点是
+// 资产阶段不会再跑一次,所以必须在渲染前兜住(2026-09-12 用户要求)。
+//
+// 成本:每个角色一次单镜渲染(数分钟 H3 Ref2V),因此只对**本次真要渲的 ref2va
+// 镜头里出现、且确实没有转台图**的角色做;补完立刻写回资产库,后续项目复用即连
+// 角度图一起带走 —— 同一个角色全局只付一次这个成本。
+func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Project, plan *project.Plan, assets map[string]project.Asset) {
+	ap := proj.Config.Params.Assets
+	if !ap.ViewsOn() || ap.Source == "skip" {
+		return
 	}
-	args := []string{"-y", "-hide_banner", "-loglevel", "error"}
-	for _, in := range inputs {
-		args = append(args, "-i", in)
+	dir := c.store.Dir(proj.ID)
+	type want struct{ id, name, prompt string }
+	var list []want
+	seen := map[string]bool{}
+	for _, s := range plan.Shots {
+		if s.Mode != "ref2va" {
+			continue
+		}
+		for _, cid := range s.Characters {
+			if seen[cid] {
+				continue
+			}
+			a, ok := assets["char:"+cid]
+			if !ok || a.File == "" {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(dir, a.File)); err != nil {
+				continue
+			}
+			if turnaroundPath(dir, a.File) != "" {
+				continue // 已有转台图(资产阶段生成的或复用带进来的)
+			}
+			seen[cid] = true
+			list = append(list, want{id: cid, name: a.Name, prompt: a.ImagePrompt})
+		}
 	}
-	filters := make([]string, 0, len(inputs)+1)
-	refs := ""
-	for i := range inputs {
-		filters = append(filters, fmt.Sprintf("[%d:v]scale=-1:1248[v%d]", i, i))
-		refs += fmt.Sprintf("[v%d]", i)
+	if len(list) == 0 {
+		return
 	}
-	filters = append(filters, fmt.Sprintf("%shstack=inputs=%d[out]", refs, len(inputs)))
-	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[out]", "-frames:v", "1", out)
-	_, err := c.ff.Run(ctx, args...)
-	return err
+	sort.Slice(list, func(i, j int) bool { return list[i].id < list[j].id })
+	eng, err := c.reg.Get("comfy")
+	if err != nil {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %d 个角色缺多视角参考图,多视角生成需要本地 ComfyUI(当前不可用)", len(list))
+		return
+	}
+	if err := eng.Available(ctx); err != nil {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %d 个角色缺多视角参考图,本地 ComfyUI 未就绪(%v),本次按单张正面照渲染", len(list), err)
+		return
+	}
+	// 已在资产阶段补过的角色不再提示;首次补齐要明确告知"这一步要等"
+	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 个角色只有单张正面照,渲染前自动补多视角(H3 原地转身,每个约数分钟)…", len(list))
+	for _, w := range list {
+		if ctx.Err() != nil {
+			return
+		}
+		a := assets["char:"+w.id]
+		master := filepath.Join(dir, a.File)
+		prompt := w.prompt
+		desc := ""
+		if c.lib != nil {
+			if e, _, ok := c.lib.Match("characters", w.name); ok {
+				if strings.TrimSpace(prompt) == "" {
+					prompt = e.ImagePrompt
+				}
+				desc = e.Description
+			}
+		}
+		if strings.TrimSpace(prompt) == "" {
+			prompt = w.name
+		}
+		turn, err := GenerateTurnaround(ctx, eng, c.ff, TurnaroundOptions{
+			MasterPath: master,
+			Name:       w.name,
+			Prompt:     prompt,
+			Steps:      proj.Config.Params.Render.Steps,
+			Accel:      proj.Config.Params.Render.Accel,
+			Emit:       func(f string, ar ...any) { c.emit(proj.ID, PhaseRender, 0, "info", 0, f, ar...) },
+		})
+		if err != nil {
+			c.emit(proj.ID, PhaseRender, 0, "warn", 0, "多视角补齐失败:角色「%s」:%v(该角色仍按单张正面照渲染)", w.name, err)
+			continue
+		}
+		rel, _ := filepath.Rel(dir, turn)
+		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 多视角就绪:角色「%s」(%s),本次渲染起作第二张参考", w.name, filepath.ToSlash(rel))
+		if c.lib != nil {
+			if _, err := c.lib.Put("characters", w.name, desc, prompt, master, proj.ID, a.Source); err != nil {
+				c.emit(proj.ID, PhaseRender, 0, "warn", 0, "多视角写回资产库失败:角色「%s」:%v", w.name, err)
+			}
+		}
+	}
 }
 
 // nameSeed 资产名→稳定种子:同名必同图,是跨集一致性的第二道保险
@@ -410,7 +454,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		list = append(list, miss{kind, id, name, desc, prompt})
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, ch.ImagePrompt+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, normalizeUniformWording(ch.ImagePrompt)+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name)+uniformCivilianClarify(ch.Description))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)

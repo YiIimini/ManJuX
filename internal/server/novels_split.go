@@ -136,26 +136,6 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		_ = okFill
 	}
 
-	// ---- 分层拆解 + 流水线化 ----
-	// 全本(如 240 章 39 万字)单次调用输出上限装不下完整拆集;按章节切块
-	// 逐段拆解,且**逐段建项**:onEps 回调让产线在首段就绪时即启动,后续段
-	// 静默补集(生产者-消费者,2026-09-10 用户定调)。
-	type chunk struct{ label, body string }
-	var chunks []chunk
-	// 阈值 4 万(原 12 万):8-10 万字的书单段拆解时 brief+chapters+思考链
-	// 仍会撞输出上限截断(2026-09-10 实证 ep12 处 JSON 腰斩);分段输出才可控
-	if len([]rune(text)) > chunkSize {
-		// 4 万字/段:更大的段输出(30-45 集大纲+思考链)会撞 completion 上限
-		// (2026-09-10 实证第 1/8 段 JSON 截断);缩小段=缩输出。
-		for _, ck := range chunkNovelText(text, chunkSize) {
-			chunks = append(chunks, chunk(ck))
-		}
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解:共 %d 段(逐段拆集,首段即开产线,后续段静默补集)", len([]rune(text)), len(chunks))})
-	} else {
-		chunks = []chunk{{label: "全书", body: text}}
-	}
-
 	series := name
 	seriesFixed := false
 	fixSeries := func(book string) {
@@ -171,7 +151,6 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				Message: "书名含项目名不支持的字符号(如全角逗号/空格),已自动规整为「" + safe + "」"})
 			series = safe
 		}
-		jobSet(series, "running", 0, "AI 拆集通读中…")
 	}
 	globalStyle := ""
 	var epsAll []string // 全部集(含补缺命中的已有集)
@@ -181,6 +160,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	}
 	createFail := 0
 	createdTotal := 0
+
+	type chunk struct{ label, body string }
+
 	createSeg := func(segEps []epItem, ck chunk) {
 		fixSeries(series)
 		var created []string
@@ -208,12 +190,26 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			}
 			src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
 				series, ep.Ep, ep.Title, globalStyle, prev, ep.Brief)
-			// 附本集覆盖章节的小说原文:分镜 LLM 直接看原文逐段改编,不再是大纲
-			// 的摘要——跳段/断章取义的根治(2026-09-10 用户定调)
-			if orig := extractEpOriginal(ck.body, ep.Chapters, maxOrig); orig != "" {
+			// 原文:平台按章切片直接给(不依赖 LLM 写的 chapters 字符串);旧路径仅作兜底
+			orig := ep.Orig
+			if orig == "" {
+				orig = extractEpOriginal(ck.body, ep.Chapters, maxOrig)
+			}
+			if orig != "" {
+				if r := []rune(orig); maxOrig > 0 && len(r) > maxOrig {
+					orig = string(r[:maxOrig])
+				}
 				src += "\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n" + orig
 			}
 			_ = s.store.SaveSource(epName, src)
+			// 把「这集覆盖哪些章」写进项目元数据:覆盖核对与「自动补缺」从此读这个真源,
+			// 不再依赖 LLM 的 chapters 字符串或【本集原文】是否附着成功(事故根因)。
+			if len(ep.ChapNums) > 0 {
+				if pj, ok := s.store.Get(epName); ok {
+					pj.Chapters = append([]int(nil), ep.ChapNums...)
+					_ = s.store.SaveMeta(pj)
+				}
+			}
 			epsAll = append(epsAll, epName)
 			created = append(created, epName)
 			lastEp = ep
@@ -225,6 +221,49 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			onEps(series, created)
 		}
 	}
+
+	// ---- 一章一档快路径(2026-09-12 用户定调「一章一档还需要慢慢拆集?」)----
+	// 正文是一章一档时,章界/章号/章名/该章正文**全部已知** —— "拆集"这件事本身不需要
+	// LLM 参与:平台按章切片直接建集(秒级),LLM 只负责给每章写一条 brief(后台并行补,
+	// 写完回填该集 source.txt)。相比"分段等 LLM 拆",首集可开跑的时间从数分钟降到秒级,
+	// 而且集数=章数、集名=章名、每集原文按章切片 —— 三项都由构造保证,不存在跳章/并章。
+	if chaps := SplitChapters(text); len(chaps) >= 8 {
+		eps := alignEpsToChapters(chaps, nil) // 一章一集;brief 先留空,后台补
+		// 集号:平台按章序连续编排(补缺模式从保留区末集续接,与分段路径同一规则)
+		num := gapStartEp
+		for i := range eps {
+			num++
+			eps[i].Ep = num
+		}
+		createSeg(eps, chunk{})
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+			Message: fmt.Sprintf("⚡ 一章一档:已按章节文件直接建集 %d 集(章名即集名,原文逐章附着);各集剧情 brief 后台并行补写中", len(eps))})
+		if onEps != nil && len(epsAll) > 0 {
+			onEps(series, epsAll)
+		}
+		go s.fillEpisodeBriefs(ctx, series, eps, artStyle, briefMin, briefMax, prevSum)
+		return series, epsAll, nil
+	}
+
+	// ---- 分层拆解 + 流水线化 ----
+	// 全本(如 240 章 39 万字)单次调用输出上限装不下完整拆集;按章节切块
+	// 逐段拆解,且**逐段建项**:onEps 回调让产线在首段就绪时即启动,后续段
+	// 静默补集(生产者-消费者,2026-09-10 用户定调)。
+	var chunks []chunk
+	// 阈值 4 万(原 12 万):8-10 万字的书单段拆解时 brief+chapters+思考链
+	// 仍会撞输出上限截断(2026-09-10 实证 ep12 处 JSON 腰斩);分段输出才可控
+	if len([]rune(text)) > chunkSize {
+		// 4 万字/段:更大的段输出(30-45 集大纲+思考链)会撞 completion 上限
+		// (2026-09-10 实证第 1/8 段 JSON 截断);缩小段=缩输出。
+		for _, ck := range chunkNovelText(text, chunkSize) {
+			chunks = append(chunks, chunk(ck))
+		}
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: fmt.Sprintf("📚 全本 %d 字,分层拆解:共 %d 段(逐段拆集,首段即开产线,后续段静默补集)", len([]rune(text)), len(chunks))})
+	} else {
+		chunks = []chunk{{label: "全书", body: text}}
+	}
+
 	// ===== 并行拆段(2026-09-10 用户定调:字数多就拆多任务跑,互不影响)=====
 	// 各段章界不重叠、集号由系统按段序统一编排,段间零依赖 → 3 路并发
 	// 调 LLM,总耗时≈单段时长(原逐段串行是段数×单段)。
@@ -296,6 +335,17 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 						Message: fmt.Sprintf("⚠ 第 %d/%d 段拆集结果异常,自动重试一次:%v", ci+1, len(chunks), err)})
 				}
 			}
+			// 平台强制一章一集(2026-09-12):集名取章名、集与章一一对应、原文按章切片。
+			// LLM 只写 brief —— 它此前会跳章/并章,并把"整段范围"抄进每集的 chapters 字段,
+			// 导致原文附着失败 + 覆盖核对误判(64 集被误删成 63 集的事故根因)。
+			if chaps := SplitChapters(ck.body); len(chaps) > 0 {
+				if len(eps) != len(chaps) {
+					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+						Message: fmt.Sprintf("⚠ 第 %d/%d 段:LLM 给了 %d 集、本段实际 %d 章 —— 已按「一章一集」校正为 %d 集",
+							ci+1, len(chunks), len(eps), len(chaps), len(chaps))})
+				}
+				eps = alignEpsToChapters(chaps, eps)
+			}
 			results[ci] = segResult{eps: eps, book: book, style: style, err: err}
 		}(ci, ck)
 	}
@@ -336,7 +386,6 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		}
 		plannedEps = append(plannedEps, res.eps...)
 		createSeg(res.eps, ck)
-		jobSet(series, "running", createdTotal, fmt.Sprintf("已建 %d 集(拆解进行中)", createdTotal))
 		if len(chunks) > 1 {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 				Message: fmt.Sprintf("📚 分层拆解 %d/%d 段入队完成,累计已建 %d 集", ci+1, len(chunks), createdTotal)})
@@ -363,6 +412,21 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		cov := map[int]bool{}
 		numRe := regexp.MustCompile(`第\s*0*([0-9]{1,4})\s*[章回节]`)
 		for _, ep := range plannedEps {
+			// ①真源优先:平台在拆集时写进项目的章号(Project.Chapters)。
+			// ②其次:该集【本集原文】里实际出现的章头。
+			// ③最后才看 LLM 写在 chapters 字段里的字符串 —— 实测它会把"整段范围"
+			//   抄进每一集,是 2026-09-12「误判缺章 → 误删正确分集」事故的直接诱因。
+			if pid := s.seriesExistingEp(series, ep.Ep); pid != "" {
+				if pj, ok := s.store.Get(pid); ok && len(pj.Chapters) > 0 {
+					for _, c := range pj.Chapters {
+						cov[c] = true
+					}
+					continue
+				}
+				for _, c := range s.epCoveredChapters(pid) {
+					cov[c] = true
+				}
+			}
 			var vals []int
 			for _, m := range numRe.FindAllStringSubmatch(ep.Chapters, -1) {
 				if v, e := strconv.Atoi(m[1]); e == nil {
@@ -508,9 +572,14 @@ func (s *Server) autoGapFillTrim(name, text string) (string, int, epItem, string
 			continue
 		}
 		n, _ := strconv.Atoi(m[1])
-		chs := s.epCoveredChapters(p.ID)
+		// 覆盖真源:优先读项目里持久化的 Chapters(平台拆集时写的),其次读原文章头。
+		chs := p.Chapters
+		if len(chs) == 0 {
+			chs = s.epCoveredChapters(p.ID)
+		}
 		c := epCov{id: p.ID, num: n, chMin: -1}
 		if len(chs) > 0 {
+			sort.Ints(chs)
 			c.chMin = chs[0]
 			for _, x := range chs {
 				covered[x] = true
@@ -551,6 +620,15 @@ func (s *Server) autoGapFillTrim(name, text string) (string, int, epItem, string
 				Message: fmt.Sprintf("⚠ 检出缺章(第 %v 章)但批量产线运行中:请先停止产线再重新提交,自动补缺将删除第 %d 集起的分集并重拆续接", missing, cut)})
 			return text, 0, epItem{}, "", false
 		}
+	}
+	// 内容实证护栏(2026-09-12 血案):"Chapters 字段/原文章头都没看到"≠"内容真的丢了"。
+	// 实测事故里,第 9/10/11 章的**元数据**缺失被判成缺章,于是删掉本来正确的分集重拆,
+	// 64 集变 63 集、第 009 章内容真的丢了。这里加一道硬校验:只有该章正文确实不在
+	// 任何分集的 source.txt 里,才允许动刀;否则只告警、不删集。
+	if bad := s.chapterTextMissingAnywhere(text, c0); !bad {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 第 %d 章未见于任何分集的覆盖信息,但其正文实际已在某个分集里 —— 判定为元数据缺失,已跳过自动补缺(不删集);如确需重拆请手动处理", c0)})
+		return text, 0, epItem{}, "", false
 	}
 	offset := chapterHeadOffset(text, c0)
 	if offset < 0 {
@@ -610,3 +688,142 @@ func (s *Server) autoGapFillTrim(name, text string) (string, int, epItem, string
 }
 
 // failNote 创建失败数附注。
+
+// chapterTextMissingAnywhere 判定"第 num 章的正文是否确实不在任何分集里"。
+//
+// 判据:取该章正文开头的一段特征串(跳过章头行、去掉空白),在**所有**分集的
+// source.txt 里找;找到即说明内容还在(只是元数据缺失),不该删集重拆。
+// 找不到特征串时保守返回 true(无从判断时按老行为走,不做更激进的改动)。
+func (s *Server) chapterTextMissingAnywhere(text string, num int) bool {
+	for _, ch := range SplitChapters(text) {
+		if ch.Num != num {
+			continue
+		}
+		// 特征串:章头之后的正文切片(去空白,取 24 字)
+		body := ch.Text
+		if i := strings.Index(body, "\n"); i >= 0 {
+			body = body[i+1:]
+		}
+		probe := strings.Join(strings.Fields(body), "")
+		if r := []rune(probe); len(r) > 24 {
+			probe = string(r[:24])
+		}
+		if len([]rune(probe)) < 8 {
+			return true // 该章正文太短,无从判断
+		}
+		for _, p := range s.store.List() {
+			if src, err := s.store.LoadSource(p.ID); err == nil && strings.Contains(strings.Join(strings.Fields(src), ""), probe) {
+				return false // 内容还在某个分集里
+			}
+		}
+		return true
+	}
+	return true
+}
+
+// fillEpisodeBriefs 一章一档快路径的后台步骤:为每章并行补写剧情节拍 brief,并回填到
+// 该集 source.txt 的【本集剧情】与前情提要。
+//
+// 为什么要并行且不阻塞建集:集与章的对应关系、集名、原文在"建集"这一刻就已经确定,
+// brief 只影响分镜 LLM 的改编质量(它同时还能看到完整原文)。用户 2026-09-12 的诉求是
+// 「一章一档还需要慢慢拆集?」——所以建集必须秒级完成、产线立即可开跑,brief 随后补齐;
+// 每集渲染要数分钟,后台补写远远跑在前面。
+func (s *Server) fillEpisodeBriefs(_ context.Context, series string, eps []epItem, artStyle string, briefMin, briefMax, prevSum int) {
+	// 独立上下文:本函数是后台补写,而调用方(拆集生产者)在建集后立刻返回、
+	// 其 ctx 随即被取消 —— 实测用调用方 ctx 会让 64 个 brief 请求在同一秒内
+	// 全部 "context canceled"(建集是秒级的,brief 是分钟级的,生命周期必须分开)。
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Minute)
+	defer cancel()
+	conc := 3
+	sem := make(chan struct{}, conc)
+	var wg sync.WaitGroup
+	briefs := make([]string, len(eps))
+	for i := range eps {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			ep := eps[i]
+			b := s.genOneChapterBrief(ctx, series, ep, artStyle, briefMin, briefMax)
+			if strings.TrimSpace(b) == "" {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", ProjectID: fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, safeSeries(ep.Title)),
+					Message: fmt.Sprintf("⚠ 第 %d 集《%s》的剧情 brief 生成失败(不影响渲染:分镜仍可用本集原文改编)", ep.Ep, ep.Title)})
+				return
+			}
+			briefs[i] = b
+			// 回填 source:补齐【本集剧情】与前情提要(建集时 brief 尚不存在)
+			epID := fmt.Sprintf("%s·第%02d集·%s", series, ep.Ep, safeSeries(ep.Title))
+			src, err := s.store.LoadSource(epID)
+			if err != nil {
+				return
+			}
+			src = replaceEpisodeBrief(src, b)
+			if i > 0 && briefs[i-1] != "" {
+				src = upsertPrevSummary(src, eps[i-1].Ep, eps[i-1].Title, clampRunes(briefs[i-1], prevSum))
+			}
+			_ = s.store.SaveSource(epID, src)
+		}(i)
+	}
+	wg.Wait()
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+		Message: fmt.Sprintf("✔ 各集剧情 brief 补写完成(%d 集,已回填到分集 source)", len(eps))})
+}
+
+// genOneChapterBrief 单章 brief:把该章原文交给 LLM,产出「剧情节拍 + 关键台词」清单。
+func (s *Server) genOneChapterBrief(ctx context.Context, series string, ep epItem, artStyle string, briefMin, briefMax int) string {
+	g := s.cfg.Get()
+	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
+	if !client.Configured() {
+		return ""
+	}
+	cctx, cancel := context.WithTimeout(ctx, time.Duration(g.LLM.Timeout)*time.Second)
+	defer cancel()
+	sys := fmt.Sprintf("你在为一集短视频写「剧情节拍 brief」(中文,%d-%d 字):按该章原文的先后顺序逐拍列出事件、出场人物、"+
+		"关键台词(逐字保留重要对白)、情绪转折与结尾悬念;只写这一章的内容,不要扩写、不要引用其它章节。", briefMin, briefMax)
+	user := fmt.Sprintf("作品:《%s》 第%d集《%s》%s\n\n【本章原文】\n%s", series, ep.Ep, ep.Title,
+		func() string {
+			if strings.TrimSpace(artStyle) != "" {
+				return "(风格:" + artStyle + ")"
+			}
+			return ""
+		}(), clampRunes(ep.Orig, 12000))
+	out, err := client.Chat(cctx, []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}, false)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
+}
+
+// replaceEpisodeBrief 把 source.txt 里的【本集剧情】替换为新 brief(没有该段则插入)。
+func replaceEpisodeBrief(src, brief string) string {
+	const mark = "【本集剧情】"
+	if i := strings.Index(src, mark); i >= 0 {
+		head := src[:i+len(mark)]
+		rest := src[i+len(mark):]
+		// 剧情段到下一个空行为止
+		if j := strings.Index(rest, "\n\n"); j >= 0 {
+			return head + brief + rest[j:]
+		}
+		return head + brief
+	}
+	// 没有剧情段:插到全局风格行之后
+	if i := strings.Index(src, "\n\n"); i >= 0 {
+		return src[:i] + "\n\n" + mark + brief + src[i:]
+	}
+	return src + "\n\n" + mark + brief
+}
+
+// upsertPrevSummary 写入/替换该集 source.txt 里的【前情提要】(前情来自上一集 brief)。
+func upsertPrevSummary(src string, prevEp int, prevTitle, prevBrief string) string {
+	line := fmt.Sprintf("【前情提要】第%02d集《%s》:%s", prevEp, prevTitle, prevBrief)
+	re := regexp.MustCompile(`(?m)^【前情提要】[^\n]*$`)
+	if re.MatchString(src) {
+		return re.ReplaceAllString(src, line)
+	}
+	// 插到标题行之后
+	if i := strings.Index(src, "\n"); i >= 0 {
+		return src[:i+1] + line + src[i+1:]
+	}
+	return line + "\n" + src
+}

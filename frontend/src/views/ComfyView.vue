@@ -5,6 +5,20 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 const st = ref(null)
 const loading = ref(false)
+// Sage 加速:状态 + 一键安装(轮子与本机 torch 绑定,升级后需重装)
+const sage = ref(null)
+const sageBusy = ref(false)
+async function loadSage() {
+  try { sage.value = await api.comfySage() } catch { sage.value = null }
+}
+async function installSage() {
+  sageBusy.value = true
+  try {
+    const d = await api.comfySageInstall()
+    ElMessage.success(`Sage 加速已安装:${d.version}(${d.note})`)
+    await loadSage()
+  } catch (e) { ElMessage.error('安装失败:' + e.message) } finally { sageBusy.value = false }
+}
 const acting = ref('')
 
 // 版本管理器
@@ -14,6 +28,7 @@ const checking = ref(false)
 
 
 async function refresh() {
+  loadSage()
   loading.value = true
   try { st.value = await api.comfyAdmin() }
   catch (e) { ElMessage.error('状态获取失败') }

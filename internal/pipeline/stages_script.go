@@ -77,6 +77,13 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	if err != nil {
 		return err
 	}
+	// 台词语言标记兜底:LLM 常把模板要求的 <d>[Chinese]…</d> 写成 <d>…</d>,
+	// 标记一丢,H3 就用任意语言说话(成片出现听不懂的"鸟语",2026-09-12 用户报障)。
+	// 在**存盘前**补齐:方案、2K 重生成、局部重绘、音频驱动、续跑重渲都读这份文本,
+	// 一处修好全链受益。
+	for i := range plan.Shots {
+		plan.Shots[i].H3Prompt = EnsureChineseDialogue(plan.Shots[i].H3Prompt)
+	}
 	if err := c.store.SavePlan(proj.ID, plan); err != nil {
 		return err
 	}

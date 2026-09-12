@@ -26,7 +26,34 @@ type ScriptParams struct {
 // AssetsParams 资产阶段(assets)参数。
 type AssetsParams struct {
 	Source string `json:"source"` // upload(手动上传)/ krea2(Krea-2 自动生成)/ skip(纯文生 t2va)
+	// Views 角色多视角转台图:定妆照 → H3 原地转身 → 抽帧拼转台图,渲染时作该角色
+	// 的第二张参考。缺了就补,是"角色只有一张正面照"的直接解法。
+	// 代价是每个角色一次单镜渲染(数分钟,仅首次;补完写回资产库,全局摊一次)。
+	//
+	// 用 *bool 而不是 bool:老项目 json 里根本没有这个键,解成 false 会让新能力
+	// 在存量项目上默认关闭(用户报的正是存量项目里角色只有正面照)。nil 语义 =
+	// 「未表态」→ 按默认开处理,见 ViewsOn()。
+	Views *bool `json:"views"`
+	// CompactRefs 参考图去冗余:只喂转台图、不喂单独那张定妆照(省一张参考图)。
+	//
+	// **默认关,且推荐保持关**(2026-09-12 实测回退):转台图是 hstack 拼合的 4 格横向图,
+	// 模型按入口分辨率缩放它时每一格只剩约 1/4 的像素 —— 定妆照里那张锐利的脸被摊薄,
+	// 而"锁脸"靠的正是这张脸的细节。实测只喂拼合图后,渲染出来的人物服装/道具照抄得
+	// 很准、脸却变成"另一个更像俊男的版本"(脸更长、眉更重、头发更散),用户当场报
+	// 「定妆照/多视角/视频渲染的人物一致性去哪了」。所以默认**两张都喂**:定妆照负责
+	// 锐利的脸(锁脸锚点),转台图负责其它角度。仅在明确不需要角度参考、只要省显存时
+	// 才打开(显式 true)。
+	CompactRefs *bool `json:"compact_refs"`
 }
+
+// CompactRefsOn 参考图是否去冗余(未表态 = **关**,见 CompactRefs 的实测说明)。
+func (a AssetsParams) CompactRefsOn() bool { return a.CompactRefs != nil && *a.CompactRefs }
+
+// ViewsOn 多视角补齐是否开启(未表态 = 开)。
+func (a AssetsParams) ViewsOn() bool { return a.Views == nil || *a.Views }
+
+// Bool 返回可比较的布尔值(供需要显式 true/false 的调用方使用)。
+func Bool(v bool) *bool { return &v }
 
 // RenderParams 渲染阶段(render)参数。
 type RenderParams struct {
@@ -67,7 +94,7 @@ func DefaultStageParams() StageParams {
 		// MaxShots=0:内容驱动(2026-09-11 用户定调「该多少就多少」)——LLM 看
 		// 原文自行决定镜头数,不人为钳制;Sanitize 上限 30 只作安全网
 		Script: ScriptParams{MaxShots: 0, TotalSeconds: 0, StyleHint: ""},
-		Assets: AssetsParams{Source: "krea2"}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
+		Assets: AssetsParams{Source: "krea2", Views: Bool(true)}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
 			// Seam 默认开:镜间连续(MotionContext)让相邻镜头运镜/画面延续,

@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,9 +12,11 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/project"
+	"github.com/YiIimini/ManJuX/internal/sysmon"
 )
 
 // Phase 阶段标识。
@@ -112,6 +115,12 @@ func (c *Coordinator) HasRunning() bool {
 
 // Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段);
 // engineOverride 非空时本次运行覆盖项目引擎(镜头级分派:auto/comfy/api)。
+//
+// **全局单管线铁律(2026-09-12 用户定调「管线生产需要合理化」)**:同一时刻只允许
+// 一条管线在跑。多集并发共用**一张显卡**,不是"更快"而是互相伤害:出图任务排在
+// 长视频任务后面排队(旧实现排队时间还计入超时预算 → 定妆照整批被判"渲染超时"),
+// 单镜从 3-5 分钟涨到 20+ 分钟(显存被反复换入换出)。实测三条管线并发时,角色与
+// 场景定妆照接连失败、镜头因缺参考图降级纯文生。要并行请换一张卡,不要靠并发本集。
 func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride string, seedOverride int64) error {
 	if phase == "" {
 		phase = PhaseAll
@@ -120,6 +129,10 @@ func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride 
 	if _, dup := c.runs[projectID]; dup {
 		c.mu.Unlock()
 		return fmt.Errorf("项目正在运行中,请先停止")
+	}
+	for id := range c.runs {
+		c.mu.Unlock()
+		return fmt.Errorf("另一条管线正在运行(《%s》):为避免两条管线抢同一张显卡一起变慢/超时(实测并发会让定妆照生成超时、单镜从 3-5 分钟涨到 20+ 分钟),请先停止它再启动本集", id)
 	}
 	proj, ok := c.store.Get(projectID)
 	if !ok {
@@ -145,15 +158,15 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if err != nil {
 		return fmt.Errorf("尚未生成分镜方案")
 	}
-	kind, name, _, prompt := "", "", "", ""
+	kind, name, desc, prompt := "", "", "", ""
 	for _, ch := range plan.Characters {
 		if "char:"+ch.ID == assetID {
-			kind, name, _, prompt = "characters", ch.Name, ch.Description, ch.ImagePrompt
+			kind, name, desc, prompt = "characters", ch.Name, ch.Description, ch.ImagePrompt
 		}
 	}
 	for _, sc := range plan.Scenes {
 		if "scene:"+sc.ID == assetID {
-			kind, name, _, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt
+			kind, name, desc, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt
 		}
 	}
 	if kind == "" {
@@ -172,7 +185,9 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	// 同剧对比+风格具象化注入:重生成与产线生成同规则;已含的块不重复追加
 	if kind == "characters" && !isChibi {
 		if !strings.Contains(prompt, "RENDER STYLE") {
+			prompt = normalizeUniformWording(prompt) // 名词短语层面的去警用化
 			prompt += styleExpand(plan.Style)
+			prompt += uniformCivilianClarify(desc)
 		}
 		if !strings.Contains(prompt, "CAST DISTINCTNESS") {
 			prompt += castContrastBlock(plan, name)
@@ -215,7 +230,29 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if err := c.store.SaveAssets(projectID, assets); err != nil {
 		return err
 	}
-	c.emit(projectID, PhaseAssets, 0, "success", 0, "✔ 已重新生成:%s「%s」", kindLabel(kind), name)
+	// 换脸后旧的角度图必须一并作废,并把新图写回资产库(2026-09-12 修):
+	//   ①项目侧:同名 <base>_view_*.png / <base>_turnaround.png 对应的是上一张脸,
+	//     留着会让"定妆照是新脸、多位图是旧脸"混用;
+	//   ②库侧:此前重生成只更新项目、不更新库 —— 库是跨集复用的真源,不写回就等于
+	//     后续剧集仍在复用旧脸(实测:同一角色在库里还是修复前的圆脸大眼版本)。
+	// 清掉派生图后,多位图会在渲染前自动补齐(或用户点「补全多视角」重建)。
+	if !strings.HasSuffix(assetID, "_chibi") {
+		base := strings.TrimSuffix(path, filepath.Ext(path))
+		for _, pat := range []string{base + "_view_*.png", base + "_turnaround.png"} {
+			if ms, gerr := filepath.Glob(pat); gerr == nil {
+				for _, m := range ms {
+					_ = os.Remove(m)
+				}
+			}
+		}
+		if c.lib != nil {
+			c.lib.ClearRelated(kind, name)
+			if _, err := c.lib.Put(kind, name, desc, prompt, path, projectID, "krea2"); err != nil {
+				c.emit(projectID, PhaseAssets, 0, "warn", 0, "⚠ 写回资产库失败(不影响本项目):%v", err)
+			}
+		}
+	}
+	c.emit(projectID, PhaseAssets, 0, "success", 0, "✔ 已重新生成:%s「%s」(旧角度图已作废,渲染前会自动补多视角)", kindLabel(kind), name)
 	return nil
 }
 
@@ -294,6 +331,10 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 	ended := ResultCompleted
 	defer func() {
 		c.SetResult(proj.ID, ended)
+		// 管线收尾:把 GPU 还给桌面(2026-09-12 用户定调「该释放的就进行释放,
+		// 专职某一项,避免资源抢占」)。渲染结束后 H3 常驻显存对用户没有任何价值 ——
+		// 桌面/浏览器/其它工具都在等这块显存,而下一集渲染前重新加载只要几十秒。
+		c.releaseVRAM(proj.ID, "管线结束")
 		c.finish(proj.ID)
 	}()
 	stages := []string{phase}
@@ -370,3 +411,63 @@ func stageLabel(id string) string {
 }
 
 // ---------- 阶段一:script ----------
+
+// releaseVRAM 释放本地引擎占用的显存并把结果如实播报(引擎未运行/云端引擎时静默)。
+//
+// 「专职某一项,避免资源抢占」的落地点:重活做完就把显存交还,别攥着不放。
+// 只在**没有正在跑的管线**时由一次性操作调用(callers 自己判断);管线内部的调用
+// 由本函数放行(projID 就是当前管线自己)。
+func (c *Coordinator) releaseVRAM(projID, why string) {
+	eng, err := c.reg.Get("comfy")
+	if err != nil {
+		return
+	}
+	before, hasBefore := sysmon.VRAMUsedMB()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := eng.FreeVRAM(ctx); err != nil {
+		return // 引擎没起来/不可达:没什么可释放的,不刷屏
+	}
+	if !hasBefore {
+		return
+	}
+	// 卸载 + empty_cache 是异步落下去的,轮询取最小值,别立刻读成"没释放"
+	after := before
+	for i := 0; i < 6; i++ {
+		time.Sleep(400 * time.Millisecond)
+		if a, ok := sysmon.VRAMUsedMB(); ok && a < after {
+			after = a
+		}
+	}
+	freed := (before - after) / 1024
+	if freed >= 0.3 {
+		c.emit(projID, "system", 0, "info", 0, "🧽 %s:释放显存 %.1f GB(现占用 %.1f GB,交还桌面)", why, freed, after/1024)
+	} else {
+		c.emit(projID, "system", 0, "info", 0, "🧽 %s:显存已无占用(当前 %.1f GB)", why, after/1024)
+	}
+}
+
+// ReleaseVRAMIfIdle 供**一次性 GPU 操作**(抽卡/自定义新建/补全多视角/局部重绘/
+// 音频驱动/单资产重生成/2K 定稿)收尾调用:没有管线在跑就把显存交还桌面;
+// 有管线在跑时不动 —— 那块 GPU 正被管线使用,释放会把它的模型从显存里踢出去。
+// 可靠性护栏:ComfyUI 队列里还有活时**绝不**释放 —— /free 会卸载模型,若那条
+// 任务正在执行,它的权重会被踢出显存(接下来每步重新流式加载,等同白跑甚至超时)。
+// 队列为空才是真正的空闲,这时释放才安全。
+func (c *Coordinator) ReleaseVRAMIfIdle(why string) {
+	if c.HasRunning() {
+		return
+	}
+	eng, err := c.reg.Get("comfy")
+	if err != nil {
+		return
+	}
+	if ce, ok := eng.(*comfyengine.Engine); ok {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		st, aerr := ce.Admin(ctx)
+		cancel()
+		if aerr == nil && st != nil && (st.Running+st.Pending) > 0 {
+			return // 队列非空:别人(或刚投的任务)正在用,不许抢
+		}
+	}
+	c.releaseVRAM("", why)
+}

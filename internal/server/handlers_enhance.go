@@ -128,10 +128,13 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// 默认复用该镜原提示词:只把崩坏部分的描述改对,其余保持不变,重绘的局部才接得上
 	prompt := strings.TrimSpace(in.Prompt)
 	if prompt == "" {
-		prompt = ctx.shot.H3Prompt
+		// 语言标记兜底(幂等):局部重绘/音频驱动同样要有 [Chinese] 标记,否则新出的
+		// 片段又会出现听不懂的鸟语(2026-09-12)
+		prompt = pipeline.EnsureChineseDialogue(ctx.shot.H3Prompt)
 	}
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
-	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets)
+	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
+		ctx.proj.Config.Params.Assets.CompactRefsOn())
 
 	s.opLog("✨ 局部重绘:%s 镜 %d 开始", ctx.proj.ID, ctx.shot.ID)
 	if _, err := ctx.engineCE.MaskFix(r.Context(), ctx.src, comfyengine.MaskOptions{
@@ -152,9 +155,11 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// 产物作为**独立文件**保留,不覆盖原镜头产物 —— 由用户比对后再决定是否采用
 	rel := s.relFile(ctx.proj.ID, ctx.outPath)
 	s.opLog("✔ 局部重绘完成:%s 镜 %d → %s", ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath))
+	// 重活做完把显存交还(队列还有活/管线在跑时内部会自己拦下,见 ReleaseVRAMIfIdle)
+	s.pipe.ReleaseVRAMIfIdle("局部重绘完成")
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "file": rel,
-		"url": "/api/projects/" + ctx.proj.ID + "/files/" + rel,
+		"url":  "/api/projects/" + ctx.proj.ID + "/files/" + rel,
 		"note": "重绘结果作为独立文件产出,原镜头未改动;比对满意后可在故事板中替换",
 	})
 }
@@ -185,10 +190,13 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	rp := ctx.proj.Config.Params.Render
 	prompt := strings.TrimSpace(in.Prompt)
 	if prompt == "" {
-		prompt = ctx.shot.H3Prompt
+		// 语言标记兜底(幂等):局部重绘/音频驱动同样要有 [Chinese] 标记,否则新出的
+		// 片段又会出现听不懂的鸟语(2026-09-12)
+		prompt = pipeline.EnsureChineseDialogue(ctx.shot.H3Prompt)
 	}
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
-	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets)
+	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
+		ctx.proj.Config.Params.Assets.CompactRefsOn())
 
 	s.opLog("🎙 音频驱动:%s 镜 %d 开始", ctx.proj.ID, ctx.shot.ID)
 	// 音频走 Job.Audios → H3 Ref2V 的 ref_audios 条件(见 comfyengine 的音频参考实现)
@@ -206,6 +214,7 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	}
 	rel := s.relFile(ctx.proj.ID, ctx.outPath)
 	s.opLog("✔ 音频驱动完成:%s 镜 %d → %s", ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath))
+	s.pipe.ReleaseVRAMIfIdle("音频驱动完成")
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "file": rel,
 		"url":  "/api/projects/" + ctx.proj.ID + "/files/" + rel,

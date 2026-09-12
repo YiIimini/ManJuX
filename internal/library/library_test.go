@@ -199,3 +199,242 @@ func TestPutCollectsRelatedImagesAndClearRelated(t *testing.T) {
 		t.Errorf("ClearRelated 误删了 asset.json: %v", err)
 	}
 }
+
+// TestPutKeepsExistingRelatedImages 重新入库(源图只有单张定妆照)时,
+// 条目目录里**已经存在**的多视角图不能被丢弃。
+//
+// 回归 2026-09-12:库复用的项目、重抽后的再次入库、渲染前多视角补齐回写,
+// 这三条链路调用 Put 时给的源图都只有定妆照一张。若 Images 只按源图收集,
+// 库条目就会从「定妆照 + 3 视角 + 转台图」退化成「只有定妆照」——
+// 详情弹窗的多视角凭空消失,后续项目复用也拿不到第二张参考。
+func TestPutKeepsExistingRelatedImages(t *testing.T) {
+	root := t.TempDir()
+	l, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := t.TempDir()
+	master := filepath.Join(src, "characters_char_c1.png")
+	if err := os.WriteFile(master, []byte("portrait"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Put("characters", "留图角色", "描述", "prompt", master, "p1", "krea2"); err != nil {
+		t.Fatalf("首次 Put 失败: %v", err)
+	}
+	if got, _, ok := l.Match("characters", "留图角色"); !ok || len(got.Images) != 1 {
+		t.Fatalf("首次入库应只有主图,实际 %+v", got)
+	}
+	// 模拟渲染前补齐多视角:库目录内直接落角度图(与生产同目录同命名规则)
+	dir := filepath.Join(root, "characters", "留图角色")
+	for _, f := range []string{"portrait_view_side.png", "portrait_view_back.png", "portrait_turnaround.png"} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("view:"+f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(l.RelatedFiles("characters", "留图角色")); n != 3 {
+		t.Fatalf("RelatedFiles 应看到 3 张固有角度图,实际 %d", n)
+	}
+	// 再次入库:源图仍只有定妆照
+	e, err := l.Put("characters", "留图角色", "描述", "prompt", master, "p1", "library")
+	if err != nil {
+		t.Fatalf("再次 Put 失败: %v", err)
+	}
+	if len(e.Images) != 4 {
+		t.Fatalf("重新入库后角度图被丢弃: %v", e.Images)
+	}
+	parsed, _, _ := l.Match("characters", "留图角色")
+	if len(parsed.Images) != 4 {
+		t.Fatalf("asset.json 里的 Images 应保留 4 张: %v", parsed.Images)
+	}
+}
+
+// TestSetMetaKeepsImagesAndCount SetMeta 只改描述与提示词,图片清单/来源/复用计数
+// 一个都不能动(否则详情弹窗里改一次描述就会把多视角参考和统计抹掉)。
+func TestSetMetaKeepsImagesAndCount(t *testing.T) {
+	root := t.TempDir()
+	l, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "characters_char_c2.png")
+	if err := os.WriteFile(src, []byte("portrait"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Put("characters", "元数据角色", "旧描述", "old prompt", src, "proj-x", "gacha"); err != nil {
+		t.Fatal(err)
+	}
+	l.BumpUsed("characters", "元数据角色")
+	if err := os.WriteFile(filepath.Join(root, "characters", "元数据角色", "portrait_turnaround.png"), []byte("turn"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e, err := l.SetMeta("characters", "元数据角色", "新描述", "new prompt")
+	if err != nil {
+		t.Fatalf("SetMeta 失败: %v", err)
+	}
+	if e.Description != "新描述" || e.ImagePrompt != "new prompt" {
+		t.Fatalf("描述/提示词未更新: %+v", e)
+	}
+	if e.Source != "gacha" || e.SourceProject != "proj-x" || e.UsedCount != 1 {
+		t.Fatalf("来源/复用计数被改动: %+v", e)
+	}
+	if e.Image != "characters/元数据角色/portrait.png" {
+		t.Fatalf("主图路径被改动: %s", e.Image)
+	}
+}
+
+// TestPutFromEntryDirKeepsGeneratedViews 源图与条目目录是**同一个目录**时,
+// 重新入库必须保住该目录里刚生成的角度图。
+//
+// 回归 2026-09-12(真机实证):「补全多视角」由库自己生成 3 帧 + 转台图后落在条目
+// 目录内,再调 Put(源图 = 条目自己的 portrait.png)刷新图片清单。若实现是
+// 「先清空目录里的角度图再按源图拷」,刚生成的四张会被自己删掉、拷贝时源文件已
+// 不存在 —— 接口返回 200、日志写「补全多视角完成」,而条目里只剩一张定妆照,
+// 用户看到的就是"点了补全、还是单张正面照"。
+func TestPutFromEntryDirKeepsGeneratedViews(t *testing.T) {
+	root := t.TempDir()
+	l, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "portrait_src.png")
+	if err := os.WriteFile(src, []byte("portrait"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Put("characters", "自生成角色", "描述", "prompt", src, "proj", "upload"); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(root, "characters", "自生成角色")
+	for _, f := range []string{
+		"portrait_view_threequarter.png", "portrait_view_side.png",
+		"portrait_view_back.png", "portrait_turnaround.png",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, f), []byte("view:"+f), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	master, _, ok := l.Match("characters", "自生成角色")
+	if !ok {
+		t.Fatal("条目应存在")
+	}
+	// 这就是 libraryViews 的收尾动作:用条目自己的主图再 Put 一次刷新清单
+	e, err := l.Put("characters", "自生成角色", master.Description, master.ImagePrompt,
+		filepath.Join(root, filepath.FromSlash(master.Image)), "", "upload")
+	if err != nil {
+		t.Fatalf("Put 失败: %v", err)
+	}
+	if len(e.Images) != 5 {
+		t.Fatalf("刚生成的角度图被自己删掉了: got %v", e.Images)
+	}
+	for _, f := range []string{
+		"portrait_view_threequarter.png", "portrait_view_side.png",
+		"portrait_view_back.png", "portrait_turnaround.png",
+	} {
+		if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+			t.Errorf("角度图应仍在磁盘上 %s: %v", f, err)
+		}
+	}
+	// 角度图还在,渲染侧推导第二张参考的契约就必须命中
+	if !containsStr(e.Images, "characters/自生成角色/portrait_turnaround.png") {
+		t.Errorf("Images 缺少转台图: %v", e.Images)
+	}
+}
+
+func containsStr(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestFindMatchesSameCharacterUnderDifferentNames 同一角色换个叫法必须复用同一条目。
+//
+// 回归 2026-09-12(用户报「相同角色无中生有多产生出定妆照,名称不一致和名称一致
+// 都有出现」):分集分镜由 LLM 独立撰写,同一角色会换称呼 —— 实测同一本小说里机关人
+// 在 第01集叫「机关人（一三七四一号）」、第02集叫「阿枢（一三七四一号）」、
+// 第03集叫「机关人（一三七四一）」,肩上小人也有三种叫法。按名精确匹配会为同一个人
+// 反复出定妆照(库里的 19 个角色里至少 5 个是同人分身)。
+func TestFindMatchesSameCharacterUnderDifferentNames(t *testing.T) {
+	root := t.TempDir()
+	l, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "p.png")
+	if err := os.WriteFile(src, []byte("png"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const desc = "少年形制的梨木机关人，打磨极细的哑光木面，刀刻平直细眉、挺直鼻梁、唇线抿成一条极克制的直线；耳后到颈侧刻着一行极小的小楷编号"
+	if _, err := l.Put("characters", "机关人（一三七四一号）", desc, "prompt", src, "p1", "krea2"); err != nil {
+		t.Fatal(err)
+	}
+	// 上装一个不同角色,用于验证"不许误并"
+	const desc2 = "十六七岁的赶车少年帮工，个子已长开而肩膀还窄；长圆脸，晒黑的皮肤，短而毛糙的黑发，直而粗的眉毛"
+	if _, err := l.Put("characters", "石柱子", desc2, "prompt", src, "p1", "krea2"); err != nil {
+		t.Fatal(err)
+	}
+
+	cases := []struct {
+		name, desc, want string
+	}{
+		{"阿枢（一三七四一号）", desc, "机关人（一三七四一号）"},                   // 名字全变、描述逐字相同
+		{"机关人（一三七四一）", desc, "机关人（一三七四一号）"},                   // 序号尾少一字
+		{"机关人", desc, "机关人（一三七四一号）"},                          // 去掉括号内容
+		{"机关人（一三七四一号）", "完全不同的描述甲甲甲甲甲甲甲甲甲甲甲甲", "机关人（一三七四一号）"}, // 名字精确匹配优先
+	}
+	for _, c := range cases {
+		e, _, ok := l.Find("characters", c.name, c.desc)
+		if !ok {
+			t.Errorf("Find(%q) 未命中(应判为同一角色)", c.name)
+			continue
+		}
+		if e.Name != c.want {
+			t.Errorf("Find(%q) 命中 %q, want %q", c.name, e.Name, c.want)
+		}
+	}
+	// 别名必须落盘:下次按名字直接命中,界面上也能看出是同一角色
+	e, _, ok := l.Find("characters", "阿枢（一三七四一号）", desc)
+	if !ok || len(e.Aliases) == 0 {
+		t.Fatalf("判定为同一角色后应登记别名,实际 ok=%v aliases=%v", ok, e.Aliases)
+	}
+	reopened, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _, ok := reopened.Find("characters", "阿枢（一三七四一号）", "短"); !ok || got.Name != "机关人（一三七四一号）" {
+		t.Errorf("别名应持久化(短描述也要能按别名命中):ok=%v got=%v", ok, got)
+	}
+	// 不同角色不得被合并:石柱子描述与机关人毫无相似处
+	if got, _, ok := l.Find("characters", "赶车的少年", desc2); !ok || got.Name != "石柱子" {
+		t.Errorf("同人判定只应认同一角色:ok=%v got=%v", ok, got)
+	}
+	if got, _, ok := l.Find("characters", "机关人", desc2); ok && got.Name == "石柱子" {
+		t.Errorf("不同角色不该被描述相似度误并:got=%v", got.Name)
+	}
+}
+
+// TestNormNameAndDescSimilar 归一化与相似度的边界。
+func TestNormNameAndDescSimilar(t *testing.T) {
+	if normName("机关人（一三七四一号）") != "机关人" {
+		t.Errorf("括号内容应丢弃: %q", normName("机关人（一三七四一号）"))
+	}
+	if normName("阿枢肩上小人") == normName("石柱子") {
+		t.Error("不同名字归一化后不应相等")
+	}
+	if normName("肩上小人的") == normName("肩上小人") {
+		// 「的」被去掉后相等 —— 这是刻意行为
+	} else {
+		t.Errorf("「的」应被忽略: %q vs %q", normName("肩上小人的"), normName("肩上小人"))
+	}
+	long := "少年形制的梨木机关人，打磨极细的哑光木面，刀刻平直细眉、挺直鼻梁、唇线抿成一条极克制的直线；耳后到颈侧刻着一行极小的小楷编号"
+	if d := descSimilar(long, long); d < 0.99 {
+		t.Errorf("同一段描述相似度应为 1,实际 %.2f", d)
+	}
+	if d := descSimilar(long, "十六七岁的赶车少年帮工，个子已长开而肩膀还窄；长圆脸，晒黑的皮肤"); d >= 0.6 {
+		t.Errorf("不同角色描述相似度必须低于阈值,实际 %.2f", d)
+	}
+	if d := descSimilar("太短", "也短"); d != 0 {
+		t.Errorf("过短描述不应参与判断,实际 %.2f", d)
+	}
+}

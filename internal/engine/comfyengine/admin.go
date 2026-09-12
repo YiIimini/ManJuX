@@ -19,6 +19,7 @@ type AdminStatus struct {
 	BaseURL string       `json:"base_url"`
 	Models  []ModelCheck `json:"models"`
 	Nodes   []NodeCheck  `json:"nodes"`
+	Sage    *SageStatus  `json:"sage,omitempty"` // Sage 加速状态(装了没/会不会启用)
 }
 
 // ModelCheck 模型配置核对。
@@ -42,6 +43,10 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	c := e.cfg()
 	e.setClient(NewClient(c.BaseURL))
 	st := &AdminStatus{Alive: false, RootDir: c.RootDir, BaseURL: c.BaseURL, Owned: e.ownedProc() != nil}
+	// Sage 状态与引擎是否在跑无关(它只看包是否装了、设置是否开着),放在前面填:
+	// 引擎停着时管理页也要能显示"为什么没加速",而不是一片空白。
+	sg := e.SageStatus(ctx)
+	st.Sage = &sg
 	if !e.client().Alive(ctx) {
 		clearPidFile(c) // 引擎已死(含托盘/任务管理器手杀):清残留 pid
 		return st, nil
@@ -57,6 +62,7 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	if run, pend, err := e.client().Queue(ctx); err == nil {
 		st.Running, st.Pending = len(run), len(pend)
 	}
+
 	// GPU(从 system_stats devices)
 	if raw, err := e.client().get(ctx, "/system_stats"); err == nil {
 		var out struct {

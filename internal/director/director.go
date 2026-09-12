@@ -44,7 +44,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 }`
 
 const sysShotRules = `## SHOT PLAN RULES
-- Shot count is driven by the CONTENT, with NO upper limit: cover this episode's story completely and clearly. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot 4-10 seconds (integer). Hook in shot 1, payoff at the end.
+- Shot count is driven by the CONTENT, with NO upper limit: cover this episode's story completely and clearly. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot 4-8 seconds (integer): local H3 rendering costs grow faster than linear with frame count (a 10s shot is ~2.8x the load of a 6s one on the same card), so split a long beat into two shots instead of stretching one. Hook in shot 1, payoff at the end.
 - CONTINUITY (critical, 2026-09-10): consecutive shots must read as ONE continuous flow. Each shot's action must BEGIN where the previous shot ENDED — same location (unless a deliberate scene change), carried-over posture/emotion/props, coherent time-of-day and lighting. NEVER skip a narrative beat the audience needs; if a beat needs two camera moments, split it into two shots with one clear action each. On scene changes, bridge with narration or a matching visual anchor, never jump-cut blind.
 - shot_size 景别用中文:远景/全景/中景/近景/特写。Emotional beats and dialogue MUST use 近景/特写 (H3 face tokens are scarce; closer framing beats wider framing).
 - One camera move per shot, chosen from official motion vocabulary ONLY: Push In / Pull Out / Pan / Truck / Tilt / Pedestal / Arc / Tracking / Static / POV / Roll / Shake, plus amplitude (small/large amplitude) and speed (slow/fast) in natural English. NEVER use jargon like dolly, crane, whip pan.
@@ -56,29 +56,30 @@ const sysH3Format = `## H3 PROMPT FORMAT (critical - follow EXACTLY)
 mode=ref2va => SIX sections in this exact order, separated by one blank line:
 
 subject_definitions:
-REFERENCE ORDER (strict, but a character may occupy ONE OR TWO pictures, so the scene index is NOT fixed): pictures are attached in this order — for each character listed in the shot's "characters" array, in array order, FIRST that character's character sheet, and THEN, only if that character has a multi-view turnaround sheet, ONE extra turnaround picture of the SAME character (a turnaround shows one character from several angles in a single image). After all character pictures comes exactly ONE scene picture, always LAST. Props never get a <Picture> — describe props in text only.
-Locate every subject by PICTURE CONTENT, not by index: a character sheet and its turnaround are the SAME subject and the same individual. NEVER reason "N characters, therefore the scene is <Picture N+1>", and never assume <Picture 2> is the scene or the second character — for a one-character shot <Picture 2> is the scene when that character has no turnaround, otherwise <Picture 2> is that character's turnaround and the scene starts at <Picture 3>.
-<Subject 1> is [full description of the FIRST character listed in "characters"]; its character sheet is the first attached picture.
+REFERENCE ORDER (strict, but a character may occupy ONE OR TWO pictures, so the scene index is NOT fixed): pictures are attached in this order — for each character listed in the shot's "characters" array, in array order, FIRST that character's front portrait (the sharp face reference), and THEN, if that character has a multi-view turnaround, ONE extra turnaround picture of the SAME character (a horizontal strip: its LEFTMOST cell is that same front portrait and the following cells show the same person turned to other angles). After all character pictures comes exactly ONE scene picture, always LAST. Props never get a <Picture> — describe props in text only.
+Locate every subject by PICTURE CONTENT, not by index: a portrait and its turnaround are the SAME subject and the same individual — never treat a turnaround as a second character. NEVER reason "N characters, therefore the scene is <Picture N+1>": with N characters the scene is the LAST picture, which is <Picture N+1> only when no character has a turnaround.
+<Subject 1> is [full description of the FIRST character listed in "characters"]; its front portrait is the first attached picture, and the character is the SAME person in every other picture that shows this individual.
 <Subject 2> is [full description of the SECOND listed character, or the scene description when the shot has only one character] — identify it by its picture content, never by counting indexes.
-The scene is the LAST attached picture; with N characters it is <Picture N+1> when no character has a turnaround, and a LATER index when any character does.
-Every <Subject> must map to a picture that exists in the order above; never invent <Picture> tags beyond that count. Picture tags appear ONLY here as a Subject's source, never standalone. A turnaround picture is never a separate subject: the character and its turnaround share one description (the character's) — the turnaround only supplies the other viewing angles.
+The scene is the LAST attached picture.
+Every <Subject> must map to a picture that exists in the order above; never invent <Picture> tags beyond that count. Picture tags appear ONLY here as a Subject's source, never standalone. A turnaround picture is never a separate subject: the character and its turnaround share one description (the character's) — the turnaround only supplies the other viewing angles, and the FRONT PORTRAIT is the authority on the face.
 
 summary:
 [reference generation]
 One English paragraph: what the video contains and how the reference materials are used.
 
 retention_analysis:
-- One line per reference picture, numbered EXACTLY as in subject_definitions. The scene index is NOT fixed: a character with a multi-view turnaround contributes TWO pictures, so in a one-character shot with a turnaround the scene is <Picture 3>, not <Picture 2>. Decide what each picture is from its CONTENT; never assume the scene is <Picture 2> and never derive indexes by counting characters.
-- A turnaround picture belongs to the character it depicts: give it the character's fully_preserved line (one line per picture) and never describe it as a different or additional character.
+- One line per reference picture, numbered EXACTLY as in subject_definitions. A character may contribute TWO pictures (front portrait + turnaround): give BOTH that character's fully_preserved line and never describe the turnaround as a different or additional character. For the face, the FRONT PORTRAIT is the authority; the turnaround only supplies the other viewing angles.
+- The scene index is not fixed: count the pictures actually attached (a character with a turnaround contributes two), and confirm by CONTENT rather than assuming an index.
 - Every character picture: fully_preserved - character identity (face shape, hairstyle, costume) must stay identical to the reference image throughout every frame. FACE LOCK on that character's own <Picture>: the facial features, bone structure, and skin details must be copied from it exactly — do NOT blend, average, or substitute another face.
 - The scene picture: weak_reference - scene layout and mood referenced, camera free.
 (Use official markers: fully_preserved / partially_preserved / attribute_transfer / weak_reference)
 (For multi-character shots: EVERY character gets its own fully_preserved line with FACE LOCK. Characters WITHOUT a reference picture must NOT borrow facial features from any reference image — generate them from the text description only.)
+The attached character sheets are the AUTHORITY on how each character looks: when a shot uses reference pictures, the face, hair, skin tone and age markers come from the sheet, not from your prose — describe wardrobe, props, pose and emotion, and never add facial marks (moles, scars, blush, red noses) that the sheet does not show. Characters without a sheet are the only ones whose face may be described in prose.
 
 detailed_description:
 [Style sentence(s) first: use the global style]. Then for every shot:
 [Shot 1] with NO timestamp for the first shot; subsequent shots "[Shot 2] At 00:06.000" with strictly increasing timestamps.
-Each shot paragraph (350-500 English words TOTAL across all shots): shot size and composition -> subject positions -> restate ALL key appearance traits (face shape, hair, age markers, distinguishing features) on EVERY subject's first appearance in this shot -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events.
+Each shot paragraph (350-500 English words TOTAL across all shots): shot size and composition -> subject positions -> restate the subject's wardrobe, props, pose and state on first appearance in this shot -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events.
 Dialogue lines: <Subject 1> (S1) says in a [voice description]: <d>[Chinese]台词原文</d>. Assign (S1)(S2) by order of first utterance and NEVER renumber within the video. Keep Chinese dialogue VERBATIM inside <d> tags with original punctuation; do not rewrite or translate it.
 Off-screen narration: The narrator (S1) says in an off-screen voiceover: <d>[Chinese]旁白原文</d> while the on-screen characters' lips remain completely closed.
 End the whole section with an exclusions sentence in prose: e.g. "No on-screen text, no subtitles, no watermarks, no logos."
@@ -103,6 +104,10 @@ non_diegetic_music:
 
 const sysHard = `## HARD CONSTRAINTS
 - English structural prose, Chinese dialogue verbatim in <d>[Chinese]...</d>.
+- The [Chinese] tag inside <d>...</d> is MANDATORY on every spoken line and every voiceover: it is what makes the voice speak Mandarin. A missing tag makes the model improvise a random language and the final video ends up with unintelligible gibberish speech. Write <d>[Chinese]台词原文</d> literally, every single time.
+- Appearance facts must come from the source story ONLY. Never invent distinguishing marks the source does not mention (moles, scars, birthmarks, red noses, tattoos, unusual hair or eye colours). Invented marks show up in the video and clash with the fixed character sheets.
+- Cast members must be easy to tell apart on screen: when creating character cards, avoid two leads that share the same age band, build and palette (e.g. two grey-bearded old men in brown robes). Differentiate by age, build, hair, silhouette and clothing colour; give each one a memorable marker taken from the source text. This is a design rule, not an invention licence: still describe only what the source supports.
+- ONE character = ONE card. The same person may be referred to both by a name and by a code or serial number (e.g. 机关人 / 阿枢 / 一三七四一号): that is ONE person. Keep a single character card, pick the most informative name, and reuse it verbatim in every shot; never create a second card for another appellation of the same person.
 - h3_prompt total length 2500-6000 characters; detailed_description body 350-500 English words.
 - No negative-prompt syntax, no CFG hints, no technical parameters - exclusions go as prose at the end.
 - Consistency: same character keeps identical appearance words every shot; same scene name reused.

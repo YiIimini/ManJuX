@@ -72,15 +72,19 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			}
 			full := NormalizeNovelText(b)
 			merged, nFiles := readMerged()
-			// 全本无有效章结构而正文/有足够分章文件时,弃全本用分章合并
-			// (2026-09-11 实证:全本 md 正文无章头仅目录,章界识别失败→
-			// 硬切大段→CHAPTERS 失准→原文附着断链→拆集粒度失控)
-			if countChapterHeads(full) >= 8 || nFiles < 8 {
-				text = full
-			} else {
+			// 数据源:**优先「正文」一章一档**(2026-09-12 用户定调「为什么还是解析的
+			// 全本?不是有正文目录里每章一个文档的」)。分章文件的章号与标题由**文件名**
+			// 给定,不依赖正文里的章头写法,也不受 markdown 规范化/目录区干扰 —— 这是
+			// 「一章一集」最可靠的地基(全本曾因章头识别失准引发缺章误判与误删分集)。
+			// 仅当分章文件不足(<8 册)时才回落全本。
+			if nFiles >= 8 {
 				text = NormalizeNovelText([]byte(merged))
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-					Message: fmt.Sprintf("📖 全本文件无章节结构,改用正文分章合并(%d 册,已按文件名注入章头)", nFiles)})
+					Message: fmt.Sprintf("📖 数据源:正文分章合并(%d 册,一章一档;章号与标题取自文件名)", nFiles)})
+			} else {
+				text = full
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+					Message: fmt.Sprintf("📖 数据源:全本文件(正文分章仅 %d 册,不足一章一档)", nFiles)})
 			}
 		} else {
 			text, _ = readMerged()
@@ -127,10 +131,11 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	maxEp := in.Max
 	go func() {
 		// 注册键必须与拆集内部键一致:splitNovelToProjects 会做 safeSeries 规整
-		// (全角逗号等→「·」),原始书名注册的占位卡会因键不一致永远停在 running
-		// (2026-09-09 实证:「天庭把我裁员，我在人间爆红」占位卡不退场)。
+		// (全角逗号等→「·」),否则失败态记录会挂在另一个键上、界面上查不到。
 		name = safeSeries(name)
-		jobSet(name, "running", 0, "AI 拆集通读中…(提交即注册,首页占位卡立即可见)")
+		// 不再注册「AI 拆集中」运行态占位:一章一档下建集是秒级的(实测 3 秒建 64 集),
+		// 占位卡只会一闪而过甚至挡住真正的书卡(2026-09-12 用户定调「AI 拆集中的占位
+		// 不需要了」)。失败态仍会记录并可见。
 		// 可取消上下文:停止按钮可中断 LLM 拆集调用(2026-09-11 用户定调)
 		splitCtx, splitCancel := context.WithCancel(context.Background())
 		defer splitCancel()
@@ -181,7 +186,7 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	writeJSON(w, 200, map[string]any{"ok": true, "submitted": true,
-		"message": "《" + name + "》已提交后台创作:拆集(2-6 分钟)→分集项目自动出现→自动开始批量产线,全程日志可观测"})
+		"message": "《" + name + "》已提交:按章节文件直接建集(秒级,一章一集)→自动开始批量产线;各集剧情 brief 后台并行补写,全程日志可观测"})
 }
 
 // ---------- 流式拆集生产者注册表(产线据此判断还有没有新分集要来) ----------

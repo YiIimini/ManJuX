@@ -244,6 +244,44 @@ func (s *Server) comfyAdmin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, st)
 }
 
+// comfySageStatus Sage 加速状态(装了没/会不会启用/本机 torch 版本)。
+func (s *Server) comfySageStatus(w http.ResponseWriter, r *http.Request) {
+	ce, err := s.comfyEngine()
+	if err != nil {
+		writeErr(w, 503, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 70*time.Second)
+	defer cancel()
+	st := ce.SageStatus(ctx)
+	writeJSON(w, 200, st)
+}
+
+// comfySageInstall 一键安装/更新与本机 torch+CUDA 匹配的 Sage 轮子。
+//
+// 为什么由应用来做:该轮子与 torch 版本严格绑定,升级 ComfyUI/torch 后旧轮子失效、
+// 表现为"突然又变慢了"而界面看不出原因。这里按本机版本自动挑官方推荐发布源里的
+// 匹配轮子安装(pip --no-deps,绝不动 torch),装完提示重启引擎生效。
+func (s *Server) comfySageInstall(w http.ResponseWriter, r *http.Request) {
+	ce, err := s.comfyEngine()
+	if err != nil {
+		writeErr(w, 503, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	s.opLog("⬇ 开始安装 Sage 加速(按本机 torch/CUDA 自动匹配轮子)…")
+	ver, err := ce.InstallSage(ctx, func(msg string) { s.opLog("%s", "   "+msg) })
+	if err != nil {
+		s.opLog("✕ Sage 安装失败:%v", err)
+		writeErr(w, 500, err)
+		return
+	}
+	s.opLog("✔ Sage 加速已就绪:%s(重启引擎后生效)", ver)
+	writeJSON(w, 200, map[string]any{"ok": true, "version": ver,
+		"note": "已安装,重启 ComfyUI 后生效(管理页「停止引擎」再点「启动」,或等下次渲染自动重启)"})
+}
+
 // comfyAction ComfyUI 管理操作:start/stop/queue-clear/interrupt/free。
 func (s *Server) comfyAction(w http.ResponseWriter, r *http.Request) {
 	eng, _ := s.reg.Get("comfy")
@@ -300,3 +338,39 @@ func (s *Server) comfyAction(w http.ResponseWriter, r *http.Request) {
 }
 
 // putShot 单镜微调:更新分镜提示词/时长/模式(指纹变化将触发该镜重渲)。
+
+// startupSageCheck 启动时自检 Sage 加速并按需自愈。
+//
+// 用户把环境升级交给本应用负责(2026-09-12):升级 ComfyUI/torch 后,Sage 轮子会失配,
+// 表现只是"渲染突然又慢一倍"而界面上看不出原因。这里在应用启动时(后台、不阻塞启动)
+// 比对轮子与本机 torch/CUDA,失配就按本机版本自动装回;过程写进运行日志,失败也不
+// 影响渲染(只是没有加速),并在管理页状态里如实说明。
+func (s *Server) startupSageCheck() {
+	// 只在本机确实装了 ComfyUI 环境时检查(否则不该联网装东西)
+	g := s.cfg.Get()
+	if g.Comfy.RootDir == "" {
+		return
+	}
+	if _, err := os.Stat(filepath.Join(g.Comfy.RootDir, "ComfyUI", "main.py")); err != nil {
+		return
+	}
+	eng, err := s.reg.Get("comfy")
+	if err != nil {
+		return
+	}
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		return
+	}
+	want := g.Comfy.SageAttention == nil || *g.Comfy.SageAttention
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
+	defer cancel()
+	done, msg := ce.SageAutoRepair(ctx, want, func(m string) { s.opLog("%s", "   "+m) })
+	if !done {
+		s.opLog("⚠ %s", msg)
+		return
+	}
+	if strings.Contains(msg, "重装完成") {
+		s.opLog("✔ %s(下次启动引擎即生效)", msg)
+	}
+}

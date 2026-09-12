@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -254,5 +255,56 @@ func TestHTTPContractSettingsMaskRoundTrip(t *testing.T) {
 	llm2, _ := again["llm"].(map[string]any)
 	if key2, _ := llm2["api_key"].(string); key2 != key {
 		t.Errorf("回存掩码后掩码应不变(说明真 key 未被覆盖),期望 %q 实际 %q", key, key2)
+	}
+}
+
+// TestLibraryOpsRoutes 资产库运营路由契约:补全多视角 / AI 生成描述提示词 /
+// 手动编辑描述与提示词。
+//
+// 这三条是详情弹窗的"完善资产"入口 —— 路由没注册或语义写反(比如场景也允许
+// 生成转身参考),界面上只会看到一个含糊的失败提示,所以这里把状态码钉住。
+func TestLibraryOpsRoutes(t *testing.T) {
+	s := newTestServer(t)
+	src := filepath.Join(t.TempDir(), "p.png")
+	if err := os.WriteFile(src, []byte("png-bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.lib.Put("scenes", "契约场景", "旧描述", "old prompt", src, "proj", "upload"); err != nil {
+		t.Fatalf("准备库条目失败: %v", err)
+	}
+	if _, err := s.lib.Put("characters", "契约角色", "旧描述", "old prompt", src, "proj", "upload"); err != nil {
+		t.Fatalf("准备库条目失败: %v", err)
+	}
+
+	// ① 编辑描述与提示词:成功 + 字段真的写进去了
+	if code, out := doReq(t, s, "PUT", "/api/library/scenes/契约场景", map[string]any{
+		"description": "新描述", "image_prompt": "new prompt",
+	}); code != 200 {
+		t.Fatalf("编辑描述应 200,实际 %d %v", code, out)
+	} else if out["description"] != "新描述" || out["image_prompt"] != "new prompt" {
+		t.Fatalf("编辑后字段未生效: %v", out)
+	}
+	// ② 不存在的条目必须 404(而不是静默 200)
+	if code, _ := doReq(t, s, "PUT", "/api/library/characters/无此角色", map[string]any{"description": "x"}); code != 404 {
+		t.Fatalf("编辑不存在的条目应 404,实际 %d", code)
+	}
+	if code, _ := doReq(t, s, "POST", "/api/library/characters/无此角色/views", nil); code != 404 {
+		t.Fatalf("给不存在的角色补多视角应 404,实际 %d", code)
+	}
+	if code, _ := doReq(t, s, "POST", "/api/library/characters/无此角色/describe", nil); code != 404 {
+		t.Fatalf("给不存在的角色生成描述应 404,实际 %d", code)
+	}
+	// ③ 场景没有"转身"语义:补多视角必须被拒(别浪费一次数分钟的渲染)
+	if code, _ := doReq(t, s, "POST", "/api/library/scenes/契约场景/views", nil); code != 400 {
+		t.Fatalf("场景补多视角应 400,实际 %d", code)
+	}
+	// ④ 角色补多视角:测试环境无本地 ComfyUI 且根目录不存在 → 503 并给出人话提示
+	code, out := doReq(t, s, "POST", "/api/library/characters/契约角色/views", nil)
+	if code != 503 {
+		t.Fatalf("无本地引擎时补多视角应 503,实际 %d %v", code, out)
+	}
+	// ⑤ AI 生成描述:测试环境 LLM/VLM 都没配 key → 400(而不是 500 或空 200)
+	if code, _ := doReq(t, s, "POST", "/api/library/scenes/契约场景/describe", nil); code != 400 {
+		t.Fatalf("未配置模型时生成描述应 400,实际 %d", code)
 	}
 }

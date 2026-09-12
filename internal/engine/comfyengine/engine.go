@@ -37,6 +37,12 @@ type Engine struct {
 	// 此前无任何同步,构成真实数据竞争(go test -race 可复现)。
 	procMu  sync.Mutex
 	procRef *os.Process // 代管启动的 ComfyUI 进程
+
+	// torch 版本探测缓存(sage 状态展示用):管理页每 8 秒轮询,不能每次都起 python。
+	torchMu      sync.Mutex
+	torchVer     string
+	torchCudaVer string
+	torchAt      time.Time
 }
 
 // client 取当前客户端快照。
@@ -137,7 +143,20 @@ func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
 	// fp16_accumulation(fp16 累加,官方明示可能画质劣化)与 --use-ck-attention
 	// (注意力后端数值特性)均已撤下——速度收益主体是 torch cu130 的 kitchen
 	// CUDA 内核(保留)+渲染前释放显存,画质优先于极限速度。
-	cmd := sysexec.Hide(exec.Command(py, main, "--port", port, "--listen", "127.0.0.1"))
+	//
+	// 内存/显存治理(2026-09-12 用户报「渲染时 GPU 和内存都快爆了」,实测数值:
+	// 显存 23529/24463 MiB = 96%、ComfyUI 的 python 进程占 40.3GB、系统内存仅剩
+	// 8GB)。根因是**同时常驻的东西太多**:H3 主模型 20GB + 视频 VAE 5GB 超出一张
+	// 24GB 卡的容量,ComfyUI 的 smart memory 又把 TE(15GB)、VAE、主模型尽量留在
+	// 显存/内存里,于是每步都在换页(代码里记过的"150 秒/步"就是这种挤压)。
+	// 这里三个参数都是**纯内存策略、不动数值与画质**:
+	//   --disable-smart-memory:用不到就卸载(TE 用完卸、采样时只留主模型、解码前
+	//     再卸主模型),把峰值从"全都挤在显存里"改成"按阶段一样一样来";
+	//   --cache-none:不缓存节点产物(190 帧解码后的图像张量一次就 1-2GB),
+	//     代价是同图内节点按需重算,而我们的图每镜只跑一次,基本无感;
+	//   --reserve-vram:给系统/浏览器留出显存(实测渲染前别的进程已占 1-2GB),
+	//     没有预留就等于和桌面抢最后几 GB —— 数值可在设置页调,0=交由 ComfyUI 自定。
+	cmd := sysexec.Hide(exec.Command(py, comfyLaunchArgs(main, port, c.ReserveVRAMGB, e.sageEnabled())...))
 	cmd.Dir = filepath.Dir(main)
 	// 无控制台(CREATE_NO_WINDOW)下 Python 管道 IO 默认按系统 locale(GBK)编码,
 	// ComfyUI 启动横幅的 emoji(🎉)会触发 UnicodeEncodeError 直接崩溃 —— 强制 UTF-8。
@@ -715,4 +734,60 @@ func (e *Engine) seamPrevExists(ctx context.Context, projectID string, prevShot 
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode == http.StatusOK
+}
+
+// comfyLaunchArgs 组装代管启动 ComfyUI 的参数。
+//
+// 抽成纯函数是为了能单测:这几个开关直接决定渲染时的显存/内存峰值(实测旧参数下
+// 显存 96%、ComfyUI 进程 40GB),不能再以字面量散落在启动代码里;同时它们是
+// **纯内存策略**,不触碰数值精度与画质(2026-09-10 用户明确要求画质优先于极限速度,
+// 当时因此撤下了 --fast 与 --use-ck-attention)。
+// sageEnabled 是否启用 Sage Attention(官方推荐:H3 生成速度约提升一倍,画质损失很小)。
+//
+// 三个条件:①standalone-env 里装了 sageattention;②设置没明确关掉(nil=未表态→开);
+// ③**与本机 torch/CUDA 匹配** —— 升级 torch 后旧轮子会失配,加了参数轻则 import
+// 失败、重则内核与显存布局不匹配导致出图异常,宁可不加速(读不到 torch 版本时才
+// 交给 ComfyUI 自身的回退兜底)。
+func (e *Engine) sageEnabled() bool {
+	c := e.cfg()
+	if !SageInstalled(c) {
+		return false
+	}
+	if c.SageAttention != nil && !*c.SageAttention {
+		return false
+	}
+	tv, cv := e.torchInfo()
+	ver := readSageVersion(filepath.Join(c.RootDir, "standalone-env", "Lib", "site-packages"), tv, cv)
+	if tv == "" {
+		return true // 读不到 torch 版本时按"装了就用",由 ComfyUI 自身回退兜底
+	}
+	ok, _ := SageCompat(ver, tv, cv)
+	if !ok {
+		log.Printf("[comfy] Sage 轮子与本机 torch 不匹配,本次不加 --use-sage-attention(管理页可一键重装)")
+	}
+	return ok
+}
+
+func comfyLaunchArgs(main, port string, reserveVRAMGB int, sage bool) []string {
+	args := []string{
+		main,
+		"--port", port,
+		"--listen", "127.0.0.1",
+		// 用不到就卸载:TE(15GB)编完即卸、采样期只留主模型、解码前卸主模型换 VAE,
+		// 避免 H3(20GB)+视频VAE(5GB) 同时压在 24GB 卡上反复换页。
+		"--disable-smart-memory",
+		// 不缓存节点产物:视频解码后的图像张量一次就 1-2GB,缓存只对同图内重复
+		// 执行有意义,而本应用每镜都是新图。
+		"--cache-none",
+	}
+	if reserveVRAMGB > 0 {
+		// 官方口径:该值让 DynamicVRAM 把这些显存**完全留空**(连别的程序占的也算),
+		// 避免 H3 吃满 24GB 之后与桌面互相挤压。
+		args = append(args, "--vram-headroom", strconv.Itoa(reserveVRAMGB))
+	}
+	if sage {
+		// 官方 H3 教程里唯一推荐的提速手段(实测 91.6 → 44.8 秒/步,≈2.04 倍)
+		args = append(args, "--use-sage-attention")
+	}
+	return args
 }

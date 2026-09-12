@@ -81,11 +81,15 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		base = filepath.Join(c.store.Dir(projectID), m.File)
 		out = filepath.Join(c.store.Dir(projectID), "clips", "2k",
 			fmt.Sprintf("shot_%03d_2k.mp4", shotID))
-		prompt = shot.H3Prompt
+		prompt = EnsureChineseDialogue(shot.H3Prompt)
 		label = fmt.Sprintf("镜头 %d", shotID)
 		// 参考图沿用渲染期资产(与 render 阶段共用 AssembleShotRefs,防止两处漂移)
 		assets, _ := c.store.LoadAssets(projectID)
-		refs, _ = AssembleShotRefs(c.store.Dir(projectID), *shot, assets)
+		compact := true
+		if proj, ok := c.store.Get(projectID); ok {
+			compact = proj.Config.Params.Assets.CompactRefsOn() // 与主渲染保持同一套参考图
+		}
+		refs, _ = AssembleShotRefs(c.store.Dir(projectID), *shot, assets, compact)
 	} else {
 		base = filepath.Join(c.store.Dir(projectID), "output", "final.mp4")
 		out = filepath.Join(c.store.Dir(projectID), "output", "final_2k.mp4")

@@ -10,9 +10,9 @@ import "testing"
 func TestNormalizeEpisodeTitles(t *testing.T) {
 	eps := []epItem{
 		{Ep: 1, Title: "七文一斤", Chapters: "第001章 第一万三千七百四十一号"}, // LLM 自起名 → 应被章名覆盖
-		{Ep: 2, Title: "送去北境", Chapters: "第1章~第2章"},                     // 区间无标题 → 保留原集名
-		{Ep: 3, Title: "", Chapters: "第002章 雨夜不点火"},                      // 空 → 用章名填
-		{Ep: 4, Title: "器不可以成道", Chapters: "第003章 器不可以成道"},         // 本来就一致 → 不变
+		{Ep: 2, Title: "送去北境", Chapters: "第1章~第2章"},           // 区间无标题 → 保留原集名
+		{Ep: 3, Title: "", Chapters: "第002章 雨夜不点火"},           // 空 → 用章名填
+		{Ep: 4, Title: "器不可以成道", Chapters: "第003章 器不可以成道"},    // 本来就一致 → 不变
 	}
 	normalizeEpisodeTitles(eps)
 

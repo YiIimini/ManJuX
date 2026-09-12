@@ -127,6 +127,12 @@ type Project struct {
 	UpdatedAt time.Time     `json:"updated_at"`
 	Config    ProjectConfig `json:"config"`
 
+	// Chapters 本集覆盖的章号(平台在拆集时按章切片写入的真源)。
+	// 为什么落盘:覆盖核对与"自动补缺"此前依赖 LLM 写在 chapters 字段里的字符串或
+	// 【本集原文】是否附着成功 —— 两者都不可靠,曾据此误判缺章、删掉正确分集
+	// (2026-09-12 事故:64 集被删成 63 集)。章号由平台自己记,判定才有依据。
+	Chapters []int `json:"chapters,omitempty"`
+
 	// 运行时状态(不落盘字段由 Store 维护)
 	Running bool   `json:"running"`
 	Phase   string `json:"phase"` // script/assets/render/qc/assemble/idle

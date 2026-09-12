@@ -99,6 +99,9 @@ export const api = {
   // 之前每处各写各的(有的查 r.ok、有的只 .then(r=>r.json())、有的静默 catch)。
   comfyAdmin: () => req('GET', '/api/comfy/admin'),
   comfyVersions: (online) => req('GET', `/api/comfy/versions${online ? '?online=1' : ''}`),
+  // Sage 加速:状态查询 / 一键安装(按本机 torch+CUDA 匹配官方推荐发布源的轮子)
+  comfySage: () => req('GET', '/api/comfy/sage'),
+  comfySageInstall: () => req('POST', '/api/comfy/sage-install'),
   // 引擎动作入口(后端路由 POST /api/comfy/{action},支持 start/stop/queue-clear/interrupt/free)。
   // 此前 api 层漏了 comfyAction,首页与「引擎管理」页的启停按钮一调用就抛
   // TypeError: api.comfyAction is not a function,又被 catch 吞成含糊报错 —— 引擎启停实际不可用。
@@ -111,6 +114,11 @@ export const api = {
   library: () => req('GET', '/api/library'),
   libraryDetail: (kind, name) => req('GET', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
   libraryRegen: (kind, name) => req('POST', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/regen`),
+  // 补全多视角(定妆照 → H3 原地转身 → 转台图;每个角色数分钟,后端一次性返回)
+  libraryViews: (kind, name) => req('POST', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/views`),
+  // AI 生成中文描述与英文提示词(配了 VLM 就让它看图写,否则退回文本模型)
+  libraryDescribe: (kind, name) => req('POST', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}/describe`),
+  librarySetMeta: (kind, name, payload) => req('PUT', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, payload),
   libraryDelete: (kind, name) => req('DELETE', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
   libraryGacha: () => req('POST', '/api/library/gacha'),
   libraryCreateCharacter: (payload) => req('POST', '/api/library/characters', payload),

@@ -111,6 +111,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	}
 	// 渲染前补齐缺失参考图(不问资产来源模式,除 skip;缺图先生成再渲染)
 	c.backfillAssets(ctx, proj, plan, assets)
+	// 多视角转台图补齐:角色只有单张正面照时,渲染前补出转身多视角
+	// (库复用/手动上传/存量项目三类不会重跑资产阶段,只能在这里兜)
+	c.backfillAssetViews(ctx, proj, plan, assets)
 	// 阶段起点清一次遗留队列(仅本地引擎;绝不在逐镜循环内清,防误杀排队任务)
 	// 并释放残留显存:上一阶段(Krea-2 定妆/抽卡等)模型常驻会把 H3 主模型
 	// (~20GB)挤出显存触发 dynamic VRAM loading——每步在 CPU↔GPU 搬权重,
@@ -119,9 +122,29 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		eng.ClearQueue(ctx)
 		b, hasB := sysmon.VRAMUsedMB()
 		_ = eng.FreeVRAM(ctx)
+		// 卸载+empty_cache 是异步落下去的,立刻读会永远得到"没释放"(实测一直显示
+		// 22.3 GB → 22.3 GB,用户据此以为这步是假的)。这里轮询最多 5 秒取最小值,
+		// 如实反映释放结果;若确实没降也照实说,不粉饰。
 		if hasB {
-			if a, hasA := sysmon.VRAMUsedMB(); hasA {
-				c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB → %.1f GB(腾出主模型常驻空间)", b/1024, a/1024)
+			after, ok := b, false
+			for i := 0; i < 10; i++ {
+				time.Sleep(500 * time.Millisecond)
+				if a, hasA := sysmon.VRAMUsedMB(); hasA {
+					ok = true
+					if a < after {
+						after = a
+					}
+					if after < b-256 { // 已明显下降,不用再等
+						break
+					}
+				}
+			}
+			if ok {
+				if after >= b {
+					c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB(引擎无可卸载的常驻模型)", b/1024)
+				} else {
+					c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB → %.1f GB(腾出主模型常驻空间)", b/1024, after/1024)
+				}
 			}
 		}
 	}
@@ -138,7 +161,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		mode := shot.Mode
 		if proj.Config.Params.Assets.Source != "skip" && mode == "ref2va" {
 			var missing []string
-			refs, missing = AssembleShotRefs(c.store.Dir(proj.ID), shot, assets)
+			refs, missing = AssembleShotRefs(c.store.Dir(proj.ID), shot, assets,
+				proj.Config.Params.Assets.CompactRefsOn())
 			if len(refs) == 0 {
 				mode = "t2va" // 资产缺失降级纯文生
 				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "镜头 %d 无参考图,降级 t2va", shot.ID)
@@ -164,7 +188,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			seed = nameSeed("shot", strings.Join(shot.Characters, "+")) + int64(shot.ID)*101
 		}
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
-		prompt := anchorPrompt(plan, &shot)
+		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
+		prompt := EnsureChineseDialogue(anchorPrompt(plan, &shot))
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。
@@ -181,7 +206,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			}
 		}
 
-		c.emit(proj.ID, PhaseRender, shot.ID, "info", base, "镜头 %d/%d 渲染开始(%s,%ds,seed=%d)", shot.ID, len(shots), mode, shot.Duration, seed)
+		// 参考图张数写进日志:一是"参考图去冗余"是否生效一眼可查(转台图已含正面,
+		// 每个角色应只占 1 张),二是出问题时能立刻判断是不是参考图少了。
+		c.emit(proj.ID, PhaseRender, shot.ID, "info", base, "镜头 %d/%d 渲染开始(%s,%ds,seed=%d,参考图 %d 张:%s)",
+			shot.ID, len(shots), mode, shot.Duration, seed, len(refs), refComposition(refs))
 		c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotRendering, engName, "", inputFP, "")
 
 		var res *engine.Result
@@ -303,3 +331,27 @@ func (c *Coordinator) setShotStatus(projectID string, manifest map[string]projec
 // anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格
 // 强制前置到镜头提示词。H3 是 VLM 输入,中文锚定段与六段式正文并存无碍;
 // 跨镜同角色描述逐字一致,配合定妆照 ref 双通道压住 LLM 逐镜漂移。
+
+// refComposition 把参考图构成缩成一行(角色/场景 + 是否拼合图),供渲染日志核对。
+func refComposition(refs []engine.RefImage) string {
+	chars, hasScene := 0, false
+	turn := 0
+	for _, r := range refs {
+		if r.Kind == "scene" {
+			hasScene = true
+			continue
+		}
+		chars++
+		if strings.Contains(filepath.Base(r.Path), "_turnaround") {
+			turn++
+		}
+	}
+	parts := []string{fmt.Sprintf("角色 %d", chars)}
+	if turn > 0 {
+		parts = append(parts, fmt.Sprintf("其中拼合转身图 %d", turn))
+	}
+	if hasScene {
+		parts = append(parts, "场景 1")
+	}
+	return strings.Join(parts, " + ")
+}

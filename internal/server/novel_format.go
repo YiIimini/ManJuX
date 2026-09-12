@@ -9,6 +9,7 @@
 package server
 
 import (
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -20,8 +21,13 @@ import (
 type epItem struct {
 	Ep       int    `json:"ep"`
 	Title    string `json:"title"`
-	Chapters string `json:"chapters"` // 覆盖章节范围(定位原文用)
+	Chapters string `json:"chapters"` // LLM 标注的章节范围(只作参考,不作真源)
 	Brief    string `json:"brief"`
+	// 以下两项由**平台**填写(2026-09-12 一章一集改造):集与章的对应关系不再依赖
+	// LLM 写在 Chapters 里的字符串 —— 实测它会把"整段范围"抄进每一集,导致原文附着
+	// 失败与覆盖核对误判(64 集被误删成 63 集的事故)。
+	ChapNums []int  `json:"-"` // 本集覆盖的章号(平台按章切片算出的真源)
+	Orig     string `json:"-"` // 本集原文(平台按章切片取,不依赖 LLM 的 Chapters)
 }
 
 var (
@@ -138,8 +144,13 @@ func firstLineValue(re *regexp.Regexp, s string) string {
 	return ""
 }
 
-// chapterHeadRe 章头行(预处理后为裸行)。切块/章计数/覆盖核对共用。
-var chapterHeadRe = regexp.MustCompile(`(?m)^[ \t]{0,4}第[0-9零〇一二三四五六七八九十百千两]+[章回节][^\n]{0,50}\s*$`)
+// chapterHeadRe 章头行。切块/章计数/覆盖核对/原文切片**共用这一个正则**。
+//
+// 必须容忍 markdown 的 `#` 前缀与全角空格:全本 md 的章头常写作 `# 第009章 洗出来的字`,
+// 旧版要求"裸行",导致一本 64 章的书只认出 3 个章头 —— 切块退化成按尺寸硬切、章计数
+// 与覆盖核对全体失准,最终「自动补缺」误判缺章、删掉了本来正确的分集(2026-09-12 事故:
+// 64 集被删成 63 集、第 009 章内容真丢)。
+var chapterHeadRe = regexp.MustCompile(`(?m)^[ \t]{0,4}(?:#{1,6}[ \t]*)?第\s*([0-9零〇一二三四五六七八九十百千两]+)\s*[章回节][^\n]{0,50}$`)
 
 // countChapterHeads 统计文本中的章头行数(≥8 视为章节结构可信)。
 func countChapterHeads(s string) int {
@@ -173,4 +184,95 @@ func ensureChapterHead(base, body string) string {
 		return h + "\n\n" + body
 	}
 	return body
+}
+
+// parseChapNums 从 LLM 标注的 chapters 字符串里解析章号列表(升序去重)。
+//
+// 容忍各种写法:第9章~第11章 / 第9-11章 / 第9、10章 / 第9至11章 / 9-11。
+// 解析不出返回 nil —— 此时调用方按"顺序对齐"兜底,绝不据此判定内容缺失。
+func parseChapNums(s string) []int {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	// 先把分隔符统一:范围符换成 ~,顿号/逗号换成空格
+	for _, r := range []string{"至", "到", "--", "—", "－", "-", "→"} {
+		s = strings.ReplaceAll(s, r, "~")
+	}
+	for _, r := range []string{"、", ",", "，", " "} {
+		s = strings.ReplaceAll(s, r, " ")
+	}
+	numRe := regexp.MustCompile(`[0-9零〇一二三四五六七八九十百千两]+`)
+	var out []int
+	seen := map[int]bool{}
+	add := func(v int) {
+		if v > 0 && !seen[v] {
+			seen[v] = true
+			out = append(out, v)
+		}
+	}
+	// 先处理 "A~B" 区间
+	for _, part := range strings.Split(s, "~") {
+		nums := numRe.FindAllString(part, -1)
+		if len(nums) == 0 {
+			continue
+		}
+		if len(nums) >= 2 {
+			a, b := chineseNum(nums[0]), chineseNum(nums[len(nums)-1])
+			if a > 0 && b >= a && b-a <= 200 {
+				for v := a; v <= b; v++ {
+					add(v)
+				}
+				continue
+			}
+		}
+		add(chineseNum(nums[0]))
+	}
+	sort.Ints(out)
+	return out
+}
+
+// alignEpsToChapters 把 LLM 返回的 brief **按章**对齐成本段的一集一章列表。
+//
+// 这是"一章一集"的强制点(2026-09-12 用户定调「一章就是一集」):集名取章名、
+// 集与章一一对应、原文直接取该章切片 —— LLM 只负责写 brief,不再有机会跳章/并章
+// (实测它会把两章并进一集、或把整段范围抄进每一集的 chapters 字段)。
+// brief 找不到对应章时:先按顺序对齐(LLM 通常是逐章给的),仍缺的留空由调用方兜底。
+func alignEpsToChapters(chaps []ChapterSlice, eps []epItem) []epItem {
+	if len(chaps) == 0 {
+		return eps
+	}
+	byChap := map[int]string{}
+	var loose []string // 章号解析不出的 brief,按顺序兜底
+	for _, e := range eps {
+		nums := parseChapNums(e.Chapters)
+		if len(nums) == 0 {
+			if strings.TrimSpace(e.Brief) != "" {
+				loose = append(loose, e.Brief)
+			}
+			continue
+		}
+		for _, n := range nums {
+			if _, ok := byChap[n]; !ok && strings.TrimSpace(e.Brief) != "" {
+				byChap[n] = e.Brief
+			}
+		}
+	}
+	out := make([]epItem, 0, len(chaps))
+	looseIdx := 0
+	for _, ch := range chaps {
+		brief := byChap[ch.Num]
+		if brief == "" && looseIdx < len(loose) {
+			brief = loose[looseIdx]
+			looseIdx++
+		}
+		out = append(out, epItem{
+			Title:    ch.Title,
+			Chapters: fmt.Sprintf("第%d章", ch.Num),
+			Brief:    brief,
+			ChapNums: []int{ch.Num},
+			Orig:     ch.Text,
+		})
+	}
+	return out
 }

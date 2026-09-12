@@ -24,36 +24,45 @@ const DefaultComfyBaseURL = "http://127.0.0.1:8190"
 
 // ComfySettings 本地 ComfyUI 引擎设置。
 type ComfySettings struct {
-	BaseURL  string `json:"base_url"`  // 例如 http://127.0.0.1:8190(默认见 DefaultComfyBaseURL)
-	RootDir  string `json:"root_dir"`  // ComfyUI 环境根目录(含 ComfyUI/ 与 standalone-env/)
-	AutoStart bool  `json:"auto_start"` // 渲染前未运行时自动启动
-	IdleStopMin int  `json:"idle_stop_min"` // 空闲自动退出(分钟):管线结束后无任务则停掉代管引擎释放显存;0=常驻
+	BaseURL     string `json:"base_url"`      // 例如 http://127.0.0.1:8190(默认见 DefaultComfyBaseURL)
+	RootDir     string `json:"root_dir"`      // ComfyUI 环境根目录(含 ComfyUI/ 与 standalone-env/)
+	AutoStart   bool   `json:"auto_start"`    // 渲染前未运行时自动启动
+	IdleStopMin int    `json:"idle_stop_min"` // 空闲自动退出(分钟):管线结束后无任务则停掉代管引擎释放显存;0=常驻
 	// 模型文件名(须与 ComfyUI 实际文件名完全一致,大小写敏感)
-	UNetRef2VA     string `json:"unet_ref2va"`     // 有角色参考图镜头用
-	UNetFL2VA      string `json:"unet_fl2va"`      // 空镜/首帧镜头用
+	UNetRef2VA      string `json:"unet_ref2va"`       // 有角色参考图镜头用
+	UNetFL2VA       string `json:"unet_fl2va"`        // 空镜/首帧镜头用
 	TurboLoRARef2VA string `json:"turbo_lora_ref2va"` // ref2va 加速 LoRA(空串=不启用)
 	TurboLoRAFL2VA  string `json:"turbo_lora_fl2va"`  // fl2va 加速 LoRA(空串=不启用)
-	VideoVAE       string `json:"video_vae"`
-	AudioVAE       string `json:"audio_vae"`   // 缺失=黑屏,必填
-	CLIP           string `json:"clip"`        // Qwen3-VL 文本编码器(CLIPLoader type=minimax)
-	CondCache      bool   `json:"cond_cache"`  // 两阶段渲染(条件缓存 .pt)
+	VideoVAE        string `json:"video_vae"`
+	AudioVAE        string `json:"audio_vae"`  // 缺失=黑屏,必填
+	CLIP            string `json:"clip"`       // Qwen3-VL 文本编码器(CLIPLoader type=minimax)
+	CondCache       bool   `json:"cond_cache"` // 两阶段渲染(条件缓存 .pt)
 	// 定妆照/场景图自动生成(Krea-2 Turbo,8 步蒸馏)
 	ImageUNet string `json:"image_unet"` // 默认 krea2_turbo_fp8_scaled.safetensors
 	ImageCLIP string `json:"image_clip"` // 默认 qwen3vl_4b_fp8_scaled.safetensors(type=krea2)
 	ImageVAE  string `json:"image_vae"`  // 默认 qwen_image_vae.safetensors
+	// ReserveVRAMGB 启动 ComfyUI 时预留的显存(GB),留给系统/浏览器。
+	// 实测渲染前别的进程已占 1-2GB,不预留就等于和桌面抢最后几 GB(CUDA OOM 或
+	// 整机卡顿)。0 = 交给 ComfyUI 自定(见 comfyLaunchArgs)。
+	ReserveVRAMGB int `json:"reserve_vram_gb"`
+	// SageAttention Sage 注意力加速(官方推荐,H3 生成约快一倍,画质损失很小)。
+	// nil = 未表态(装了 sageattention 包就自动启用);true/false = 显式开关。
+	// 用三态是因为它**影响画面**(2026-09-10 用户实证过注意力后端导致画质劣化),
+	// 必须让用户能一键关掉,而不该由代码替他决定。
+	SageAttention *bool `json:"sage_attention"`
 }
 
 // MiniMaxSettings MiniMax H3 云端 API 设置。
 type MiniMaxSettings struct {
-	BaseURL    string `json:"base_url"`    // 国内 https://api.minimax.cn / 国际 https://api.minimaxi.com
+	BaseURL    string `json:"base_url"` // 国内 https://api.minimax.cn / 国际 https://api.minimaxi.com
 	APIKey     string `json:"api_key"`
-	Model      string `json:"model"`       // MiniMax-H3 / MiniMax-H3-Max
-	Resolution string `json:"resolution"`  // 768P / 2K / 480P(Max)
+	Model      string `json:"model"`      // MiniMax-H3 / MiniMax-H3-Max
+	Resolution string `json:"resolution"` // 768P / 2K / 480P(Max)
 }
 
 // FFSettings ffmpeg/ffprobe 设置。
 type FFSettings struct {
-	FFmpegPath  string `json:"ffmpeg_path"`  // 空串=从 PATH 查找
+	FFmpegPath  string `json:"ffmpeg_path"` // 空串=从 PATH 查找
 	FFprobePath string `json:"ffprobe_path"`
 }
 
@@ -66,42 +75,42 @@ type VLMSettings struct {
 
 // RenderSettings 渲染默认参数(项目级可覆盖)。
 type RenderSettings struct {
-	DefaultEngine string `json:"default_engine"` // auto / comfy / api
-	Width         int    `json:"width"`          // 须被 32 整除,短边≤768
-	Height        int    `json:"height"`
-	Steps         int    `json:"steps"`          // turbo 8 / 基线 20
-	Seed          int64  `json:"seed"`           // 0=每镜随机;非 0=全项目固定
-	BurnSubtitles bool   `json:"burn_subtitles"` // 合成时烧录字幕
-	Transition    string `json:"transition"`     // cut / fade / dissolve
-	MaxShots      int    `json:"max_shots"`      // 单次分镜上限(成本护栏)
-	FadeSec       float64 `json:"fade_sec"`      // 转场时长(秒)
-	ShotTimeout   int    `json:"shot_timeout"`  // 单镜渲染超时(分钟)
+	DefaultEngine string  `json:"default_engine"` // auto / comfy / api
+	Width         int     `json:"width"`          // 须被 32 整除,短边≤768
+	Height        int     `json:"height"`
+	Steps         int     `json:"steps"`          // turbo 8 / 基线 20
+	Seed          int64   `json:"seed"`           // 0=每镜随机;非 0=全项目固定
+	BurnSubtitles bool    `json:"burn_subtitles"` // 合成时烧录字幕
+	Transition    string  `json:"transition"`     // cut / fade / dissolve
+	MaxShots      int     `json:"max_shots"`      // 单次分镜上限(成本护栏)
+	FadeSec       float64 `json:"fade_sec"`       // 转场时长(秒)
+	ShotTimeout   int     `json:"shot_timeout"`   // 单镜渲染超时(分钟)
 }
 
 // SplitSettings 小说拆集参数(设置页可调,2026-09-11 用户定调:灵活配置)。
 type SplitSettings struct {
-	ChunkSize    int `json:"chunk_size"`    // 分段大小(字/段,0=20000;按输出预算倒推:每段最多8集×700字×1.5token+思考30K≈40K,须<65K)
+	ChunkSize    int `json:"chunk_size"`     // 分段大小(字/段,0=20000;按输出预算倒推:每段最多8集×700字×1.5token+思考30K≈40K,须<65K)
 	MaxOrigChars int `json:"max_orig_chars"` // 每集附原文截断上限(字,0=9000)
-	Concurrency  int `json:"concurrency"`   // 并行拆集并发数(0=3)
-	PrevSummary  int `json:"prev_summary"`  // 前情提要截断(字,0=400)
-	BriefMin      int `json:"brief_min"`     // 每集大纲最短(字,0=400)
-	BriefMax      int `json:"brief_max"`     // 每集大纲最长(字,0=700)
-	ShotLimit     int `json:"shot_limit"`    // 镜头数安全网上限(0=30)
+	Concurrency  int `json:"concurrency"`    // 并行拆集并发数(0=3)
+	PrevSummary  int `json:"prev_summary"`   // 前情提要截断(字,0=400)
+	BriefMin     int `json:"brief_min"`      // 每集大纲最短(字,0=400)
+	BriefMax     int `json:"brief_max"`      // 每集大纲最长(字,0=700)
+	ShotLimit    int `json:"shot_limit"`     // 镜头数安全网上限(0=30)
 }
 
 // Settings 全局设置根。
 type Settings struct {
-	ServerPort int            `json:"server_port"`
-	DataDir    string         `json:"data_dir"`
-	AutoOpenUI bool           `json:"auto_open_ui"` // 启动时自动打开浏览器工作台
-	LLM        LLMSettings    `json:"llm"`
-	Comfy      ComfySettings  `json:"comfy"`
+	ServerPort int             `json:"server_port"`
+	DataDir    string          `json:"data_dir"`
+	AutoOpenUI bool            `json:"auto_open_ui"` // 启动时自动打开浏览器工作台
+	LLM        LLMSettings     `json:"llm"`
+	Comfy      ComfySettings   `json:"comfy"`
 	MiniMax    MiniMaxSettings `json:"minimax"`
-	FF         FFSettings     `json:"ff"`
-	VLM        VLMSettings    `json:"vlm"`
-	Render     RenderSettings `json:"render"`
-	Split      SplitSettings  `json:"split"`
-	NovelDir   string        `json:"novel_dir"` // 小说库目录(小说管理页扫描)
+	FF         FFSettings      `json:"ff"`
+	VLM        VLMSettings     `json:"vlm"`
+	Render     RenderSettings  `json:"render"`
+	Split      SplitSettings   `json:"split"`
+	NovelDir   string          `json:"novel_dir"` // 小说库目录(小说管理页扫描)
 }
 
 // Default 返回带默认值的设置。
@@ -133,6 +142,7 @@ func Default() *Settings {
 			ImageUNet:       "krea2_turbo_fp8_scaled.safetensors",
 			ImageCLIP:       "qwen3vl_4b_fp8_scaled.safetensors",
 			ImageVAE:        "qwen_image_vae.safetensors",
+			ReserveVRAMGB:   1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
 		},
 		MiniMax: MiniMaxSettings{
 			BaseURL:    "https://api.minimax.cn",
@@ -158,13 +168,13 @@ func Default() *Settings {
 			ShotTimeout:   45,
 		},
 		Split: SplitSettings{
-			ChunkSize:     12000, // 细拆目标段:≈3-4 章/段→每段 4-8 集,集数密度按段内章数动态上限(2026-09-11「细中细」定调;输出预算:24集上限×700字×1.5+思考≈55K<65K)
-			MaxOrigChars:  9000,
-			Concurrency:   3,
-			PrevSummary:   400,
-			BriefMin:      400,
-			BriefMax:      700,
-			ShotLimit:     30,
+			ChunkSize:    12000, // 细拆目标段:≈3-4 章/段→每段 4-8 集,集数密度按段内章数动态上限(2026-09-11「细中细」定调;输出预算:24集上限×700字×1.5+思考≈55K<65K)
+			MaxOrigChars: 9000,
+			Concurrency:  3,
+			PrevSummary:  400,
+			BriefMin:     400,
+			BriefMax:     700,
+			ShotLimit:    30,
 		},
 	}
 }
@@ -193,33 +203,33 @@ func NewManager(path, exeDir string) (*Manager, error) {
 	if def.NovelDir == "" {
 		def.NovelDir = filepath.Join(def.DataDir, "Novel")
 	}
-		raw, err := os.ReadFile(path)
-		if err == nil && len(raw) > 0 {
-			s := Default()
-			s.DataDir = def.DataDir
-			s.Comfy.RootDir = def.Comfy.RootDir
-			if err := json.Unmarshal(raw, s); err != nil {
-				return nil, err
-			}
-			// 已有文件但字段为空时回落到推导值
-			if s.DataDir == "" {
-				s.DataDir = def.DataDir
-			}
-			if s.Comfy.RootDir == "" {
-				s.Comfy.RootDir = def.Comfy.RootDir
-			}
-			if s.NovelDir == "" {
-				s.NovelDir = def.NovelDir
-			}
-			// 旧默认值迁移:v0.32 时代落盘的 chunk_size=40000 是截断防治
-			// 期的默认(8 集/段上限配套),细拆定调后段目标 12000
-			// (2026-09-11 用户定调「细中细」:56 章 49 集即此残留所致)
-			if s.Split.ChunkSize == 40000 {
-				s.Split.ChunkSize = 12000
-			}
-			m.settings = s
-			return m, nil
+	raw, err := os.ReadFile(path)
+	if err == nil && len(raw) > 0 {
+		s := Default()
+		s.DataDir = def.DataDir
+		s.Comfy.RootDir = def.Comfy.RootDir
+		if err := json.Unmarshal(raw, s); err != nil {
+			return nil, err
 		}
+		// 已有文件但字段为空时回落到推导值
+		if s.DataDir == "" {
+			s.DataDir = def.DataDir
+		}
+		if s.Comfy.RootDir == "" {
+			s.Comfy.RootDir = def.Comfy.RootDir
+		}
+		if s.NovelDir == "" {
+			s.NovelDir = def.NovelDir
+		}
+		// 旧默认值迁移:v0.32 时代落盘的 chunk_size=40000 是截断防治
+		// 期的默认(8 集/段上限配套),细拆定调后段目标 12000
+		// (2026-09-11 用户定调「细中细」:56 章 49 集即此残留所致)
+		if s.Split.ChunkSize == 40000 {
+			s.Split.ChunkSize = 12000
+		}
+		m.settings = s
+		return m, nil
+	}
 	// 文件缺失/为空:落一份默认文件(此时没有可覆盖的用户值)
 	m.settings = def
 	if err := m.saveLocked(); err != nil {

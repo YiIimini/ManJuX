@@ -15,7 +15,17 @@ const form = reactive({ script: {}, assets: {}, render: {}, qc: {}, assemble: {}
 
 watch(stageId, () => {
   const p = pj.value?.project?.params
-  if (p) Object.assign(form, JSON.parse(JSON.stringify(p)))
+  if (!p) return
+  const copy = JSON.parse(JSON.stringify(p))
+  // 逐层兜底:老项目快照里可能没有某个阶段(或某个新字段)。整体覆盖会让
+  // 模板里的 v-model="form.qc.enabled" 这类表达式打到 undefined 上直接抛错,
+  // 抽屉一开就弹「界面错误」。
+  for (const k of Object.keys(form)) {
+    form[k] = Object.assign({}, form[k] || {}, copy[k] || {})
+  }
+  // 多视角 / 参考图去冗余:缺省 = 开(与后端 ViewsOn()/CompactRefsOn() 的「未表态即开」同一语义)
+  form.assets.views = form.assets.views !== false
+  form.assets.compact_refs = form.assets.compact_refs === true // 默认关(只喂转台图会让锁脸变弱)
 }, { immediate: true })
 
 const titles = {
@@ -115,9 +125,17 @@ async function save() {
             <el-option value="skip" label="跳过(全部镜头纯文生 t2va)" />
           </el-select>
         </el-form-item>
+        <el-form-item label="角色多视角转台图(H3 原地转身 → 抽帧转台图,渲染时作该角色第二张参考)">
+          <el-switch v-model="form.assets.views" />
+        </el-form-item>
+        <el-form-item label="参考图去冗余(只喂转台图省一张;注意:拼合图缩放后脸部细节变弱,锁脸会变差,默认关)">
+          <el-switch v-model="form.assets.compact_refs" />
+        </el-form-item>
       </el-form>
       <el-alert type="info" :closable="false"
         title="Krea-2 生成:角色半身竖幅 832×1248 / 场景按项目画幅;已有资产自动复用,可上传替换。" />
+      <el-alert type="warning" :closable="false"
+        title="多视角:角色只有单张正面照时,渲染前会自动补一次 H3 转身渲染(每个角色数分钟,仅首次;补完写回资产库,后续项目直接复用)。不想要这个耗时可以关掉。" />
     </div>
 
     <div v-else-if="stageId === 'render'" class="flex flex-col gap-4">

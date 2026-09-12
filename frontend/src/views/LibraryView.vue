@@ -30,16 +30,97 @@ const detailOpen = computed({
   set: (v) => { if (!v) detail.value = null },
 })
 
+// 描述/提示词在弹窗里可编辑:AI 生成或手改后点「保存」落库(data/asset.json)。
+const editDesc = ref('')
+const editPrompt = ref('')
+const metaBusy = ref(false)
+const descBusy = ref(false)
+
+async function reloadDetail(k, n) {
+  try {
+    const d = await api.libraryDetail(k, n)
+    detail.value = { ...d, kind: k }
+    editDesc.value = detail.value.description || ''
+    editPrompt.value = detail.value.image_prompt || ''
+  } catch (e) { ElMessage.error('读取资产详情失败:' + e.message) }
+}
+
 async function openDetail(e) {
   if (batch.value) return // 批量选择模式下,点击卡片是勾选而不是看详情
   detailBusy.value = true
+  detail.value = { ...e } // 先开弹窗(卡片上的字段),再补详情,点击无空窗
+  editDesc.value = e.description || ''
+  editPrompt.value = e.image_prompt || ''
   try {
-    const d = await api.libraryDetail(e.kind, e.name)
-    detail.value = { ...e, ...d }
+    await reloadDetail(e.kind, e.name)
   } catch (err) {
     ElMessage.error('读取资产详情失败:' + err.message)
   }
   detailBusy.value = false
+}
+
+// hasViews 该角色是否已有多视角参考图(多视角原图或转台图)。
+// 没有 = 用这个角色渲染时只有一张正面照 —— 详情弹窗要给补全入口。
+const hasViews = computed(() => {
+  const d = detail.value
+  if (!d) return false
+  return (d.images || []).some((f) => /_view_|_turnaround/.test(String(f)))
+})
+
+// 补全多视角:一次 H3 转身渲染(数分钟),后端做完才返回,期间按钮保持 loading,
+// 不能让用户以为"点了没反应"。
+const viewsBusy = ref(false)
+async function doViews() {
+  const d = detail.value
+  if (!d) return
+  viewsBusy.value = true
+  try {
+    const j = await api.libraryViews(d.kind, d.name)
+    if (j && j.skipped) ElMessage.info(j.message || '已有多视角图')
+    else ElMessage.success('多视角已就绪:渲染将自动把它作为该角色的第二张参考')
+    await reloadDetail(d.kind, d.name)
+    refresh()
+  } catch (e) {
+    ElMessage.error('补全多视角失败:' + e.message)
+  }
+  viewsBusy.value = false
+}
+
+// AI 生成中文描述与英文提示词:配了视觉模型就让它读这张定妆照(描述的是图里的
+// 角色本身),否则退回文本模型；结果直接落库并回填到输入框,可再手动改。
+async function doDescribe() {
+  const d = detail.value
+  if (!d) return
+  descBusy.value = true
+  try {
+    const j = await api.libraryDescribe(d.kind, d.name)
+    const e = j.entry || j
+    editDesc.value = e.description || ''
+    editPrompt.value = e.image_prompt || ''
+    detail.value = { ...detail.value, ...e }
+    ElMessage.success(j.via === 'vlm' ? '已按图片生成描述与提示词(视觉模型)' : '已生成描述与提示词(文本模型)')
+    refresh()
+  } catch (e) {
+    ElMessage.error('生成失败:' + e.message)
+  }
+  descBusy.value = false
+}
+
+async function saveMeta() {
+  const d = detail.value
+  if (!d) return
+  metaBusy.value = true
+  try {
+    const e = await api.librarySetMeta(d.kind, d.name, {
+      description: editDesc.value, image_prompt: editPrompt.value,
+    })
+    detail.value = { ...d, ...e }
+    ElMessage.success('描述与提示词已保存')
+    refresh()
+  } catch (err) {
+    ElMessage.error('保存失败:' + err.message)
+  }
+  metaBusy.value = false
 }
 
 // imgURL 拼库内图片地址;file 为空取主图,否则取指定图(只传基名,后端会校验)
@@ -47,6 +128,13 @@ function imgURL(e, file) {
   const base = `/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`
   if (!file) return base
   return `${base}?file=${encodeURIComponent(String(file).split('/').pop())}`
+}
+
+// cardHasViews 卡片上的多视角标记(与详情弹窗同一判据),让用户不用点开就知道
+// 哪些角色还只有一张正面照。
+function cardHasViews(e) {
+  if (e.kind !== 'characters') return true
+  return (e.images || []).some((f) => /_view_|_turnaround/.test(String(f)))
 }
 
 // labelOf 按文件名推断图片用途,便于一眼看出哪张是定妆照、哪张是转台图
@@ -60,8 +148,9 @@ function labelOf(file) {
   return '定妆照'
 }
 
-// 重抽:同一角色换一张(提示词与描述不变,只换随机种子)。与顶部「抽卡」的区别是
-// 抽卡抽的是全新角色,重抽是对当前这个不满意再摇一次。
+// 重抽(抽卡):同一角色换一张(提示词与描述不变,只换随机种子)。与页面顶部
+// 「抽一张」的区别是:抽卡抽的是全新角色,重抽是对当前这个不满意再摇一次。
+// 没有提示词的条目后端会先用 LLM 依描述推导一条,不再直接拒绝。
 const regenBusy = ref(false)
 async function regenDetail() {
   const d = detail.value
@@ -69,11 +158,13 @@ async function regenDetail() {
   regenBusy.value = true
   try {
     const j = await api.libraryRegen(d.kind, d.name)
-    detail.value = { ...d, ...j }
-    ElMessage.success('已重抽:定妆照已更新(旧的多视角图已一并清除)')
+    detail.value = { ...d, ...j, kind: d.kind }
+    editPrompt.value = detail.value.image_prompt || ''
+    editDesc.value = detail.value.description || ''
+    ElMessage.success('已抽到新的一张(旧的多视角图已清除,可点「补全多视角」重建)')
     refresh()
   } catch (e) {
-    ElMessage.error('重抽失败:' + e.message)
+    ElMessage.error('抽卡失败:' + e.message)
   }
   regenBusy.value = false
 }
@@ -320,8 +411,12 @@ async function remove(e) {
         </div>
         <div class="flex items-center gap-2">
           <b class="text-sm truncate flex-1">{{ e.name }}</b>
+          <el-tooltip v-if="e.kind === 'characters' && !cardHasViews(e)"
+                      content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
+            <el-tag size="small" type="warning" effect="plain">单视角</el-tag>
+          </el-tooltip>
           <el-tag size="small" effect="plain" :type="e.source === 'krea2' ? 'warning' : 'info'">
-            {{ e.source === 'krea2' ? 'Krea-2' : '上传' }}
+            {{ e.source === 'krea2' ? 'Krea-2' : e.source === 'gacha' ? '抽卡' : '上传' }}
           </el-tag>
         </div>
         <div class="text-xs" style="color:var(--mx-text2)">
@@ -374,12 +469,31 @@ async function remove(e) {
       </template>
     </el-dialog>
 
-    <!-- 资产详情:全部图片(定妆照/多视角/转台图) + 中文描述 + 英文提示词 + 管理 -->
-    <el-dialog v-model="detailOpen" width="780px" append-to-body :title="detail ? `资产详情 · ${detail.name}` : '资产详情'">
+    <!-- 资产详情:全部图片(定妆照/多视角/转台图) + 中文描述 + 英文提示词 + 抽卡/补全 -->
+    <el-dialog v-model="detailOpen" width="820px" append-to-body :title="detail ? `资产详情 · ${detail.name}` : '资产详情'">
       <div v-if="detail" class="flex flex-col gap-4">
         <div>
-          <div class="text-xs mb-2" style="color:var(--mx-text3)">
-            全部图片({{ detailImages.length }} 张)· 点击可放大
+          <div class="flex items-center gap-2 mb-2 flex-wrap">
+            <span class="text-xs" style="color:var(--mx-text3)">
+              全部图片({{ detailImages.length }} 张:定妆照 + 多视角/转台图)· 点击可放大
+            </span>
+            <div class="flex-1"></div>
+            <template v-if="detail.kind === 'characters'">
+              <el-tag v-if="hasViews" size="small" type="success" effect="plain">
+                含多视角参考(渲染时作第二张参考)
+              </el-tag>
+              <template v-else>
+                <span class="text-xs" style="color:var(--mx-amber)">
+                  只有单张正面照 —— 渲染时该角色拿不到多视角参考
+                </span>
+                <el-tooltip content="H3 原地转身视频 → 抽帧转台图(约数分钟);完成后自动写回资产库,渲染直接调用" placement="top">
+                  <el-button size="small" type="primary" plain :loading="viewsBusy" @click="doViews">
+                    <el-icon class="mr-1"><MagicStick /></el-icon>
+                    {{ viewsBusy ? '多视角生成中(约数分钟)…' : '补全多视角' }}
+                  </el-button>
+                </el-tooltip>
+              </template>
+            </template>
           </div>
           <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(112px,1fr))">
             <div v-for="(f, i) in detailImages" :key="f"
@@ -392,25 +506,48 @@ async function remove(e) {
             </div>
           </div>
         </div>
+
         <div>
-          <div class="text-xs mb-1" style="color:var(--mx-text3)">中文描述</div>
-          <div class="text-sm p-2 rounded-lg" style="background:var(--mx-bg2);white-space:pre-wrap">{{ detail.description || '(无)' }}</div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs" style="color:var(--mx-text3)">中文描述(跨项目一致性用)</span>
+            <div class="flex-1"></div>
+            <el-tooltip content="让 AI 依据这张定妆照生成中文描述与英文提示词(配了视觉模型就读图,否则用文本模型)" placement="top">
+              <el-button size="small" text :loading="descBusy" @click="doDescribe">
+                <el-icon class="mr-1"><MagicStick /></el-icon>{{ descBusy ? '生成中…' : 'AI 生成描述/提示词' }}
+              </el-button>
+            </el-tooltip>
+          </div>
+          <el-input v-model="editDesc" type="textarea" :rows="3" resize="none"
+                    placeholder="如:20岁黑发少年,青色布衣,眼神明亮…(为空时点右上「AI 生成」)" />
         </div>
+
         <div>
-          <div class="text-xs mb-1" style="color:var(--mx-text3)">英文提示词(定妆照)</div>
-          <div class="text-xs p-2 rounded-lg" style="background:var(--mx-bg2);word-break:break-word;line-height:1.6">{{ detail.image_prompt || '(无)' }}</div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="text-xs" style="color:var(--mx-text3)">英文提示词(定妆照;抽卡与重生成都按它出图)</span>
+          </div>
+          <el-input v-model="editPrompt" type="textarea" :rows="4" resize="none"
+                    placeholder="A 20-year-old Chinese young man, short black hair, cyan hanfu robe…(为空时抽卡会先用描述推导)" />
         </div>
+
         <div class="text-xs" style="color:var(--mx-text3)">
-          来源:{{ detail.source === 'krea2' ? 'Krea-2 生成' : '上传' }} ·
+          来源:{{ detail.source === 'krea2' ? 'Krea-2 生成' : detail.source === 'gacha' ? '抽卡' : '上传' }} ·
           首次入库:{{ detail.source_project || '-' }} ·
           已被 {{ detail.used_count }} 个项目复用
+          <span v-if="detail.aliases?.length">
+            <br />同一角色的其它叫法(分集分镜换称呼也不会重出定妆照):{{ detail.aliases.join('、') }}
+          </span>
         </div>
       </div>
       <template #footer>
         <el-button plain @click="detailOpen = false">关闭</el-button>
-        <el-button type="primary" :loading="regenBusy" @click="regenDetail">
-          <el-icon class="mr-1"><Trophy /></el-icon>{{ regenBusy ? '重抽中(约 1 分钟)…' : '重抽(同角色换一张)' }}
-        </el-button>
+        <el-tooltip content="把上面编辑过的中文描述与英文提示词写入资产库" placement="top">
+          <el-button :loading="metaBusy" @click="saveMeta">保存描述/提示词</el-button>
+        </el-tooltip>
+        <el-tooltip content="同一角色再摇一张定妆照(描述与提示词不变,只换随机种子)" placement="top">
+          <el-button type="primary" :loading="regenBusy" @click="regenDetail">
+            <el-icon class="mr-1"><Trophy /></el-icon>{{ regenBusy ? '抽卡中(约 1 分钟)…' : '抽卡(换一张定妆照)' }}
+          </el-button>
+        </el-tooltip>
         <el-button type="danger" plain @click="removeDetail">
           <el-icon class="mr-1"><Delete /></el-icon>删除该资产
         </el-button>

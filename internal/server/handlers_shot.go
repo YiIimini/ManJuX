@@ -253,6 +253,7 @@ func (s *Server) regenAsset(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err)
 		return
 	}
+	s.pipe.ReleaseVRAMIfIdle("单资产重生成完成")
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 

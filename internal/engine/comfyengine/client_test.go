@@ -12,23 +12,41 @@ import (
 	"github.com/YiIimini/ManJuX/internal/engine"
 )
 
-// TestWaitForDoneUsesConfiguredTimeout 回归 2026-09-11:单镜超时此前被写死
-// 45 分钟,设置页的「单镜渲染超时」形同虚设。现在必须真正生效,且超时错误要能
-// 被 errors.Is(err, engine.ErrRenderTimeout) 识别 —— 管线据此决定是否释放显存重试。
+// TestWaitForDoneUsesConfiguredTimeout 回归 2026-09-11 + 2026-09-12:
+// ①配置的单镜超时必须真正生效,且超时错误要能被 errors.Is(err, engine.ErrRenderTimeout)
+// 识别 —— 管线据此决定是否释放显存重试;
+// ②但超时**只对"已开始执行"的时间**生效:排队等待不吃执行预算。
+// 旧实现从提交那刻起算,定妆照排在长视频任务后面排 10 分钟队就必被判"渲染超时",
+// 实测整批角色与场景定妆照被误杀、镜头缺参考图降级 t2va(2026-09-12 用户报障)。
 func TestWaitForDoneUsesConfiguredTimeout(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case strings.HasPrefix(r.URL.Path, "/history/"):
-			_, _ = w.Write([]byte(`{}`))
-		case r.URL.Path == "/queue":
-			_, _ = w.Write([]byte(`{"queue_running":[],"queue_pending":[]}`))
-		default:
-			_, _ = w.Write([]byte(`{}`))
-		}
-	}))
-	defer srv.Close()
+	newSrv := func(queueBody string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch {
+			case strings.HasPrefix(r.URL.Path, "/history/"):
+				_, _ = w.Write([]byte(`{}`))
+			case r.URL.Path == "/queue":
+				_, _ = w.Write([]byte(queueBody))
+			default:
+				_, _ = w.Write([]byte(`{}`))
+			}
+		}))
+	}
 
-	c := NewClient(srv.URL)
+	// ① 任务还在排队:1 纳秒的执行上限也不该判超时(排队不计时),
+	//    只受调用方 ctx 约束 —— 这里用 8 秒 ctx 收尾,验证它一直等到 ctx 到期。
+	pendSrv := newSrv(`{"queue_running":[],"queue_pending":[[1,"pid-1"]]}`)
+	defer pendSrv.Close()
+	pc := NewClient(pendSrv.URL)
+	pctx, pcancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer pcancel()
+	if _, err := pc.WaitForDone(pctx, "pid-1", time.Nanosecond, nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("排队中的任务不应被判执行超时(排队不吃执行预算),实际 %v", err)
+	}
+
+	// ② 任务已开始执行:1 纳秒上限应在下一次心跳被判超时,且包装 ErrRenderTimeout
+	runSrv := newSrv(`{"queue_running":[[1,"pid-1"]],"queue_pending":[]}`)
+	defer runSrv.Close()
+	c := NewClient(runSrv.URL)
 	started := time.Now()
 	// 轮询心跳固定 3s,超短超时会在第一个心跳后被判定,而不是等默认 45 分钟
 	_, err := c.WaitForDone(context.Background(), "pid-1", time.Nanosecond, nil)

@@ -403,16 +403,25 @@ const defaultImageTimeout = 10 * time.Minute
 
 // WaitForDone 轮询直到完成/出错。onProgress 收到 0-100 进度。
 // timeout<=0 时回退 defaultShotTimeout。
+//
+// **计时口径(2026-09-12 修正)**:排队等待不计入执行预算。
+// 旧实现把 deadline 定在"提交那一刻"(time.Now().Add(timeout)),于是排在前面的
+// 长视频任务(单镜可跑数十分钟)会把后面所有任务的超时预算一起吃掉 —— 出图任务
+// 排 10 分钟队就必然被判「渲染超时(单镜上限 10m0s)」,而引擎其实一点没坏。
+// 实测:三条管线并发时,资产阶段的角色与场景定妆照接连被杀,镜头因此缺参考图
+// 降级 t2va(2026-09-12 用户报障「角色生成失败」「场景也有失败」)。
+// 现在只计"真正在执行"的时间(timeout 是卡死防线,不是排队防线),排队另有
+// 一个宽松上限 queueCap:排到 queueCap 还没轮到,才判定异常并明确告知在排队。
 func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.Duration, onProgress func(pct int, note string)) (*HistoryEntry, error) {
 	if timeout <= 0 {
 		timeout = defaultShotTimeout
 	}
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
-	deadline := time.Now().Add(timeout)
-	missCount := 0        // 连续不在队列且无 history 的次数
-	started := time.Now() // 执行计时(真实感知,不用假百分比)
-	lastNote := ""        // 进度文案去重:同文案不重复上报
+	submitted := time.Now() // 提交时刻(仅用于排队计时与展示)
+	var execStart time.Time // 首次观察到"正在执行"的时刻
+	missCount := 0          // 连续不在队列且无 history 的次数
+	lastNote := ""          // 进度文案去重:同文案不重复上报
 	report := func(pct int, note string) {
 		if note == lastNote {
 			return
@@ -422,8 +431,8 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 			onProgress(pct, note)
 		}
 	}
-	fmtDur := func() string {
-		s := int(time.Since(started).Seconds())
+	fmtDur := func(d time.Duration) string {
+		s := int(d.Seconds())
 		if s < 60 {
 			return fmt.Sprintf("%d 秒", s)
 		}
@@ -434,8 +443,14 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			if time.Now().After(deadline) {
-				return nil, fmt.Errorf("%w(单镜上限 %v)", engine.ErrRenderTimeout, timeout)
+			now := time.Now()
+			switch DecideWait(now, submitted, execStart, timeout, queueWaitCap) {
+			case WaitExecTimeout:
+				return nil, fmt.Errorf("%w(已执行 %v,执行上限 %v;排队等待 %v)",
+					engine.ErrRenderTimeout, fmtDur(now.Sub(execStart)), timeout, fmtDur(execStart.Sub(submitted)))
+			case WaitQueueTimeout:
+				return nil, fmt.Errorf("%w(排队等待 %v 仍未开始执行,排队上限 %v;通常是前面压着更长的视频任务)",
+					engine.ErrRenderTimeout, fmtDur(now.Sub(submitted)), queueWaitCap)
 			}
 			h, err := c.History(ctx, promptID)
 			if err != nil {
@@ -453,20 +468,27 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 				}
 				if qerr == nil {
 					if containsID(pendIDs, promptID) {
-						report(2, "排队中")
+						// 排队中:如实报"已等多久" —— 用户要能一眼看出慢在排队而不是卡死
+						report(2, fmt.Sprintf("排队中 · 已等 %s", fmtDur(now.Sub(submitted))))
 					} else if containsID(runIDs, promptID) {
+						if execStart.IsZero() {
+							execStart = now
+						}
 						// 执行中:真实计时(每 30 秒更新一跳),不再给假百分比
-						s := int(time.Since(started).Seconds())
+						s := int(now.Sub(execStart).Seconds())
 						if s%30 < 3 {
-							report(20+min(60, s/10), fmt.Sprintf("执行中 · 已 %s", fmtDur()))
+							report(20+min(60, s/10), fmt.Sprintf("执行中 · 已 %s", fmtDur(now.Sub(execStart))))
 						}
 					} else {
 						report(50, "执行中")
 					}
 				} else {
-					report(2, "排队中")
+					report(2, fmt.Sprintf("排队中 · 已等 %s", fmtDur(now.Sub(submitted))))
 				}
 				continue
+			}
+			if execStart.IsZero() {
+				execStart = now // 有 history 记录 = 已经开始执行
 			}
 			if h.Status.Completed || h.Status.StatusStr == "success" {
 				return h, nil
@@ -480,6 +502,34 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 			}
 		}
 	}
+}
+
+// queueWaitCap 排队等待上限:排这么久还没轮到就判定异常(有更长的任务压着或队列卡住)。
+// 与执行上限(timeout)分开计,不共用预算 —— 见 WaitForDone 的计时口径说明。
+const queueWaitCap = 90 * time.Minute
+
+// WaitDecision 一次轮询的判定结果。
+type WaitDecision int
+
+const (
+	WaitContinue     WaitDecision = iota // 继续等
+	WaitExecTimeout                      // 执行超时(真卡死)
+	WaitQueueTimeout                     // 排队超时(一直没轮到)
+)
+
+// DecideWait 判定是否该放弃等待。抽成纯函数便于单测 —— 这里的口径直接决定
+// "排在长任务后面的任务会不会被误杀",是本次修复的核心,必须有回归测试钉住。
+func DecideWait(now, submitted, execStart time.Time, execTimeout, queueCap time.Duration) WaitDecision {
+	if !execStart.IsZero() {
+		if now.Sub(execStart) > execTimeout {
+			return WaitExecTimeout
+		}
+		return WaitContinue
+	}
+	if now.Sub(submitted) > queueCap {
+		return WaitQueueTimeout
+	}
+	return WaitContinue
 }
 
 func containsID(ids []string, id string) bool {

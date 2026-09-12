@@ -5,10 +5,41 @@ import { THEMES, loadPrefs, applyTheme } from '../themes'
 import { reactive, onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
-const form = reactive({
-  server_port: 8790, data_dir: '', auto_open_ui: true,
-  llm: {}, comfy: {}, minimax: {}, ff: {}, render: {}, split: {},
+// form 的**完整默认形状**:模板里 v-model="form.xxx.yyy" 的每一层都必须在首帧
+// 就存在。此前 vlm 段是新加的 UI 但 form 的初值里没有 vlm 键 —— 首帧渲染
+// form.vlm.base_url 立刻抛 "Cannot read properties of undefined (reading
+// 'base_url')",而且 getSettings 返回前会连抛三次(base_url/model/api_key),
+// 用户看到的就是设置页一进去满屏「界面错误」。
+const emptyForm = () => ({
+  server_port: 8790, data_dir: '', novel_dir: '', auto_open_ui: true,
+  llm: { base_url: '', api_key: '', model: '', timeout_seconds: 600 },
+  comfy: {
+    base_url: '', root_dir: '', auto_start: true, idle_stop_min: 10, cond_cache: true,
+    reserve_vram_gb: 1, sage_attention: true,
+  },
+  minimax: { base_url: '', api_key: '', model: '', resolution: '768P' },
+  vlm: { base_url: '', api_key: '', model: '' },
+  ff: { ffmpeg_path: '', ffprobe_path: '' },
+  render: { default_engine: 'auto', fade_sec: 0.5, shot_timeout: 45 },
+  split: {
+    chunk_size: 12000, concurrency: 3, max_orig_chars: 9000,
+    prev_summary: 400, brief_min: 400, brief_max: 700, shot_limit: 30,
+  },
 })
+const form = reactive(emptyForm())
+// fill 逐层合并而不是整体替换:后端字段比模板多(comfy.unet_ref2va 等模型文件名、
+// minimax.resolution…)时必须原样带上保存,整体替换会把后端新增字段从这次提交里
+// 抹掉;而模板用到的层则由 emptyForm 兜底,后端少给哪一层都不会再抛 undefined。
+function fill(s) {
+  if (!s || typeof s !== 'object') return
+  for (const [k, v] of Object.entries(s)) {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      form[k] = Object.assign({}, form[k] || {}, v)
+    } else {
+      form[k] = v
+    }
+  }
+}
 const testing = ref('')
 // ---- 自动保存:任何字段变更即标记 dirty;离开页面(切导航/关窗)自动落盘 ----
 // 修复「改了超时/模型没点保存,切页回来就丢」的体验(2026-09-09 反馈)
@@ -20,7 +51,10 @@ async function loadSettings(force = false) {
   if (dirty.value && !force) return // 有未保存修改时不拉旧值覆盖(顶栏刷新也不打断编辑)
   try {
     const s = await api.getSettings()
-    Object.assign(form, s)
+    fill(s)
+    // 三态字段在前端一律落成布尔:后端 nil = 未表态(自动),若原样交给 el-switch,
+    // 开关会显示成"关"而实际在生效(用户看到的就是"明明开着却显示关")。
+    form.comfy.sage_attention = form.comfy.sage_attention !== false
     savedSnap = JSON.stringify(form)
     dirty.value = false
   } catch (e) { ElMessage.error(e.message) }
@@ -29,12 +63,6 @@ watch(() => G.tick.settings, () => loadSettings())
 
 // 个性化:主题与玻璃拟态(纯前端偏好,即时生效即时保存)
 const appear = reactive({ theme: 'midnight-amber', glass: false, glassAlpha: 0.72 })
-onMounted(() => {
-  const p = loadPrefs()
-  appear.theme = p.theme || 'midnight-amber'
-  appear.glass = !!p.glass
-  appear.glassAlpha = p.glassAlpha || 0.72
-})
 const curTheme = computed(() => THEMES.find(t => t.id === appear.theme))
 function pickTheme(id) {
   appear.theme = id
@@ -48,10 +76,11 @@ function onAlpha(v) {
 }
 
 onMounted(async () => {
-  try {
-    const s = await api.getSettings()
-    Object.assign(form, s)
-  } catch (e) { ElMessage.error(e.message) }
+  const p = loadPrefs()
+  appear.theme = p.theme || 'midnight-amber'
+  appear.glass = !!p.glass
+  appear.glassAlpha = p.glassAlpha || 0.72
+  await loadSettings(true) // 首次进入强制拉一次(此前有 2 个 onMounted 各拉一次,重复请求)
 })
 
 async function save() {
@@ -185,6 +214,12 @@ async function testConn(target) {
           </el-form-item>
           <el-form-item label="空闲自动退出(分钟;管线结束后无任务自动停引擎释放显存,0=常驻)">
             <el-input-number v-model="form.comfy.idle_stop_min" :min="0" :max="240" :step="5" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="显存预留(GB;引擎启动时留给系统/浏览器,防渲染时整机卡顿,0=自定)">
+            <el-input-number v-model="form.comfy.reserve_vram_gb" :min="0" :max="8" :step="0.5" style="width:100%" />
+          </el-form-item>
+          <el-form-item label="Sage 注意力加速(官方推荐:生成约快一倍、显存占用更低;需已装 sageattention 包)">
+            <el-switch v-model="form.comfy.sage_attention" />
           </el-form-item>
           <el-form-item label="两阶段渲染(条件缓存 .pt)">
             <el-switch v-model="form.comfy.cond_cache" />

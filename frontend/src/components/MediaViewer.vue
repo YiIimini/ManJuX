@@ -57,7 +57,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
 
 <style scoped>
 .mv-mask {
-  position: fixed; inset: 0; z-index: 2000;
+  position: fixed; inset: 0;
+  /* 层级(2026-09-12 修「多级弹窗层级异常」):Element 的弹层计数器从 2000 起、
+     每多开一层 +1,而全屏预览器原来也是 2000 —— 从「资产库详情」「分镜卡」这类
+     弹窗/抽屉里点图打开预览时,预览器被压在弹窗底下(看不见也点不到)。
+     现取 2700:高于弹层计数器与运行日志悬浮窗(2600),低于永远最高的 Tip(3000)。 */
+  z-index: 2700;
   background: rgba(3, 5, 9, .82);
   backdrop-filter: blur(10px);
   display: flex; align-items: center; justify-content: center;

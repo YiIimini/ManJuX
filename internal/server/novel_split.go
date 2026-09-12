@@ -73,7 +73,6 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		// 注册键与拆集内部 safeSeries 规整键一致,防占位卡孤儿(同 novels.go)
 		name = safeSeries(name)
-		jobSet(name, "running", 0, "AI 拆集通读中…")
 		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, "", nil)
 		if err != nil {
 			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
@@ -227,9 +226,17 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, batchTotal(), ep, err)})
 			return
 		}
-		// 等本集跑完(轮询 Running;单集上限 2.5 小时兜底)
-		deadline := time.Now().Add(150 * time.Minute)
-		for time.Now().Before(deadline) {
+		epStart := time.Now()
+		// 等本集跑完。判定口径(2026-09-12 重构):**看有没有产物进展,而不是看跑了多久**。
+		//   - 只要项目目录里还有新产物落地(定妆照/转台图/manifest 状态/镜头 mp4),
+		//     就一直等 —— 角色多、多视角转身多的集本来就慢(实测一集 10 个角色光转身
+		//     就 50 分钟),旧实现的固定 2.5 小时上限会把这种"慢而正常"的集判成异常;
+		//   - 连续 batchStallLimit 分钟**一点变化都没有**才判卡住并暂停产线;
+		//   - batchEpisodeHardCap 是绝对兜底,防极端情况下无限等。
+		hardDeadline := epStart.Add(batchEpisodeHardCap)
+		fresh := projectFreshest(s.store.Dir(ep))
+		lastActive := time.Now()
+		for time.Now().Before(hardDeadline) {
 			time.Sleep(10 * time.Second)
 			batch.mu.Lock()
 			stopped := batch.stop
@@ -242,6 +249,26 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			if s.pipe.Running(ep) == nil {
 				break
 			}
+			if f := projectFreshest(s.store.Dir(ep)); f.After(fresh) {
+				fresh, lastActive = f, time.Now()
+			} else if time.Since(lastActive) > batchStallLimit {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+					Message: fmt.Sprintf("⏸ 批量产线暂停于 %d/%d:《%s》近 %s 没有任何新产物(疑似卡住),已保留它继续跑,不再并行开下一集;确认后再点「批量产线」续跑",
+						i+1, batchTotal(), ep, batchStallLimit.Round(time.Minute))})
+				return
+			}
+		}
+		// 绝对兜底到点、而该集**仍在运行**时,绝不能当成"完成"往下走。
+		// 旧实现直接落到下面的「✔ 完成」分支:上一集还在渲染,下一集已经开跑,
+		// 于是多集并发抢一张显卡 —— 出图任务排在长视频任务后面排队超时(角色/场景
+		// 定妆照整批失败)、单镜从 3-5 分钟涨到 20+ 分钟,越跑越慢(2026-09-12 实证:
+		// 第01/02/03 集三条管线同时在跑,三张定妆照 + 一张场景图被杀)。
+		// 这里改为:保留它继续跑,产线停住等用户 —— 单集慢是慢,不会把别集一起拖垮。
+		if s.pipe.Running(ep) != nil {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+				Message: fmt.Sprintf("⏸ 批量产线暂停于 %d/%d:《%s》已跑 %s 仍未结束(超过单集 %s 绝对上限),已保留它继续跑,不再并行开下一集(同一条产线共用一张显卡,并发只会让两集一起变慢甚至超时);等它跑完再点「批量产线」续跑",
+					i+1, batchTotal(), ep, time.Since(epStart).Round(time.Minute), batchEpisodeHardCap.Round(time.Minute))})
+			return
 		}
 		// 排队铁律:只有「自然完成」才续下一集;中止/失败一律停住队列,
 		// 不得把被停的集当成完成继续空转跳集(2026-09-08 用户规则)。
@@ -286,4 +313,39 @@ func tailRunes(s string, n int) string {
 		return string(r)
 	}
 	return string(r[len(r)-n:])
+}
+
+// 批量产线的等待策略常量。
+const (
+	// batchStallLimit 连续多久"项目目录一点新产物都没有"就判该集卡住并暂停产线。
+	// 定 60 分钟:单镜渲染最长 45 分钟(超时后还会释放显存重试一次),中间会写
+	// manifest 状态,所以正常等待不会连续一小时毫无动静。
+	batchStallLimit = 60 * time.Minute
+	// batchEpisodeHardCap 单集绝对上限(12 小时),防极端情况下产线无限等。
+	batchEpisodeHardCap = 12 * time.Hour
+)
+
+// projectFreshest 项目目录里最近一次文件改动时间(跳过 logs/)。
+//
+// 作为"这条管线还在产出吗"的活性信号:定妆照、多视角转台图、manifest 状态、
+// 镜头 mp4、成片 —— 任何一步落地都会刷新它。比"跑了多久"可靠得多:
+// 慢而正常的集(角色多、转身多)不会被误判,死住的集会被抓出来。
+func projectFreshest(dir string) time.Time {
+	var newest time.Time
+	_ = filepath.WalkDir(dir, func(p string, e os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if e.IsDir() {
+			if e.Name() == "logs" { // 管线自己的日志不算"产物"
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if fi, ierr := e.Info(); ierr == nil && fi.ModTime().After(newest) {
+			newest = fi.ModTime()
+		}
+		return nil
+	})
+	return newest
 }
