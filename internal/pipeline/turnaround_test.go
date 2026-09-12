@@ -255,3 +255,38 @@ func TestNormalizeUniformWording(t *testing.T) {
 		t.Errorf("无关描述不应被改动:%s", normalizeUniformWording(plain))
 	}
 }
+
+// TestCompactIdentityKeepsEthnicity 剥离面部词必须**整词**匹配,不得削掉族群词。
+//
+// 回归 2026-09-12(用户「转台图和多位图咋生成外国人了,还与正面图不一样啊」):
+// 上一版用 strings.ReplaceAll 扣面部词,`chin` 把 `Chinese man` 削成 `ese man` ——
+// 族群信息一丢,转身视频立刻把角色画成外国人(用户当场发现)。整词边界同时避免
+// chin→machine / lip→clip / face→surface 这类误伤。
+func TestCompactIdentityKeepsEthnicity(t *testing.T) {
+	in := "Chinese man in his late twenties, slim build, long narrow face with a sharp chin, " +
+		"high brow ridge, narrow single-lidded cold calm eyes, slightly messy short black hair, " +
+		"faded grey-blue short-sleeve work shirt, upper-body framing, front-facing"
+	got := compactIdentity(in)
+	low := strings.ToLower(got)
+	if !strings.Contains(low, "chinese") {
+		t.Errorf("族群词必须保留(否则会画成外国人):%q", got)
+	}
+	// 注意:不能简单查 "ese man" —— "chinese man" 本身就包含它;只查"开头被削"这种真错法
+	if strings.HasPrefix(low, "ese ") {
+		t.Errorf("族群词被削掉了(chinese→ese):%q", got)
+	}
+	for _, bad := range []string{" chin ", " chin,", "eyes", " face ", "lips", "nose"} {
+		if strings.Contains(low, bad) {
+			t.Errorf("面部词未被整词剥掉(残留 %q):%q", bad, got)
+		}
+	}
+	// 服装/发型/年龄锚点要留住,残句要清干净
+	for _, keep := range []string{"work shirt", "black hair", "late twenties"} {
+		if !strings.Contains(low, keep) {
+			t.Errorf("身份锚点应保留 %q:%q", keep, got)
+		}
+	}
+	if strings.Contains(got, " ,") || strings.Contains(got, ",,") {
+		t.Errorf("删除后面部词后不得留下残句标点:%q", got)
+	}
+}

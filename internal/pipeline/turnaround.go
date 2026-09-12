@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -175,9 +176,9 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 // (旧版只对第 1 帧说了上半身中景,后三帧模型就自由拉到全身)。
 func turnaroundPrompt(name, imagePrompt string) string {
 	desc := compactIdentity(imagePrompt)
-	subject := "the character in <Picture 1>"
+	subject := "the EXACT SAME individual as <Picture 1> in <Picture 1>"
 	if strings.TrimSpace(desc) != "" {
-		subject = "the character in <Picture 1> (" + desc + ")"
+		subject = "the EXACT SAME individual as <Picture 1>, " + desc + ", in <Picture 1>"
 	}
 	return `subject_definitions:
 <Subject 1> is ` + subject + `.
@@ -187,7 +188,7 @@ summary:
 A character turnaround reference: the character stands still in the centre of frame and slowly rotates in place, showing the front view first, then turning through three-quarter and full profile to the back view. Plain seamless background, even studio lighting, the character never leaves the frame and never changes appearance.
 
 retention_analysis:
-- <Picture 1> : fully_preserved - this is an IDENTITY COPY, not a re-design. Face shape, facial features, eyebrows, nose shape and colour, skin tone, hairstyle, hair colour, costume, accessories and body proportions must stay exactly the same as <Picture 1> in every frame. FACE LOCK: copy the facial features, bone structure and skin details from <Picture 1> exactly; do NOT blend, average, beautify, slim, age or de-age the face, and do NOT substitute any other face. Do NOT restyle the subject: same character, same art style, same age, same body proportion as <Picture 1>.
+- <Picture 1> : fully_preserved - this is an IDENTITY COPY, not a re-design. The subject is the SAME PERSON as <Picture 1>: same ethnicity and facial type, same face, same age — never cast a different-looking or different-ethnicity person. Face shape, facial features, eyebrows, nose shape and colour, skin tone, hairstyle, hair colour, costume, accessories and body proportions must stay exactly the same as <Picture 1> in every frame. FACE LOCK: copy the facial features, bone structure and skin details from <Picture 1> exactly; do NOT blend, average, beautify, slim, age or de-age the face, and do NOT substitute any other face. Do NOT restyle the subject: same character, same art style, same age, same body proportion as <Picture 1>.
 - Keep the SAME framing as <Picture 1> in all four shots (the same upper-body medium shot throughout). Do NOT zoom out, do NOT switch to a full-body view, do NOT change the camera distance.
 - Everything must be COPIED from <Picture 1>, never re-invented: hairstyle (same length and same colour), costume, accessories, the objects the character is holding (same objects, same colours, no lettering added anywhere) and body proportions. Do not restyle, do not recolour, do not change the subject's age or art style.
 
@@ -223,22 +224,42 @@ func compactIdentity(p string) string {
 		p = strings.ReplaceAll(p, w, "")
 	}
 	low := strings.ToLower(p)
-	for _, w := range []string{
-		"rosy", "blush", "red nose", "freckles", "freckle", "mole", "scar", "scars",
-		"birthmark", "pockmark", "pockmarks", "large eyes", "big eyes", "round eyes",
-		"eyelids", "eyelid", "eyebrows", "eyebrow", "cheekbones", "cheekbone", "cheeks",
-		"cheek", "chin", "jaw", "lips", "lip", "nose", "eyes", "eye", "face",
-		"skin", "complexion", "makeup", "handsome", "pretty", "beautif", "cute",
-	} {
-		low = strings.ReplaceAll(low, w, "")
+	// **按整词删**( 边界),不能再用子串替换:实测 strings.ReplaceAll(low,"chin","")
+	// 会把 "Chinese man" 削成 "ese man" —— 族群信息一丢,转身视频立刻把角色画成外国人
+	// (2026-09-12 用户报「转台图和多位图咋生成外国人了」,根因即此)。整词边界同时
+	// 避免 chin→machine、lip→clip、face→surface 这类误伤。
+	// 另外族群/身份词(Chinese/Asian/东方)一律**保留**:它们是身份锚,不是"面部细节"。
+	low = reStripWord.ReplaceAllString(low, " ")
+	return tidyCompact(low)
+}
+
+// compactStripWords 转身视频提示词里**要剥掉**的面部/皮肤类词(整词匹配)。
+// 为什么剥:长相一律以参考图为准,文字多写一句就多一次"模型按文字重画"的机会。
+// 注意这些都是**整词**,且不含 Chinese/Asian 等族群词。
+var compactStripWords = []string{
+	"rosy", "blush", "freckles", "freckle", "mole", "scars", "scar",
+	"birthmark", "pockmarks", "pockmark", "eyelids", "eyelid",
+	"eyebrows", "eyebrow", "cheekbones", "cheekbone", "cheeks", "cheek",
+	"chin", "jaw", "lips", "lip", "nose", "eyes", "eye", "face",
+	"skin", "complexion", "makeup", "handsome", "pretty", "beautiful", "beautify", "cute",
+}
+
+// reStripWord 整词删除用的正则(按词边界,避免削掉 Chinese/machine 这类词的一部分)。
+var reStripWord = regexp.MustCompile("\x5cb(?:" + strings.Join(compactStripWords, "|") + ")\x5cb")
+
+// tidyCompact 清理删除后留下的空格与孤立标点(残句会误导模型,如 "long narrow with a sharp ,")。
+func tidyCompact(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	for _, bad := range []string{" ,", " .", " ;", "with a ,", ", ,"} {
+		s = strings.ReplaceAll(s, bad, "")
 	}
-	out := strings.Join(strings.Fields(low), " ")
-	// 只做长度保护,不做"掐前 N 个词"截断:剥掉面部词后剩下的基本就是服装/发型/
-	// 年龄,这些正是转身视频需要的最小锚点,掐掉会任由模型改服装改年龄。
-	if r := []rune(out); len(r) > 400 {
-		return string(r[:400])
+	s = strings.ReplaceAll(s, " ,", ",")
+	s = strings.ReplaceAll(s, ",,", ",")
+	s = strings.ReplaceAll(s, "  ", " ")
+	if r := []rune(s); len(r) > 400 {
+		s = string(r[:400])
 	}
-	return out
+	return strings.TrimSpace(strings.Trim(strings.TrimSpace(s), ",;"))
 }
 
 // hstackImages 横向拼接多张图(ffmpeg hstack):统一缩放到同一高度后并排,
