@@ -72,7 +72,7 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Krea-2 定妆照(按实体类型取景:抽卡也可能抽出一只器物/妖兽)
-	imgPath, err := s.genLibraryPortrait(ctx, card.Name, card.Description, card.ImagePrompt, time.Now().UnixNano()&0x7fffffff)
+	imgPath, err := s.genLibraryPortrait(ctx, card.Name, card.Description, card.ImagePrompt, pipeline.RandomSeed())
 	if err != nil {
 		writeErr(w, 500, fmt.Errorf("抽卡定妆失败(Krea-2):%w", err))
 		return
@@ -162,7 +162,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
 		defer cancel()
-		p, err := s.genLibraryPortrait(ctx, name, desc, prompt, time.Now().UnixNano()&0x7fffffff)
+		p, err := s.genLibraryPortrait(ctx, name, desc, prompt, pipeline.RandomSeed())
 		if err != nil {
 			writeErr(w, 500, fmt.Errorf("定妆生成失败(Krea-2):%w", err))
 			return
@@ -213,7 +213,7 @@ func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	seed := time.Now().UnixNano() & 0x7fffffff // 随机种子:每次抽到不同的图
+	seed := pipeline.RandomSeed() // 随机种子:每次抽到不同的图
 	tmp, err := s.genLibraryPortrait(r.Context(), name, e.Description, prompt, seed)
 	if err != nil {
 		writeErr(w, 503, fmt.Errorf("重抽失败(需要本地 ComfyUI):%w", err))

@@ -191,16 +191,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			mode = "t2va"
 		}
 
-		seed := rp.Seed
-		if seedOverride > 0 {
-			seed = seedOverride + int64(shot.ID)*101 // 单镜微调种子:同值同镜稳定复现
-		} else if seed == 0 {
-			// 角色锚定种子:默认种子曾用时间随机,同角色同定妆照跨集仍换脸
-			// (2026-09-09 用户实证「貅兜兜飘逸」)。改为按镜头角色组合派生,
-			// 同角色组合跨集得到同基种子,配合同一张库定妆照,一致性最强;
-			// shot.ID 项保住集内镜头间的多样性。
-			seed = nameSeed("shot", strings.Join(shot.Characters, "+")) + int64(shot.ID)*101
-		}
+		// 镜头种子:唯一收口点 ShotSeed(override > 项目固定种子 > 按角色组合派生)
+		seed := ShotSeed(rp.Seed, seedOverride, shot.ID, shot.Characters)
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
 		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
 		// 渲染提示词:身份锚定 + 画风硬约束(动漫化/哑光)+ 台词语言标记,四路渲染共用

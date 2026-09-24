@@ -213,7 +213,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		w, h = 1248, 832
 	}
 	out := filepath.Join(c.store.Dir(projectID), "assets", kind, director.SanitizeForCache(kind+"_"+strings.TrimPrefix(assetID, kind+":"))+".png")
-	seed := time.Now().UnixNano() & 0x7fffffff
+	seed := RandomSeed() // 重新生成 = 就是要换一张(随机种子只允许出现在这类显式动作里)
 	path, err := eng.GenerateImage(ctx, prompt, "", seed, w, h, out)
 	if err != nil {
 		return err

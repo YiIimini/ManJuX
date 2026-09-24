@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -196,7 +197,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				Kind: KindChibi, Name: ch.Name, Description: ch.Description,
 				ImagePrompt: ch.ImagePrompt, FacesOn: proj.Config.Params.Script.FacesOn(),
 			}, plan)
-			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
+			// Q 版种子必须与主定妆照同一套派生(审计 P1-2):这里原先用
+			// `len(ch.ID)*1000 + len(ch.Name)*7 + 13` —— **长度哈希**,
+			// 两个名字长度相同的角色会撞到同一个种子(正是主定妆照早就改掉的坑)。
+			seed := nameSeed("chibi", ch.ID)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
@@ -459,11 +463,41 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 
 // nameSeed 资产名→稳定种子:同名必同图,是跨集一致性的第二道保险
 // (第一道是资产库按名复用)。
+//
+// 种子派生的**唯一收口点**(审计 P1-2):全部"要可复现"的生成都走它 ——
+// 定妆照/场景(nameSeed)、Q 版(nameSeed("chibi", id))、镜头(见 ShotSeed)、
+// 多视角(turnaround / viewedit)。历史上有过四种派生方式,其中**长度哈希**
+// (`len(id)*1000+len(name)*7`)会让同名长度的角色撞种子(实测踩过),
+// 已全部收敛到这里 + ShotSeed + RandomSeed 三个出口。
 func nameSeed(kind, name string) int64 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(kind + "\x00" + name))
 	return int64(h.Sum32())
 }
+
+// ShotSeed 镜头种子派生(fnv 锚定 + 镜号步进)。
+//
+// 参数:override = 本次运行的种子覆盖(0=不覆盖);base = 项目固定种子(0=按角色组合派生)。
+// 三条出像素的路径(主渲染、单镜 2K、局部重绘/音频驱动经 ShotRenderPrompt 的渲染调用)
+// 都必须用它,否则"同一镜重渲"会得到不同的脸。
+func ShotSeed(base, override int64, shotID int, characters []string) int64 {
+	if override > 0 {
+		return override + int64(shotID)*101 // 单镜微调:同值同镜稳定复现
+	}
+	if base != 0 {
+		return base + int64(shotID)*101
+	}
+	// 角色锚定种子:按镜头角色组合派生 —— 同角色组合跨集得到同基种子,
+	// 配合同一张库定妆照,一致性最强;shot.ID 项保住集内镜头间的多样性。
+	return nameSeed("shot", strings.Join(characters, "+")) + int64(shotID)*101
+}
+
+// RandomSeed 每次都不同的种子(重新生成 / 抽卡这类"就是要换一张"的场景)。
+//
+// 集中一处是为了让"哪里是随机"一眼可查:随机种子参与不了断点续跑判据,
+// 所以只能出现在这两类显式动作里,绝不能出现在渲染主链路上
+// (渲染链路用 ShotSeed,否则每次续跑都会重渲)。
+func RandomSeed() int64 { return time.Now().UnixNano() & 0x7fffffff }
 
 // styleExpand 风格英文具象化:用户的 art_style 多为中文速记(如「次世代
 // 3D·BJD 虚拟人+半写实国漫AI漫剧质感」),STYLE LOCK 让 image_prompt 逐
