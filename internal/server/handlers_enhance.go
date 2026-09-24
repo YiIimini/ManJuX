@@ -9,6 +9,7 @@ package server
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -161,6 +162,91 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "file": rel,
 		"url":  "/api/projects/" + ctx.proj.ID + "/files/" + rel,
 		"note": "重绘结果作为独立文件产出,原镜头未改动;比对满意后可在故事板中替换",
+	})
+}
+
+// handleShotUpscale POST /api/projects/{id}/shot/{shotID}/upscale
+// body { type?, model?, ltx_vae? } —— 2× 放大后处理,保留原音轨。
+//
+// 与局部重绘/音频驱动的区别:那两项是**重新生成**画面,这一项是**放大已完成的画面**
+// —— 引擎层(comfyengine/upscalegraph.go)早已就绪并有契约测试,缺的是这一层入口。
+//
+// 帧数与 fps **从源产物推**,不用项目当前参数:放大是逐帧后处理,帧数必须与原片一致,
+// 拿配置里的 length 会让放大后的时长与原镜对不上(且 8n+1 补齐与裁回都按这个数走)。
+func (s *Server) handleShotUpscale(w http.ResponseWriter, r *http.Request) {
+	// 用指针而不是 string:必须区分「**没传**(用默认值)」与「**传了空白**(非法,该拦)」。
+	// 用 string + TrimSpace(...) != "" 判断会把"传了空白"悄悄当成"没传"从而填回默认值,
+	// 那条"模型名为空"的校验就永远不会触发 —— 契约测试正是这样抓出来的。
+	var in struct {
+		Type   *string `json:"type"`
+		Model  *string `json:"model"`
+		LTXVAE *string `json:"ltx_vae"`
+	}
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+
+	opt := engine.DefaultUpscaleOptions()
+	if in.Type != nil {
+		opt.Type = strings.TrimSpace(*in.Type)
+	}
+	if in.Model != nil {
+		opt.ModelName = strings.TrimSpace(*in.Model)
+	}
+	if in.LTXVAE != nil {
+		opt.LTXVAE = strings.TrimSpace(*in.LTXVAE)
+	}
+	// 参数体检放在调引擎之前:ltx/esrgan 对依赖的要求不同,错在这里能给出人话,
+	// 到引擎里只会变成一句看不懂的节点缺失
+	if opt.Type != "ltx" && opt.Type != "esrgan" {
+		writeErr(w, 400, fmt.Errorf("放大方式只支持 ltx 或 esrgan,收到「%s」", opt.Type))
+		return
+	}
+	if strings.TrimSpace(opt.ModelName) == "" {
+		writeErr(w, 400, fmt.Errorf("请指定放大模型文件名(model)"))
+		return
+	}
+	if opt.Type == "ltx" && strings.TrimSpace(opt.LTXVAE) == "" {
+		writeErr(w, 400, fmt.Errorf("LTX 隐空间放大需要同时指定 LTX 的 VAE 文件名(ltx_vae)"))
+		return
+	}
+
+	ctx, ok := s.prepareShotEnhance(w, r, "upscale2x")
+	if !ok {
+		return
+	}
+
+	info, err := s.ff.Probe(ctx.src)
+	if err != nil {
+		writeErr(w, 500, fmt.Errorf("读取源镜头信息失败:%w", err))
+		return
+	}
+	fps := info.FPS
+	if fps <= 0 {
+		fps = 24 // 极少数容器不报帧率,按 H3 的产出口径兜底
+	}
+	length := int(math.Round(info.Duration * fps))
+	if length <= 1 {
+		writeErr(w, 400, fmt.Errorf("源镜头时长异常(%.2fs),无法确定帧数", info.Duration))
+		return
+	}
+
+	s.opLog("🔍 2× 放大:%s 镜 %d 开始(%s / %d 帧 @ %.2ffps)", ctx.proj.ID, ctx.shot.ID, opt.Type, length, fps)
+	if _, err := ctx.engineCE.Upscale(r.Context(), ctx.src, opt, length, fps,
+		ctx.outName, ctx.outPath, ctx.timeout); err != nil {
+		s.opLog("✕ 2× 放大失败:%v", err)
+		writeErr(w, 500, fmt.Errorf("2× 放大失败:%w", err))
+		return
+	}
+
+	rel := s.relFile(ctx.proj.ID, ctx.outPath)
+	s.opLog("✔ 2× 放大完成:%s 镜 %d → %s", ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath))
+	s.pipe.ReleaseVRAMIfIdle("2× 放大完成")
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "file": rel,
+		"url":  "/api/projects/" + ctx.proj.ID + "/files/" + rel,
+		"note": "放大结果作为独立文件产出,原镜头未改动;音轨沿用源片",
 	})
 }
 

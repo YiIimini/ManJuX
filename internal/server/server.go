@@ -127,6 +127,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	// 镜头增强:局部重绘(只改目标区域)与音频驱动(口型跟随配音)
 	m.HandleFunc("POST /api/projects/{id}/shot/{shotID}/mask-fix", s.handleShotMaskFix)
 	m.HandleFunc("POST /api/projects/{id}/shot/{shotID}/audio-drive", s.handleShotAudioDrive)
+	m.HandleFunc("POST /api/projects/{id}/shot/{shotID}/upscale", s.handleShotUpscale)
 	m.HandleFunc("POST /api/projects/{id}/assets/regen", s.regenAsset)
 	m.HandleFunc("GET /api/comfy/admin", s.comfyAdmin)
 	m.HandleFunc("POST /api/comfy/{action}", s.comfyAction)

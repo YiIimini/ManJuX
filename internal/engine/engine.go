@@ -64,6 +64,35 @@ type Result struct {
 	Cached    bool // 命中缓存/断点续跑
 }
 
+// UpscaleOptions 2× 放大后处理的参数。
+//
+// 放在 engine 包而不是具体引擎里:与 Job/RefImage 同理 —— 一旦类型定义在
+// comfyengine,server 层就必须 import 具体引擎才能构造参数,
+// 「把具体引擎的能力泄漏到上层」的老问题会以另一种形式回来。
+type UpscaleOptions struct {
+	// Type 放大方式:
+	//   "ltx"    隐空间 2× —— 把已解码的画面重编码到 LTX VAE 空间做学习式空间放大,
+	//            细节更自然,是"保音频高清化"的成熟做法;
+	//   "esrgan" 帧级 2× —— 逐帧超分,快但对已干净素材更稳妥,容易放大噪点。
+	Type string
+	// ModelName 模型文件名(ltx 用 latent_upscale_models/ 下的,esrgan 用 upscale_models/ 下的)
+	ModelName string
+	// LTXVAE LTX 的 VAE 文件名(仅 ltx 方式需要)
+	LTXVAE string
+}
+
+// DefaultUpscaleOptions 返回放大的默认参数。
+//
+// 默认走 **esrgan** 而不是 ltx:esrgan 只要一个 upscale_models 权重即可运行,
+// 而 ltx 还额外依赖 LTX 的 VAE;在缺 VAE 的机器上默认选 ltx 会一上手就失败。
+// 两个权重名以本机实测存在的为准。
+func DefaultUpscaleOptions() UpscaleOptions {
+	return UpscaleOptions{
+		Type:      "esrgan",
+		ModelName: "4x-UltraSharp.safetensors",
+	}
+}
+
 // Engine 渲染引擎。
 type Engine interface {
 	Name() string
@@ -78,6 +107,9 @@ type Engine interface {
 	ClearQueue(ctx context.Context)
 	Interrupt(ctx context.Context)
 	GenerateImage(ctx context.Context, prompt, neg string, seed int64, w, h int, outPath string) (string, error)
+	// Upscale 对已完成的镜头做 2× 放大后处理(必须保留原音轨)。
+	// 与上面几项同属可选能力:云端引擎不支持,给出带指引的错误。
+	Upscale(ctx context.Context, srcVideoPath string, opt UpscaleOptions, length int, fps float64, outName, outPath string, timeout time.Duration) (string, error)
 }
 
 // Registry 引擎注册表。

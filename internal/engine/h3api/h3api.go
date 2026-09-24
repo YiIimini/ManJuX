@@ -62,6 +62,12 @@ func (e *Engine) GenerateImage(ctx context.Context, prompt, neg string, seed int
 	return "", fmt.Errorf("云端引擎不支持本地图像生成,请改用本地 ComfyUI 引擎")
 }
 
+// Upscale 2× 放大是本地后处理链路(依赖 ComfyUI 的放大节点与权重),
+// 云端引擎不实现 —— 与 GenerateImage 同理,给出可执行的指引而不是静默失败。
+func (e *Engine) Upscale(ctx context.Context, srcVideoPath string, opt engine.UpscaleOptions, length int, fps float64, outName, outPath string, timeout time.Duration) (string, error) {
+	return "", fmt.Errorf("2× 放大是本地后处理,请改用本地 ComfyUI 引擎")
+}
+
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
 	c := e.cfg()
 	if err := e.Available(ctx); err != nil {

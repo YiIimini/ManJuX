@@ -126,6 +126,9 @@ export const api = {
   deleteShot: (id, shotID) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}`),
   maskFix: (id, shotID) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`, {}),
   audioDrive: (id, shotID, audioPath) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/audio-drive`, { audio_path: audioPath }),
+  // 2× 放大后处理:传 opts({type, model, ltx_vae}) 覆盖默认;不传则后端用 esrgan + 4x-UltraSharp。
+  // 结果作为独立文件产出,原镜头不动,音轨沿用源片。
+  upscale: (id, shotID, opts) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/upscale`, opts || {}),
   uploadCover: (id, payload) => req('POST', `/api/projects/${encodeURIComponent(id)}/cover`, payload),
   exportPack: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/export-pack`),
   deleteOutput: (projectID) => req('DELETE', `/api/projects/${encodeURIComponent(projectID)}/output`),

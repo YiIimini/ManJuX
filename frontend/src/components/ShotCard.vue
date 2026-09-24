@@ -108,6 +108,45 @@ async function rerender(cmd) {
   } catch (e) { ElMessage.error(e.message) }
 }
 
+// 2× 放大后处理:放大**已完成的画面**,不是重新生成 —— 音轨沿用源片、时长不变。
+//
+// 两条链路的前置条件不同,所以分别询问:帧级(esrgan)只需要一个 upscale_models 权重;
+// LTX 隐空间还必须指定 VAE 文件名,少给这一个参数后端会直接 400(不给用户看节点缺失)。
+async function upscale(cmd) {
+  const mf = props.manifestItem
+  if (!mf || mf.status !== 'done') { ElMessage.info('镜头尚未渲染完成'); return }
+  let opts = { type: 'esrgan' }
+  if (cmd === 'ltx') {
+    let vae
+    try {
+      const r = await ElMessageBox.prompt(
+        `对镜头 ${props.shot.id} 做 LTX 隐空间 2× 放大。\n\n` +
+        `这条链路细节更自然,但需要 ComfyUI 的 vae 目录下已有 LTX 的 VAE 文件 —— 请填文件名。\n\n` +
+        `只提升分辨率:音轨沿用源片、时长不变。结果作为独立文件产出,原镜头不变。`,
+        '2× 放大 · 隐空间',
+        { confirmButtonText: '开始放大', cancelButtonText: '取消', inputPlaceholder: '如 ltx_vae.safetensors' })
+      vae = (r.value || '').trim()
+    } catch { return }
+    if (!vae) { ElMessage.warning('未填写 LTX 的 VAE 文件名'); return }
+    opts = { type: 'ltx', ltx_vae: vae }
+  } else {
+    try {
+      await ElMessageBox.confirm(
+        `对镜头 ${props.shot.id} 做 2× 放大?\n\n` +
+        `走帧级链路(4x-UltraSharp):快且稳,对已干净的素材更保险。\n\n` +
+        `只提升分辨率:音轨沿用源片、时长不变。结果作为独立文件产出,原镜头不变。`,
+        '2× 放大 · 帧级', { type: 'info', confirmButtonText: '开始放大', cancelButtonText: '取消' })
+    } catch { return }
+  }
+  enhanceBusy.value = true
+  try {
+    const d = await api.upscale(pj.value.project.id, props.shot.id, opts)
+    ElMessage.success('2× 放大完成:' + (d.file || ''))
+    refreshProject()
+  } catch (e) { ElMessage.error('2× 放大失败:' + e.message) }
+  enhanceBusy.value = false
+}
+
 const statusTag = computed(() => {
   const m = props.manifestItem
   if (!m) return { text: '待渲染', type: 'info' }
@@ -200,6 +239,20 @@ const sceneName = computed(() => {
                   title="音频驱动:用配音驱动重渲,口型与节奏跟随音频"
                   @click.stop="audioDrive"><el-icon :size="13"><Microphone /></el-icon><span>音频驱动</span></button>
         </el-tooltip>
+        <el-dropdown trigger="click" :disabled="running || enhanceBusy || manifestItem?.status !== 'done'" @command="upscale">
+          <button class="card-act" :disabled="running || enhanceBusy || manifestItem?.status !== 'done'"
+                  title="2× 放大:只提升分辨率,音轨沿用源片、时长不变(需本地 ComfyUI)"
+                  @click.stop>
+            <el-icon :size="13"><ZoomIn /></el-icon><span>2× 放大</span>
+            <el-icon :size="10"><ArrowDown /></el-icon>
+          </button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="esrgan">帧级 2×(快且稳 · 推荐)</el-dropdown-item>
+              <el-dropdown-item command="ltx">隐空间 2×(细节自然 · 需 LTX VAE)</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-dropdown trigger="click" :disabled="running" @command="rerender">
           <button class="card-act primary" :disabled="running" @click.stop>
             <el-icon :size="13"><RefreshRight /></el-icon>

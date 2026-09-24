@@ -8,18 +8,9 @@ import (
 	"github.com/YiIimini/ManJuX/internal/engine"
 )
 
-// UpscaleOptions 放大参数。
-type UpscaleOptions struct {
-	// Type 放大方式:
-	//   "ltx"    隐空间 2× —— 把已解码的画面重编码到 LTX VAE 空间做学习式空间放大,
-	//            细节更自然,是"保音频高清化"的成熟做法;
-	//   "esrgan" 帧级 2× —— 逐帧超分,快但对已干净素材更稳妥,容易放大噪点。
-	Type string
-	// ModelName 模型文件名(ltx 用 latent_upscale_models/ 下的,esrgan 用 upscale_models/ 下的)
-	ModelName string
-	// LTXVAE LTX 的 VAE 文件名(仅 ltx 方式需要)
-	LTXVAE string
-}
+// UpscaleOptions 放大参数 —— 定义在 engine 包(见 engine.UpscaleOptions 的说明:
+// 类型留在具体引擎里会让 server 层不得不 import comfyengine)。
+type UpscaleOptions = engine.UpscaleOptions
 
 // upscaleFrames 时间轴对齐:LTX 视频 VAE 要求 8n+1 帧,不足则复制尾帧补齐。
 func upscalePad(frames int) int {

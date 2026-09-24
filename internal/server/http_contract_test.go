@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/YiIimini/ManJuX/internal/config"
@@ -306,5 +307,86 @@ func TestLibraryOpsRoutes(t *testing.T) {
 	// ⑤ AI 生成描述:测试环境 LLM/VLM 都没配 key → 400(而不是 500 或空 200)
 	if code, _ := doReq(t, s, "POST", "/api/library/scenes/契约场景/describe", nil); code != 400 {
 		t.Fatalf("未配置模型时生成描述应 400,实际 %d", code)
+	}
+}
+
+// TestHTTPContractShotUpscale 2× 放大入口的契约。
+//
+// 引擎层(comfyengine/upscalegraph.go)与它的图契约测试早已就绪,缺的一直是
+// 上层入口 —— README 里明写「界面入口尚未接入」。本测试锁住三件事:
+//
+//	① 路由确实注册(而不是落到 404);
+//	② 参数体检排在调引擎之前,且错误信息可执行(而不是让用户看到一句
+//	   看不懂的节点缺失);
+//	③ 项目/镜头不存在时给出准确的状态码。
+//
+// 用例都不触碰外部资源:参数校验与项目校验都排在 ff.Probe 之前,
+// 因此 newTestServer 的零值 ff 不会被触发。
+func TestHTTPContractShotUpscale(t *testing.T) {
+	s := newTestServer(t)
+
+	cases := []struct {
+		name     string
+		path     string
+		body     any
+		want     int
+		wantWord string
+	}{
+		{
+			name: "放大方式非法要给出可选值",
+			path: "/api/projects/p1/shot/1/upscale",
+			body: map[string]any{"type": "bicubic"},
+			want: 400, wantWord: "ltx",
+		},
+		{
+			name: "ltx 缺 VAE 要点明具体缺什么",
+			path: "/api/projects/p1/shot/1/upscale",
+			body: map[string]any{"type": "ltx", "model": "ltx-2-spatial-upscaler-x2-1.0.safetensors"},
+			want: 400, wantWord: "VAE",
+		},
+		{
+			name: "模型名为空白要拦下",
+			path: "/api/projects/p1/shot/1/upscale",
+			body: map[string]any{"type": "esrgan", "model": "   "},
+			want: 400, wantWord: "模型",
+		},
+		{
+			name: "项目不存在",
+			path: "/api/projects/不存在的项目/shot/1/upscale",
+			body: map[string]any{"type": "esrgan", "model": "4x-UltraSharp.safetensors"},
+			want: 404, wantWord: "项目",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, out := doReq(t, s, "POST", c.path, c.body)
+			if got != c.want {
+				t.Fatalf("状态码 want %d got %d(body=%v)", c.want, got, out)
+			}
+			msg, _ := out["error"].(string)
+			if msg == "" {
+				t.Fatalf("错误响应必须带 error 字段(前端直接展示它),实际 %v", out)
+			}
+			if c.wantWord != "" && !strings.Contains(msg, c.wantWord) {
+				t.Errorf("错误信息应提到「%s」以便用户自查,实际:%s", c.wantWord, msg)
+			}
+		})
+	}
+}
+
+// TestHTTPContractShotUpscaleRouteRegistered 路由必须在,而不是掉进 404。
+//
+// 与上一条的区别:上一条的 404 用例是"项目不存在"的语义 404,
+// 这一条防的是"路由根本没注册"——那种情况下任何 body 都是 404,
+// 只看状态码会误判成"参数没被拦下"。所以这里断言 400 系而不是 404。
+func TestHTTPContractShotUpscaleRouteRegistered(t *testing.T) {
+	s := newTestServer(t)
+	got, out := doReq(t, s, "POST", "/api/projects/p1/shot/1/upscale", map[string]any{"type": "nope"})
+	if got == 404 {
+		t.Fatalf("路由未注册(POST /api/projects/{id}/shot/{shotID}/upscale 返回 404)—— 放大入口是本次补齐的能力,掉了会静默回到「界面入口尚未接入」")
+	}
+	if got != 400 {
+		t.Fatalf("非法参数应返回 400,实际 %d(%v)", got, out)
 	}
 }
