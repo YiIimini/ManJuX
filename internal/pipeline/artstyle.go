@@ -29,12 +29,18 @@ import "strings"
 // 一件器物被要求"简化五官、哑光粉质肤色"就是在逼模型给它长一张脸。类型条款见
 // entity_prompts.go 的 entityProfiles(每类各自的渲染方法)。
 
+// MediumMarker 动画介质块的唯一标记串。
+//
+// 两处用途:① "已经带过就不再叠"的判据;② **反推一张定妆照走的是动画线还是写实线**
+// (RealisticForPrompt)—— 没有项目上下文的调用方(资产库「补全多视角」)只能这么判断。
+const MediumMarker = "ANIMATED MATTE RENDER"
+
 // animatedMediumImageBlock Krea-2 侧的**通用介质块**(不含任何身体部位词)。
 //
 // 只能用"它是什么"来描述:手绘线稿 + 赛璐璐平涂 + 宽而软的平涂阴影 + 哑光暗哑质感 +
 // 柔和低对比散射光 + 原创设计。一个否定词都不写。
 func animatedMediumImageBlock() string {
-	return "\n\nANIMATED MATTE RENDER (mandatory): 2D/2.5D animation — hand-drawn clean line art, " +
+	return "\n\n" + MediumMarker + " (mandatory): 2D/2.5D animation — hand-drawn clean line art, " +
 		"flat cel-shaded colour with wide soft shadow shapes, a matte dull even finish across every surface, " +
 		"soft diffuse low-contrast light that falls gently across the form. " +
 		"The subject is an original animation design." +
@@ -86,6 +92,41 @@ func animatedFaceRenderBlock() string {
 
 // 开关本身在 project.ScriptParams(StylizedFaces / FacesOn),未表态即开 ——
 // 理由见那里的注释:存量项目正是报障的那批,默认关掉等于新约束对它们不可见。
+
+// TurnaroundMediumBlock 转身/转台视频的**介质锁**。
+//
+// 为什么必须单独给这一层(2026-09-24 用户报「角色多视角老是生成错误」的根因):
+// 转身视频是**另一次渲染调用**,它不吃分镜那套 styleAndMediumBlock,而
+// TurnaroundPrompt 里只有一句轻描淡写的 "same art style"。实测(H3 Ref2V)结果:
+//   - 赛璐璐动漫角色 → 被重画成写实真人(换成素色和服、迷彩纹样丢失);
+//   - 插画风青铜雀   → 被重画成写实 3D 机械铜鸟(铆钉/玻璃眼/金属板);
+//
+// 于是逐帧身份校验**正确地**判定"不是同一主体"并丢弃 —— 三个角色连续失败,
+// 用户看到的就是"多视角老是生成错误"。判定没错,缺的是介质锁。
+//
+// realistic=true(用户显式关了「角色动漫化」要拍真人剧)时返回空串:那种情况下
+// 强塞动画介质才是错的。
+func TurnaroundMediumBlock(kind EntityKind, realistic bool) string {
+	if realistic {
+		return ""
+	}
+	switch NormalizeEntityKind(string(kind)) {
+	case KindHuman, KindChibi:
+		return animatedFaceRenderBlock() // 通用介质 + 人脸条款
+	default:
+		// 器物/灵宠/妖兽/无实体:只给通用介质(给器物写"肤色哑光"等于逼它长一张脸)
+		return animatedMediumRenderBlock()
+	}
+}
+
+// RealisticForPrompt 反推"这张定妆照该用写实介质还是动画介质" —— 给**没有项目
+// 上下文**的调用方用(资产库「补全多视角」拿不到项目的 stylized_faces)。
+//
+// 判据是定妆照提示词里有没有我们自己的介质标记串:有 = 它是 Krea-2 动画线画的;
+// 没有 = 多半是用户上传的真人照片/写实图(那种情况下强塞动画介质同样是错的)。
+func RealisticForPrompt(imagePrompt string) bool {
+	return !strings.Contains(imagePrompt, MediumMarker)
+}
 
 // photorealRequested 风格文本里是否明确要真人/写实画风。
 //

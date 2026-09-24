@@ -51,11 +51,20 @@ type TurnaroundOptions struct {
 	// Kind 实体类型:决定用哪一套"多视角方法" —— 人原地转身、器物转台自转、
 	// 妖兽绕行/转身、无实体原地旋动、Q 版 Q 版转身(见 entity_prompts.go)。
 	// 零值("")按 human 处理,保证老调用方行为不变。
-	Kind   EntityKind
-	Steps  int
-	Accel  string
-	Length int   // 帧数;0 = 124(约 5.2 秒)
-	Seed   int64 // 0 = 按角色名派生稳定种子
+	Kind EntityKind
+	// Realistic 用户显式要求真人写实(script.stylized_faces 关掉)。
+	// **零值是"动漫化"**:与项目策略一致(未表态即开),也让漏传的调用方
+	// 拿到的是安全行为(带介质锁)而不是静默丢锁。
+	//
+	// 为什么必须由调用方传:转身视频是另一次渲染,它拿不到分镜那套
+	// styleAndMediumBlock;少了介质锁,H3 会用自己的默认介质重画
+	// (实测:赛璐璐角色→写实真人、插画铜雀→写实 3D 机械鸟),逐帧校验必然不通过
+	// —— 2026-09-24 用户报「多视角老是生成错误」的根因就是这个。
+	Realistic bool
+	Steps     int
+	Accel     string
+	Length    int   // 帧数;0 = 124(约 5.2 秒)
+	Seed      int64 // 0 = 按角色名派生稳定种子
 	// Verify 视觉模型客户端:非 nil 时逐帧核对"是不是定妆照里那个人",不一致就换种子
 	// 重出;全部重试仍不一致则**拒绝使用**(详见 GenerateTurnaround 的说明)。
 	Verify         *llm.Client
@@ -158,7 +167,7 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 		}
 		job := engine.Job{
 			ProjectID: "turnaround", ShotID: 0,
-			Prompt:    prof.TurnaroundPrompt(o.Name, o.Prompt),
+			Prompt:    prof.TurnaroundPrompt(o.Name, o.Prompt, TurnaroundMediumBlock(o.Kind, o.Realistic)),
 			Mode:      "ref2va",
 			RefImages: []engine.RefImage{{Kind: "character", Path: o.MasterPath}},
 			Width:     832, Height: 1248,

@@ -376,7 +376,12 @@ var entityProfiles = map[EntityKind]entityProfile{
 }
 
 // TurnaroundPrompt 组装该类型的转身/转台视频提示词(六段式,与 director 的 sysH3Format 同构)。
-func (p entityProfile) TurnaroundPrompt(name, imagePrompt string) string {
+//
+// medium 是**介质锁**(见 artstyle.go 的 TurnaroundMediumBlock,空串 = 不加):
+// 转身视频是独立的一次渲染,拿不到分镜那边的介质覆盖,不给它这一句,H3 就用自己的
+// 默认介质重画 —— 实测赛璐璐角色被画成写实真人、插画铜雀被画成写实 3D 机械鸟,
+// 逐帧身份校验于是必然不通过(2026-09-24 用户报「多视角老是生成错误」的根因)。
+func (p entityProfile) TurnaroundPrompt(name, imagePrompt, medium string) string {
 	desc := compactIdentity(imagePrompt)
 	subject := p.TurnSubject
 	if strings.TrimSpace(desc) != "" {
@@ -391,11 +396,25 @@ func (p entityProfile) TurnaroundPrompt(name, imagePrompt string) string {
 		}
 	}
 	var sb strings.Builder
-	sb.WriteString("subject_definitions:\n<Subject 1> is " + subject + ".\n\nsummary:\n[reference generation]\n")
+	sb.WriteString("subject_definitions:\n<Subject 1> is " + subject + ".\n")
+	if medium != "" {
+		// 介质锁紧贴身份句:它是"身份的一部分",不是风格偏好
+		sb.WriteString("\nMEDIUM LOCK (highest priority): rendering medium is part of the identity. " +
+			"<Picture 1>, every frame of this clip and every frame extracted from it must read as THE SAME ARTWORK — " +
+			"same medium, same level of stylization, same finish. This is an identity copy, not a re-illustration.\n")
+		sb.WriteString(medium + "\n")
+	}
+	sb.WriteString("\nsummary:\n[reference generation]\n")
 	sb.WriteString(p.TurnSummary)
 	sb.WriteString("\n\nretention_analysis:\n")
 	for _, r := range p.TurnRetention {
 		sb.WriteString("- " + r + "\n")
+	}
+	if medium != "" {
+		sb.WriteString("- RENDERING MEDIUM IS PART OF THE IDENTITY: <Picture 1> is stylized 2D/2.5D animation. " +
+			"Do NOT re-render the subject as a photographed human or as a realistic 3D/plastic model; the line art, " +
+			"the flat cel shading, the flat colour fields and the matte finish must stay identical in every frame " +
+			"(see MEDIUM LOCK above).\n")
 	}
 	sb.WriteString("\ndetailed_description:\n")
 	sb.WriteString(p.TurnDetail + "\n")
@@ -405,6 +424,10 @@ func (p entityProfile) TurnaroundPrompt(name, imagePrompt string) string {
 	sb.WriteString("NOTE FOR THE RENDERER: never mention a feature you do not want (saying \"no grey hair\" makes grey hair appear) — " +
 		"copy everything from <Picture 1> instead of re-inventing it.\n")
 	sb.WriteString(p.TurnNegative + "\n")
+	if medium != "" {
+		sb.WriteString("NEGATIVE (must not happen): a photographic or 3D-rendered version of the subject, " +
+			"a live-action look, glossy or plastic surfaces, and any change of the rendering medium between frames.\n")
+	}
 	sb.WriteString("The whole clip is one continuous slow rotation with no cuts, no camera movement and no background change. " +
 		"No on-screen text, no subtitles, no watermarks, no logos. Subjects must remain clearly visible and adequately lit throughout the video; " +
 		"avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\n" + p.TurnSound +

@@ -321,9 +321,16 @@ func (s *Server) libraryViews(w http.ResponseWriter, r *http.Request) {
 		TempVideo:  true, // 视频不如库,库目录只留参考图
 		Name:       name,
 		Prompt:     prompt,
-		Steps:      steps,
-		Verify:     pipeline.TurnaroundVerifier(g.VLM),
-		Emit:       func(f string, a ...any) { s.opLog("🎥 "+f, a...) },
+		// 资产库这条路径没有项目上下文,但**类型与介质都必须判**:
+		//   - 类型决定"多视角方法"(器物转台自转 vs 人原地转身),漏传会让一只
+		//     铜雀按人形转身提示词去转(实体类型那轮修的就是这个);
+		//   - 介质由定妆照提示词反推:动画线的定妆照(带 ANIMATED MATTE RENDER 标记)
+		//     必须锁同介质,否则 H3 用自己的默认介质重画成写实版,逐帧校验必然不过。
+		Kind:      pipeline.InferEntityKind(name, e.Description, prompt),
+		Realistic: pipeline.RealisticForPrompt(prompt),
+		Steps:     steps,
+		Verify:    pipeline.TurnaroundVerifier(g.VLM),
+		Emit:      func(f string, a ...any) { s.opLog("🎥 "+f, a...) },
 	})
 	if err != nil {
 		writeErr(w, 500, fmt.Errorf("多视角生成失败:%w", err))

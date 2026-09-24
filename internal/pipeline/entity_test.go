@@ -207,7 +207,7 @@ func TestAnchorPromptObjectOnlyHasNoHumanLock(t *testing.T) {
 
 // TestTurnaroundPromptPerKind 多视角提示词按类型分发:器物转台、人转身、灵体不得实体化。
 func TestTurnaroundPromptPerKind(t *testing.T) {
-	obj := EntityProfileOf(KindObject).TurnaroundPrompt("阿凿", realAzao.ImagePrompt)
+	obj := EntityProfileOf(KindObject).TurnaroundPrompt("阿凿", realAzao.ImagePrompt, "")
 	for _, want := range []string{"EXACT SAME object", "object turntable", "NOT turn into a creature", "whole object"} {
 		if !strings.Contains(obj, want) {
 			t.Errorf("器物多视角提示词缺少「%s」:\n%s", want, obj)
@@ -217,14 +217,14 @@ func TestTurnaroundPromptPerKind(t *testing.T) {
 		t.Error("器物多视角不得套用人物转身文案")
 	}
 
-	hum := EntityProfileOf(KindHuman).TurnaroundPrompt("鲁青砚", realLuqingyan.ImagePrompt)
+	hum := EntityProfileOf(KindHuman).TurnaroundPrompt("鲁青砚", realLuqingyan.ImagePrompt, "")
 	for _, want := range []string{"Character turnaround", "SAME PERSON", "FACE LOCK", "upper-body medium shot"} {
 		if !strings.Contains(hum, want) {
 			t.Errorf("人物多视角提示词缺少「%s」(2026-09-12 定稿不得回退)", want)
 		}
 	}
 
-	inc := EntityProfileOf(KindIncorporeal).TurnaroundPrompt("三娘", "a translucent woman in a red robe")
+	inc := EntityProfileOf(KindIncorporeal).TurnaroundPrompt("三娘", "a translucent woman in a red robe", "")
 	for _, want := range []string{"EXACT SAME apparition", "never becomes solid", "no cast shadow"} {
 		if !strings.Contains(inc, want) {
 			t.Errorf("无实体多视角提示词缺少「%s」", want)
@@ -232,7 +232,7 @@ func TestTurnaroundPromptPerKind(t *testing.T) {
 	}
 	// 六类都要能出提示词(不允许空壳)
 	for _, k := range EntityKinds {
-		p := EntityProfileOf(k).TurnaroundPrompt("测试", "a thing")
+		p := EntityProfileOf(k).TurnaroundPrompt("测试", "a thing", "")
 		if len(p) < 600 || !strings.Contains(p, "subject_definitions:") || !strings.Contains(p, "overall_soundscape:") {
 			t.Errorf("%s 的多视角提示词不完整(长度 %d)", EntityKindLabel(k), len(p))
 		}
