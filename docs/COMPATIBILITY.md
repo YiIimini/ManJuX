@@ -2,7 +2,9 @@
 
 > 首次建档:2026-09-11(实测采集)。**版本会漂移,渲染出问题时先从这里比对。**
 >
-> 最近更新:2026-09-24(第四节补 LTX 视频 VAE;第一节新增「ManJuX 自身构建栈」表并记入
+> 最近更新:2026-09-24 二次更新(ComfyUI v0.35.1 → **v0.37.2**,第二节 commit 表整表刷新,
+> 第八节新增一条 ComfyUI 升级记录,第九节改为「只 `shared_current` 一段生效」)。
+> 上次更新:2026-09-24(第四节补 LTX 视频 VAE;第一节新增「ManJuX 自身构建栈」表并记入
 > Wails `v2.16.0`;第五、七节补上第三方 fork 的约束;第八节新增 Wails 升级记录)。
 > 此前更新:2026-09-12(第一节版本行复核为 v0.35.1;第八节状态改为「升级已完成并保持」;
 > 第九节的两个放大模型已落地)。此前第七节的维护约定同样适用:**改了一处就回头改第一节**,
@@ -20,7 +22,7 @@
 
 | 组件 | 版本 |
 |---|---|
-| ComfyUI | **v0.35.1**(`git describe` = `v0.35.1`,HEAD `856a922b`,`comfyui_version.py` = 0.35.1;2026-09-12 复核) |
+| ComfyUI | **v0.37.2**(`git describe` = `v0.37.2`,HEAD `830232b8`,`comfyui_version.py` = 0.37.2;2026-09-24 升级,回退基线 `backup_before_v0.37.2` = `856a922b`) |
 | Python | **3.13.12**(`comfyui/standalone-env`) |
 | PyTorch | **2.11.0+cu130**(CUDA 13.0) |
 | OS | Windows 10/11 |
@@ -44,20 +46,27 @@
 
 ManJuX 的渲染图**直接依赖**下列节点类,任何升级改名都会让渲染在运行期失败:
 
-| 包 | 当前 commit (2026-09-11) | 被谁使用 |
+| 包 | 当前 commit (2026-09-24 全表刷新) | 被谁使用 |
 |---|---|---|
-| ComfyUI-H3-Motion-Context | `5335715` | 镜间接缝(`MiniMaxH3MotionContext*` 四个节点) |
-| ComfyUI-H3-ConditioningCache | `239d21e` | 两阶段条件缓存(`MiniMaxH3CondSave/Load`) |
-| ComfyUI-MiniMax-H3-PDD-Acc | `311a65d` | quality 加速档(Acc-8Step LoRA / `MiniMaxH3SigmaShift`) |
-| ComfyUI-MiniMaxH3-Easy | `d100200` | H3 相关辅助节点 |
-| ComfyUI-KJNodes | `5710537` | 通用图像节点 |
-| ComfyUI_IPAdapter_plus | `a0f451a` | 参考图相关 |
-| rgthree-comfy | `2c5342a` | 图工具 |
-| was-node-suite-comfyui | `c0598f6` | 通用图像节点 |
-| MaskVidExperiments | `e5c4450` | **局部重绘**(遮罩裁切/回贴) |
-| comfyui-vrgamedevgirl | `050ead7` | 音频处理节点 |
+| ComfyUI-H3-Motion-Context | `5335715`(未变) | 镜间接缝(`MiniMaxH3MotionContext*` 四个节点) |
+| ComfyUI-H3-ConditioningCache | `239d21e`(未变) | 两阶段条件缓存(`MiniMaxH3CondSave/Load`) |
+| ComfyUI-MiniMax-H3-PDD-Acc | `311a65d`(未变) | quality 加速档(Acc-8Step LoRA / `MiniMaxH3SigmaShift`) |
+| ComfyUI-MiniMaxH3-Easy | `61ceb3c`(旧表记 `d100200`,实测早已不符,本次按实测改回) | H3 相关辅助节点 |
+| ComfyUI-KJNodes | `d3cfe21`(旧 `5710537`) | 通用图像节点 |
+| ComfyUI_IPAdapter_plus | `a0f451a`(未变) | 参考图相关 |
+| rgthree-comfy | `2c5342a`(未变) | 图工具 |
+| was-node-suite-comfyui | `eb772ed`(旧 `c0598f6`) | 通用图像节点 |
+| MaskVidExperiments | `c32ed8c`(旧 `e5c4450`) | **局部重绘**(遮罩裁切/回贴) |
+| comfyui-vrgamedevgirl | `75d4370`(旧 `050ead7`) | 音频处理节点 |
 
 > 上表 commit 只作**回退参照**:平时无需钉版,出问题时可 `git -C <插件目录> checkout <commit>` 回退。
+> 完整 17 个节点(含上表之外的 FaceRefine / Turbo / Director / audio-T8 / Spectrum / latent-Upscaler)
+> 的基线快照见 `D:\Ai\ComfyUI\_maintenance\20260924-upgrade\baseline-repos.json`。
+
+> **was-node-suite 的破坏性改名(2026-09-24 升级带入)**:该包把 25 个 id 加了 `WAS`/`WASNS` 前缀,
+> 并删除 `DownloadImage` / `Image Send HTTP` / `Text Random Prompt` / `True Random.org Number Generator`
+> / `Noodle Soup Pantry Refresh` 五类节点。已核对 ManJuX 侧 Go 源码:图形契约里**没有**引用任何 `WAS*` 节点,
+> 故此次改名对渲染无影响;但若日后手工导入含上述旧 id 的工作流,需先在 ComfyUI 前端重新选节点。
 
 ## 三、已知冲突(机制级记录)
 
@@ -140,10 +149,145 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 - 升级任一插件后,请更新上表 commit(`git -C <目录> rev-parse --short HEAD`)。
 - **升级 Wails 后**三件事一起做:①确认 `go.mod` 与 CLI 同版本(否则每次构建告警);
   ②按 `third_party/README.md` 的自检命令确认 go-webview2 补丁仍在;③在本文件第八节记一条升级记录。
+- **单独跑 `scripts/build.ps1` 时务必显式给 `MANJUX_VERSION`**:不带它时脚本用
+  `git describe --tags` 推版本号,而本仓 tag 落后于实际版本(最新 tag `v0.34.4`,
+  `version.go` 已是 `v0.35.0`),于是会把 `wails.json`/`frontend/package.json`/`version.go`
+  **一起改回更旧的号**并把工作区弄脏。正确姿势:
+  `$env:MANJUX_VERSION="v0.35.0"; powershell -File scripts\build.ps1`。
+  (`release.ps1` 因为显式注入,天然躲开这个坑。)
 - `data/rollback_points.txt` 已废弃,保留仅为历史参照。
 - 发现新的冲突时,请按第三节的格式补充**机制说明**(为什么冲突、影响哪些模式、怎么绕过),而不只写症状。
 
 ## 八、升级记录
+
+### 2026-09-24:设置页「显存预留」步进与后端 `int` 类型不匹配(**已修复并重建**)
+
+**症状**:设置页里「显存预留(GB)」的输入框步进是 `0.5`,点两下就能得到 `2.5`。
+点保存时后端 `readBody` → `json.Unmarshal` 把 `2.5` 塞进 `ReserveVRAMGB int` 会报
+`cannot unmarshal number 2.5 into Go struct field ... of type int`,接口返回 400,
+**设置整份存不进去**;而该值一旦以任何方式落进 `settings.json`(手改、旧版本残留),
+下次启动会在 `main.go` 的 `fatalIf(err, "加载设置失败")` 上**直接退出**。
+
+**根因**:控件粒度(0.5)与存储类型(`int`,单位 GB)不是同一个契约。
+审计过全应用:Go 数值字段里只有这一处不匹配 ——
+`render.fade_sec` 是 `float64` 配 `:precision="1"`,
+project 侧的 `qc.min_duration`/`max_duration`/`dark_ratio_*` 也都是 `float64`,均无问题。
+
+**修复**(`frontend/src/views/SettingsView.vue`):该控件由
+`:step="0.5"` 改为 `:step="1" :precision="0"`。
+只改步进不够 —— `el-input-number` 默认允许**手输**小数,`:precision="0"` 才能把输入也
+归整到整数(同文件 `fade_sec` 已有 `:precision="1"` 的先例,不是新引入的写法)。
+
+**验证**:`scripts/check.ps1` 六道全过(gofmt / vet / build / test 10 包 / vite build /
+go-webview2 补丁在位);`build.ps1` 重建后启动实测:日志出现
+`[WebView2] Environment created successfully` 与 `[manjux] 桌面窗口就绪`,
+窗口标题「ManJuX · 短视频创作工作台」,`GET /api/settings` 返回 `reserve_vram_gb=4`、
+`novel_dir=D:\Ai\小说` 完好 —— 说明带 `int` 的 settings 读取链路正常。
+
+**回滚**:源码 `git revert`,或直接用同目录的
+`ManJuX-vramfix-rollback-20260924.exe.bak`(改名前那个 exe,去掉 `.bak` 即用)。
+
+### 2026-09-24:渲染显存优化 —— `reserve_vram_gb` 1 → 4(**已生效**)
+
+**问题**:视频渲染时显存长期顶在 92% 上下,最低只剩 ~1.5 GB 空闲,桌面/浏览器随时可能被挤。
+
+**测量方法**(可复现):`D:\Ai\ComfyUI\_maintenance\20260924-upgrade\profile-vram.py`
+按 ManJuX 同款启动参数拉起 ComfyUI,跑真实 H3 工作流,1 秒采样一次 `nvidia-smi`。
+基准用 `api-workflows/h3-t2v-768p-crf16.json`(1344×768 / 124 帧 / 8 步),
+与 `settings.json` 的 `render 768×1344 steps 8` 对得上。
+
+**结论**(1344×768,各两次热态运行):
+
+| `reserve_vram_gb`(= `--vram-headroom`) | 峰值显存 | 峰值占比 | 最低空闲 | 单镜耗时 |
+|---|---|---|---|---|
+| **1(原值)** | 22,623 / 22,626 MiB | 92.5% | 1.51 GB | 181.2 / 190.2 s |
+| 2 | 21,563 MiB | 88.1% | 2.58 GB | 60.3 s(832×480 口径) |
+| 3 | 20,570 MiB | 84.1% | 3.57 GB | 60.3 s(832×480 口径) |
+| **4(新值)** | 19,551 / 19,551 MiB | **79.9%** | **4.59 GB** | 181.2 / 184.0 s |
+| 5 | 18,491 MiB | 75.6% | 5.65 GB | 63.3 s(832×480 口径)—— 开始掉速 |
+
+**峰值与预留量近乎 1:1 线性**(多留 1 GB ≈ 少占 1 GB),而**到 4 GB 为止耗时完全不涨**
+(181.2 s vs 181.2 s),5 GB 才开始掉约 5%。所以取 **4**:峰值 −3.0 GB、空闲 +3.0 GB、零速度代价。
+
+**改动**:`data/settings.json` 的 `comfy.reserve_vram_gb`: `1` → `4`
+(UI 设置项「显存预留(GB)」,范围 0–8)。改前备份 `settings.json.bak-20260924-before-lora-v12`
+(该备份同时是本日两次模型换装前的原始件)。
+
+**顺带否掉的方案**(均实测,无收益或有害):
+
+| 参数 | 实测峰值 | 结论 |
+|---|---|---|
+| `--reserve-vram 3` | 22,395 MiB(−0.19 GB) | 远不如 `--vram-headroom`,不用 |
+| `--disable-comfy-compiler` | 21,371 MiB(单跑) | 与 headroom 并用时落在噪声内,不值得改 Go 源码重建 |
+| `--fast-disk` | 22,556 MiB | 对显存无收益 |
+| `--disable-pinned-memory` | 22,589 MiB | 管的是系统内存,不是显存 |
+
+**注意事项**:本次只覆盖主渲染路径(条件编码 → 采样 → VAE 解码)。LTX 2× 隐空间放大 /
+二采重采样属于更重的阶段且与主模型不共存(有 `--disable-smart-memory`),理论上有余量;
+若日后发现那几个阶段变慢,把 `reserve_vram_gb` 降回 3 即可。
+
+### 2026-09-24:ComfyUI v0.35.1 → v0.37.2 + 6 个插件同步升级(**升级已完成并保持**)
+
+**动机**:本体落后上游 94 个提交(v0.35.2 / v0.36.0 / v0.37.0-2 三个版本没跟上),
+而 H3 生态插件(Director +124、vrgamedevgirl +1056)已经在按新内核写代码 —— 继续钉在 v0.35.1
+迟早出现「插件的新代码调用不到内核新接口」的运行期失败,属于必须一起动的那类。
+
+**执行**:
+
+1. **基线**:`D:\Ai\ComfyUI\_maintenance\20260924-upgrade\` 存 `baseline-repos.json`(全部仓库 HEAD)、
+   `pip-freeze-before.txt`(134 行依赖快照);本体打 `backup_before_v0.37.2` 分支指向 `856a922b`。
+2. **插件**:`git fetch` + `merge --ff-only`,逐个判断有无上游新提交。网络直连 github.com 不通
+   (`curl` 走不通、`git` 亦不通),实际可用通路是 **系统代理 `127.0.0.1:7897`**(`Invoke-WebRequest`
+   自动走、`curl`/`git` 不会),故对直连失败的仓库用 `git -c http.proxy=… fetch` 补拉
+   (试过补 `gh-proxy` 的 `mirror` 远端,git 协议下会挂住,已放弃)。
+   升级:KJNodes +1、audio-T8 +4、vrgamedevgirl +1056、Director +124、MaskVidExperiments +1、
+   was-node-suite +15;其余 10 个本就最新。
+3. **本体**:恢复被删的示例占位文件 → `git checkout v0.37.2`。
+4. **依赖**:只装 `requirements.txt` 里真正变了的 5 个包(frontend 1.51.10→1.52.7、
+   workflow-templates 0.11.59→0.11.69、embedded-docs 0.5.11→0.5.12、comfy-kitchen 0.2.33→0.2.35、
+   comfy-aimdo 0.5.3→0.5.5)。**没有**跑整份 `pip install -r requirements.txt` ——
+   那会把 `torch`/`torchvision`/`torchaudio` 按 PyPI 默认重装,极可能顶掉本机的
+   `2.11.0+cu130` 专用轮子。
+5. **配置**:`extra_model_paths.yaml` 里指向不存在的 `D:/Ai/ManJuX/comfyui/shared/` 那一段
+   整段注释(见第九节)。
+
+**升级后验证(逐项实测)**:
+
+| 检查 | 结果 |
+|---|---|
+| 启动 | 10 秒内 ready(`/system_stats` 200),`[INFO] ComfyUI version: 0.37.2` |
+| 节点导入 | 日志中 `Cannot import` / `IMPORT FAILED` / `Traceback` **零条** |
+| 节点总数 | **2419** 个类(v0.35.1 时为 1929) |
+| ManJuX 依赖节点 | 逐条核对 `preflight.go` 与 Go 源码里出现的 **44 个类,全部存在**(见下表) |
+| 模型可见性 | `shared_current` 段 27 条搜索路径全部指向 `D:/Ai/ComfyUI/shared/models/*` |
+| 资源 | `Total VRAM 24435 MB` / `pytorch 2.11.0+cu130`,与升级前一致 |
+
+| 分组 | 节点 | 结果 |
+|---|---|---|
+| H3 核心 | ReferenceToVideo / ImageToVideo / SigmaShift | ✓ |
+| 条件缓存 | CondSave / CondLoad | ✓ |
+| 镜间接缝 | MotionContext × 4(含 LoadLatent / SaveLatent / Trim) | ✓ |
+| SAM3 跟踪 | VideoTrack / TrackToMask | ✓ |
+| Mask 处理 | MVEx SubjectCrop / SubjectUncrop / MaskToLatentSpace / LatentMaskToMask | ✓ |
+| PDD 加速 | MiniMaxH3PDDAccApply | ✓ |
+| 图放大链路 | LatentUpscaleModelLoader / UpscaleModelLoader / LTXVLatentUpsampler | ✓ |
+| 基础 I/O | UNETLoader / CLIPLoader / VAELoader / LoadAudio / LoadVideo / VAEDecodeAudio 等 | ✓ |
+
+**同批完成的模型换装(细节见第九节)**:
+
+| 文件 | 从 | 到 |
+|---|---|---|
+| `loras/minimax_h3_fl2v_turbo_4step_*_768p_comfyui_bf16.safetensors` | v1.1 | **v1.2**(音频质量改善) |
+| `vae/minimax_h3_video_vae_int8_convrot.safetensors` | 3,171,670,912 字节(旧量化) | **2,811,065,184 字节**(上游 2026-09-15 现行版) |
+
+**已知副作用(不影响渲染,记录备查)**:v0.37 的素材库表结构迁移 `0007_record_content_split`
+把旧素材库的**手工标签、用户元数据、预览图、重命名记录**清空重建了,旧库保留在
+`ComfyUI/user/comfyui.db.bkp`。这只涉及 ComfyUI 新版「素材库」UI 的元数据,
+与 ManJuX 的项目数据(`D:\Ai\Datas\ManJuX\data`)无关。
+
+**回滚方式**:本体 `git -C D:\Ai\ComfyUI\ComfyUI checkout backup_before_v0.37.2`;
+依赖按 `pip-freeze-before.txt` 逐条 `pip install <pin>`;插件按 `baseline-repos.json` 逐个
+`git -C <目录> checkout <head>`;模型改回第九节列出的旧文件名即可(两个旧文件都留在原地)。
 
 ### 2026-09-24:Wails v2.15.0 → v2.16.0(**升级已完成并保持**)
 
@@ -218,14 +362,38 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 **diffusers 布局**,键名对不上 ComfyUI 的分支判据,不能直接丢进 `models/vae/`。
 
 注意位置是 `comfyui/shared/models/`(**不是** `comfyui/ComfyUI/models/`),由
-`comfyui/ComfyUI/extra_model_paths.yaml` 注册。该文件里有两段:`shared` 段的
+`comfyui/ComfyUI/extra_model_paths.yaml` 注册。该文件里原本有两段:`shared` 段的
 base_path 是 `D:/Ai/ManJuX/comfyui/shared/`(部署形态下的路径),`shared_current` 段
 指向 `D:/Ai/ComfyUI/shared/`(本机实际目录)—— ComfyUI 会合并多段加载,所以**两边都生效**。
+
+> **2026-09-24 变更**:本机已不存在 `D:/Ai/ManJuX`(ManJuX 现在装在 `D:\Ai\Datas\ManJuX`,
+> 其 `settings.json` 里 `comfy.root_dir` 直接就是 `D:\Ai\ComfyUI`,没有 `comfyui/shared` 这一层)。
+> 那段旧的 `shared` 每次启动都会白扫 29 条无效搜索路径,已**整段注释保留**(不删除,便于复现部署形态),
+> 现在**只有 `shared_current` 一段生效**,指向的仍是同一批模型文件,行为不变。
+
 引擎层实现见 `internal/engine/comfyengine/upscalegraph.go`。
 
 已就位的 LoRA(H3 加速链完整):
 
 - `MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors`(quality 档)
 - `MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors`(quality 档)
-- `minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors`(turbo 档)
+- `minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors`(turbo 档 · **当前生效**)
 - `minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors`(turbo 档)
+
+> **2026-09-24 换装**:fl2v turbo LoRA 由 v1.1 → **v1.2**
+> (1,956,193,000 字节,sha256 `c8168ebc…`,与上游一致)。官方 v1.2 相对 v1.1 专门改善音频质量
+> (更干净、伪影更少),步数/分辨率不变(4 步 / video shift 6 / audio shift 3 / Euler / ≤768p)。
+> `settings.json` 的 `turbo_lora_fl2va` 已同步指向 v1.2;v1.1 文件保留在原地
+> (回退就是改回那一行)。**注意 `ref2va` 无 v1.2**,4 步档最新仍是 v0.1。
+
+### express 极速档的 int8 视频 VAE(2026-09-24 换装)
+
+`vae/minimax_h3_video_vae_int8_convrot.safetensors` 由 **3,171,670,912 → 2,811,065,184 字节**
+(sha256 `52a2c8c7…`)。本机那份是更早的另一种量化;Comfy-Org 于 2026-09-15 重新上传了现行版本。
+换装后实测:文件被 `folder_paths` 正常列出、能经真实 `nodes.VAELoader.load_vae` 加载
+(`latent_channels=24`、`latent_dim=3`、下采样 16×16)。
+旧文件就地保留为 `….safetensors.bak-old-3171M` —— 扩展名不是 `.safetensors`,**不会被扫描进模型列表**
+(已实测列表里没有它),要回退直接改回文件名即可。
+
+> 该文件只影响 `express` 极速预览档(`engine.go:516`,有 fp16 回退);turbo / quality 档走的是
+> `minimax_h3_video_vae_fp16`,未受影响。
