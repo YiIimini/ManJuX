@@ -60,7 +60,9 @@ func final2KPrompt(proj *project.Project, plan *project.Plan) string {
 	}
 	// 风格 + 介质覆盖(与分镜路径同一段实现,不另写一份)
 	sb.WriteString(styleAndMediumBlock(plan, facesOn))
-	return sb.String()
+	// 画面文字兜底与分镜路径同源:整片重生成同样会把招牌/牌匾上的字画错,
+	// 而"文字"这一条只有一个实现点(EnsureNoOnScreenText)。
+	return EnsureNoOnScreenText(sb.String())
 }
 
 // final2KRefs 成片 2K 的身份锚定参考图:按镜头出场顺序取主要角色的定妆照。

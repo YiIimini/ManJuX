@@ -44,3 +44,24 @@ func TestMusicDefaultsToNone(t *testing.T) {
 		t.Error("配乐 schema 里不该再留「照抄这个例子」的具体乐器示范")
 	}
 }
+
+// TestOnScreenTextExclusionIsMandatory ③ 画面文字:exclusions 不能再是"例如"。
+//
+// 旧文案是 `e.g. "No on-screen text, ..."` —— 写不写全凭自觉,于是招牌/牌匾/书页上的字
+// 被模型自己发明,渲染成错字(用户 2026-09-24 报「视频渲染中的文字有时候出现错误的字」)。
+func TestOnScreenTextExclusionIsMandatory(t *testing.T) {
+	for _, want := range []string{
+		"MANDATORY exclusions sentence",
+		"no on-screen text",
+		"no signage or plaques",
+		"render",
+		"verbatim",
+	} {
+		if !strings.Contains(strings.ToLower(SystemPrompt), strings.ToLower(want)) {
+			t.Errorf("分镜提示词缺少画面文字条款(%q)", want)
+		}
+	}
+	if strings.Contains(SystemPrompt, `in prose: e.g. "No on-screen text`) {
+		t.Error("exclusions 不该再是「例如」的语气(那等于不要求)")
+	}
+}

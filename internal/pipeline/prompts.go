@@ -216,11 +216,50 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 画面重新生成出油光,局部重绘会在脸上补一块写实皮肤。约束只写一处必然如此,
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
-	facesOn := true
-	if proj != nil {
-		facesOn = proj.Config.Params.Script.FacesOn()
+	return EnsureNoOnScreenText(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj))))
+}
+
+// noOnScreenTextMarker 幂等判据(改了文案必须保留这个串,否则会重复叠加)。
+const noOnScreenTextMarker = "NO ON-SCREEN TEXT"
+
+// EnsureNoOnScreenText 给镜头提示词补上"画面里不许出现文字"的硬约束(幂等)。
+//
+// 用户 2026-09-24 报「视频渲染中的文字有时候出现错误的字」——根因是**画面文字从来没被
+// 真正禁止**:分镜提示词里那句 exclusions 只是 `e.g.`("例如:不要字幕、不要水印"),
+// LLM 写不写、怎么写全凭自觉;而招牌/牌匾/书页/胸牌这类东西一旦进了画面描述,
+// 视频模型就会"自己发明"几个字 —— 汉字它认不出,于是画出形近的错字或糊成一团的假字。
+//
+// 所以这条在**代码层**兜底(与 EnsureChineseDialogue 同一思路:提示词管不住的事,
+// 收口到装配点):无论 LLM 写没写,每条出像素的提示词都带上这段。
+//
+// 注意它不是"一律禁止文字"这么简单,而是分三种情况说清楚,否则模型会走另一个极端
+// (该有字的地方也留白,或者反过来把字写错):
+//  1. 默认:画面里不要任何文字;
+//  2. 剧情确实需要(牌匾/书名/告示):**照抄提示词里给出的原字**,不许自己发明;
+//  3. 不需要辨认的远景文字:用无法辨认的抽象笔画带过,绝不拼凑假字。
+func EnsureNoOnScreenText(prompt string) string {
+	if strings.Contains(prompt, noOnScreenTextMarker) {
+		return prompt
 	}
-	return EnsureChineseDialogue(anchorPrompt(plan, shot, facesOn))
+	return prompt + "\n\n" + noOnScreenTextMarker + " (mandatory): do not render any readable text in the frame — " +
+		"no signage, no banners or plaques, no book or newspaper pages with writing, no letters, no UI, " +
+		"no subtitles, no watermarks, no logos, no name tags. " +
+		"If a sign or prop inherently carries writing, show it as out-of-focus, cropped away, turned away from " +
+		"camera, or as character-free abstract marks: never invent, guess or approximate characters, because " +
+		"invented Chinese characters always render as wrong or garbled glyphs. " +
+		"If the brief explicitly quotes specific characters, render EXACTLY those characters and nothing else; " +
+		"do not add extra words, and if the quoted text is long or uncertain, prefer framing it out of shot.\n" +
+		"(中文对照:画面内不得出现任何可辨认的文字 —— 招牌/牌匾/书报/胸牌/字幕/水印/logo 一律不画;" +
+		"道具上本来带字的,用失焦、裁掉、转向镜头外或纯抽象笔画表达,**绝不自己发明汉字**" +
+		"(模型自造的汉字必然出错);提示词里明确给出的原字必须逐字照抄,不加不减。"
+}
+
+// facesOnOf 项目开关(未表态 = 开);proj 为 nil 时按开处理。
+func facesOnOf(proj *project.Project) bool {
+	if proj == nil {
+		return true
+	}
+	return proj.Config.Params.Script.FacesOn()
 }
 
 // PortraitSubject 一张定妆照的装配输入(唯一装配点 PortraitPrompt 的参数)。
