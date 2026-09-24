@@ -155,7 +155,7 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 		})
 		modelLink = link("31", 0)
 	}
-	g["32"] = nd("MiniMaxH3SigmaShift", map[string]any{
+	g["32"] = nd(classSigmaShift, map[string]any{
 		"model": modelLink, "shift_video": 12.0, "shift_audio": 3.0,
 	})
 	model := link("32", 0)
@@ -164,7 +164,7 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 	//    节点本身支持 ref_videos(autogrow,max 3,24fps 的 2-15s 帧序列),但这里
 	//    一个都没传,所以运动一致性不是靠参考视频约束的,而是靠 ⑦ 的「贴回原画面」:
 	//    重绘结果只替换遮罩区域,其余帧像素逐帧原样保留。
-	g["20"] = nd("MiniMaxH3ReferenceToVideo", map[string]any{
+	g["20"] = nd(classRef2V, map[string]any{
 		"clip":           link("1", 0),
 		"vae":            link("2", 0),
 		"audio_vae":      link("3", 0),

@@ -254,7 +254,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		}
 		uploadedAudios = append(uploadedAudios, an)
 	}
-	if c.CondCache && e.client().HasNode(ctx, "MiniMaxH3CondSave") {
+	if c.CondCache && e.client().HasNode(ctx, classCondSave) {
 		// 缓存键含参考图内容指纹:换定妆照(同名覆盖)后自动失效,防旧条件隐性复用
 		var refFPs []string
 		for _, ref := range job.RefImages {
@@ -478,11 +478,11 @@ func addConditionNode(g map[string]any, job engine.Job, uploaded []string, audio
 			}
 			inputs["ref_audios"] = auds
 		}
-		g["20"] = nd("MiniMaxH3ReferenceToVideo", inputs)
+		g["20"] = nd(classRef2V, inputs)
 		return "20", "20"
 	}
 	// t2va / fl2va:MiniMaxH3ImageToVideo(不带 first/last frame 即纯文生)
-	g["20"] = nd("MiniMaxH3ImageToVideo", base)
+	g["20"] = nd(classI2V, base)
 	return "20", "20"
 }
 
@@ -504,7 +504,7 @@ func copyMap(m map[string]any) map[string]any {
 func buildEncodeGraph(job engine.Job, c config.ComfySettings, uploaded, audios []string, w, h, length int, cacheName string) map[string]any {
 	g := loaders(c, job.Accel)
 	cond, _ := addConditionNode(g, job, uploaded, audios, w, h, length)
-	g["60"] = nd("MiniMaxH3CondSave", map[string]any{
+	g["60"] = nd(classCondSave, map[string]any{
 		"conditioning": link(cond, 0),
 		"cache_name":   cacheName,
 	})
@@ -567,10 +567,10 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	var condNode, latentNode string
 	latentSlot := 1 // R2V/I2V 双输出:cond=0 / latent=1
 	if condRef != "" {
-		g["24"] = nd("MiniMaxH3CondLoad", map[string]any{
+		g["24"] = nd(classCondLoad, map[string]any{
 			"cache_name": condRef[len("cache:"):],
 		})
-		g["25"] = nd("EmptyMiniMaxH3LatentAV", map[string]any{"width": w, "height": h, "length": length})
+		g["25"] = nd(classEmptyLatAV, map[string]any{"width": w, "height": h, "length": length})
 		condNode, latentNode = "24", "25"
 		latentSlot = 0 // EmptyLatentAV 单输出
 	} else {
@@ -613,7 +613,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 		})
 		modelLink = link("31", 0)
 	}
-	g["32"] = nd("MiniMaxH3SigmaShift", map[string]any{
+	g["32"] = nd(classSigmaShift, map[string]any{
 		"model":       modelLink,
 		"shift_video": 12.0,
 		"shift_audio": 3.0,
@@ -641,11 +641,11 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	guiderCond := link(condNode, 0)
 	if useSeam {
 		seamDir := "manjux/" + sanitizePrefix(job.ProjectID) + "_seam"
-		g["70"] = nd("MiniMaxH3MotionContextLoadLatent", map[string]any{
+		g["70"] = nd(classMotionLoad, map[string]any{
 			"latent_path": seamDir, // 目录 + clip_index 取固定槽,项目间隔离
 			"clip_index":  job.PrevShot,
 		})
-		g["71"] = nd("MiniMaxH3MotionContext", map[string]any{
+		g["71"] = nd(classMotionCtx, map[string]any{
 			"conditioning":         guiderCond,
 			"vae":                  link("2", 0),
 			"latent":               link(latentNode, latentSlot),
@@ -657,7 +657,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	}
 	// 本镜采样输出落盘为下一镜的接缝上下文(固定槽,重渲自动覆盖)
 	if job.Seam {
-		g["72"] = nd("MiniMaxH3MotionContextSaveLatent", map[string]any{
+		g["72"] = nd(classMotionSave, map[string]any{
 			"latent":          link("44", 0),
 			"filename_prefix": "manjux/" + sanitizePrefix(job.ProjectID) + "_seam/clip",
 			"clip_index":      job.ShotID,
@@ -687,7 +687,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	g["51"] = nd("VAEDecodeAudio", map[string]any{"samples": link("44", 0), "vae": link("3", 0)})
 	if useSeam {
 		// 裁掉 pinned 头:images+audio 同裁,match_tail 保证音画等长
-		g["73"] = nd("MiniMaxH3MotionContextTrim", map[string]any{
+		g["73"] = nd(classMotionTrim, map[string]any{
 			"images":      link("50", 0),
 			"trim_frames": link("71", 1),
 			"audio":       link("51", 0),
