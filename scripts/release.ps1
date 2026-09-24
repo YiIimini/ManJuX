@@ -1,9 +1,15 @@
 ﻿# ManJuX 发布脚本:体检门禁 → 构建 → 提交 → 打 tag → 推送 GitHub(私有仓)
 # 版本更新自动推送:每次发布自动 commit + tag + push
-# 用法: powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Version v1.0.1] [-Note "说明"]
+# 用法: powershell -ExecutionPolicy Bypass -File scripts\release.ps1 [-Version v1.0.1] [-Note "说明"] [-DryRun]
+#
+# -DryRun 只跑到"门禁通过"就停:不起构建、不提交、不打 tag、不推送 ——
+# 用于发布前单独复核门禁这一段(审计 P1-4:旧实现的门禁指向仓外脚本、
+# 本机不存在就**静默跳过**,而且判据是"输出里有没有 FAIL 字样",python 报错也算过;
+# 所以"这一段到底跑没跑"必须能被单独验证)。
 param(
   [string]$Version = "",
-  [string]$Note = ""
+  [string]$Note = "",
+  [switch]$DryRun
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -55,6 +61,11 @@ if ($gateCode -ne 0) {
   throw "check.ps1 门禁未通过(退出码 $gateCode):修复后重跑,禁止带病交付"
 }
 Write-Host "==> 门禁通过(check.ps1 六道门 + 版本同源)" -ForegroundColor Green
+
+if ($DryRun) {
+  Write-Host "==> 预演结束:门禁已通过,未构建/未提交/未打 tag/未推送" -ForegroundColor Yellow
+  exit 0
+}
 
 # 2) 构建(注入本次发布版本号,避免 git describe 带旧 tag 后缀)
 $env:MANJUX_VERSION = $Version
