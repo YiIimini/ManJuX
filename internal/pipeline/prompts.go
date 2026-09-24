@@ -133,26 +133,31 @@ func styleAndMediumBlock(plan *project.Plan, facesOn bool) string {
 	if style != "" {
 		sb.WriteString("【全片视觉风格】" + style + "\n")
 	}
-	if !facesOn {
-		return sb.String()
-	}
 	if style != "" {
-		sb.WriteString("【渲染介质·最高优先级】上面的风格描述只当作**场景、色调、光线与氛围**的参考;" +
-			"**人物与整体画法以本段为准** —— 全片按二维/2.5 维动画渲染:手绘线稿、五官简化、赛璐璐平涂、" +
-			"哑光平涂肤色、柔和低对比光。风格串里的 realism / 写实 / 胶片 / 35mm 之类只作用于布景与影调," +
-			"不得把人物画成被拍摄的真人。\n" +
-			"MEDIUM OVERRIDE (highest priority): treat the style line above as a reference for location, palette, " +
-			"lighting and mood ONLY. Characters and the overall rendering are 2D/2.5D animation — hand-drawn line art, " +
-			"simplified graphic features, flat cel-shaded colour, matte flat-shaded skin, soft low-contrast light. " +
-			"Realism, live-action or film-grain wording in that style line applies to sets and grading only and must " +
-			"never turn a character into a photographed human being.\n")
-	} else {
-		// 方案没写风格(极少数):也把介质说清楚,免得只靠画面描述里的写实词
-		sb.WriteString("【渲染介质·最高优先级】全片按二维/2.5 维动画渲染:手绘线稿、五官简化、赛璐璐平涂、哑光平涂肤色、柔和低对比光。\n")
+		// 风格由**上游(小说技能端)指定**时,平台不抢风格(用户 2026-09-24 定调:
+		// 「平台端渲染不限制风格,由小说技能端管控指定视频风格」)。
+		//
+		// 旧行为是无条件 MEDIUM OVERRIDE:不管上面写了什么,一律压成"二维/2.5 维
+		// 动画 + 赛璐璐平涂 + 哑光"。后果是技能端指定的写实/胶片/3D 风格全被吃掉 ——
+		// 用户看到的是"我明明指定了风格,出来还是那一套动漫脸"。
+		//
+		// 现在只保留**法务与原创性**那条(不影射真实人物、原创设计):它不规定画风,
+		// 是任何风格下都必须成立的底线 —— 那也正是当初加介质锁的一半理由(避免侵权),
+		// 而"必须动漫化"那另一半是风格选择,归技能端。
+		sb.WriteString("【风格执行】以上风格由剧集设定指定,照此渲染,不要另换画风;" +
+			"全片风格必须逐镜一致(同一部剧不得出现两种画风)。\n" +
+			"STYLE AUTHORITY (from the series spec, do not substitute): render exactly in the style line above and keep " +
+			"it identical in every shot of this series. Every design stays ORIGINAL: never make a character resemble a " +
+			"real person, actor, singer, celebrity or public figure.\n")
+	} else if facesOn {
+		// 上游没给风格(极少数):用平台的动漫化兜底,并说明这是兜底 ——
+		// 风格该由谁定写清楚,免得下一轮又变成"平台偷偷替我决定画风"。
+		sb.WriteString("【渲染介质·兜底画风】本次没有任何风格设定,按平台默认的二维/2.5 维动画渲染:" +
+			"手绘线稿、五官简化、赛璐璐平涂、哑光平涂肤色、柔和低对比光。" +
+			"(风格应由上游剧本/技能端在方案里指定;指定后本段不再生效。)\n")
+		sb.WriteString(animatedFaceRenderBlock() + "\n")
 	}
-	// 画风硬约束放在风格段之后、正文之前:既压住风格段里可能残留的写实词,
-	// 也让 H3 在读画面描述前先接受"哑光动画"的基调。
-	sb.WriteString(animatedFaceRenderBlock() + "\n")
+	// 有上游风格时**不加**兜底画风块:那会把技能端指定的画风again压成动画。
 	return sb.String()
 }
 

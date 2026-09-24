@@ -35,15 +35,21 @@ func TestEveryPixelProducingPathCarriesMediumMarker(t *testing.T) {
 		"主渲染与单镜2K与局部重绘与音频驱动(ShotRenderPrompt)": ShotRenderPrompt(proj, plan, shot),
 		"成片2K(final2KPrompt)": final2KPrompt(proj, plan),
 	}
+	// 判据(2026-09-24 用户定调「平台端渲染不限制风格,由小说技能端管控指定视频风格」后更新):
+	//   - 上游给了风格 → 每条出像素的路径都必须带**风格执行段**(STYLE AUTHORITY)与
+	//     原创/法务底线,且**不得**再出现 MEDIUM OVERRIDE(平台不再抢画风);
+	//   - 上游没给风格 → 必须带平台兜底的介质块(RenderMediumMarker),否则会退化成一堆
+	//     互相打架的写实措辞。
+	// 两条都断言"路径没有整段漏掉风格",只是"风格由谁定"变了。
 	for name, p := range paths {
-		// 判据用**渲染侧**标记:渲染块允许写 NEGATIVE,图像块不许 —— 两者不可互换
-		// (见 RenderMediumMarker 的说明),所以"出像素的路径"该带的是前者。
-		if !strings.Contains(p, RenderMediumMarker) {
-			t.Errorf("%s 的提示词缺少渲染介质锁标记 %q —— 这条路径会把动画脸重画成写实脸:\n%s",
-				name, RenderMediumMarker, p)
+		if !strings.Contains(p, "STYLE AUTHORITY") {
+			t.Errorf("%s 缺少风格执行段(上游指定的风格必须逐镜贯彻):\n%s", name, p)
 		}
-		if !strings.Contains(p, "MEDIUM OVERRIDE") {
-			t.Errorf("%s 缺少 MEDIUM OVERRIDE 段", name)
+		if !strings.Contains(p, "ORIGINAL") {
+			t.Errorf("%s 缺少原创/不影射真实人物的底线条款:\n%s", name, p)
+		}
+		if strings.Contains(p, "MEDIUM OVERRIDE") {
+			t.Errorf("%s 在**上游已指定风格**时仍做介质覆盖 —— 平台不该抢画风:\n%s", name, p)
 		}
 	}
 	// 反例守卫:两个标记串必须互不相同 —— 否则"这张定妆照是不是动画线"会被渲染侧
@@ -131,10 +137,21 @@ func TestFinal2KPromptRespectsFacesOff(t *testing.T) {
 	if !strings.Contains(p, "REFINE, DO NOT REDESIGN") {
 		t.Error("即使真人写实,也要说清\"这是分辨率提升不是重画\"")
 	}
-	// 未表态(老项目 json 没有这个键)= 开,与 FacesOn 的语义一致
+	// 未表态(老项目 json 没有这个键)= 开,与 FacesOn 的语义一致。
+	// 注意语义已变(2026-09-24 用户定调「平台不限制风格」):上游**给了**风格时,
+	// 交付的是"逐镜贯彻该风格 + 原创底线",而不是平台兜底的动画介质块;
+	// 兜底画风块只在**没有任何风格设定**时才出现。
 	proj.Config.Params.Script.StylizedFaces = nil
-	if !strings.Contains(final2KPrompt(proj, plan), RenderMediumMarker) {
-		t.Error("未表态时应按'开'处理(存量项目正是报障的那批)")
+	if !strings.Contains(final2KPrompt(proj, plan), "STYLE AUTHORITY") {
+		t.Error("未表态时应按'开'处理:上游风格必须被贯彻")
+	}
+	bare := &project.Plan{} // 没有任何风格设定
+	if !strings.Contains(final2KPrompt(proj, bare), RenderMediumMarker) {
+		t.Error("没有任何风格设定时应带平台兜底的介质块(否则退化成一堆打架的写实措辞)")
+	}
+	proj.Config.Params.Script.StylizedFaces = project.Bool(false)
+	if strings.Contains(final2KPrompt(proj, bare), RenderMediumMarker) {
+		t.Error("显式关掉动漫化兜底时不该强塞媒介块")
 	}
 }
 

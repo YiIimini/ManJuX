@@ -174,19 +174,21 @@ func TestShotRenderPromptIsSingleSourceForAllRenderPaths(t *testing.T) {
 	shot := &project.Shot{ID: 1, Characters: []string{"c1"}, Scene: "s1",
 		H3Prompt: "detailed_description:\n[Shot 1] ...\n<d>[Chinese]走。</d>"}
 	got := ShotRenderPrompt(proj, plan, shot)
-	if !strings.Contains(got, "MATTE ANIMATED LOOK") {
-		t.Error("渲染期提示词必须带画风硬约束")
+	// 2026-09-24 用户定调「平台端渲染不限制风格,由小说技能端管控指定视频风格」:
+	// 上游给了风格时,平台只负责"逐镜贯彻 + 原创底线",不再压成动画介质。
+	if !strings.Contains(got, "STYLE AUTHORITY") {
+		t.Error("渲染期提示词必须带风格执行段(上游风格逐镜贯彻)")
 	}
 	if !strings.Contains(got, "身份锁") {
 		t.Error("渲染期提示词必须带身份锚定")
 	}
 	// 介质覆盖**无条件**追加,不靠关键词:LLM 的措辞追不完(实测真实项目的
 	// "gritty rural Chinese period realism" 一个写实关键词都不命中)。
-	if !strings.Contains(got, "MEDIUM OVERRIDE") {
-		t.Error("开启画风开关时必须无条件追加介质覆盖,否则风格串里的写实措辞会与动画约束打架")
+	if strings.Contains(got, "MEDIUM OVERRIDE") {
+		t.Error("上游已指定风格时不得再做介质覆盖(平台不抢画风)")
 	}
-	if !strings.Contains(got, "treat the style line above as a reference for location") {
-		t.Error("介质覆盖必须说明「风格段只当场景/色调参考」")
+	if !strings.Contains(got, "STYLE AUTHORITY") {
+		t.Error("风格执行段必须说明「照此渲染、不得另换画风」")
 	}
 	if !strings.Contains(got, "【全片视觉风格】photorealistic cinematic") {
 		t.Error("风格段本身应原样保留(它仍是场景/色调/氛围的出题依据)")
@@ -217,9 +219,15 @@ func TestRealWorldStyleStringStillGetsMediumOverride(t *testing.T) {
 	plan := &project.Plan{Style: photoish}
 	shot := &project.Shot{ID: 1, H3Prompt: "detailed_description:\n[Shot 1] ..."}
 	got := ShotRenderPrompt(proj, plan, shot)
-	if !strings.Contains(got, "MEDIUM OVERRIDE") || !strings.Contains(got, "MATTE ANIMATED LOOK") {
-		t.Errorf("未命中关键词的风格串下仍必须带介质覆盖与画风块:\n%s", got)
+	// 上游**给了**风格(哪怕是这种不含关键词的写法)时:平台照它渲染,不再压成动画;
+	// 兜底画风块只在**没有**风格时才出现(见 styleAndMediumBlock)。
+	if strings.Contains(got, "MEDIUM OVERRIDE") {
+		t.Errorf("上游已指定风格时不得做介质覆盖:\n%s", got)
 	}
+	if !strings.Contains(got, "STYLE AUTHORITY") {
+		t.Errorf("上游指定的风格必须带风格执行段:\n%s", got)
+	}
+
 	// 已知的写实措辞也要能识别出来(用于给用户那句"要真人剧请关掉开关"的告警)
 	if !photorealRequested("gritty rural Chinese period realism") {
 		t.Error("period realism 属于写实措辞,应能提示用户")

@@ -190,7 +190,7 @@ func TestAnchorPromptObjectOnlyHasNoHumanLock(t *testing.T) {
 	if strings.Contains(got, "每个人物的脸型") {
 		t.Errorf("纯器物镜头不得带人类身份锁:\n%s", got)
 	}
-	for _, want := range []string{"器物锁", "ARTEFACT CLAUSE", "MATTE ANIMATED LOOK"} {
+	for _, want := range []string{"器物锁", "ARTEFACT CLAUSE", "STYLE AUTHORITY"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("纯器物镜头缺少「%s」", want)
 		}

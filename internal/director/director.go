@@ -81,7 +81,8 @@ detailed_description:
 [Style sentence(s) first: use the global style]. Then for every shot:
 [Shot 1] with NO timestamp for the first shot; subsequent shots "[Shot 2] At 00:06.000" with strictly increasing timestamps.
 Each shot paragraph (350-500 English words TOTAL across all shots): shot size and composition -> subject positions -> restate the subject's wardrobe, props, pose and state on first appearance in this shot -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events.
-Dialogue lines: <Subject 1> (S1) says in a [voice description]: <d>[Chinese]台词原文</d>. Assign (S1)(S2) by order of first utterance and NEVER renumber within the video. Keep Chinese dialogue VERBATIM inside <d> tags with original punctuation; do not rewrite or translate it.
+Dialogue lines: <Subject 1> (S1) says in a [voice description]: <d>[Chinese]台词原文</d>. Assign (S1)(S2) by order of first utterance and NEVER renumber within the video.
+  **Voice consistency (critical, the finished video must not sound like a different cast per shot)**: the [voice description] of a speaking character MUST be copied **verbatim** from that character's "voice" field in the cast list — never invent a new wording for a character you have already described anywhere in this plan, and never give two different characters the same voice description. If a character's "voice" field is empty, derive it once from that character's age/gender/appearance and reuse the exact same wording in every shot of the series. Keep Chinese dialogue VERBATIM inside <d> tags with original punctuation; do not rewrite or translate it.
 Off-screen narration: The narrator (S1) says in an off-screen voiceover: <d>[Chinese]旁白原文</d> while the on-screen characters' lips remain completely closed.
 End the whole section with an exclusions sentence in prose: e.g. "No on-screen text, no subtitles, no watermarks, no logos."
 MANDATORY brightness guard as the final sentence: "Subjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark."
@@ -90,7 +91,7 @@ overall_soundscape:
 1-4 English sentences of diegetic ambient sound. Do NOT repeat dialogue here.
 
 non_diegetic_music:
-Instruments + tempo + rhythm + dynamics in English, e.g. "Guzheng and low strings, slow tempo, sparse rhythm, gradually building dynamics." Or "N/A" if silence fits.
+Write "N/A" as the DEFAULT for most shots — the finished short drama must not carry continuous background music. Only when this specific shot genuinely needs scoring (montage / time transition / emotional climax) write instruments + tempo + rhythm + dynamics in English, kept sparse and low; never let the same music cue run across unrelated shots.
 
 mode=t2va => THREE sections in this exact order, separated by one blank line:
 
@@ -129,6 +130,7 @@ const sysHard = `## HARD CONSTRAINTS
 - No negative-prompt syntax, no CFG hints, no technical parameters - exclusions go as prose at the end.
 - Consistency: same character keeps identical appearance words every shot; same scene name reused.
 - Sound: dialogue only via <d> tags; ambience in overall_soundscape; music in non_diegetic_music; never duplicate.
+- Music discipline (the finished video must not be permanently scored): non_diegetic_music is "N/A" by DEFAULT — most shots have NO music. Only score a shot that genuinely needs it (montage / time passing / emotional climax), keep it sparse and low, and never run the same cue across unrelated shots. Continuous background music buries the dialogue.
 - Soundscape discipline (the finished video must not sound noisy): keep overall_soundscape to 1-2 short sentences describing a QUIET, low-level background bed (e.g. "distant street hum, faint wind"). Do not stack many simultaneous sound sources, do not ask for loud machinery, crowd chatter, alarms or continuous heavy noise: constant loud ambience buries the dialogue and reads as hiss in the final mix. Silence or near-silence is a perfectly good choice where it fits.
 - Screen-visible text must be quoted exactly and kept in original language.`
 

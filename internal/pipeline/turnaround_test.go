@@ -158,16 +158,19 @@ func TestAnchorPromptLocksIdentityToPicture(t *testing.T) {
 			t.Errorf("锚定块缺少「%s」:\n%s", want, got)
 		}
 	}
-	// 2026-09-24:角色动漫化 + 哑光(去"油腻")硬约束必须进视频侧提示词。
-	// 只压定妆照不够 —— H3 会照着强光描述把哑光角色重新画成油光脸。
-	for _, want := range []string{"MATTE ANIMATED LOOK", "oily or greasy skin", "resemblance to a real person"} {
+	// 2026-09-24 用户定调「平台端渲染不限制风格,由小说技能端管控指定视频风格」后,
+	// 视频侧交付的是"逐镜贯彻上游风格 + 原创/法务底线",而不是平台兜底的动画介质块:
+	//   - 有上游风格 → STYLE AUTHORITY + ORIGINAL(不得影射真实人物);
+	//   - 无上游风格 → 平台兜底介质块(那条由别的用例覆盖)。
+	for _, want := range []string{"STYLE AUTHORITY", "ORIGINAL", "resemble a real person"} {
 		if !strings.Contains(got, want) {
-			t.Errorf("视频侧画风硬约束缺少「%s」:\n%s", want, got)
+			t.Errorf("视频侧风格执行段缺少「%s」:\n%s", want, got)
 		}
 	}
-	// 关掉该开关时不得注入(真人剧是合法路线,不能强加画风)
-	if off := anchorPrompt(plan, shot, false); strings.Contains(off, "MATTE ANIMATED LOOK") {
-		t.Error("关闭角色动漫化后不应再注入动画/哑光硬约束")
+	// 关掉平台兜底开关时:**兜底动画介质块**不得注入(真人剧是合法路线,不能强加画风),
+	// 但"原创、不影射真实人物"是底色条款,与画风无关,仍应在。
+	if off := anchorPrompt(plan, shot, false); strings.Contains(off, RenderMediumMarker) {
+		t.Error("关闭平台兜底画风后不该再注入动画哑光介质块")
 	}
 	// 文字仍要传给模型(供服装/道具/姿态用),但必须标明用途受限
 	if !strings.Contains(got, "嘴角边一颗黑痣") {
