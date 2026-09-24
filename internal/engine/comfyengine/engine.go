@@ -527,6 +527,22 @@ func loaders(c config.ComfySettings, accel string) map[string]any {
 	}
 }
 
+// isQuantizedBase 判断底模文件名是否属于低位量化权重 —— Acc-8Step LoRA 挂不上这类底模
+// (int8 实测 tensor 32 vs 1024,官方修复未合并主线)。w4a8/nvfp4/mxfp8 与 int8 同属
+// 低位量化,一并排除;`fp8_scaled` 是官方原厂发布的底模格式,保持原有行为不动。
+//
+// 大小写不敏感:模型文件名在社区发行里有 `INT8` / `Int8` 等写法,判据不该因大小写漏判
+// (漏判的后果是给量化底模挂上蒸馏 LoRA,出图直接损坏,而不是报错)。
+func isQuantizedBase(name string) bool {
+	low := strings.ToLower(name)
+	for _, m := range []string{"int8", "w4a8", "nvfp4", "mxfp8"} {
+		if strings.Contains(low, m) {
+			return true
+		}
+	}
+	return false
+}
+
 // modelFileExists 在模型子目录探测文件存在(质量档/极速档的文件守卫)。
 // 同时覆盖 ComfyUI/models 与 shared/models(extra_model_paths 映射的两个根)。
 func modelFileExists(c config.ComfySettings, name string, subs []string) bool {
@@ -580,7 +596,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 		if job.Mode != "ref2va" {
 			acc = "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors"
 		}
-		if !strings.Contains(unet, "int8") && modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
+		if !isQuantizedBase(unet) && modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
 			turbo = acc
 		}
 	}
