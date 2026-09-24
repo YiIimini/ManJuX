@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
@@ -92,6 +93,9 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Request) {
 	var name, desc, prompt, imgPath string
 	uploaded := false
+	// wantWhiten 上传图是否白底化(默认**开**:用户 2026-09-24 定调"上传后也走
+	// Qwen-Image-Edit 生成白底角色");显式传 whiten=false 可跳过。
+	wantWhiten := true
 	var cleanup func()
 	defer func() {
 		if cleanup != nil {
@@ -104,6 +108,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 			Name        string `json:"name"`
 			Description string `json:"description"`
 			ImagePrompt string `json:"image_prompt"`
+			Whiten      *bool  `json:"whiten"` // nil = 默认白底化
 			imagePayload
 		}
 		if err := readBody(r, &in); err != nil {
@@ -113,6 +118,9 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		name = strings.TrimSpace(in.Name)
 		desc = strings.TrimSpace(in.Description)
 		prompt = strings.TrimSpace(in.ImagePrompt)
+		if in.Whiten != nil {
+			wantWhiten = *in.Whiten
+		}
 		if name == "" {
 			writeErr(w, 400, fmt.Errorf("角色名必填"))
 			return
@@ -129,6 +137,9 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		name = strings.TrimSpace(r.FormValue("name"))
 		desc = strings.TrimSpace(r.FormValue("description"))
 		prompt = strings.TrimSpace(r.FormValue("image_prompt"))
+		if v := strings.TrimSpace(r.FormValue("whiten")); v != "" {
+			wantWhiten = v != "0" && strings.ToLower(v) != "false"
+		}
 		if file, hdr, ferr := r.FormFile("image"); ferr == nil {
 			defer file.Close()
 			tmp, terr := os.CreateTemp("", "mx-char-*"+strings.ToLower(filepath.Ext(hdr.Filename)))
@@ -171,8 +182,26 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 	}
 
 	source := "krea2"
+	note := ""
 	if uploaded {
 		source = "upload"
+		// 白底化(用户 2026-09-24 要求):上传图背景五花八门,而这张主图会被当作
+		// 参考图喂进渲染(锁脸锚点),花背景会把布景/光线一起带进成片。
+		// 走 Qwen-Image-Edit-2511 图生图把背景换成纯白 —— 只改背景、不动主体。
+		//
+		// 失败绝不阻断上传:拿不到编辑链路(权重没下齐/ComfyUI 没起)时保留原图入库,
+		// 并把原因写进 note 让界面如实告诉用户,而不是假装白底化了。
+		if wantWhiten {
+			ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
+			out, werr := s.whitenUploaded(ctx, name, desc, imgPath)
+			cancel()
+			if werr != nil {
+				note = "已按原图入库(白底化未完成:" + werr.Error() + ")"
+			} else if out != "" {
+				imgPath = out
+				source = "upload-whitebg" // 来源如实记录:白底化过的上传图
+			}
+		}
 	}
 	entry, err := s.lib.Put("characters", name, desc, prompt, imgPath, "", source)
 	if err != nil {
@@ -180,7 +209,42 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		return
 	}
 	s.pipe.ReleaseVRAMIfIdle("自定义新建完成")
-	writeJSON(w, 200, map[string]any{"entry": entry})
+	writeJSON(w, 200, map[string]any{"entry": entry, "note": note})
+}
+
+// whitenUploaded 用 Qwen-Image-Edit-2511 把上传图的背景换成纯白,返回产物路径。
+//
+// 编辑链路未就绪时返回明确错误(调用方据此保留原图并如实告知)——**不偷懒用
+// Krea-2 文生图重画**:那会把用户上传的人重新设计一遍,是"改内容"不是"换背景"。
+func (s *Server) whitenUploaded(ctx context.Context, name, desc, imgPath string) (string, error) {
+	eng, err := s.reg.Get("comfy")
+	if err != nil {
+		return "", fmt.Errorf("需要本地 ComfyUI")
+	}
+	ee, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		return "", fmt.Errorf("当前引擎不支持图像编辑")
+	}
+	if err := eng.Available(ctx); err != nil {
+		return "", err
+	}
+	if missing := ee.EditAssets(ctx); len(missing) > 0 {
+		return "", fmt.Errorf("图像编辑模型未就绪(%s)", strings.Join(missing, ";"))
+	}
+	out := imgPath + ".whitebg.png"
+	if _, err := ee.EditImage(ctx, comfyengine.ImageEditOptions{
+		RefImages: []string{imgPath},
+		Prompt:    pipeline.WhiteBgPrompt(name, desc),
+		Negative:  pipeline.WhiteBgNegative(),
+		UseTurbo:  true,  // 4 步 Lightning:换背景这种小改动够用
+		UseAngles: false, // 转角度 LoRA 与"换背景"无关
+	}, out); err != nil {
+		return "", err
+	}
+	if st, serr := os.Stat(out); serr != nil || st.Size() == 0 {
+		return "", fmt.Errorf("白底化未产出有效图片")
+	}
+	return out, nil
 }
 
 // libraryRegen 重抽库资产:用条目自带的提示词重新生成定妆照(随机 seed)并覆盖入库。

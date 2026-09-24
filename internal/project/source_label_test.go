@@ -48,7 +48,7 @@ func TestEveryAssetSourceHasALabel(t *testing.T) {
 	// 采集:Source: "x" / Source = "x" / l.Put(..., "x") 里的来源字面量。
 	// 只认"看起来像来源"的取值:小写、无空格、无路径分隔符 —— 避免把
 	// 提示词或路径误当来源。
-	re := regexp.MustCompile(`(?:Source\s*[:=]\s*|,\s*)(?:")([a-z][a-z0-9-]{1,24})(?:")`)
+	re := regexp.MustCompile(`(?i)(?:source\s*[:=]\s*|,\s*)(?:")([a-z][a-z0-9-]{1,24})(?:")`)
 	known := map[string]bool{}
 	for _, e := range assetSourceNames {
 		known[e.Key] = true
@@ -67,7 +67,7 @@ func TestEveryAssetSourceHasALabel(t *testing.T) {
 				continue
 			}
 			// 只在"资产来源"语境里判:赋值给 Source 字段,或 library.Put 的最后一个参数
-			isSourceLine := strings.Contains(ln, "Source:") || strings.Contains(ln, "Source =") ||
+			isSourceLine := strings.Contains(strings.ToLower(ln), "source:") || strings.Contains(strings.ToLower(ln), "source =") ||
 				strings.Contains(ln, ".Put(")
 			if !isSourceLine {
 				continue

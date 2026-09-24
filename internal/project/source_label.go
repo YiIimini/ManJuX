@@ -26,6 +26,7 @@ var assetSourceNames = []struct {
 	{"krea2-chibi", "Krea-2 · Q版"},
 	{"library", "库复用"},
 	{"upload", "上传"},
+	{"upload-whitebg", "上传 · 白底化"},
 	{"video-frame", "视频截帧"},
 	{"gacha", "抽卡"},
 }

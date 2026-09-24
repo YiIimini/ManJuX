@@ -249,7 +249,7 @@ async function gacha() {
 
 const createOpen = ref(false)
 const createBusy = ref(false)
-const createForm = reactive({ name: '', description: '', image_prompt: '', mode: 'generate' })
+const createForm = reactive({ name: '', description: '', image_prompt: '', mode: 'generate', whiten: true })
 const createImage = ref(null)
 const createImageURL = ref('')
 watch(createImage, (f, oldF) => {
@@ -285,6 +285,8 @@ async function doCreate() {
     // 大文件(2026-09-09「源图不存在」根因),浏览器模式同样可用
     const body = { name: createForm.name.trim(), description: createForm.description }
     if (createForm.mode === 'upload') {
+      // 白底化默认开(用户 2026-09-24 定调:上传图也走 Qwen-Image-Edit 生成白底角色)
+      body.whiten = createForm.whiten
       if (createNativePath.value) {
         body.image_path = createNativePath.value
       } else if (createImage.value) {
@@ -298,7 +300,9 @@ async function doCreate() {
       body.image_prompt = createForm.image_prompt.trim()
     }
     const d = await api.libraryCreateCharacter(body)
-    ElMessage.success(`角色「${d.entry.name}」已入库`)
+    // 白底化没做成时后端会如实回 note(降级为原图入库)—— 必须说出来,不能假装成功
+    if (d.note) ElMessage.warning(`角色「${d.entry.name}」已入库:${d.note}`)
+    else ElMessage.success(`角色「${d.entry.name}」已入库`)
     createOpen.value = false
     createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null; createNativePath.value = null
     kind.value = 'characters'
@@ -445,7 +449,16 @@ async function remove(e) {
           <el-input v-model="createForm.image_prompt" type="textarea" :rows="3"
             placeholder="A 20-year-old Chinese young man, short black hair, cyan hanfu robe, bright determined eyes, cinematic soft lighting, upper-body portrait" />
         </el-form-item>
-        <el-form-item v-else label="参考图片(png / jpg / webp)">
+        <!-- 白底化:上传图常带花背景,而这张主图会被当参考图喂进渲染(花背景会把
+             布景/光线一起带进成片)。默认勾选 —— 走 Qwen-Image-Edit-2511 只换背景、
+             不动主体;编辑链路没就绪时后端会退回原图并在提示里说明原因。 -->
+        <el-form-item v-if="createForm.mode === 'upload'">
+          <el-switch v-model="createForm.whiten" />
+          <span class="text-xs ml-2" style="color:var(--mx-text2)">白底化(用 Qwen-Image-Edit 只换背景,不改主体)</span>
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            换成纯白背景便于当参考图;关闭则原图直接入库。没做成时会让原图入库并说明原因。
+          </div>
+        </el-form-item>        <el-form-item v-else label="参考图片(png / jpg / webp)">
           <div v-if="!createImage && !createNativePath" class="upload-zone" style="--wails-drop-target: drop"
                @click="createInput?.click()" @dragover.prevent @drop.prevent="createImage = $event.dataTransfer?.files?.[0] || null"
                @mx-filedrop="onNativeDrop">
