@@ -16,10 +16,10 @@ func TestConflictsOnlyFlagsEnabledPacks(t *testing.T) {
 	root := t.TempDir()
 	nodes := filepath.Join(root, "ComfyUI", "custom_nodes")
 	for _, name := range []string{
-		"ComfyUI-MiniMaxH3-Cache",           // 未禁用 → 必须告警
-		"ComfyUI-MiniMaxH3-Cache.disabled",  // 已禁用 → 不告警
-		"ComfyUI-KJNodes",                    // 无关包 → 不告警
-		"ComfyUI-H3-ConditioningCache",       // 名字相近但无关 → 不告警
+		"ComfyUI-MiniMaxH3-Cache",          // 未禁用 → 必须告警
+		"ComfyUI-MiniMaxH3-Cache.disabled", // 已禁用 → 不告警
+		"ComfyUI-KJNodes",                  // 无关包 → 不告警
+		"ComfyUI-H3-ConditioningCache",     // 名字相近但无关 → 不告警
 	} {
 		if err := os.MkdirAll(filepath.Join(nodes, name), 0o755); err != nil {
 			t.Fatal(err)

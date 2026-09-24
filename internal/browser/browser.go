@@ -11,7 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/YiIimini/ManJuX/internal/sysexec")
+	"github.com/YiIimini/ManJuX/internal/sysexec"
+)
 
 // OpenAppWindow 以桌面应用窗口形态打开 URL(优先 Edge App 模式)。
 func OpenAppWindow(url string, width, height int) error {

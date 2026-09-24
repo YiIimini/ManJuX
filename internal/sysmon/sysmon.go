@@ -19,15 +19,15 @@ import (
 
 // Snapshot 一次采样结果。
 type Snapshot struct {
-	CPU      float64        `json:"cpu"`                // 总占用 0-100
-	Cores    []float64      `json:"cores"`              // 每逻辑核心占用(悬停详情)
-	RAMUsed  uint64         `json:"ramUsed"`            // 字节
-	RAMTotal uint64         `json:"ramTotal"`           // 字节
-	RAMAvail uint64         `json:"ramAvail"`           // 字节
-	RAMPct   float64        `json:"ramPct"`             // 百分比
-	GPU      *GPUSnapshot   `json:"gpu,omitempty"`      // 无 N 卡时 nil
-	CoreN    int            `json:"coreN"`              // 逻辑核心数
-	TS       int64          `json:"ts"`                 // 采样时刻 unix 秒
+	CPU      float64      `json:"cpu"`           // 总占用 0-100
+	Cores    []float64    `json:"cores"`         // 每逻辑核心占用(悬停详情)
+	RAMUsed  uint64       `json:"ramUsed"`       // 字节
+	RAMTotal uint64       `json:"ramTotal"`      // 字节
+	RAMAvail uint64       `json:"ramAvail"`      // 字节
+	RAMPct   float64      `json:"ramPct"`        // 百分比
+	GPU      *GPUSnapshot `json:"gpu,omitempty"` // 无 N 卡时 nil
+	CoreN    int          `json:"coreN"`         // 逻辑核心数
+	TS       int64        `json:"ts"`            // 采样时刻 unix 秒
 }
 
 // GPUSnapshot GPU 利用率与显存(悬停气泡展示完整明细)。
@@ -138,8 +138,8 @@ func (m *Monitor) sampleGPU() *GPUSnapshot {
 	return g
 }
 
-func parseF(s string) float64 { v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64); return round1(v) }
-func parseU(s string) uint64  { v, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64); return v }
+func parseF(s string) float64  { v, _ := strconv.ParseFloat(strings.TrimSpace(s), 64); return round1(v) }
+func parseU(s string) uint64   { v, _ := strconv.ParseUint(strings.TrimSpace(s), 10, 64); return v }
 func round1(v float64) float64 { return float64(int(v*10+0.5)) / 10 }
 
 // VRAMUsedMB 一次性读取显存占用(MB);无卡/查询失败返回 false。

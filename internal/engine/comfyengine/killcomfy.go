@@ -38,6 +38,7 @@ func killTree(pid int) {
 //   - 代管主进程 pid(存活中,连同其子孙树)
 //   - 全系统 python*:exe 位于 ComfyUI 根目录内(standalone-env 等),
 //     或命令行命中 根目录/ComfyUI/main.py(外部手动 `python main.py` 启动)
+//
 // RootDir 为空/非法时只按代管 PID(绝不误杀无关 python)。
 func comfyCandidates(c config.ComfySettings, managedPID int) []int {
 	seen := map[int]bool{}

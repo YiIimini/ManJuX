@@ -12,10 +12,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/project"
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 )
 
 // Params 合成参数。
@@ -23,8 +23,8 @@ type Params struct {
 	Width, Height int
 	Transition    string // cut / fade / dissolve
 	BurnSubtitles bool
-	SubtitleSize  int    // 字号(屏高百分比)
-	Loudness      int    // LUFS
+	SubtitleSize  int     // 字号(屏高百分比)
+	Loudness      int     // LUFS
 	FadeSec       float64 // 转场时长
 }
 
@@ -78,7 +78,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		if err != nil {
 			return nil, err
 		}
-	parts = append(parts, part)
+		parts = append(parts, part)
 		durations = append(durations, info.Duration)
 		if onProgress != nil {
 			onProgress(5+(i+1)*50/len(clips), fmt.Sprintf("规范化 %d/%d", i+1, len(clips)))

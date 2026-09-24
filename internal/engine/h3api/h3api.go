@@ -182,7 +182,7 @@ func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[
 		return "", fmt.Errorf("提交失败 HTTP %d: %s", resp.StatusCode, textutil.Truncate(string(out), 400))
 	}
 	var r struct {
-		TaskID string `json:"task_id"`
+		TaskID   string `json:"task_id"`
 		BaseResp *struct {
 			StatusMsg string `json:"status_msg"`
 		} `json:"base_resp"`
@@ -218,7 +218,7 @@ func (e *Engine) query(ctx context.Context, c config.MiniMaxSettings, taskID str
 	}
 	var r struct {
 		Task struct {
-			Status string `json:"status"`
+			Status  string `json:"status"`
 			Content struct {
 				URL string `json:"url"`
 			} `json:"content"`
@@ -327,4 +327,3 @@ func ratioFor(w, h int) string {
 		return "9:16"
 	}
 }
-

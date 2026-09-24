@@ -35,7 +35,7 @@ type VersionItem struct {
 	Repo         string `json:"repo"`                   // owner/repo
 	Status       string `json:"status"`                 // latest / behind / unknown / local / norepo
 	Detail       string `json:"detail"`                 // 附加信息(模型大小等)
-	Desc         string `json:"desc,omitempty"`          // 中文简要描述(名称下小灰行)
+	Desc         string `json:"desc,omitempty"`         // 中文简要描述(名称下小灰行)
 	CheckedAt    int64  `json:"checkedAt"`              // 在线检查时刻(0=未检查)
 }
 

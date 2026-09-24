@@ -54,9 +54,9 @@ func (e *Engine) Regenerate2K(ctx context.Context, baseVideo string, prompt stri
 	})
 
 	body := map[string]any{
-		"model":     "MiniMax-H3",
-		"task_type": "regeneration",
-		"content":   content,
+		"model":      "MiniMax-H3",
+		"task_type":  "regeneration",
+		"content":    content,
 		"resolution": "2K",
 	}
 	taskID, err := e.create(ctx, c, body)

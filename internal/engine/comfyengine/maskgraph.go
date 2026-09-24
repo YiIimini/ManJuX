@@ -130,15 +130,15 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 	//    一个都没传,所以运动一致性不是靠参考视频约束的,而是靠 ⑦ 的「贴回原画面」:
 	//    重绘结果只替换遮罩区域,其余帧像素逐帧原样保留。
 	g["20"] = nd("MiniMaxH3ReferenceToVideo", map[string]any{
-		"clip":          link("1", 0),
-		"vae":           link("2", 0),
-		"audio_vae":     link("3", 0),
-		"prompt":        opt.Prompt,
-		"width":         w,
-		"height":        h,
-		"length":        length,
+		"clip":           link("1", 0),
+		"vae":            link("2", 0),
+		"audio_vae":      link("3", 0),
+		"prompt":         opt.Prompt,
+		"width":          w,
+		"height":         h,
+		"length":         length,
 		"ref_image_size": "max",
-		"ref_images":    []any{link("15", 0)},
+		"ref_images":     []any{link("15", 0)},
 	})
 
 	// ⑥ 采样(与整镜渲染同一套参数:官方 res_multistep + simple)

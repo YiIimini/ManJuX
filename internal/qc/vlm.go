@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/YiIimini/ManJuX/internal/sysexec"
 	"github.com/YiIimini/ManJuX/internal/llm"
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 )
 
 // VLMReport 视觉审片结论。

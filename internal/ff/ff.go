@@ -10,7 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/YiIimini/ManJuX/internal/sysexec")
+	"github.com/YiIimini/ManJuX/internal/sysexec"
+)
 
 // FF ffmpeg/ffprobe 执行器。
 type FF struct {
@@ -62,23 +63,23 @@ func (f *FF) Run(ctx context.Context, args ...string) (string, error) {
 
 // ProbeInfo ffprobe 摘要信息。
 type ProbeInfo struct {
-	Duration  float64 `json:"duration"`
-	Width     int     `json:"width"`
-	Height    int     `json:"height"`
-	FPS       float64 `json:"fps"`
-	HasAudio  bool    `json:"has_audio"`
-	AudioRate int     `json:"audio_sample_rate"` // Hz
-	VideoCodec string `json:"video_codec"`
-	AudioCodec string `json:"audio_codec"`
+	Duration   float64 `json:"duration"`
+	Width      int     `json:"width"`
+	Height     int     `json:"height"`
+	FPS        float64 `json:"fps"`
+	HasAudio   bool    `json:"has_audio"`
+	AudioRate  int     `json:"audio_sample_rate"` // Hz
+	VideoCodec string  `json:"video_codec"`
+	AudioCodec string  `json:"audio_codec"`
 }
 
 type probeOut struct {
 	Streams []struct {
-		CodecType  string `json:"codec_type"`
-		CodecName  string `json:"codec_name"`
-		Width      int    `json:"width"`
-		Height     int    `json:"height"`
-		SampleRate string `json:"sample_rate"`
+		CodecType    string `json:"codec_type"`
+		CodecName    string `json:"codec_name"`
+		Width        int    `json:"width"`
+		Height       int    `json:"height"`
+		SampleRate   string `json:"sample_rate"`
 		AvgFrameRate string `json:"avg_frame_rate"`
 	} `json:"streams"`
 	Format struct {

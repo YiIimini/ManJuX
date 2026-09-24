@@ -25,20 +25,20 @@ type RefImage struct {
 
 // Job 单镜渲染任务。
 type Job struct {
-	ProjectID   string
-	ShotID      int
-	Prompt      string // 完整 H3 提示词(LLM 直出)
-	Mode        string // ref2va / t2va
-	RefImages   []RefImage
-	Width       int
-	Height      int
-	Length      int // 帧数(17k+5 网格,engine 自行对齐)
-	Seed        int64
-	Steps       int
-	Accel       string // 加速档: quality(Acc-8Step) / turbo(默认) / express(极速预览)
-	OutputDir   string // 产物落盘目录(项目 clips/)
-	OutputName  string // 产物文件名主干(如 shot_001)
-	OnProgress  func(percent int, note string)
+	ProjectID  string
+	ShotID     int
+	Prompt     string // 完整 H3 提示词(LLM 直出)
+	Mode       string // ref2va / t2va
+	RefImages  []RefImage
+	Width      int
+	Height     int
+	Length     int // 帧数(17k+5 网格,engine 自行对齐)
+	Seed       int64
+	Steps      int
+	Accel      string // 加速档: quality(Acc-8Step) / turbo(默认) / express(极速预览)
+	OutputDir  string // 产物落盘目录(项目 clips/)
+	OutputName string // 产物文件名主干(如 shot_001)
+	OnProgress func(percent int, note string)
 
 	// 镜间连续(MotionContext 接缝):Seam=true 且 PrevShot>0 时,
 	// 加载上一镜保存的 AV latent 钉入条件,产物自动裁掉 pinned 头。

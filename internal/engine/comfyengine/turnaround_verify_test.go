@@ -54,8 +54,8 @@ func TestTurnaroundRender(t *testing.T) {
 		Mode:      "ref2va",
 		RefImages: []engine.RefImage{{Kind: "character", Path: master}},
 		Width:     832, Height: 1248,
-		Length:    124,
-		Seed:      12345, Steps: 8, Accel: "turbo",
+		Length: 124,
+		Seed:   12345, Steps: 8, Accel: "turbo",
 		OutputDir: outDir, OutputName: "turnaround",
 		OnProgress: func(p int, note string) { t.Logf("  [%d%%] %s", p, note) },
 	})
