@@ -1,0 +1,63 @@
+# 统一 LF —— 与 zhishiku 仓库同一约定。
+#
+# 起因：本仓库 core.autocrlf=true 且原先没有 .gitattributes，
+# 于是 Windows 检出为 CRLF、Mac 检出为 LF，两边整文件互相 diff（假 diff），
+# 且 gofmt -l 会在 Windows 上把全部 .go 报成"未格式化"（实测 97 个文件），
+# 噪声盖住真正的格式问题。
+#
+# git 索引里本来就是 LF（0 个 CRLF 条目），故加本文件不会引发批量变更，
+# 只是让工作区与跨系统检出统一走 LF。
+
+* text=auto eol=lf
+
+# 二进制：不做行尾转换（否则会损坏文件）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.bmp binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.7z binary
+*.rar binary
+*.tar binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.node binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.eot binary
+*.mp3 binary
+*.wav binary
+*.ogg binary
+*.mp4 binary
+*.mov binary
+*.webm binary
+*.mkv binary
+*.safetensors binary
+*.ckpt binary
+*.pt binary
+*.pth binary
+*.onnx binary
+
+# 供人工阅读/比对的大体积文本也按 LF，不参与自动判定
+*.md text eol=lf
+*.go text eol=lf
+*.js text eol=lf
+*.ts text eol=lf
+*.vue text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
