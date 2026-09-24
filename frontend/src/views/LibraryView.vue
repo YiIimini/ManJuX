@@ -1,5 +1,5 @@
 <script setup>
-import { G, api, fileToB64 } from '../store'
+import { G, api, fileToB64, sourceLabel, sourceTone} from '../store'
 import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -415,8 +415,8 @@ async function remove(e) {
                       content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
             <el-tag size="small" type="warning" effect="plain">单视角</el-tag>
           </el-tooltip>
-          <el-tag size="small" effect="plain" :type="e.source === 'krea2' ? 'warning' : 'info'">
-            {{ e.source === 'krea2' ? 'Krea-2' : e.source === 'gacha' ? '抽卡' : '上传' }}
+          <el-tag size="small" effect="plain" :type="sourceTone(e.source)">
+            {{ sourceLabel(e.source) }}
           </el-tag>
         </div>
         <div class="text-xs" style="color:var(--mx-text2)">
@@ -530,7 +530,7 @@ async function remove(e) {
         </div>
 
         <div class="text-xs" style="color:var(--mx-text3)">
-          来源:{{ detail.source === 'krea2' ? 'Krea-2 生成' : detail.source === 'gacha' ? '抽卡' : '上传' }} ·
+          来源:{{ sourceLabel(detail.source) }} ·
           首次入库:{{ detail.source_project || '-' }} ·
           已被 {{ detail.used_count }} 个项目复用
           <span v-if="detail.aliases?.length">

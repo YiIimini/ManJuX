@@ -23,6 +23,10 @@ export const G = reactive({
   metaUpscale: {},         // /api/meta 的放大默认值 {default_type,default_model,default_ltx_vae}
                            // 权重文件名的事实来源在后端(它决定 ComfyUI 模型目录里该有什么),
                            // 前端只回显 —— 不在这里再写一份文件名字面量。
+  metaSources: [],         // /api/meta 的资产来源词汇表 {key,name}
+                           // 同一类分叉的另一例:来源由后端写入,中文名也必须由后端给 ——
+                           // 前端原先在各处三元猜,只认三种值,Q 版定妆/视频截帧/抽卡
+                           // 全被显示成"上传"(2026-09-24 用户报「Krea-2 字样写死了」)。
 })
 
 // 阶段清单的**兜底**副本(后端 /api/meta 是唯一真源)。
@@ -52,6 +56,33 @@ export function phases() {
       desc: p.desc || local.desc || '',
     }
   })
+}
+
+// sourceLabel 资产来源的中文名:**唯一实现点**。
+//
+// 后端写入 source,也由后端给中文名(/api/meta 的 asset_sources)。前端不再自己
+// 猜 —— 原先七处三元只认三种值,Q 版定妆(krea2-chibi)、视频截帧(video-frame)、
+// 抽卡(gacha)全被显示成"上传",显示的内容与事实不符。
+//
+// 兜底表只在 meta 未就绪时用;认不出的 key **原样返回**,让人看出"这是另一种来源",
+// 而不是统一说成"上传"。
+const FALLBACK_SOURCE_NAMES = {
+  krea2: 'Krea-2', 'krea2-chibi': 'Krea-2 · Q版',
+  library: '库复用', upload: '上传', 'video-frame': '视频截帧', gacha: '抽卡',
+}
+export function sourceLabel(src) {
+  if (!src) return '未知'
+  const hit = (G.metaSources || []).find(s => s.key === src)
+  if (hit) return hit.name
+  return FALLBACK_SOURCE_NAMES[src] || src
+}
+
+// sourceTone 标签配色的语义分类(纯展示):库复用=绿、本地生成=橙、其余=灰。
+// 与 sourceLabel 同一处维护 —— 免得"名字对了、颜色还是按老的三种值分"。
+export function sourceTone(src) {
+  if (src === 'library') return 'success'
+  if (src === 'krea2' || src === 'krea2-chibi' || src === 'gacha') return 'warning'
+  return 'info'
 }
 
 // phase 显示名:all/upgrade2k 等非阶段值映射为人话,具体阶段用中文名(后端清单优先)
@@ -180,6 +211,7 @@ export async function loadMeta() {
     if (Array.isArray(m?.phases)) G.metaPhases = m.phases
     // 实体类型清单(角色卡渲染方法):同样以后端为准,前端不硬编 key
     if (Array.isArray(m?.entity_kinds)) G.metaEntityKinds = m.entity_kinds
+  if (Array.isArray(m?.asset_sources)) G.metaSources = m.asset_sources
     if (m?.upscale && typeof m.upscale === 'object') G.metaUpscale = m.upscale
   } catch { /* 用内置兜底 */ }
 }

@@ -1,6 +1,6 @@
 <!-- 管线阶段详情管理:script/assets/render/qc/assemble 五面板 -->
 <script setup>
-import { G, api, refreshProject } from '../store'
+import { G, api, refreshProject, sourceLabel, sourceTone } from '../store'
 import { computed, reactive, watch, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -73,7 +73,7 @@ async function setKind(c, key) {
 
 function viewAsset(a, kind, name) {
   if (!a?.file) return
-  G.viewer = { index: 0, items: [{ type: 'image', src: api.fileURL(pj.value.project.id, a.file), title: name, meta: a.source === 'library' ? '库复用' : (a.source === 'krea2' ? 'Krea-2' : '上传'), kindLabel: 'ASSET' }] }
+  G.viewer = { index: 0, items: [{ type: 'image', src: api.fileURL(pj.value.project.id, a.file), title: name, meta: sourceLabel(a.source), kindLabel: 'ASSET' }] }
 }
 async function regen(assetId) {
   busy.regen = assetId
@@ -174,8 +174,8 @@ function castOf(sh) {
                 <span class="text-xs" style="color:var(--mx-text3);margin-left:8px">{{ o.hint }}</span>
               </el-option>
             </el-select>
-            <el-tag size="small" effect="plain" :type="c.asset?.source==='library'?'success':(c.asset?.source==='krea2'?'warning':'info')">
-              {{ c.asset ? (c.asset.source==='library'?'库复用':c.asset.source==='krea2'?'Krea-2':'上传') : '缺失' }}
+            <el-tag size="small" effect="plain" :type="sourceTone(c.asset?.source)">
+              {{ c.asset ? sourceLabel(c.asset.source) : '缺失' }}
             </el-tag>
             <el-tooltip v-if="sheetStale(c)" content="这张定妆照是按旧类型(或旧版本)渲染的 —— 请点右侧 ✨ 重新生成后再渲染,否则错的图会被当作第一参考喂回去" placement="top">
               <el-tag size="small" effect="dark" type="danger">定妆照待重出</el-tag>
@@ -192,8 +192,8 @@ function castOf(sh) {
         </div>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2"><b class="text-sm">{{ sc.name }}</b>
-            <el-tag size="small" effect="plain" :type="sc.asset?.source==='library'?'success':(sc.asset?.source==='krea2'?'warning':'info')">
-              {{ sc.asset ? (sc.asset.source==='library'?'库复用':sc.asset.source==='krea2'?'Krea-2':'上传') : '缺失' }}
+            <el-tag size="small" effect="plain" :type="sourceTone(sc.asset?.source)">
+              {{ sc.asset ? sourceLabel(sc.asset.source) : '缺失' }}
             </el-tag>
           </div>
           <div class="text-xs truncate mt-1" style="color:var(--mx-text3)">{{ sc.description }}</div>

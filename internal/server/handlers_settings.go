@@ -8,6 +8,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
@@ -19,6 +20,16 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	type styleOut struct {
 		Key  string `json:"key"`
 		Name string `json:"name"`
+	}
+
+	// sourceListOut 资产来源词汇表(定义在 project 包,与写入 source 的地方同源)。
+	sourceListOut := func() []map[string]string {
+		srcs := project.AssetSources()
+		out := make([]map[string]string, 0, len(srcs))
+		for _, s := range srcs {
+			out = append(out, map[string]string{"key": s.Key, "name": s.Name})
+		}
+		return out
 	}
 	phases := make([]phaseOut, 0, len(pipeline.PhaseNames))
 	for _, p := range pipeline.PhaseNames {
@@ -49,6 +60,11 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		"phases":       phases,
 		"styles":       styles,
 		"entity_kinds": entityKinds,
+		// 资产来源词汇表:同一类"后端写字符串、前端猜中文名"的分叉 ——
+		// 前端原先在七处各自三元猜,只认三种值,Q 版定妆/视频截帧/抽卡全被显示成
+		// "上传"(2026-09-24 用户报「资产库里的 Krea-2 字样写死了」)。
+		// 现在后端下发 key→name,前端一个 sourceLabel() 查表;新增来源由后端闸门保证登记。
+		"asset_sources": sourceListOut(),
 		// 放大链路的默认参数连同默认文件名一起下发:前端只回显、不自行记常量,
 		// 换权重/换默认 VAE 时改一处即可(此前那个 VAE 文件名只活在用户手打的
 		// 输入框里,打错一个字要到 ComfyUI 执行到节点才报错)。
