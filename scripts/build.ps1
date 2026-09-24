@@ -42,6 +42,14 @@ $verNum = $verBase.TrimStart('v')
 # 此前只同步前两处,version.go 靠 -ldflags 注入时才正确,go run / 未注入场景
 # 会读到漂移的旧值(实测漂到 v0.33.20 而 tag 已 v0.34.1)——根因是"三处同源"
 # 只落地了两处,这里补齐第三处,不再依赖人工记得改。
+#
+# 注意:**同步这三处只是必要条件,不是充分条件**。exe 右键「属性 → 详细信息」里的
+# 字段由 build/windows/info.json 渲染进 RT_VERSION 资源,而 wails 自带的模板把
+# 版本块写在语言 "0000"(中性)下 —— Windows 的版本 API(VerQueryValue / 资源管理器)
+# 根本不认这个语言键,于是资源明明在二进制里、属性面板却整片空白(2026-09-24 实测:
+# 字符串在 exe 字节流里搜得到,FileVersionInfo 读出来全是空)。已把该文件的语言键
+# 改成 "0409" 并补上 FileVersion/product_version。**若日后用 wails 脚手架重新生成
+# build/windows/info.json,记得把这两处改回来**,否则属性又会静默变空。
 # 用 UTF8Encoding($false) 写入,规避 Windows PowerShell 5.1 的 BOM 问题
 # (package.json 带 BOM 会让 pnpm 解析失败)。
 foreach ($vf in @("$root/wails.json", "$root/frontend/package.json")) {

@@ -10,6 +10,35 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## v0.34.3 exe 文件属性修复(2026-09-24)
+
+**现象**:打包出来的 `ManJuX.exe` 右键「属性 → 详细信息」整片空白 —— 产品名、版本、公司、
+版权、说明一个都没有。`build.ps1` 的注释写着三处版本同源就是为了让"exe 文件属性"正确,
+所以这属于既定意图没落地。
+
+**根因**:不是版本没同步,而是**资源块的语言键**。wails 自带的 `build/windows/info.json`
+把 StringFileInfo 写在语言 `"0000"`(中性)下,而 Windows 的版本 API(`VerQueryValue`,
+也就是资源管理器属性面板用的那条路径)不认这个键,于是整块读不出来。
+证据链(避免误判,逐层验证过):
+
+1. `wails build` 日志有 `Generating application assets: Done.`,且用文件监视抓到了它生成的
+   `ManJuX-res.syso`(7080 字节,位置正确在项目根、随即被 wails 删除);
+2. 直接解析该 syso:CompanyName / ProductName / ProductVersion(0.34.2) / LegalCopyright /
+   Comments 全部**有值**,`VS_VERSION_INFO` 结构存在;
+3. 在 exe 字节流里 UTF-16LE 搜 `VS_VERSION_INFO`、`ManJuX 短视频创作工作台` 也**都能搜到**
+   —— 说明资源确实链进了二进制;
+4. 但 `FileVersionInfo.GetVersionInfo()` 读出来全是空 → 所以问题只可能在语言键。
+
+**修法**:`build/windows/info.json` 的语言键 `0000` → `0409`(en-US,通用回退),
+并补上 `FileVersion` 字符串与 `fixed.product_version`(原先只有 `file_version`,
+且 `0.34.2` 三段版本经 `Sscanf("%d.%d.%d.%d")` 只能解出前三段)。
+`build.ps1` 里加了注释说明"同步三处只是必要条件、info.json 才是充分条件",
+并在用脚手架重新生成该文件时会踩回来的地方写明要改哪两处。
+
+**验证**:重建后 `GetVersionInfo` 全部字段可读 —— ProductName / ProductVersion /
+FileVersion / FileDescription / CompanyName / LegalCopyright / Comments 与 `wails.json`
+的 info 块逐项一致。
+
 ## v0.34.2 放大链路补齐 LTX 视频 VAE + 权重体检(2026-09-24)
 
 **起因(用户报「LTX VAE 缺失,ltx 放大这条路在本机跑不通」)**:上一轮把 2× 放大端到端接通了,
