@@ -25,6 +25,7 @@ import (
 // shotEnhanceCtx 两个端点共用的取数:定位镜头、校验产物、准备源视频与参考图。
 type shotEnhanceCtx struct {
 	proj     *project.Project
+	plan     *project.Plan // 分镜方案(渲染期提示词装配需要:身份锚定 + 画风硬约束)
 	shot     *project.Shot
 	src      string // 源镜头本地绝对路径
 	outName  string
@@ -79,6 +80,7 @@ func (s *Server) prepareShotEnhance(w http.ResponseWriter, r *http.Request, suff
 	outName := fmt.Sprintf("shot_%03d_%s", shotID, suffix)
 	return &shotEnhanceCtx{
 		proj:     proj,
+		plan:     plan,
 		shot:     shot,
 		src:      filepath.Join(s.store.Dir(id), m.File),
 		outName:  outName,
@@ -129,9 +131,10 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// 默认复用该镜原提示词:只把崩坏部分的描述改对,其余保持不变,重绘的局部才接得上
 	prompt := strings.TrimSpace(in.Prompt)
 	if prompt == "" {
-		// 语言标记兜底(幂等):局部重绘/音频驱动同样要有 [Chinese] 标记,否则新出的
-		// 片段又会出现听不懂的鸟语(2026-09-12)
-		prompt = pipeline.EnsureChineseDialogue(ctx.shot.H3Prompt)
+		// 与主渲染同一条提示词(身份锚定 + 画风硬约束 + [Chinese] 语言标记)。
+		// 只拿 shot.H3Prompt 的话,重绘出来的一块脸会没有哑光/动画约束 —— 局部重绘
+		// 恰恰是在脸上动刀,少了这条最容易看出"补丁"。
+		prompt = pipeline.ShotRenderPrompt(ctx.proj, ctx.plan, ctx.shot)
 	}
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
 	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
@@ -298,9 +301,9 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	rp := ctx.proj.Config.Params.Render
 	prompt := strings.TrimSpace(in.Prompt)
 	if prompt == "" {
-		// 语言标记兜底(幂等):局部重绘/音频驱动同样要有 [Chinese] 标记,否则新出的
-		// 片段又会出现听不懂的鸟语(2026-09-12)
-		prompt = pipeline.EnsureChineseDialogue(ctx.shot.H3Prompt)
+		// 与主渲染同一条提示词(身份锚定 + 画风硬约束 + [Chinese] 语言标记),
+		// 否则重渲出来的片段又会出现"没有哑光约束"的油腻脸与听不懂的鸟语(2026-09-12/09-24)
+		prompt = pipeline.ShotRenderPrompt(ctx.proj, ctx.plan, ctx.shot)
 	}
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
 	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,

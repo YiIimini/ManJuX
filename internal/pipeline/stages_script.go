@@ -68,6 +68,7 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	plan, err := director.Generate(ctx, client, text, director.Options{
 		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
 		ExtraHint: hint, Chibi: p.Chibi,
+		AnimeFaces: p.FacesOn(),
 		OnBatch: func(batch, total, fromShot, toShot int) {
 			c.emit(proj.ID, PhaseScript, 0, "info", 15, "▸ 分批分镜 %d/%d:镜 %d-%d 生成中…", batch, total, fromShot, toShot)
 		},
@@ -76,6 +77,18 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	<-hbDone
 	if err != nil {
 		return err
+	}
+	// 台词时长预算:LLM 常把 20 字台词塞进 4 秒镜头,H3 只能把话说到被截断为止
+	// (2026-09-24 用户报「配音也不完整」)。存盘前逐镜核算并抬时长,抬不动的
+	// 如实报出来让用户拆镜 —— 这层必须在存盘前做,方案、2K 重生成、局部重绘、
+	// 音频驱动、续跑重渲读的都是这份文本。
+	if n, details := director.FitDialogueDurations(plan); n > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "info", 15, "⏱ 台词时长预算:%d 镜时长已调整(%s)", n, strings.Join(details, ";"))
+	}
+	for _, sh := range plan.Shots {
+		if msg := director.DialogueOverflow(sh); msg != "" {
+			c.emit(proj.ID, PhaseScript, sh.ID, "warn", 15, "⚠ %s", msg)
+		}
 	}
 	// 台词语言标记兜底:LLM 常把模板要求的 <d>[Chinese]…</d> 写成 <d>…</d>,
 	// 标记一丢,H3 就用任意语言说话(成片出现听不懂的"鸟语",2026-09-12 用户报障)。

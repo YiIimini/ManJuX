@@ -186,7 +186,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if kind == "characters" && !isChibi {
 		if !strings.Contains(prompt, "RENDER STYLE") {
 			prompt = normalizeUniformWording(prompt) // 名词短语层面的去警用化
-			prompt += styleExpand(plan.Style)
+			prompt += styleExpand(plan.Style, proj.Config.Params.Script.FacesOn())
 			prompt += uniformCivilianClarify(desc)
 		}
 		if !strings.Contains(prompt, "CAST DISTINCTNESS") {

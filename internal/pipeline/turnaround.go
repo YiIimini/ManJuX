@@ -8,8 +8,11 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/ff"
+	"github.com/YiIimini/ManJuX/internal/llm"
+	"github.com/YiIimini/ManJuX/internal/qc"
 )
 
 // 多视角转台图(角色转身参考)生成。
@@ -49,11 +52,29 @@ type TurnaroundOptions struct {
 	Accel      string
 	Length     int   // 帧数;0 = 124(约 5.2 秒)
 	Seed       int64 // 0 = 按角色名派生稳定种子
-	Emit       func(format string, args ...any)
+	// Verify 视觉模型客户端:非 nil 时逐帧核对"是不是定妆照里那个人",不一致就换种子
+	// 重出;全部重试仍不一致则**拒绝使用**(详见 GenerateTurnaround 的说明)。
+	Verify         *llm.Client
+	VerifyMinScore int // 逐帧最低相似分,0 = 70
+	VerifyRetries  int // 不一致时的额外重试次数,默认 1(=最多出 2 次)
+	Emit           func(format string, args ...any)
 }
 
-// GenerateTurnaround 定妆照 → 原地转身视频 → 抽帧 → 横向拼转台图。
+// GenerateTurnaround 定妆照 → 原地转身视频 → 抽帧 → 校验 → 横向拼转台图。
 // 返回转台图绝对路径。任何一步失败都返回错误(由调用方决定告警还是阻断)。
+//
+// **为什么必须校验后才交付(2026-09-24 用户报「多视角/转台图和参考的定妆照不一致」)**:
+// 转身视频是 H3 生成的,它有创作自由,可以把人转着转着画成另一个人。旧实现对此毫无
+// 察觉,而且这张"另一个人"的拼图会作为该角色的**第二张参考图**喂回渲染 —— 主动把成片
+// 的人脸往错误方向拉,比"没有多视角"更糟。所以:
+//
+//  1. 抽帧之后、拼图之前逐帧判"像不像本人"(视觉模型,见 qc.IdentityJudge);
+//  2. 不一致就换种子重出(VerifyRetries 次);
+//  3. 仍不一致 —— **拒绝交付**:删掉本次抽出的角度帧、不生成转台图、返回错误。
+//     调用方照旧只告警,于是该角色退回"单张正面照"渲染(锁脸锚点仍在,只是少了
+//     其它角度),既不污染一致性也不阻断出片。
+//
+// 校验需要视觉模型;没配置(VLM 未填)时跳过校验并明确写进日志 —— 不假装校验过。
 func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o TurnaroundOptions) (string, error) {
 	if strings.TrimSpace(o.MasterPath) == "" {
 		return "", fmt.Errorf("缺少定妆照路径")
@@ -97,32 +118,19 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	if length <= 0 {
 		length = 124 // 17k+5 网格,约 5.2 秒
 	}
-	seed := o.Seed
-	if seed == 0 {
-		seed = nameSeed("turnaround", o.Name)
+	baseSeed := o.Seed
+	if baseSeed == 0 {
+		baseSeed = nameSeed("turnaround", o.Name)
 	}
-	steps := o.Steps
-	emit("多视角:「%s」转身视频生成中(H3 Ref2V,约数分钟)…", o.Name)
-	job := engine.Job{
-		ProjectID: "turnaround", ShotID: 0,
-		Prompt:    turnaroundPrompt(o.Name, o.Prompt),
-		Mode:      "ref2va",
-		RefImages: []engine.RefImage{{Kind: "character", Path: o.MasterPath}},
-		Width:     832, Height: 1248,
-		Length:    length,
-		Seed:      seed,
-		Steps:     steps,
-		Accel:     o.Accel,
-		OutputDir: viewDir, OutputName: "turnaround",
-		OnProgress: func(p int, note string) {
-			emit("多视角「%s」:%s(%d%%)", o.Name, note, p)
-		},
+	attempts := 1
+	if o.Verify != nil && o.VerifyRetries > 0 {
+		attempts += o.VerifyRetries
 	}
-	if _, err := ce.Render(ctx, job); err != nil {
-		return "", fmt.Errorf("转身视频渲染失败:%w", err)
+	if o.Verify == nil {
+		emit("多视角:未配置视觉模型,本次不做「与定妆照是否同一个人」的校验")
 	}
 
-	// 从转身视频按时间点抽帧:1.3s 四分之三 → 2.6s 侧面 → 3.9s 背面。
+	// 时间点:1.3s 四分之三 → 2.6s 侧面 → 3.9s 背面。
 	// 0s 的正面帧**刻意不抽**:它与定妆照本就是同一张脸同一角度,拼转台图时直接
 	// 用定妆照作第一格,不必再占一份磁盘与一个 glob 名额。
 	stamps := []struct{ at, tag string }{
@@ -130,35 +138,96 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 		{"2.6", "side"},
 		{"3.9", "back"},
 	}
-	views := []string{}
-	for _, s := range stamps {
-		p := filepath.Join(dir, base+"_view_"+s.tag+".png")
-		if _, err := f.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
-			"-ss", s.at, "-i", clip, "-map", "0:v:0", "-frames:v", "1", "-update", "1", p); err != nil {
-			emit("多视角抽帧失败(%ss):%v", s.at, err)
-			continue
+	lastReason := ""
+	for attempt := 1; attempt <= attempts; attempt++ {
+		seed := baseSeed + int64(attempt-1)*7919 // 重试换种子(质数步进,避开同种子的复现)
+		if attempt == 1 {
+			emit("多视角:「%s」转身视频生成中(H3 Ref2V,约数分钟)…", o.Name)
+		} else {
+			emit("多视角:「%s」第 %d 次重出(上一次与定妆照不一致:%s)", o.Name, attempt, lastReason)
 		}
-		if st, err := os.Stat(p); err == nil && st.Size() > 0 {
-			views = append(views, p)
+		job := engine.Job{
+			ProjectID: "turnaround", ShotID: 0,
+			Prompt:    turnaroundPrompt(o.Name, o.Prompt),
+			Mode:      "ref2va",
+			RefImages: []engine.RefImage{{Kind: "character", Path: o.MasterPath}},
+			Width:     832, Height: 1248,
+			Length:    length,
+			Seed:      seed,
+			Steps:     o.Steps,
+			Accel:     o.Accel,
+			OutputDir: viewDir, OutputName: "turnaround",
+			OnProgress: func(p int, note string) {
+				emit("多视角「%s」:%s(%d%%)", o.Name, note, p)
+			},
 		}
-	}
-	if len(views) < 2 {
-		return "", fmt.Errorf("多视角可用帧不足(仅 %d 张)", len(views))
-	}
+		if _, err := ce.Render(ctx, job); err != nil {
+			return "", fmt.Errorf("转身视频渲染失败:%w", err)
+		}
+		views := make([]string, 0, len(stamps))
+		for _, s := range stamps {
+			p := filepath.Join(dir, base+"_view_"+s.tag+".png")
+			if _, err := f.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
+				"-ss", s.at, "-i", clip, "-map", "0:v:0", "-frames:v", "1", "-update", "1", p); err != nil {
+				emit("多视角抽帧失败(%ss):%v", s.at, err)
+				continue
+			}
+			if st, err := os.Stat(p); err == nil && st.Size() > 0 {
+				views = append(views, p)
+			}
+		}
+		if len(views) < 2 {
+			removeFiles(views)
+			return "", fmt.Errorf("多视角可用帧不足(仅 %d 张)", len(views))
+		}
+		if o.Verify != nil {
+			rep, err := qc.IdentityJudge(ctx, o.Verify, o.MasterPath, views, o.VerifyMinScore)
+			if err != nil {
+				emit("多视角校验不可用(%v):本次按未校验交付,建议在设置页配好视觉模型", err)
+			} else if !rep.Pass {
+				lastReason = rep.Reason
+				removeFiles(views)
+				continue // 换种子重出
+			} else {
+				emit("✔「%s」多视角校验通过:%s", o.Name, rep.Reason)
+			}
+		}
+		// 转台图 = 正面定妆照 + 抽到的各角度帧(顺序即 正面→四分之三→侧面→背面)
+		frames := make([]string, 0, len(views)+1)
+		if _, err := os.Stat(o.MasterPath); err == nil {
+			frames = append(frames, o.MasterPath)
+		}
+		frames = append(frames, views...)
 
-	// 转台图 = 正面定妆照 + 抽到的各角度帧(顺序即 正面→四分之三→侧面→背面)
-	frames := make([]string, 0, len(views)+1)
-	if _, err := os.Stat(o.MasterPath); err == nil {
-		frames = append(frames, o.MasterPath)
+		turn := filepath.Join(dir, base+"_turnaround.png")
+		if err := hstackImages(ctx, f, frames, turn); err != nil {
+			return "", fmt.Errorf("转台图拼接失败(各角度帧已保留在 %s):%w", dir, err)
+		}
+		emit("✔「%s」转台图已生成(%d 个视角)", o.Name, len(frames))
+		return turn, nil
 	}
-	frames = append(frames, views...)
+	// 全部尝试都不一致:拒绝交付,并如实说清后果(该角色退回单张正面照)
+	emit("✕「%s」多视角校验未通过(%d 次尝试):%s —— 已丢弃本次角度帧,"+
+		"该角色本次按单张正面照渲染(宁缺勿错:错误的第二张参考会把脸往错的方向拉)", o.Name, attempts, lastReason)
+	return "", fmt.Errorf("多视角与定妆照不一致,已拒绝使用:%s", lastReason)
+}
 
-	turn := filepath.Join(dir, base+"_turnaround.png")
-	if err := hstackImages(ctx, f, frames, turn); err != nil {
-		return "", fmt.Errorf("转台图拼接失败(各角度帧已保留在 %s):%w", dir, err)
+// removeFiles 尽力删除文件(校验不通过时清掉角度帧,不让它们被资产库扫进去)。
+func removeFiles(paths []string) {
+	for _, p := range paths {
+		_ = os.Remove(p)
 	}
-	emit("✔「%s」转台图已生成(%d 个视角)", o.Name, len(frames))
-	return turn, nil
+}
+
+// TurnaroundVerifier 由视觉模型配置构造多视角校验客户端;未配置返回 nil。
+//
+// 三处调用方(资产阶段、渲染前补齐、资产库「补全多视角」)共用同一判据:
+// 设置页填了 VLM 就校验,没填就跳过并如实告知 —— 不假装校验过。
+func TurnaroundVerifier(v config.VLMSettings) *llm.Client {
+	if strings.TrimSpace(v.BaseURL) == "" || strings.TrimSpace(v.APIKey) == "" || strings.TrimSpace(v.Model) == "" {
+		return nil
+	}
+	return llm.New(v.BaseURL, v.APIKey, v.Model, 120)
 }
 
 // turnaroundPrompt 组装 H3 Ref2V 的转身视频提示词(六段式,与 director 的

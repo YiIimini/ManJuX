@@ -21,7 +21,16 @@ type ScriptParams struct {
 	Styles       []string `json:"styles"`        // 渲染风格预设 key(可多选组合)
 	StyleHint    string   `json:"style_hint"`    // 附加风格要求(自由文本)
 	Chibi        bool     `json:"chibi"`         // 定妆时同步生成 Q 版形象(内心活动表达)
+	// StylizedFaces 角色动漫化 + 非真人脸 + 哑光(去"油腻")。
+	//
+	// 与 AssetsParams.Views 同样的 *bool 语义:老项目 json 里没有这个键,解成 false
+	// 会让新约束对存量项目默认关闭 —— 而存量项目恰恰就是用户报「人物油腻 / 真人脸」
+	// 的那一批。未表态 = 开,显式 false 才关(要做真人剧的项目自己关)。
+	StylizedFaces *bool `json:"stylized_faces"`
 }
+
+// FacesOn 是否启用「动漫化 + 非真人脸 + 哑光」硬约束(未表态 = 开)。
+func (s ScriptParams) FacesOn() bool { return s.StylizedFaces == nil || *s.StylizedFaces }
 
 // AssetsParams 资产阶段(assets)参数。
 type AssetsParams struct {
@@ -86,14 +95,29 @@ type AssembleParams struct {
 	Peak          float64 `json:"peak"`           // 峰值归一(默认 0.92)
 	SubtitleSize  int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 5)
 	Upgrade2K     bool    `json:"upgrade_2k"`     // 云端 2K 定稿:合成完成后自动 regeneration 升 2K(消耗云额度)
+	// Denoise 音频净化(高通去隆隆声 + 频谱降噪去底噪/嘶声)。
+	//
+	// 用户报「视频有杂音」时,声源侧有两条:H3 自己生成的环境底噪,以及各镜 AAC 拼接
+	// 带来的嘶声与爆音。前者压不掉(那是提示词写的音景),后者这一链能压。
+	// 默认开;追求"原声一点不动"的项目可显式关。
+	Denoise *bool `json:"denoise"`
 }
+
+// DenoiseOn 是否启用音频净化(未表态 = 开,与 ViewsOn/FacesOn 同一套语义)。
+func (a AssembleParams) DenoiseOn() bool { return a.Denoise == nil || *a.Denoise }
 
 // DefaultStageParams 返回全局默认的阶段参数。
 func DefaultStageParams() StageParams {
 	return StageParams{
 		// MaxShots=0:内容驱动(2026-09-11 用户定调「该多少就多少」)——LLM 看
 		// 原文自行决定镜头数,不人为钳制;Sanitize 上限 30 只作安全网
-		Script: ScriptParams{MaxShots: 0, TotalSeconds: 0, StyleHint: ""},
+		//
+		// Styles 默认国漫二维:2026-09-24 用户定调「角色不要真人脸,动漫化,避免侵权」
+		// —— 二维赛璐璐既是用户要的画风,也顺带解决"人物油腻"(平涂肤色没有皮脂高光),
+		// 且与现实人物天然拉开距离。要真人剧的项目自己把风格换成 live_action 并关掉
+		// script.stylized_faces。
+		Script: ScriptParams{MaxShots: 0, TotalSeconds: 0, StyleHint: "",
+			Styles: []string{"guoman_2d"}, StylizedFaces: Bool(true)},
 		Assets: AssetsParams{Source: "krea2", Views: Bool(true)}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
@@ -111,7 +135,7 @@ func DefaultStageParams() StageParams {
 			// fade=平滑交叉叠化(用户 2026-09-10 定调:不要 dissolve 像素溶解的粒子观感)
 			Transition: "fade", BurnSubtitles: true,
 			Loudness: -16, Peak: 0.92, SubtitleSize: 4,
-			Upgrade2K: false,
+			Upgrade2K: false, Denoise: Bool(true),
 		},
 	}
 }

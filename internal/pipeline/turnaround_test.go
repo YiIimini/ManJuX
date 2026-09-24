@@ -149,7 +149,7 @@ func TestAnchorPromptLocksIdentityToPicture(t *testing.T) {
 		Scenes: []project.Scene{{ID: "s1", Name: "废件库", Description: "青砖大院"}},
 	}
 	shot := &project.Shot{ID: 1, Characters: []string{"c1"}, Scene: "s1", H3Prompt: "detailed_description:\n[Shot 1] ..."}
-	got := anchorPrompt(plan, shot)
+	got := anchorPrompt(plan, shot, true)
 	if strings.Contains(got, "外貌描述优先级最高") {
 		t.Error("旧文案必须删掉:它让模型按文字重画脸")
 	}
@@ -157,6 +157,17 @@ func TestAnchorPromptLocksIdentityToPicture(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("锚定块缺少「%s」:\n%s", want, got)
 		}
+	}
+	// 2026-09-24:角色动漫化 + 哑光(去"油腻")硬约束必须进视频侧提示词。
+	// 只压定妆照不够 —— H3 会照着强光描述把哑光角色重新画成油光脸。
+	for _, want := range []string{"MATTE ANIMATED LOOK", "oily or greasy skin", "resemblance to a real person"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("视频侧画风硬约束缺少「%s」:\n%s", want, got)
+		}
+	}
+	// 关掉该开关时不得注入(真人剧是合法路线,不能强加画风)
+	if off := anchorPrompt(plan, shot, false); strings.Contains(off, "MATTE ANIMATED LOOK") {
+		t.Error("关闭角色动漫化后不应再注入动画/哑光硬约束")
 	}
 	// 文字仍要传给模型(供服装/道具/姿态用),但必须标明用途受限
 	if !strings.Contains(got, "嘴角边一颗黑痣") {

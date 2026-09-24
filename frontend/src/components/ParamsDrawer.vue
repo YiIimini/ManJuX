@@ -26,6 +26,10 @@ watch(stageId, () => {
   // 多视角 / 参考图去冗余:缺省 = 开(与后端 ViewsOn()/CompactRefsOn() 的「未表态即开」同一语义)
   form.assets.views = form.assets.views !== false
   form.assets.compact_refs = form.assets.compact_refs === true // 默认关(只喂转台图会让锁脸变弱)
+  // 角色动漫化 / 音频净化:同样「未表态即开」——老项目参数快照里没有这两个键,
+  // 若不在这里兜底成 true,抽屉一开就会把用户亲手关掉(false)的开关也显示成开。
+  form.script.stylized_faces = form.script.stylized_faces !== false
+  form.assemble.denoise = form.assemble.denoise !== false
 }, { immediate: true })
 
 const titles = {
@@ -109,6 +113,13 @@ async function save() {
         <el-form-item label="风格附加要求(自由文本,与上方预设叠加)">
           <el-input v-model="form.script.style_hint" type="textarea" :rows="3"
             placeholder="例如:偏冷色调、雨夜氛围、手持镜头感…" />
+        </el-form-item>
+        <el-form-item label="角色动漫化(非真人脸 + 哑光画风,避免影射真实人物/侵权)">
+          <el-switch v-model="form.script.stylized_faces" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            开:角色为动画化人物(手绘线稿 + 赛璐璐平涂 + 哑光肤色),同时压掉"油光/汗湿反光"的油腻感;
+            风格里写了真人/写实也会按动漫化渲染(会告警)。要拍真人剧请关掉本开关,并把上方风格换成「真人实拍质感」。
+          </div>
         </el-form-item>
         <el-form-item label="Q 版形象(定妆时同步生成角色 Q 版;内心活动镜头的表达素材)">
           <el-switch v-model="form.script.chibi" />
@@ -217,6 +228,12 @@ async function save() {
         </el-form-item>
         <el-form-item label="目标响度(LUFS)">
           <el-slider v-model="form.assemble.loudness" :min="-30" :max="-6" :step="1" show-input />
+        </el-form-item>
+        <el-form-item label="音频净化(高通去隆隆声 + 频谱降噪去底噪/嘶声)">
+          <el-switch v-model="form.assemble.denoise" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            默认开。成片响度按两遍法归一(先测量再线性增益),不会逐帧抽气;镜间音频切点会自动落在静音上,不再切掉台词尾巴。
+          </div>
         </el-form-item>
         <el-form-item label="字幕字号(屏高 %)">
           <el-slider v-model="form.assemble.subtitle_size" :min="3" :max="9" :step="1" show-input />

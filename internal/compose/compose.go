@@ -2,16 +2,28 @@
 // 响度归一化 → 字幕烧录 → faststart。
 // 关键纪律(知识库):H3 源视频仅首帧为 IDR,任何裁剪/拼接必须重编码,
 // 禁止流复制;成片必须 +faststart(微信/播放器起播兼容)。
+//
+// 音频纪律(2026-09-24 用户报「配音也不完整 / 有杂音」后成文,改之前先读):
+//   - **不许切在字上**:叠化转场必须让出与画面重叠等长的音频,让出哪一段是可选的
+//     ——切成静音上(见 internal/audio 的 SolveCut),人声一个字都不丢;
+//   - **每镜音频先补到与画面等长**(apad + -shortest):H3 偶有音轨比画面短的情况,
+//     不补的话裁剪区间会越界,只能静默丢帧;
+//   - **中间轨一律无损**(flac/mkv):拼接不是"再压一遍 AAC"的地方,否则每过一道
+//     就多一层嘶声 —— 这正是"有杂音"的一半来源;
+//   - **响度量两遍**(measure → linear 应用):单遍 loudnorm 是逐帧动态调增益,
+//     会在对话与静音之间"抽气",听起来像底噪忽大忽小。
 package compose
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/audio"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -26,6 +38,8 @@ type Params struct {
 	SubtitleSize  int     // 字号(屏高百分比)
 	Loudness      int     // LUFS
 	FadeSec       float64 // 转场时长
+	// Denoise 音频净化:高通去隆隆声 + 频谱降噪去嘶声/底噪(默认开)。
+	Denoise bool
 }
 
 // Result 合成产物。
@@ -33,6 +47,8 @@ type Result struct {
 	FinalPath string
 	SRTPath   string
 	Duration  float64
+	// AudioNotes 音频处理实况(切点是否落在静音、降噪是否生效),供管线如实回显。
+	AudioNotes []string
 }
 
 // Compose 执行合成。clips 为有序镜头文件(绝对路径),plan 用于字幕。
@@ -52,6 +68,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 			os.Rename(work, work+"-failed") // 保留排查现场
 		}
 	}()
+	res := &Result{}
 
 	// ---- 步骤一:逐镜规范化(重编码,统一分辨率/fps/采样)----
 	if onProgress != nil {
@@ -66,12 +83,14 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		part := filepath.Join(work, fmt.Sprintf("part_%03d.mp4", i))
 		vf := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=24,setsar=1",
 			p.Width, p.Height, p.Width, p.Height)
+		// apad + -shortest:音轨补齐到与画面等长。H3 产物偶有音轨略短于视频,
+		// 不补的话后面按"画面时长"裁音频会越界(表现为末尾静音或整轨前移)。
 		if _, err := f.Run(ctx, "-y", "-i", clip,
 			"-vf", vf,
-			"-af", "aresample=48000",
+			"-af", "aresample=48000,apad",
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 			"-c:a", "aac", "-b:a", "192k", "-ac", "2",
-			part); err != nil {
+			"-shortest", part); err != nil {
 			return nil, fmt.Errorf("镜头 %d 规范化失败: %w", i+1, err)
 		}
 		info, err := f.Probe(part)
@@ -114,7 +133,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	}
 	switch p.Transition {
 	case "fade":
-		master, err = stitchWithTransitions(ctx, f, parts, durations, work, p, onProgress)
+		master, err = stitchWithTransitions(ctx, f, parts, durations, work, p, res, onProgress)
 		if err != nil {
 			return nil, err
 		}
@@ -137,9 +156,16 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	if trans != "cut" && len(parts) > 1 {
 		total -= float64(len(parts)-1) * fd // 转场重叠扣除后的真实成片时长
 	}
+	res.SRTPath = srtPath
+
+	chain, _, note := prepareAudio(ctx, f, master, p)
+	res.AudioNotes = append(res.AudioNotes, note)
+	if onProgress != nil && note != "" {
+		onProgress(88, note)
+	}
 
 	finalPath := filepath.Join(outDir, "final.mp4")
-	args := []string{"-y", "-i", master}
+	args := []string{"-y", "-i", master, "-af", chain}
 	if p.BurnSubtitles && plan != nil {
 		ass := filepath.Join(outDir, "final.ass")
 		if err := os.WriteFile(ass, []byte(BuildASS(plan, starts, durations, p.SubtitleSize, p.Width, p.Height)), 0o644); err != nil {
@@ -149,7 +175,6 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		if err := runIn(ctx, f.Ffmpeg, outDir, append(args,
 			"-vf", "subtitles=filename=final.ass",
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-			"-af", fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness),
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 			"-movflags", "+faststart", finalPath)...); err != nil {
 			return nil, fmt.Errorf("终混失败: %w", err)
@@ -157,7 +182,6 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	} else {
 		if _, err := f.Run(ctx, append(args,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-			"-af", fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness),
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 			"-movflags", "+faststart", finalPath)...); err != nil {
 			return nil, fmt.Errorf("终混失败: %w", err)
@@ -167,10 +191,109 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		onProgress(100, "合成完成")
 	}
 	failed = false // 成功:清理中间目录;失败保留 compose-*-failed 现场供排查
-	return &Result{FinalPath: finalPath, SRTPath: srtPath, Duration: total}, nil
+	res.FinalPath = finalPath
+	res.Duration = total
+	return res, nil
 }
 
-// stitchCut 硬切拼接(demuxer,同参数段直接 copy)。
+// ---------- 音频链 ----------
+
+// denoiseChain 净化链:高通砍掉隆隆声/直流,afftdn 压嘶声与宽带底噪。
+//
+// 参数刻意保守(nr=12dB、噪声基准 -30dBFS):频谱降噪开大了会让语音发闷发"水",
+// 宁可少降一点。用户报的"杂音"里,这一链能治的是嘶声/底噪/低频轰鸣;
+// H3 自己写在音景里的持续环境声压不掉(那要靠分镜侧的音景纪律,见 director.go)。
+func denoiseChain() string {
+	return "highpass=f=70,afftdn=nr=12:nf=-30"
+}
+
+// loudnormMeasured 一遍测量得到的响度参数(两遍法的第一遍产物)。
+type loudnormMeasured struct {
+	InputI       string
+	InputTP      string
+	InputLRA     string
+	InputThresh  string
+	TargetOffset string
+}
+
+// loudnormReport ffmpeg loudnorm 打在 stderr 里的 JSON 报告(数字用 json.Number
+// 保留原始文本,直接交给滤镜串,避免浮点格式化引入偏差)。
+type loudnormReport struct {
+	InputI       json.Number `json:"input_i"`
+	InputTP      json.Number `json:"input_tp"`
+	InputLRA     json.Number `json:"input_lra"`
+	InputThresh  json.Number `json:"input_thresh"`
+	TargetOffset json.Number `json:"target_offset"`
+}
+
+// prepareAudio 依次尝试:净化 + 两遍响度 → 净化 + 单遍 → 仅两遍 → 仅单遍,
+// 返回最终可用的音频链与说明。为什么要逐级回退:净化滤镜要较新的 ffmpeg,
+// 而用户机器上的 ffmpeg 来自系统 PATH —— 缺滤镜时就该降级而不是整片合成失败。
+func prepareAudio(ctx context.Context, f *ff.FF, master string, p Params) (string, *loudnormMeasured, string) {
+	base := fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness)
+	cands := []struct{ chain, label string }{}
+	if p.Denoise {
+		cands = append(cands, struct{ chain, label string }{denoiseChain() + ",", "音频净化"})
+	}
+	cands = append(cands, struct{ chain, label string }{"", "原声"})
+
+	for _, c := range cands {
+		if meas := measureLoudness(ctx, f, master, c.chain+base); meas != nil {
+			return c.chain + loudnormApplied(meas, p.Loudness), meas,
+				c.label + " + 两遍响度归一(线性增益,不抽气)"
+		}
+		// 测量失败多为滤镜不可用:同一条链退回单遍写法再试
+		if _, err := f.Run(ctx, "-y", "-hide_banner", "-loglevel", "error", "-i", master,
+			"-af", c.chain+base, "-f", "null", "-"); err == nil {
+			if c.chain == "" {
+				return base, nil, "原声 + 单遍响度归一(两遍法不可用,已降级)"
+			}
+			return c.chain + base, nil, c.label + " + 单遍响度归一(两遍法不可用,已降级)"
+		}
+	}
+	return base, nil, "⚠ 音频链全部回退失败,按单遍响度归一继续(音质可能不稳)"
+}
+
+// loudnormApplied 用测量值构造第二遍(linear=true)的 loudnorm 滤镜串。
+func loudnormApplied(m *loudnormMeasured, target int) string {
+	if m == nil || m.InputI == "" {
+		return fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", target)
+	}
+	return fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11:measured_I=%s:measured_TP=%s:measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true",
+		target, m.InputI, m.InputTP, m.InputLRA, m.InputThresh, m.TargetOffset)
+}
+
+// measureLoudness 第一遍:只分析不输出,从 stderr 里抠出 loudnorm 的 JSON 报告。
+func measureLoudness(ctx context.Context, f *ff.FF, input, chain string) *loudnormMeasured {
+	out, _ := f.Run(ctx, "-hide_banner", "-i", input,
+		"-af", chain+":print_format=json", "-f", "null", "-")
+	a := strings.LastIndex(out, "{")
+	b := strings.LastIndex(out, "}")
+	if a < 0 || b <= a {
+		return nil
+	}
+	// loudnorm 的报告是 stderr 里最后一个 JSON 对象
+	var probe loudnormReport
+	if json.Unmarshal([]byte(out[a:b+1]), &probe) != nil {
+		return nil
+	}
+	if probe.InputI == "" {
+		return nil
+	}
+	return &loudnormMeasured{
+		InputI: probe.InputI.String(), InputTP: probe.InputTP.String(),
+		InputLRA: probe.InputLRA.String(), InputThresh: probe.InputThresh.String(),
+		TargetOffset: probe.TargetOffset.String(),
+	}
+}
+
+// stitchCut 硬切拼接:视频流复制(零损失),音频用 concat 滤镜重建。
+//
+// 为什么音频不能跟着视频一起走 demuxer 的 -c copy(旧实现):AAC 每段自带
+// ~1024 采样(21ms)的编码器 priming,concat demuxer 按包拼接时这些 priming 会变成
+// 接缝处的缝隙/错位,听感就是"每切一刀咔一下"。重建音频(aresample=async=1 把时间轴
+// 拉直)+ 一次无损编码,接缝才真正干净。
+// 中间轨用 flac/mkv:无损,最终终混那一道才编码 AAC,不为拼接多付一次有损压缩。
 func stitchCut(ctx context.Context, f *ff.FF, parts []string, work string, onProgress func(int, string)) (string, error) {
 	if onProgress != nil {
 		onProgress(60, "拼接(硬切)")
@@ -183,16 +306,25 @@ func stitchCut(ctx context.Context, f *ff.FF, parts []string, work string, onPro
 	if err := os.WriteFile(list, []byte(sb.String()), 0o644); err != nil {
 		return "", err
 	}
-	out := filepath.Join(work, "master.mp4")
+	out := filepath.Join(work, "master.mkv")
 	if _, err := f.Run(ctx, "-y", "-f", "concat", "-safe", "0", "-i", list,
-		"-c", "copy", out); err != nil {
+		"-map", "0:v:0", "-map", "0:a:0?",
+		"-c:v", "copy",
+		"-af", "aresample=48000:async=1:first_pts=0",
+		"-c:a", "flac", out); err != nil {
 		return "", fmt.Errorf("拼接失败: %w", err)
 	}
 	return out, nil
 }
 
-// stitchWithTransitions xfade/acrossfade 链拼接(fade=闪黑叠化,dissolve=交叉叠化)。
-func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations []float64, work string, p Params, onProgress func(int, string)) (string, error) {
+// stitchWithTransitions xfade 视频链 + **按静音落刀**的音频链拼接。
+//
+// 视频:xfade 叠化,链式推进(旧实现,不动)。
+// 音频:每个接缝要交出 fd 秒(与画面重叠等长),旧实现固定砍在重叠区中点 ——
+// 等于每镜头尾各砍 fd/2,台词压在头尾就被切掉半句(用户报「配音不完整」的根因)。
+// 现在改为:用 internal/audio 的能量包络求解切点,让"让出去的这段"尽量落在没人声的
+// 地方;两镜都可裁区间内人人声时,自然退回中点(与旧行为一致,不留新问题)。
+func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations []float64, work string, p Params, res *Result, onProgress func(int, string)) (string, error) {
 	if onProgress != nil {
 		onProgress(60, "拼接(转场 "+p.Transition+")")
 	}
@@ -216,29 +348,66 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 		lastV = outV
 		acc += durations[i] - d
 	}
-	// 音频链:转场中点硬切(出镜配乐吃到叠化前半,入镜从后半起),
-	// 切点前后各 20ms 线性淡入淡出防爆音。曾用 acrossfade d=0.5——两条
-	// 独立配乐各衰减一半叠加 0.5 秒,每个转场都是「双配乐糊团+响度凹陷」
-	// (2026-09-09 实测转场中心 RMS 凹 6dB),拼接不丝滑的主因。
+
+	// ---- 音频链:逐接缝求解切点 ----
+	envs := make([]*audio.Envelope, n)
+	for i, part := range parts {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		e, err := audio.Decode(ctx, f, part)
+		if err != nil {
+			envs[i] = nil // 解不出来就按"无包络"处理(该接缝回退中点切)
+			continue
+		}
+		envs[i] = e
+	}
+	// head[i]/tail[i] 为该镜保留的音频区间(秒)。窗口内切点 t 的含义见 audio.SolveCut。
+	heads := make([]float64, n)
+	tails := make([]float64, n)
+	silentCut := 0
+	for i := 0; i < n; i++ {
+		heads[i], tails[i] = 0, durations[i]
+	}
+	for i := 0; i+1 < n; i++ {
+		if durations[i] <= d || durations[i+1] <= d {
+			continue // 超短镜:整段保留(与旧实现的兜底一致)
+		}
+		t := audio.SolveCut(envs[i], durations[i]-d, envs[i+1], d, d)
+		// 判定"这一刀落在静音里":让出的两段都没有人声
+		if envs[i] != nil && envs[i+1] != nil {
+			on := envs[i].Speech()
+			onIn := envs[i+1].Speech()
+			lost := envs[i].SpeechSeconds(on, durations[i]-d+t, durations[i]) +
+				envs[i+1].SpeechSeconds(onIn, 0, t)
+			if lost <= audio.Hop {
+				silentCut++
+			}
+		}
+		tails[i] = durations[i] - (d - t)
+		heads[i+1] = t
+	}
+	if res != nil {
+		res.AudioNotes = append(res.AudioNotes,
+			fmt.Sprintf("接缝切点:%d/%d 处完全落在静音(其余按最接近静音的时点切,人声损失已最小化)", silentCut, n-1))
+	}
+
 	const afade = 0.02
 	aParts := make([]string, 0, n)
 	for i := 0; i < n; i++ {
-		head, tail := 0.0, durations[i]
-		if i > 0 {
-			head = d / 2
-		}
-		if i < n-1 {
-			tail = durations[i] - d/2
-		}
-		if tail-head < 4*afade { // 超短镜兜底:整段保留不裁
+		head, tail := heads[i], tails[i]
+		if tail <= head {
 			head, tail = 0, durations[i]
 		}
-		f := fmt.Sprintf("[%d:a]atrim=%.3f:%.3f,asetpts=PTS-STARTPTS", i, head, tail)
-		if i > 0 && tail-head > 8*afade {
-			f += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", afade)
-		}
-		if i < n-1 && tail-head > 8*afade {
-			f += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", tail-head-afade, afade)
+		f := fmt.Sprintf("[%d:a]apad=whole_dur=%.3f,atrim=%.3f:%.3f,asetpts=PTS-STARTPTS", i, durations[i], head, tail)
+		seg := tail - head
+		if seg > 8*afade {
+			if head > 0 {
+				f += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", afade)
+			}
+			if tail < durations[i] {
+				f += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", seg-afade, afade)
+			}
 		}
 		filters = append(filters, f+fmt.Sprintf("[ap%d]", i))
 		aParts = append(aParts, fmt.Sprintf("[ap%d]", i))
@@ -250,16 +419,32 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 	// 从首镜画面开始、末镜画面结束。null=视频直通滤镜(nop 不存在);
 	// 兼容单镜场景:无转场可链时 filter_complex 仍有内容。
 	filters = append(filters, fmt.Sprintf("%snull[vout]", lastV))
+	// 中间轨走 flac/mkv:视频已经因 xfade 重编码过一次,音频没必要再压一遍 AAC
+	// (每多一道有损编码就多一层嘶声,而终混那一道还要编码一次)。
+	out := filepath.Join(work, "master.mkv")
 	args = append(args,
 		"-filter_complex", strings.Join(filters, ";"),
 		"-map", "[vout]", "-map", lastA,
 		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-		"-c:a", "aac", "-b:a", "192k", "-ac", "2",
-		filepath.Join(work, "master.mp4"))
+		"-c:a", "flac",
+		out)
 	if _, err := f.Run(ctx, args...); err != nil {
 		return "", err
 	}
-	return filepath.Join(work, "master.mp4"), nil
+	return out, nil
+}
+
+// ShotSpeechBudget 该镜"应该有"的人声秒数(台词 + 旁白)。
+//
+// 放在 compose 包是因为它和成片音频同源(同一套语速常量);质检用它和实测语音时长
+// 对比 —— 差太多就是"配音不完整"。
+func ShotSpeechBudget(sh project.Shot) float64 {
+	sec := 0.0
+	for _, l := range sh.Dialogue {
+		sec += director.SpeechSeconds(l.Text)
+	}
+	sec += director.SpeechSeconds(sh.Narration)
+	return sec
 }
 
 // runIn 在指定工作目录执行(字幕相对路径方案)。

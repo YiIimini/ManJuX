@@ -25,6 +25,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		return err
 	}
 	p := proj.Config.Params.Assets
+	// 风格要真人、但角色动漫化开关开着:必须当场说清"为什么没按你选的风格走"
+	if notice := photorealOverrideNotice(proj, plan); notice != "" {
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", notice)
+	}
 
 	// Krea-2 自动生成缺失参考图(角色竖幅半身 832×1248;场景按项目画幅方向)
 	var comfyGen engine.Engine
@@ -162,7 +166,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, normalizeUniformWording(ch.ImagePrompt)+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name)+uniformCivilianClarify(ch.Description))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
@@ -182,7 +186,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
 			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
 			chibiPrompt := "cute chibi SD figure of the same character, big head, tiny body, full body, simple pastel background, " +
-				"expressive face, figure product photography, " + normalizeUniformWording(ch.ImagePrompt) + styleExpand(plan.Style) + castContrastBlock(plan, ch.Name) + uniformCivilianClarify(ch.Description)
+				"expressive face, figure product photography, " + normalizeUniformWording(ch.ImagePrompt) + styleExpand(plan.Style, proj.Config.Params.Script.FacesOn()) + castContrastBlock(plan, ch.Name) + uniformCivilianClarify(ch.Description)
 			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
@@ -293,6 +297,7 @@ func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Proje
 		Prompt:     imagePrompt,
 		Steps:      proj.Config.Params.Render.Steps,
 		Accel:      proj.Config.Params.Render.Accel,
+		Verify:     TurnaroundVerifier(c.cfg.Get().VLM),
 		Emit:       func(f string, a ...any) { c.emit(proj.ID, PhaseAssets, 0, "info", 0, f, a...) },
 	})
 	if err != nil {
@@ -406,6 +411,7 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 			Prompt:     prompt,
 			Steps:      proj.Config.Params.Render.Steps,
 			Accel:      proj.Config.Params.Render.Accel,
+			Verify:     TurnaroundVerifier(c.cfg.Get().VLM),
 			Emit:       func(f string, ar ...any) { c.emit(proj.ID, PhaseRender, 0, "info", 0, f, ar...) },
 		})
 		if err != nil {
@@ -440,6 +446,9 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	if proj.Config.Params.Assets.Source == "skip" {
 		return true
 	}
+	if notice := photorealOverrideNotice(proj, plan); notice != "" {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", notice)
+	}
 	type miss struct{ kind, id, name, desc, prompt string }
 	var list []miss
 	check := func(kind, id, name, desc, prompt string) {
@@ -454,7 +463,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		list = append(list, miss{kind, id, name, desc, prompt})
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, normalizeUniformWording(ch.ImagePrompt)+styleExpand(plan.Style)+castContrastBlock(plan, ch.Name)+uniformCivilianClarify(ch.Description))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch))
 	}
 	for _, sc := range plan.Scenes {
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)

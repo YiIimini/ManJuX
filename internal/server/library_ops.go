@@ -322,6 +322,7 @@ func (s *Server) libraryViews(w http.ResponseWriter, r *http.Request) {
 		Name:       name,
 		Prompt:     prompt,
 		Steps:      steps,
+		Verify:     pipeline.TurnaroundVerifier(g.VLM),
 		Emit:       func(f string, a ...any) { s.opLog("🎥 "+f, a...) },
 	})
 	if err != nil {
@@ -455,6 +456,9 @@ func (s *Server) imageDataURL(ctx context.Context, path string) (string, error) 
 }
 
 // genLibraryPortrait 用本地 ComfyUI(Krea-2)生成资产库定妆照,返回临时文件路径。
+//
+// 提示词在这里补上动画哑光画风块(与项目内 characterImagePrompt 同一套):库是跨项目
+// 全局资产,库里出一条真人脸,复用到任何项目都会与渲染侧的"MATTE ANIMATED LOOK"打架。
 func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int64) (string, error) {
 	eng, err := s.reg.Get("comfy")
 	if err != nil {
@@ -466,7 +470,7 @@ func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int
 	}
 	tmp.Close()
 	out := tmp.Name()
-	if _, err := eng.GenerateImage(ctx, prompt, "", seed, 832, 1248, out); err != nil {
+	if _, err := eng.GenerateImage(ctx, pipeline.LibraryPortraitPrompt(prompt), "", seed, 832, 1248, out); err != nil {
 		os.Remove(out)
 		return "", err
 	}

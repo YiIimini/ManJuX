@@ -66,6 +66,9 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 		r := qc.Check(ctx, c.ff, shot.ID, full, qc.Params{
 			DarkRatioFail: p.DarkRatioFail, DarkRatioWarn: p.DarkRatioWarn,
 			MinDuration: p.MinDuration, MaxDuration: p.MaxDuration,
+			// 台词应有口播时长:与渲染时长同源(镜头时长已按台词做过预算),这里
+			// 用同一套语速常量核对成片里到底说没说够 —— 词与曲同源才比得准。
+			ExpectedSpeechSec: compose.ShotSpeechBudget(shot),
 		})
 		if vlmClient != nil && r.OK {
 			brief := fmt.Sprintf("%s/%s/角色:%v", shot.ShotSize, shot.Camera, shot.Characters)
@@ -166,11 +169,17 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		Width: proj.Config.Params.Render.Width, Height: proj.Config.Params.Render.Height,
 		Transition: p.Transition, BurnSubtitles: p.BurnSubtitles,
 		SubtitleSize: p.SubtitleSize, Loudness: p.Loudness, FadeSec: 0.5,
+		Denoise: p.DenoiseOn(),
 	}, func(pct int, note string) {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", pct, "%s", note)
 	})
 	if err != nil {
 		return err
+	}
+	// 音频实况如实回显:接缝是否切在静音、响度是两遍还是降级,用户一眼能判断
+	// 「配音不完整/有杂音」这类问题这次到底修没修到。
+	for _, note := range res.AudioNotes {
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 96, "🔊 %s", note)
 	}
 	c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒)", filepath.Base(res.FinalPath), res.Duration)
 

@@ -81,7 +81,14 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		base = filepath.Join(c.store.Dir(projectID), m.File)
 		out = filepath.Join(c.store.Dir(projectID), "clips", "2k",
 			fmt.Sprintf("shot_%03d_2k.mp4", shotID))
-		prompt = EnsureChineseDialogue(shot.H3Prompt)
+		// 2K 重生成必须与 768p 主渲染**同一条提示词**:只带 shot.H3Prompt 的话,
+		// 身份锚定与画风硬约束(动漫化/哑光)在 2K 这一道全丢了 —— 实测表现为
+		// "768p 是哑光动画脸、升到 2K 变成油光写实脸"。四路渲染统一走 ShotRenderPrompt。
+		var projPtr *project.Project
+		if p, ok := c.store.Get(projectID); ok {
+			projPtr = p
+		}
+		prompt = ShotRenderPrompt(projPtr, plan, shot)
 		label = fmt.Sprintf("镜头 %d", shotID)
 		// 参考图沿用渲染期资产(与 render 阶段共用 AssembleShotRefs,防止两处漂移)
 		assets, _ := c.store.LoadAssets(projectID)

@@ -13,6 +13,11 @@ import (
 
 // anchorPrompt 角色/场景身份锚定:把出场人物与参考图绑在一起交给 H3。
 //
+// facesOn = 项目的「角色动漫化 + 非真人脸 + 哑光」开关(未表态即开)。开启时在锚定块
+// 之后追加 RenderLookBlock —— 这是用户四项报障里「人物油腻」「角色不要真人脸」在
+// **视频侧**的落点:定妆照那头由 styleExpand 的 image 块压住,视频这头必须同时压,
+// 否则 H3 会照着强光描述把哑光的定妆照重新画成油光脸(两头各写一份必然漂移)。
+//
 // **身份以参考图为准(2026-09-12 根因修复)**:旧版写的是「外貌描述优先级最高,
 // 任何画面细节与之冲突时以此为准」—— 等于明确告诉模型"忘掉参考图那张脸,按文字
 // 重画"。实测后果(用户本轮四项报障同一根因):
@@ -24,7 +29,7 @@ import (
 // 现在改成:长相照抄参考图(Ref2VA 锁脸的标准做法),文字只许用于服装/道具/姿态/
 // 情绪/台词,并显式禁止添加参考图里没有的面部标记 —— 定妆照没有的,视频里也不会
 // 凭空长出来。
-func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
+func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	type named struct{ name, desc string }
 	var chars, scenes []named
 	for _, cid := range shot.Characters {
@@ -40,6 +45,9 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
 		}
 	}
 	if len(chars) == 0 && len(scenes) == 0 {
+		if facesOn {
+			return animatedFaceRenderBlock() + "\n" + shot.H3Prompt
+		}
 		return shot.H3Prompt
 	}
 	var sb strings.Builder
@@ -72,7 +80,21 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot) string {
 		}
 	}
 	if strings.TrimSpace(plan.Style) != "" {
-		sb.WriteString("【全片视觉风格】" + strings.TrimSpace(plan.Style) + "\n")
+		st := strings.TrimSpace(plan.Style)
+		// 风格段与画风硬约束不能自相矛盾:方案里写的是"写实电影感"而开关要求动漫化时,
+		// 把风格段本身换掉 —— 同时给 H3 两条打架的风格指令,得到的是"既写实又扁平"的糊图,
+		// 而不是"硬约束赢"。
+		if facesOn && photorealRequested(st) {
+			st = "stylized Chinese animation (donghua): cel-shaded flat colour, hand-drawn line art, " +
+				"matte flat-shaded skin — the original live-action/photoreal style request was overridden " +
+				"by this project's 'animated characters' setting(原写实风格请求已被本项目的角色动漫化设置覆盖)"
+		}
+		sb.WriteString("【全片视觉风格】" + st + "\n")
+	}
+	if facesOn {
+		// 画风硬约束放在风格段之后、正文之前:既压住风格段里可能残留的写实词,
+		// 也让 H3 在读画面描述前先接受"哑光动画"的基调。
+		sb.WriteString(animatedFaceRenderBlock() + "\n")
 	}
 	return sb.String() + "\n" + shot.H3Prompt
 }
@@ -102,6 +124,66 @@ func EnsureChineseDialogue(prompt string) string {
 			"gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it."
 	}
 	return p
+}
+
+// LibraryPortraitPrompt 资产库侧(不持有项目上下文的路径:抽卡 / 自定义新建 / 重抽)
+// 的定妆照提示词:补上**同一套**动画哑光画风块。
+//
+// 为什么这里用"总是加"而不是跟着项目开关:资产库是跨项目的全局资产,而全应用现在默认
+// 就是动漫化角色。若库里生成的是真人脸,它被复用到任一项目后都会与渲染侧"MATTE ANIMATED
+// LOOK"打架(定妆照是写实、视频是动画 = 又回到"两张脸")。要真人脸的角色走**上传**
+// 那条路(上传路径不做任何改写);要全片真人剧则关项目开关并把定妆照换成上传图。
+func LibraryPortraitPrompt(prompt string) string {
+	if strings.Contains(prompt, "ANIMATED MATTE CHARACTER") {
+		return prompt
+	}
+	return prompt + animatedFaceImageBlock()
+}
+
+// ShotRenderPrompt **渲染期**提示词的唯一装配点:身份锚定(以定妆照为准)+ 角色画风
+// 硬约束(动漫化/哑光)+ 台词语言标记。
+//
+// 为什么必须收口(2026-09-24 补):这一串约束原先只长在 stages_render.go 的主渲染里,
+// 而"真正出像素"的路径有四条 —— 主渲染、云端 2K 定稿、局部重绘、音频驱动。后三条各自
+// 直接拿 shot.H3Prompt 提交,于是画风/身份约束在它们身上全部缺席:2K 会把 768p 的哑光
+// 画面重新生成出油光,局部重绘会在脸上补一块写实皮肤。约束只写一处必然如此,
+// 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
+func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
+	facesOn := true
+	if proj != nil {
+		facesOn = proj.Config.Params.Script.FacesOn()
+	}
+	return EnsureChineseDialogue(anchorPrompt(plan, shot, facesOn))
+}
+
+// characterImagePrompt 角色定妆照提示词的**唯一装配点**(资产阶段、渲染前补齐、
+// 单资产重生成三处共用)。
+//
+// 为什么必须收口:这四段(normalizeUniformWording / styleExpand / castContrastBlock /
+// uniformCivilianClarify)此前在 3 处逐字重复,改一处漏一处就会让"重新生成的那张定妆照"
+// 与产线那张不是同一套约束 —— 而两者是同一个角色的脸,不一致就是换脸。
+func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.Character) string {
+	facesOn := true
+	if proj != nil {
+		facesOn = proj.Config.Params.Script.FacesOn()
+	}
+	return normalizeUniformWording(ch.ImagePrompt) + styleExpand(plan.Style, facesOn) +
+		castContrastBlock(plan, ch.Name) + uniformCivilianClarify(ch.Description)
+}
+
+// photorealOverrideNotice 风格要真人、但角色动漫化开关开着时的告警文案(空 = 无冲突)。
+//
+// 必须让用户看见:否则他会以为"我选了真人实拍风格却没生效",而实际是角色非真人脸
+// 这条硬约束把它覆盖了 —— 想拍真人剧就把 script.stylized_faces 关掉。
+func photorealOverrideNotice(proj *project.Project, plan *project.Plan) string {
+	if proj == nil || plan == nil || !proj.Config.Params.Script.FacesOn() {
+		return ""
+	}
+	if !photorealRequested(plan.Style) && !photorealRequested(proj.Config.Params.Script.StyleHint) {
+		return ""
+	}
+	return "风格里含真人/写实请求,但「角色动漫化(非真人脸)」开关是开的 —— 已按动漫化渲染;" +
+		"确实要真人剧请在剧本阶段关掉该开关(参数抽屉)"
 }
 
 // genAssetImage Krea-2 生成单张资产图(角色竖幅半身/场景按画幅方向)。
@@ -190,8 +272,8 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	return sb.String(), len(chars)
 }
 
-func styleExpand(style string) string {
-	if strings.TrimSpace(style) == "" {
+func styleExpand(style string, facesOn bool) string {
+	if strings.TrimSpace(style) == "" && !facesOn {
 		return ""
 	}
 	s := strings.ToLower(style)
@@ -204,12 +286,24 @@ func styleExpand(style string) string {
 	var terms []string
 	stylized := true
 	switch {
+	case facesOn && photorealRequested(style):
+		// 动漫化开关打开时,真人/写实风格请求被明确覆盖(2026-09-24 用户定调
+		// 「角色不要真人脸,动漫化,避免侵权」)。写实风格词与哑光平涂的动画约束
+		// 直接打架,同时交给模型只会得到"既写实又扁平"的糊图 —— 覆盖掉,并由
+		// 调用方告警告知用户"要真人剧请关掉角色动漫化开关"。
+		terms = append(terms, "Chinese donghua (animation) character design, anime-influenced stylized features, clean cel shading")
+		if strings.TrimSpace(style) != "" {
+			terms = append(terms, "overall art direction: "+strings.TrimSpace(style))
+		}
 	case has3D:
 		// 注意:**风格块绝不能改写面部特征**。此前这里写着 "large glossy stylized eyes",
 		// 与角色卡的面部描述(如"细长单眼皮")直接打架 —— 定妆照被风格"重新设计"成圆软脸
 		// 大眼,而视频按文字走,两边永远对不上(2026-09-12 用户报一致性丢失,根因即此)。
 		// 风格只描述材质与渲染方式(表面/光泽/媒介),形状类词汇一律不写。
-		terms = append(terms, "next-generation 3D CG character render, BJD ball-jointed doll aesthetic, smooth poreless synthetic skin, collectible virtual figure look")
+		// 2026-09-24:原措辞 "smooth poreless synthetic skin"(光滑无孔合成皮肤)正是
+		// 用户报的"人物油腻"的一半来源 —— 无孔 = 塑料 = 皮脂高光。改成哑光粉质。
+		terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
+			"matte powdery skin shading with a dull even finish, collectible virtual figure look")
 		if hasAnime {
 			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
 		}
@@ -220,7 +314,7 @@ func styleExpand(style string) string {
 	case hasInk:
 		terms = append(terms, "Chinese ink-wash painting style, expressive brush outlines, negative space")
 	case hasReal:
-		terms = append(terms, "photorealistic cinematic portrait, realistic skin texture") // 真人剧是合法风格
+		terms = append(terms, "photorealistic cinematic portrait, realistic skin texture") // 真人剧是合法风格(需关掉角色动漫化)
 		stylized = false
 	default:
 		return "" // 无已知关键词:不强行改写用户自定义风格
@@ -232,8 +326,13 @@ func styleExpand(style string) string {
 	if stylized {
 		tail = ". The output must read as a stylized character render in this exact art style."
 	}
-	return "\n\nRENDER STYLE (mandatory): " + strings.TrimSpace(style) + " — " + strings.Join(terms, "; ") + tail +
+	out := "\n\nRENDER STYLE (mandatory): " + strings.TrimSpace(style) + " — " + strings.Join(terms, "; ") + tail +
 		identityFidelityBlock()
+	if facesOn {
+		// 动漫化 + 哑光硬约束:与 RenderLookBlock(视频侧)是同一件事的两头,改动要成对。
+		out += animatedFaceImageBlock()
+	}
+	return out
 }
 
 // identityFidelityBlock 忠实度硬约束:定妆照必须与角色卡描述逐项一致,风格不得改写长相。

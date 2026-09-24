@@ -31,7 +31,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 {
   "title": "剧名(中文,≤12字)",
   "logline": "一句话故事(中文,≤40字)",
-  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series.",
+  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series. It must be an ANIMATION style (donghua / anime / cel-shaded illustration), never photorealistic live-action.",
   "characters": [
     {"id":"char_xiaofan","name":"小凡","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt, IDENTITY FIRST per CAST DISTINCTNESS: [distinctive physical identity: age, face shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style field above EXACTLY — same art style as the series]' then 'plain background, upper-body framing, front-facing'. NEVER open with style words; NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
   ],
@@ -50,6 +50,7 @@ const sysShotRules = `## SHOT PLAN RULES
 - One camera move per shot, chosen from official motion vocabulary ONLY: Push In / Pull Out / Pan / Truck / Tilt / Pedestal / Arc / Tracking / Static / POV / Roll / Shake, plus amplitude (small/large amplitude) and speed (slow/fast) in natural English. NEVER use jargon like dolly, crane, whip pan.
 - mode: "ref2va" when character/scene reference images will be provided (any shot with on-screen characters); "t2va" for pure text-to-video shots without references.
 - dialogue speaker must match a character name, or use speaker "旁白" for narration. Keep spoken lines short (≤20 chars), punchy, ending with 。?! naturally. At most 2 speakers per shot.
+- DIALOGUE MUST FIT THE SHOT (critical): Mandarin delivery runs about 4.5 characters per second, and H3 needs roughly one extra second of headroom to start and settle. The shot's duration MUST be at least ceil(total_dialogue_chars / 4.5) + 1 (rounded up to a whole second, min 4, max 8). A 20-character line therefore needs 6 seconds — never park a 20-character line in a 4-second shot: the speech gets cut off and the finished video loses the end of the line. If a line cannot fit 8 seconds, split the beat into two shots, each carrying part of the line.
 - narration (旁白) is an off-screen voiceover; characters' lips stay closed. Use sparingly.`
 
 const sysH3Format = `## H3 PROMPT FORMAT (critical - follow EXACTLY)
@@ -112,6 +113,7 @@ const sysHard = `## HARD CONSTRAINTS
 - No negative-prompt syntax, no CFG hints, no technical parameters - exclusions go as prose at the end.
 - Consistency: same character keeps identical appearance words every shot; same scene name reused.
 - Sound: dialogue only via <d> tags; ambience in overall_soundscape; music in non_diegetic_music; never duplicate.
+- Soundscape discipline (the finished video must not sound noisy): keep overall_soundscape to 1-2 short sentences describing a QUIET, low-level background bed (e.g. "distant street hum, faint wind"). Do not stack many simultaneous sound sources, do not ask for loud machinery, crowd chatter, alarms or continuous heavy noise: constant loud ambience buries the dialogue and reads as hiss in the final mix. Silence or near-silence is a perfectly good choice where it fits.
 - Screen-visible text must be quoted exactly and kept in original language.`
 
 // sysCastRules 选角差异化(2026-09-11 用户定调「不同角色脸不能相似」):
@@ -122,7 +124,19 @@ const sysHard = `## HARD CONSTRAINTS
 const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same series must NEVER look alike)
 - Every named character gets a UNIQUE physical identity. No two characters may share the same face template: vary face shape (round / square / long / narrow / heart), age (child / teen / young adult / middle-aged / elderly), build (slim / average / stocky / burly), skin tone, hairstyle & hair color, and give each at least ONE signature marker (scar, mole, freckles, glasses, beard, tooth gap, dyed streak, bandage, tattoo...).
 - image_prompt STRUCTURE (identity first): open with this character's distinctive physical identity (age, face shape, build, hair, eyes, skin, signature marker), then costume, then "in [COPY the global style EXACTLY]", end with "plain background, upper-body framing, front-facing". Do NOT open the portrait prompt with style words — identity traits must LEAD the prompt so they dominate the render.
-- If the source states a character's appearance (age, build, hair color, scars...), follow it EXACTLY; never beautify or average it away. A fat character stays fat, an old character stays old, a scarred character keeps the scar.`
+- If the source states a character's appearance (age, build, hair color, scars...), follow it EXACTLY; never beautify or average it away. A fat character stays fat, an old character stays old, a scarred character keeps the scar.
+- Faces are ORIGINAL ANIMATION DESIGNS (avoid infringing anyone's likeness): never model a character on a real person, actor, singer, celebrity or public figure, never name a character after one, and never write "looks like <real person>" in any field.`
+
+// animeFaceLock 角色画风锁(注入到用户附加要求最前面)。
+//
+// 三个"必须"对应三件不同的事:①`style` 字段与每张 image_prompt、每镜 H3 提示词
+// 用同一种动画画风(否则定妆照与视频又是两套);②脸必须是动画脸(平涂 + 线稿 +
+// 哑光,不是照片里的皮脂高光);③原创设计,不影射任何真实人物 —— 这一条是避免侵权
+// 的落点,必须写在分镜层,不能只靠画图模型自觉。
+const animeFaceLock = `CHARACTER STYLE LOCK (MANDATORY, highest priority):
+- The 'style' field, EVERY character image_prompt and EVERY shot h3_prompt must use the SAME stylized ANIMATION art style (2D/2.5D donghua look: clean line art, cel-shaded flat colour, simplified graphic facial features, matte powdery skin with a dull even finish).
+- Never write or imply a photorealistic human face, live-action actor, photographic skin texture, glossy or oily skin, wet highlights, or a plastic/wax finish anywhere in the plan.
+- Every face is an ORIGINAL animation design: never describe a character as looking like a real person, actor, singer, celebrity or public figure, and never use such a name as a character name.`
 
 // SystemPrompt 单轮直出(完整 schema + 全部规则)。
 const SystemPrompt = sysHeader + `
@@ -154,6 +168,10 @@ type Options struct {
 	TotalSeconds int    // 期望总时长(秒);0=由镜头数推算
 	ExtraHint    string // 用户附加要求(风格/题材)
 	Chibi        bool   // 生成 Q 版形象(内心活动用;分镜提示词指引 Q 版 cameo)
+	// AnimeFaces 角色动漫化 + 非真人脸(项目 script.stylized_faces,未表态即开)。
+	// 开启时在提示词最前面钉一条角色画风锁 —— 分镜这一层不定,后面两头(定妆照
+	// 的 image 块、视频的 render 块)都是在给一个已经写成"写实电影感"的方案打补丁。
+	AnimeFaces bool
 	// OnBatch 分批生成进度(批 i/n,负责镜号区间);仅分批路径触发。
 	OnBatch func(batch, total, fromShot, toShot int)
 }
@@ -201,6 +219,17 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 		lock := "STYLE LOCK (MANDATORY): The global visual style for this series is: " + locked +
 			". You MUST use this EXACT style in the 'style' field and in ALL character image_prompts. " +
 			"Do NOT invent a different style. Character portraits must be in the same art style as the video."
+		if strings.TrimSpace(opt.ExtraHint) != "" {
+			opt.ExtraHint = lock + "\n" + opt.ExtraHint
+		} else {
+			opt.ExtraHint = lock
+		}
+	}
+	// 角色画风锁(2026-09-24 用户定调「角色不要真人脸,动漫化,避免侵权」):
+	// 放在 ExtraHint **最前面**,优先级高于用户自己写的风格附加要求 —— 分镜这一层
+	// 定不下来,后面定妆照/视频两头都是在给"已写成写实电影感"的方案打补丁。
+	if opt.AnimeFaces {
+		lock := animeFaceLock
 		if strings.TrimSpace(opt.ExtraHint) != "" {
 			opt.ExtraHint = lock + "\n" + opt.ExtraHint
 		} else {

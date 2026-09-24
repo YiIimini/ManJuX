@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/audio"
 	"github.com/YiIimini/ManJuX/internal/ff"
 )
 
@@ -26,6 +27,11 @@ type Report struct {
 	HasAudio  bool       `json:"has_audio"`
 	DarkRatio float64    `json:"dark_ratio"`    // 暗像素占比(0-1)
 	VLM       *VLMReport `json:"vlm,omitempty"` // 智能审片(可选)
+	// SpeechSec 实测人声时长(秒);ExpectedSpeechSec 本镜台词应有的口播时长。
+	// 两者差距过大就是「配音不完整」——这是用户 2026-09-24 报障里唯二可以
+	// **机械判定**的一条(另一条是杂音,靠频谱,不在本包范围内)。
+	SpeechSec         float64 `json:"speech_sec"`
+	ExpectedSpeechSec float64 `json:"expected_speech_sec,omitempty"`
 }
 
 // Params 质检阈值。
@@ -34,7 +40,16 @@ type Params struct {
 	DarkRatioWarn float64
 	MinDuration   float64
 	MaxDuration   float64
+	// ExpectedSpeechSec 本镜台词的应有口播时长(秒);>0 时启用人声完整性判定。
+	ExpectedSpeechSec float64
 }
+
+// speechWarnRatio 实测/应有 人声时长低于此比例即告警。
+//
+// 0.6 是刻意留松的:同一句话的语速会有 20-30% 的正常浮动,H3 也可能把两句之间的
+// 停顿吃掉;低于六成就不像"语速快"而像"话没说完/整句没出声"。只是告警不阻断 ——
+// 重渲同一提示词同一 seed 大概率复现,真正要改的是台词长度或拆镜。
+const speechWarnRatio = 0.6
 
 // Check 检查单个视频文件。
 func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Report {
@@ -47,6 +62,19 @@ func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Re
 	r.Duration, r.Width, r.Height, r.HasAudio = info.Duration, info.Width, info.Height, info.HasAudio
 	if !info.HasAudio {
 		r.Problems = append(r.Problems, "无音轨(H3 产物应自带 32kHz 立体声)")
+	} else {
+		// 人声完整性:实测语音时长 vs 台词应有口播时长(见 Params.ExpectedSpeechSec)
+		if env, err := audio.Decode(ctx, f, path); err == nil && env != nil {
+			r.SpeechSec = env.SpeechSeconds(env.Speech(), 0, env.Duration())
+			r.ExpectedSpeechSec = p.ExpectedSpeechSec
+			if p.ExpectedSpeechSec > 1.0 && r.SpeechSec < p.ExpectedSpeechSec*speechWarnRatio {
+				r.Warnings = append(r.Warnings, fmt.Sprintf(
+					"疑似配音不完整:实测人声 %.1fs,台词应有约 %.1fs(不足六成)——检查台词是否被截断或整句未出声",
+					r.SpeechSec, p.ExpectedSpeechSec))
+			}
+		} else if err != nil {
+			r.Warnings = append(r.Warnings, "人声时长分析失败:"+err.Error())
+		}
 	}
 	if info.Duration < p.MinDuration {
 		r.Problems = append(r.Problems, fmt.Sprintf("时长过短 %.1fs(应≥%.0fs)", info.Duration, p.MinDuration))

@@ -189,7 +189,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
 		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
-		prompt := EnsureChineseDialogue(anchorPrompt(plan, &shot))
+		// 渲染提示词:身份锚定 + 画风硬约束(动漫化/哑光)+ 台词语言标记,四路渲染共用
+		prompt := ShotRenderPrompt(proj, plan, &shot)
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。
@@ -331,6 +332,7 @@ func (c *Coordinator) setShotStatus(projectID string, manifest map[string]projec
 // anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格
 // 强制前置到镜头提示词。H3 是 VLM 输入,中文锚定段与六段式正文并存无碍;
 // 跨镜同角色描述逐字一致,配合定妆照 ref 双通道压住 LLM 逐镜漂移。
+// 实现见 prompts.go(含角色动漫化/哑光硬约束 facesOn)。
 
 // refComposition 把参考图构成缩成一行(角色/场景 + 是否拼合图),供渲染日志核对。
 func refComposition(refs []engine.RefImage) string {

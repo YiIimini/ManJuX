@@ -1,0 +1,82 @@
+package director
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/project"
+)
+
+// TestSpeechSecondsAndNeededDuration 台词时长预算的核心换算。
+func TestSpeechSecondsAndNeededDuration(t *testing.T) {
+	// 空白与标点里的空白不计;9 字 ≈ 2 秒 + 0.3 秒收尾
+	if got := SpeechSeconds("一二三四五六七八九"); got < 2.2 || got > 2.4 {
+		t.Errorf("9 字台词应约 2.3 秒,实际 %.2f", got)
+	}
+	if got := SpeechSeconds("   \n  "); got != 0 {
+		t.Errorf("纯空白应算 0,实际 %.2f", got)
+	}
+	sh := project.Shot{Duration: 4, Dialogue: []project.Line{{Text: "你怎么也来这里了？"}}} // 9 字
+	if got := NeededDuration(sh); got != 4 {
+		t.Errorf("9 字台词需 3 秒(含收尾),不应超过 4 秒下限,实际 %d", got)
+	}
+	// 20 字:20/4.5+0.3 = 4.74 → 5 秒
+	sh.Dialogue = []project.Line{{Text: strings.Repeat("字", 20)}}
+	if got := NeededDuration(sh); got != 5 {
+		t.Errorf("20 字台词应需 5 秒,实际 %d", got)
+	}
+	// 旁白同样占用时间
+	sh.Dialogue = nil
+	sh.Narration = strings.Repeat("字", 20)
+	if got := NeededDuration(sh); got != 5 {
+		t.Errorf("旁白必须计入时长预算,实际 %d", got)
+	}
+}
+
+// TestFitDialogueDurations 回归用户报障「配音也不完整」在分镜侧的根治:
+// 台词装不下就抬时长,而且只加不减(缩短只会制造新的截断)。
+func TestFitDialogueDurations(t *testing.T) {
+	plan := &project.Plan{Shots: []project.Shot{
+		{ID: 1, Duration: 4, Dialogue: []project.Line{{Text: strings.Repeat("字", 20)}}}, // 4s 装不下 20 字
+		{ID: 2, Duration: 8, Dialogue: []project.Line{{Text: "短句"}}},                    // 够长,不动
+		{ID: 3, Duration: 2, Dialogue: nil},                                             // 太短,抬到下限
+	}}
+	n, details := FitDialogueDurations(plan)
+	if n != 2 {
+		t.Fatalf("应调整 2 个镜头,实际 %d(%v)", n, details)
+	}
+	if plan.Shots[0].Duration != 5 {
+		t.Errorf("镜 1 应抬到 5 秒(20 字 + 收尾),实际 %d", plan.Shots[0].Duration)
+	}
+	if plan.Shots[1].Duration != 8 {
+		t.Errorf("镜 2 已够长,不应被改动,实际 %d", plan.Shots[1].Duration)
+	}
+	if plan.Shots[2].Duration != MinShotSeconds {
+		t.Errorf("镜 3 应抬到下限 %d 秒,实际 %d", MinShotSeconds, plan.Shots[2].Duration)
+	}
+	if !strings.Contains(strings.Join(details, ";"), "台词装得下") {
+		t.Errorf("调整明细应说明原因:%v", details)
+	}
+	if FitDialogueDurations(nil); false {
+		t.Error("nil 方案不应 panic")
+	}
+}
+
+// TestFitDialogueDurationsClampsAtCeiling 超长台词抬到上限就停,并给出拆镜建议。
+func TestFitDialogueDurationsClampsAtCeiling(t *testing.T) {
+	long := strings.Repeat("字", 60) // 60/4.5+0.3 ≈ 13.6 秒 > 上限 10 秒
+	plan := &project.Plan{Shots: []project.Shot{
+		{ID: 1, Duration: 4, Dialogue: []project.Line{{Text: long}}},
+	}}
+	FitDialogueDurations(plan)
+	if plan.Shots[0].Duration != MaxShotSeconds {
+		t.Fatalf("应抬到上限 %d 秒,实际 %d", MaxShotSeconds, plan.Shots[0].Duration)
+	}
+	msg := DialogueOverflow(plan.Shots[0])
+	if !strings.Contains(msg, "拆成两镜") {
+		t.Errorf("抬到上限仍装不下时必须建议拆镜,实际:%q", msg)
+	}
+	if DialogueOverflow(project.Shot{Duration: 6, Dialogue: []project.Line{{Text: "短句"}}}) != "" {
+		t.Error("装得下的镜头不该报溢出")
+	}
+}
