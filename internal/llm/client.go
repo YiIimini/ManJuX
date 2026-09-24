@@ -67,9 +67,31 @@ type chatResponse struct {
 		Message      chatRespMessage `json:"message"`
 		FinishReason string          `json:"finish_reason"`
 	} `json:"choices"`
+	Usage *Usage `json:"usage"`
 	Error *struct {
 		Message string `json:"message"`
 	} `json:"error"`
+}
+
+// Usage 本次调用的 token 用量(截断排查用:completion 顶到上限即被截断)。
+type Usage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	TotalTokens      int `json:"total_tokens"`
+}
+
+// Result 一次对话的正文与结束信息。
+//
+// 为什么要把 finish_reason / usage 带出来:分镜规划轮失败过一类极难查的
+// "输出解析失败(缺少 title/segments)"(2026-09-24 用户报障,48 集产线卡在第 1 集)。
+// 根因往往就是**被 max_tokens 截断**(推理 token 也算在 completion 里),
+// 而旧接口只把正文交出去,调用方分不清"截断"和"模型没按格式答",只能给一句
+// 无从下手的错误。带上 finish/usage 后:截断能指名道姓,并能据此触发更小的重问。
+type Result struct {
+	Content string
+	Finish  string
+	Usage   Usage
+	Model   string
 }
 
 type chatRespMessage struct {
@@ -83,8 +105,17 @@ type chatRespMessage struct {
 // 深度推理模型单次响应可长达数分钟:仅对可重试错误(网络/429/5xx)重试 1 次,
 // 鉴权/参数类(401/403/404/400)立即失败,避免把用户晾在十几分钟里。
 func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (string, error) {
+	res, err := c.ChatEx(ctx, msgs, jsonMode)
+	if err != nil {
+		return "", err
+	}
+	return res.Content, nil
+}
+
+// ChatEx 同 Chat,但把 finish_reason / token 用量一并交回调用方(见 Result 注释)。
+func (c *Client) ChatEx(ctx context.Context, msgs []Message, jsonMode bool) (Result, error) {
 	if !c.Configured() {
-		return "", fmt.Errorf("LLM 未配置:请在工作台「设置」中填写 BaseURL / API Key / Model")
+		return Result{}, fmt.Errorf("LLM 未配置:请在工作台「设置」中填写 BaseURL / API Key / Model")
 	}
 	var lastErr error
 	useJSON := jsonMode
@@ -92,7 +123,7 @@ func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (strin
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return "", ctx.Err()
+				return Result{}, ctx.Err()
 			case <-time.After(time.Duration(attempt*3) * time.Second):
 			}
 		}
@@ -116,15 +147,15 @@ func (c *Client) Chat(ctx context.Context, msgs []Message, jsonMode bool) (strin
 		lastErr = err
 		// 用户取消不重试
 		if ctx.Err() != nil {
-			return "", ctx.Err()
+			return Result{}, ctx.Err()
 		}
 		// 鉴权/参数/模型名错误:重试无意义,立即失败
 		if isFatalLLMError(err) {
-			return "", fmt.Errorf("LLM 调用失败: %w", err)
+			return Result{}, fmt.Errorf("LLM 调用失败: %w", err)
 		}
 		useJSON = false // 下一次降级普通模式
 	}
-	return "", fmt.Errorf("LLM 调用失败(已重试): %w", lastErr)
+	return Result{}, fmt.Errorf("LLM 调用失败(已重试): %w", lastErr)
 }
 
 // isFatalLLMError 鉴权/参数/资源不存在类错误。
@@ -143,45 +174,49 @@ type statusError struct {
 
 func (e *statusError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.code, e.body) }
 
-func (c *Client) do(ctx context.Context, body []byte) (string, error) {
+func (c *Client) do(ctx context.Context, body []byte) (Result, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
 	resp, err := c.http.Do(httpReq)
 	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
 	if err != nil {
-		return "", err
+		return Result{}, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &statusError{code: resp.StatusCode, body: textutil.Truncate(string(raw), 500)}
+		return Result{}, &statusError{code: resp.StatusCode, body: textutil.Truncate(string(raw), 500)}
 	}
 	var cr chatResponse
 	if err := json.Unmarshal(raw, &cr); err != nil {
-		return "", fmt.Errorf("响应解析失败: %w", err)
+		return Result{}, fmt.Errorf("响应解析失败: %w", err)
 	}
 	if cr.Error != nil {
-		return "", fmt.Errorf("API 错误: %s", cr.Error.Message)
+		return Result{}, fmt.Errorf("API 错误: %s", cr.Error.Message)
 	}
 	if len(cr.Choices) == 0 {
-		return "", fmt.Errorf("API 返回空 choices")
+		return Result{}, fmt.Errorf("API 返回空 choices")
 	}
-	msg := cr.Choices[0].Message
-	content := strings.TrimSpace(msg.Content)
+	ch := cr.Choices[0]
+	content := strings.TrimSpace(ch.Message.Content)
+	res := Result{Content: stripReasoning(content), Finish: ch.FinishReason, Model: c.model}
+	if cr.Usage != nil {
+		res.Usage = *cr.Usage
+	}
 	if content == "" {
-		if cr.Choices[0].FinishReason == "length" {
-			return "", fmt.Errorf("输出被 max_tokens 截断(思考模型正文未生成):请在项目参数中减少镜头数,或更换非推理模型")
+		if ch.FinishReason == "length" {
+			return res, fmt.Errorf("输出被 max_tokens 截断(思考模型正文未生成):请在项目参数中减少镜头数,或更换非推理模型")
 		}
-		return "", fmt.Errorf("API 返回空内容(finish=%s)", cr.Choices[0].FinishReason)
+		return res, fmt.Errorf("API 返回空内容(finish=%s)", ch.FinishReason)
 	}
-	return stripReasoning(content), nil
+	return res, nil
 }
 
 // stripReasoning 剥离部分模型(如 DeepSeek-R1/GLM 思考模式)的 <think> 块。

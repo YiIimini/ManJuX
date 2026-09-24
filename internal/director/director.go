@@ -190,6 +190,9 @@ type Options struct {
 	AnimeFaces bool
 	// OnBatch 分批生成进度(批 i/n,负责镜号区间);仅分批路径触发。
 	OnBatch func(batch, total, fromShot, toShot int)
+	// OnNote 非致命提示(降级/兜底时用)。用于把"方案不完整但我们继续了"这类
+	// 事实说给用户听 —— 静默降级等于骗人,直接报错又会让整条产线停在一集上。
+	OnNote func(format string, args ...any)
 }
 
 // segment 分批切分计划(轮1 产物,不落盘)。
@@ -354,10 +357,19 @@ func generateSingle(ctx context.Context, client *llm.Client, sourceText string, 
 	if err != nil {
 		return nil, err
 	}
-	if err := validate(plan); err != nil {
+	if err := validate(plan, shotLimitOf(opt, contentDriven)); err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// shotLimitOf 本次生成的镜头数上限:内容驱动时是安全网 MaxShotsCeiling
+// (0=该多少就多少,不能拿内部兜底值 12 去砍),指定镜头数时就是该值。
+func shotLimitOf(opt Options, contentDriven bool) int {
+	if contentDriven {
+		return project.MaxShotsCeiling
+	}
+	return opt.MaxShots
 }
 
 // chatPlan 单次方案请求 + 一次 JSON 修复重试。
@@ -390,41 +402,61 @@ func chatPlan(ctx context.Context, client *llm.Client, sys, user string) (*proje
 	return plan, nil
 }
 
-// parsePlan 从 LLM 输出提取并解析 JSON(容错:剥围栏/前后杂文)。
+// parsePlan 从 LLM 输出提取并解析 JSON(容错:剥围栏/前后杂文/截断补全/拆一层包装)。
+// 错误信息带原文摘录:方案解析失败时,日志里能直接看出是"截断"还是"格式跑偏"。
 func parsePlan(raw string) (*project.Plan, error) {
-	s := strings.TrimSpace(raw)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	if i := strings.LastIndex(s, "```"); i >= 0 {
-		s = s[:i]
-	}
-	// 截取首个 { 到最后一个 }
-	start := strings.Index(s, "{")
-	end := strings.LastIndex(s, "}")
-	if start < 0 || end <= start {
-		return nil, fmt.Errorf("输出中未找到 JSON 对象")
-	}
-	s = s[start : end+1]
-	var plan project.Plan
-	if err := json.Unmarshal([]byte(s), &plan); err != nil {
-		// LLM 常在字符串值里写裸换行/制表符(标准 JSON 非法),先修再试一次
-		if err2 := json.Unmarshal([]byte(repairJSONStrings(s)), &plan); err2 != nil {
-			return nil, fmt.Errorf("JSON 解析失败: %v", err)
+	obj, ok := extractJSONObject(raw)
+	if !ok {
+		if fixed, closed := closeTruncatedJSON(obj); closed {
+			obj, ok = fixed, true
 		}
 	}
-	return &plan, nil
+	if !ok || obj == "" {
+		return nil, fmt.Errorf("输出中未找到 JSON 对象(原文 %d 字):%s", len([]rune(raw)), snippet(raw, 120))
+	}
+	s := repairJSONStrings(obj)
+	decode := func(x string) (*project.Plan, error) {
+		var plan project.Plan
+		if err := json.Unmarshal([]byte(x), &plan); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(plan.Title) == "" && len(plan.Shots) == 0 {
+			return nil, fmt.Errorf("JSON 合法但既无 title 也无 shots")
+		}
+		return &plan, nil
+	}
+	plan, firstErr := decode(s)
+	if firstErr == nil {
+		return plan, nil
+	}
+	for _, inner := range allObjects(s) {
+		if inner == s {
+			continue
+		}
+		if p, err := decode(repairJSONStrings(inner)); err == nil {
+			return p, nil
+		}
+	}
+	return nil, fmt.Errorf("JSON 解析失败: %v;原文摘录:%s", firstErr, snippet(raw, 120))
 }
 
 // validate 做最小硬校验并规整(id 连续、引用存在、时长钳制)。
-func validate(p *project.Plan) error {
+//
+// shotLimit 是**本次生成的镜头数上限**:内容驱动时传 project.MaxShotsCeiling
+// (安全网,不是预设值),指定镜头数时传该值。
+// 旧实现在这里写死 `> 20 就截断` —— 与 params.go 的 MaxShotsCeiling=120 和
+// 「0=内容驱动、该多少就多少」的定调直接冲突:实测一集按原文节拍规划出 32 镜,
+// 分批也照 32 镜全跑完了,末了被这行**静默砍成 20 镜** —— 既白花 3 轮 LLM 调用,
+// 又正好违反用户反复强调的「不跳段、不省略」。
+func validate(p *project.Plan, shotLimit int) error {
 	if p.Title == "" {
 		return fmt.Errorf("缺少剧名")
 	}
 	if len(p.Shots) == 0 {
 		return fmt.Errorf("分镜为空")
 	}
-	if len(p.Shots) > 20 {
-		p.Shots = p.Shots[:20]
+	if shotLimit > 0 && len(p.Shots) > shotLimit {
+		p.Shots = p.Shots[:shotLimit]
 	}
 	sceneIDs := map[string]bool{}
 	for _, sc := range p.Scenes {
@@ -579,17 +611,15 @@ Return STRICT JSON only (no markdown fences, no commentary):
 - ids must be integers inside the range, sequential, no gaps.
 - Story continuity: respect the PREVIOUS SHOTS summary if provided (do not repeat events; keep character states consistent).`
 
-// generateBatched 分批路径:轮1 规划(轻量)→ 轮 2..k 逐批出镜(每批 ≤5 镜,
-// 单轮生成量小,推理模型压回 1-3 分钟)。
-func generateBatched(ctx context.Context, client *llm.Client, sourceText string, opt Options, contentDriven bool) (*project.Plan, error) {
+// buildPlanUserPrompt 组装规划轮的用户提示词。
+// 单独成函数是为了让"线上跑的那段提示词"和诊断用的那段**完全同源** ——
+// 复现失败时最怕提示词与线上不一致(改一处漏一处,复现出来的是另一个问题)。
+func buildPlanUserPrompt(sourceText string, opt Options, contentDriven bool) string {
 	hint := styleHint(opt)
-
-	// ---- 轮 1:规划 ----
-	// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,只保留
-	// 「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出),不是数量上限。
-	var planUser string
 	if contentDriven {
-		planUser = fmt.Sprintf(`Source text (Chinese):
+		// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,
+		// 只保留「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出)。
+		return fmt.Sprintf(`Source text (Chinese):
 """
 %s
 """
@@ -599,8 +629,8 @@ Additional requirements:
 - Then split it into consecutive segments of 3-%d shots each, so the segments continuously cover shot ids 1..N where N is the total you decided.
 %s
 Produce the STRICT BATCH PLAN JSON now.`, sourceText, batchMaxShots, hint)
-	} else {
-		planUser = fmt.Sprintf(`Source text (Chinese):
+	}
+	return fmt.Sprintf(`Source text (Chinese):
 """
 %s
 """
@@ -610,18 +640,144 @@ Additional requirements:
 - Split the story into segments of 3-%d shots each (segments must continuously cover shot ids 1..%d).
 %s
 Produce the STRICT BATCH PLAN JSON now.`, sourceText, opt.MaxShots, opt.TotalSeconds, batchMaxShots, opt.MaxShots, hint)
-	}
+}
 
-	raw, err := client.Chat(ctx, []llm.Message{
-		{Role: "system", Content: planSystemPrompt},
-		{Role: "user", Content: planUser},
+// decodePlanHead 直接解析并校验(错误信息按**缺什么**分别说明)。
+func decodePlanHead(s string) (planHead, error) {
+	var head planHead
+	if err := json.Unmarshal([]byte(s), &head); err != nil {
+		return head, fmt.Errorf("JSON 解析失败: %v", err)
+	}
+	if strings.TrimSpace(head.Title) == "" {
+		return head, fmt.Errorf("JSON 合法但缺少 title")
+	}
+	if len(head.Segments) == 0 {
+		return head, fmt.Errorf("JSON 合法但缺少 segments")
+	}
+	return head, nil
+}
+
+// parsePlanHead 解析规划轮输出(标题/角色/场景/分段):
+// 提取 → 直解 → 补全截断 → 拆一层包装,四步都失败才报错。
+// 第二个返回值表示"这份结果是靠补全截断尾巴得到的"(方案可能不完整),
+// 调用方据此决定要不要重问一轮。
+// 规划轮是 48 集产线的咽喉,一句笼统的"解析失败"没法修,所以每步都留清楚原因。
+func parsePlanHead(raw string) (head planHead, truncated bool, err error) {
+	obj, ok := extractJSONObject(raw)
+	if !ok {
+		if fixed, closed := closeTruncatedJSON(obj); closed {
+			obj, ok, truncated = fixed, true, true
+		}
+	}
+	if !ok || obj == "" {
+		return planHead{}, false, fmt.Errorf("未找到 JSON 对象(原文 %d 字)", len([]rune(raw)))
+	}
+	s := repairJSONStrings(obj)
+	h, firstErr := decodePlanHead(s)
+	if firstErr == nil {
+		return h, truncated, nil
+	}
+	// 包了一层({"plan":{…}} / {"result":{…}} / {"data":{…}})是常见写法,拆一层再试
+	for _, inner := range allObjects(s) {
+		if inner == s {
+			continue
+		}
+		if h2, err2 := decodePlanHead(repairJSONStrings(inner)); err2 == nil {
+			return h2, truncated, nil
+		}
+	}
+	return planHead{}, truncated, firstErr
+}
+
+// callPlanRound 规划轮:调用 + 一次修复重问。
+//
+// 为什么要专门做一层(2026-09-24 用户 48 集产线卡在第 1 集):
+//   - 失败几乎都是**格式**问题(被 max_tokens 截断、或先写一段说明再给 JSON),
+//     不是模型不会规划 —— 把原文回灌要求"只补发合法 JSON"通常一次就救回来;
+//   - 旧实现只回一句"规划轮输出解析失败(缺少 title/segments)",finish_reason、
+//     token 用量、原文摘录全丢了,现场无法复盘。这里把它们全部写进错误。
+func callPlanRound(ctx context.Context, client *llm.Client, sys, user string, note func(string, ...any)) (planHead, error) {
+	res, err := client.ChatEx(ctx, []llm.Message{
+		{Role: "system", Content: sys},
+		{Role: "user", Content: user},
 	}, true)
 	if err != nil {
-		return nil, fmt.Errorf("规划轮失败: %w", err)
+		return planHead{}, fmt.Errorf("规划轮失败: %w", err)
 	}
-	var head planHead
-	if err := json.Unmarshal([]byte(repairJSONStrings(trimJSONBlock(raw))), &head); err != nil || head.Title == "" || len(head.Segments) == 0 {
-		return nil, fmt.Errorf("规划轮输出解析失败(缺少 title/segments)")
+	head, truncated, perr := parsePlanHead(res.Content)
+	if perr == nil && !truncated {
+		return head, nil
+	}
+	// 走到这里两种情形:① 解析失败;② 解析成功但靠的是"补全截断的尾巴"
+	// —— 后者那份方案大概率不完整(后面的段会落到占位 brief),
+	// 所以先花一轮把它问全;真问不回来再用它兜底,不让产线停在第 1 集。
+	var fallback *planHead
+	if perr == nil {
+		h := head
+		fallback = &h
+	}
+
+	// ---- 修复/补全重问 ----
+	prev := res.Content
+	if len([]rune(prev)) > 40000 {
+		prev = snippet(prev, 20000)
+	}
+	shrink := ""
+	if truncated || res.Finish == "length" {
+		shrink = "\nYour previous reply was CUT OFF by the output limit. This time make the plan SHORTER: fewer segments (each up to 5 shots) and terse briefs — still covering the whole story."
+	}
+	why := "output ended before the JSON object was complete"
+	if perr != nil {
+		why = perr.Error()
+	}
+	fixUser := fmt.Sprintf(`Your previous reply could not be parsed as a complete JSON object: %s.
+Return ONLY the JSON object — no markdown fences, no commentary, no text before or after — with exactly these top-level keys:
+{"title":"…","logline":"…","style":"…","characters":[…],"scenes":[…],"segments":[{"from":1,"to":3,"brief":"…"}]}%s
+
+Keep every id/name you already decided. Previous reply:
+"""
+%s
+"""`, why, shrink, prev)
+	if fix, ferr := client.ChatEx(ctx, []llm.Message{
+		{Role: "system", Content: sys},
+		{Role: "user", Content: fixUser},
+	}, true); ferr == nil {
+		if h2, trunc2, e2 := parsePlanHead(fix.Content); e2 == nil && !trunc2 {
+			return h2, nil
+		} else if e2 == nil {
+			perr, res = nil, fix
+			fallback = &h2
+		} else {
+			perr, res = e2, fix
+		}
+	}
+	if fallback != nil {
+		if note != nil {
+			note("⚠ 规划轮输出疑似被截断,已用补全后的方案继续(建议本集跑完后回看分镜;如明显缺段,重跑「剧本分镜」即可)")
+		}
+		return *fallback, nil
+	}
+
+	whyStr := perr.Error()
+	if res.Finish == "length" {
+		whyStr += ";输出被 max_tokens 截断"
+	}
+	return planHead{}, fmt.Errorf(
+		"规划轮输出解析失败(%s;finish=%s,completion=%d tokens,原文 %d 字)\n原文摘录:%s",
+		whyStr, res.Finish, res.Usage.CompletionTokens, len([]rune(res.Content)), snippet(res.Content, 240))
+}
+
+// generateBatched 分批路径:轮1 规划(轻量)→ 轮 2..k 逐批出镜(每批 ≤5 镜,
+// 单轮生成量小,推理模型压回 1-3 分钟)。
+func generateBatched(ctx context.Context, client *llm.Client, sourceText string, opt Options, contentDriven bool) (*project.Plan, error) {
+	hint := styleHint(opt)
+
+	// ---- 轮 1:规划 ----
+	// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,只保留
+	// 「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出),不是数量上限。
+	head, err := callPlanRound(ctx, client, planSystemPrompt, buildPlanUserPrompt(sourceText, opt, contentDriven), opt.OnNote)
+	if err != nil {
+		return nil, err
 	}
 	// 段规范化上限:内容驱动时不能用人为此限 —— 否则 LLM 决定拍 20 镜会被截到
 	// 内部兜底值,「不设上限」就成了空话。这里取规划轮自己给出的最大镜号。
@@ -652,6 +808,12 @@ Produce the STRICT BATCH PLAN JSON now.`, sourceText, opt.MaxShots, opt.TotalSec
 			opt.OnBatch(bi+1, total, seg.From, seg.To)
 		}
 		segSeconds := opt.TotalSeconds * (seg.To - seg.From + 1) / opt.MaxShots
+		if contentDriven {
+			// 内容驱动下 opt.TotalSeconds/MaxShots 只是内部兜底(12 镜×7 秒),
+			// 拿它换算分段时长会把"32 镜的一集"每段写成 10 秒 —— 提示词自相矛盾。
+			// 按本文件一贯的 7 秒/镜估,才和实际方案对得上。
+			segSeconds = (seg.To - seg.From + 1) * 7
+		}
 		prevSummary := previousShotsSummary(plan.Shots)
 		user := fmt.Sprintf(`Established plan head (STRICT, reuse ids verbatim):
 %s
@@ -694,7 +856,7 @@ Produce ONLY this batch's shots as STRICT JSON now.`, cards, head.Style, hint, s
 		}
 		plan.Shots = append(plan.Shots, shots...)
 	}
-	if err := validate(plan); err != nil {
+	if err := validate(plan, shotLimitOf(opt, contentDriven)); err != nil {
 		return nil, err
 	}
 	return plan, nil
@@ -743,13 +905,44 @@ func normalizeSegments(h *planHead, max int) {
 	h.Segments = out
 }
 
-// parseShotsBatch 解析一批 shots 并校验区间。
+// parseShotsBatch 解析一批 shots 并校验区间(同样支持截断补全与拆一层包装)。
 func parseShotsBatch(raw string, from, to int) ([]project.Shot, error) {
-	s := repairJSONStrings(trimJSONBlock(raw))
-	var out batchShotOut
-	if err := json.Unmarshal([]byte(s), &out); err != nil {
-		return nil, fmt.Errorf("JSON 解析失败: %v", err)
+	obj, ok := extractJSONObject(raw)
+	if !ok {
+		if fixed, closed := closeTruncatedJSON(obj); closed {
+			obj, ok = fixed, true
+		}
 	}
+	if !ok || obj == "" {
+		return nil, fmt.Errorf("未找到 JSON 对象(原文 %d 字):%s", len([]rune(raw)), snippet(raw, 120))
+	}
+	s := repairJSONStrings(obj)
+	decode := func(x string) ([]project.Shot, error) {
+		var out batchShotOut
+		if err := json.Unmarshal([]byte(x), &out); err != nil {
+			return nil, err
+		}
+		if len(out.Shots) == 0 {
+			return nil, fmt.Errorf("shots 为空")
+		}
+		return out.Shots, nil
+	}
+	parsed, firstErr := decode(s)
+	if firstErr != nil {
+		for _, inner := range allObjects(s) {
+			if inner == s {
+				continue
+			}
+			if sh, err := decode(repairJSONStrings(inner)); err == nil {
+				parsed, firstErr = sh, nil
+				break
+			}
+		}
+	}
+	if firstErr != nil {
+		return nil, fmt.Errorf("JSON 解析失败: %v;原文摘录:%s", firstErr, snippet(raw, 120))
+	}
+	out := batchShotOut{Shots: parsed}
 	if len(out.Shots) == 0 {
 		return nil, fmt.Errorf("shots 为空")
 	}
@@ -782,14 +975,6 @@ func previousShotsSummary(shots []project.Shot) string {
 	return b.String()
 }
 
-// trimJSONBlock 剥围栏并截取最外层对象。
-func trimJSONBlock(raw string) string {
-	s := strings.TrimSpace(strings.Trim(raw, "`"))
-	if i := strings.Index(s, "{"); i > 0 {
-		s = s[i:]
-	}
-	if j := strings.LastIndex(s, "}"); j >= 0 {
-		s = s[:j+1]
-	}
-	return s
-}
+// trimJSONBlock 已由 jsonx.go 的 extractJSONObject/closeTruncatedJSON 取代
+// (旧实现是"首个 { 到最后一个 }",模型在 JSON 前写一句带花括号的说明、或输出被
+//  截断时会截出非法片段,且无法区分这两种情形)。保留此别名只为兼容历史调用点。

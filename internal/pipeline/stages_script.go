@@ -72,6 +72,11 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 		OnBatch: func(batch, total, fromShot, toShot int) {
 			c.emit(proj.ID, PhaseScript, 0, "info", 15, "▸ 分批分镜 %d/%d:镜 %d-%d 生成中…", batch, total, fromShot, toShot)
 		},
+		// 降级/兜底提示直接进前端事件流:静默降级等于骗人
+		// (典型:规划轮输出被截断,补全后继续 —— 必须让用户知道并有机会重跑)
+		OnNote: func(format string, args ...any) {
+			c.emit(proj.ID, PhaseScript, 0, "warn", 15, format, args...)
+		},
 	})
 	hbStop()
 	<-hbDone
