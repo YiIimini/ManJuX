@@ -1,6 +1,9 @@
 package comfyengine
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestRenderGraphAudioDrive 音频驱动契约。
 //
@@ -54,7 +57,7 @@ func TestRenderGraphAudioDrive(t *testing.T) {
 func TestMaskGraphContract(t *testing.T) {
 	c := testComfySettings()
 	job := baseJob("ref2va")
-	opt := MaskOptions{SourceVideo: "shot_003.mp4", Prompt: "test prompt", ObjectIndex: "0"}
+	opt := MaskOptions{SourceVideo: "shot_003.mp4", Prompt: "test prompt", Target: "the bronze sparrow", ObjectIndex: "0"}
 
 	graph := buildMaskGraph(job, c, opt, 768, 1344, 124)
 	assertGraphContract(t, graph)
@@ -89,5 +92,76 @@ func TestMaskGraphContract(t *testing.T) {
 		if _, ok := uncropInputs[in]; !ok {
 			t.Errorf("SubjectUncrop 缺少输入 %q(缺它就无法把重绘结果贴回原位)", in)
 		}
+	}
+}
+
+// TestMaskGraphWiresSAM3Conditioning SAM3 跟踪节点的**必需输入**必须真的接上。
+//
+// 2026-09-24 全项目审计发现的功能性死链:这张图从建立起既没传 initial_mask、
+// 也没传 conditioning,而 nodes_sam3.py 里写着
+//
+//	if conditioning ... elif initial_mask is None: raise ValueError("Either initial_mask or conditioning must be provided")
+//
+// —— 也就是说「局部重绘」这个 UI 上有按钮、有弹窗、有 API 的功能,**必然失败**,
+// 而且失败报文是 ComfyUI 侧的原始 ValueError。这里把修复钉死:
+// SAM3_VideoTrack 必须拿到 conditioning,且它来自 SAM3 checkpoint 自带的 CLIP
+// (CheckpointLoaderSimple 的输出槽 1)编码出的文本。
+func TestMaskGraphWiresSAM3Conditioning(t *testing.T) {
+	c := testComfySettings()
+	job := baseJob("ref2va")
+	opt := MaskOptions{SourceVideo: "shot_003.mp4", Prompt: "p", Target: "the bronze sparrow"}
+
+	graph := buildMaskGraph(job, c, opt, 768, 1344, 124)
+	assertGraphContract(t, graph)
+
+	ckptID, _ := findNode(t, graph, "CheckpointLoaderSimple")
+	if ckptID == "" {
+		t.Fatal("缺少 CheckpointLoaderSimple(SAM3 跟踪模型与文本编码器都来自它)")
+	}
+	_, trackInputs := findNode(t, graph, "SAM3_VideoTrack")
+	if trackInputs == nil {
+		t.Fatal("缺少 SAM3_VideoTrack")
+	}
+	condLink, ok := trackInputs["conditioning"].([]any)
+	if !ok || len(condLink) != 2 {
+		t.Fatalf("SAM3_VideoTrack 必须接 conditioning(否则节点直接抛 ValueError),实际 %v", trackInputs["conditioning"])
+	}
+	encID, _ := findNode(t, graph, "CLIPTextEncode")
+	if encID == "" {
+		t.Fatal("缺少 CLIPTextEncode:文本条件没有被真正编出来")
+	}
+	if condLink[0] != encID {
+		t.Errorf("conditioning 应来自 CLIPTextEncode(%s),实际 %v", encID, condLink[0])
+	}
+	// CLIP 必须取自 SAM3 checkpoint 的 CLIP 槽(槽 1),不是主模型或别处的 CLIP
+	encNode := graph[encID].(map[string]any)
+	clipLink, _ := encNode["inputs"].(map[string]any)["clip"].([]any)
+	if len(clipLink) != 2 || clipLink[0] != ckptID || clipLink[1] != 1 {
+		t.Errorf("CLIPTextEncode 的 clip 应取自 SAM3 checkpoint 的槽 1([%s,1]),实际 %v", ckptID, clipLink)
+	}
+	// 文本就是用户给的目标短语
+	if got := encNode["inputs"].(map[string]any)["text"]; got != "the bronze sparrow" {
+		t.Errorf("编码的文本应是用户给的目标,实际 %v", got)
+	}
+	// 模型权重名:缺它同样必然失败,顺带钉住(审计指出 CHANGELOG 曾声称有断言而其实没有)
+	ck := graph[ckptID].(map[string]any)["inputs"].(map[string]any)
+	if ck["ckpt_name"] != sam3Checkpoint {
+		t.Errorf("CheckpointLoaderSimple 应加载 %s,实际 %v", sam3Checkpoint, ck["ckpt_name"])
+	}
+}
+
+// TestMaskOptionsRequireTarget 目标短语是硬前置:缺它要在提交任务之前就报错,
+// 而不是把请求发到 ComfyUI 再抛原始报文(这条链路要上传源视频、跑十几分钟)。
+func TestMaskOptionsRequireTarget(t *testing.T) {
+	if err := (MaskOptions{Prompt: "p"}).validate(); err == nil {
+		t.Fatal("缺 Target 时必须报错")
+	} else if !strings.Contains(err.Error(), "SAM3") {
+		t.Errorf("错误信息要说清为什么要填目标(SAM3 开放词表),实际:%v", err)
+	}
+	if err := (MaskOptions{Prompt: "p", Target: "  "}).validate(); err == nil {
+		t.Error("只有空白字符也算没填")
+	}
+	if err := (MaskOptions{Prompt: "p", Target: "the lantern"}).validate(); err != nil {
+		t.Errorf("填了目标不该报错:%v", err)
 	}
 }

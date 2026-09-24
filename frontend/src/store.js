@@ -130,7 +130,7 @@ export const api = {
   libraryCreateCharacter: (payload) => req('POST', '/api/library/characters', payload),
   putShot: (id, shot) => req('PUT', `/api/projects/${encodeURIComponent(id)}/shot`, shot),
   deleteShot: (id, shotID) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}`),
-  maskFix: (id, shotID) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`, {}),
+  maskFix: (id, shotID, target) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`, { target }),
   audioDrive: (id, shotID, audioPath) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/audio-drive`, { audio_path: audioPath }),
   // 2× 放大后处理:传 opts({type, model, ltx_vae}) 覆盖默认;不传则后端用 esrgan + 4x-UltraSharp。
   // 结果作为独立文件产出,原镜头不动,音轨沿用源片。

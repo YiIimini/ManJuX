@@ -3,6 +3,7 @@ package comfyengine
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/config"
@@ -10,18 +11,38 @@ import (
 )
 
 // sam3Checkpoint SAM3 跟踪模型文件名(ComfyUI 标准 checkpoints 目录)。
-// 缺它时局部重绘无法定位目标。注意 Preflight **不检查这个 checkpoint** ——
-// 它只校验 Ref2V / I2V / SigmaShift 三个 H3 根节点(见 preflight.go 的注释),
-// 缺模型会在提交后由 ComfyUI 在 CheckpointLoaderSimple 处报错(表现为渲染
-// 跑到一半失败、报文是 node_errors),排查时先确认该文件在 checkpoints/ 下。
+// 缺它时局部重绘无法定位目标。它**不在 Preflight 的节点体检里**(那套只校验
+// H3 根节点),所以另给了 MaskAssets() 做这条链路的权重+节点体检 ——
+// 缺模型要在**点下去之前**就告诉用户,而不是等 ComfyUI 执行到那一节点抛原始报文。
 const sam3Checkpoint = "sam3.1_multiplex_fp16.safetensors"
 
 // MaskOptions 局部重绘参数。
 type MaskOptions struct {
 	SourceVideo string // 源镜头在 ComfyUI 侧的**文件名**(调用方先上传)
 	Prompt      string // 完整 H3 提示词(与整镜渲染同构的六段式)
-	ObjectIndex string // 要重绘的目标序号(""=全部跟踪到的目标;"0"=第一个)
+	// Target 要跟踪/重绘的目标,**英文名词短语**(如 the bronze sparrow / the young man /
+	// the lantern / the hands)。SAM3 是"开放词表"跟踪器:必须告诉它找什么,否则
+	// 节点会 `raise ValueError("Either initial_mask or conditioning must be provided")`。
+	//
+	// 2026-09-24 审计发现的死功能:这张图从建立起就**两个必需输入一个都没传**,
+	// 而 UI 上按钮、弹窗、API 一应俱全 —— 用户点下去只会在 ComfyUI 侧抛原始报文。
+	Target      string
+	ObjectIndex string // 跟踪到多个目标时取哪一个(""=全部;"0"=第一个)
 	Feather     int    // 回贴边缘羽化像素(0 用默认 12)
+}
+
+// MaskTargetHint 缺目标时的统一提示语(引擎、API、前端共用一句话,免得三处口径不一)。
+const MaskTargetHint = "局部重绘需要指定要跟踪的目标(英文名词短语,如 the bronze sparrow / the young man / the hands):" +
+	"SAM3 是开放词表跟踪器,不给它目标就无法判断该重绘哪一块"
+
+// validate 参数自检。**必须在提交任务之前做**:这类缺参数的错误一旦漏到 ComfyUI 侧,
+// 用户拿到的是节点原始报文(ValueError: Either initial_mask or conditioning...),
+// 既不知道是自己少填了东西,也不知道该填什么。
+func (o MaskOptions) validate() error {
+	if strings.TrimSpace(o.Target) == "" {
+		return fmt.Errorf("%s", MaskTargetHint)
+	}
+	return nil
 }
 
 // MaskFix 执行局部重绘:对源镜头中跟踪到的目标区域重新生成,其余画面逐帧保留。
@@ -30,6 +51,9 @@ type MaskOptions struct {
 // opt.Prompt 通常直接复用该镜的原提示词 —— 只把崩坏部分的描述改对即可,
 // 其余描述保持不变,重绘出来的局部才会与原画面接得上。
 func (e *Engine) MaskFix(ctx context.Context, srcVideoPath string, opt MaskOptions, job engine.Job, w, h, length int, outPath string) (string, error) {
+	if err := opt.validate(); err != nil {
+		return "", err
+	}
 	if err := e.Available(ctx); err != nil {
 		return "", err
 	}
@@ -84,11 +108,22 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 	g["10"] = nd("LoadVideo", map[string]any{"file": opt.SourceVideo})
 	g["11"] = nd("GetVideoComponents", map[string]any{"video": link("10", 0)})
 
-	// ② SAM3 跨帧跟踪(首帧无初始遮罩 → 走文本检测,由 conditioning 驱动)
+	// ② SAM3 跨帧跟踪
+	//
+	// 首帧没有初始遮罩(本应用没有框选/涂抹 UI),所以**必须**走文本检测:
+	// CheckpointLoaderSimple 的 CLIP 槽(输出 1)就是 SAM3 自己的文本编码器,
+	// 用它把目标名词短语编码成 conditioning 喂给跟踪节点。
+	// 漏掉这一步的后果是硬失败 —— 节点里写着:
+	//   if conditioning ... elif initial_mask is None: raise ValueError("Either initial_mask or conditioning must be provided")
 	g["12"] = nd("CheckpointLoaderSimple", map[string]any{"ckpt_name": sam3Checkpoint})
+	g["17"] = nd("CLIPTextEncode", map[string]any{
+		"clip": link("12", 1),
+		"text": opt.Target,
+	})
 	g["13"] = nd("SAM3_VideoTrack", map[string]any{
 		"images":              link("11", 0),
 		"model":               link("12", 0),
+		"conditioning":        link("17", 0),
 		"detection_threshold": 0.5,
 		"max_objects":         1,
 		"detect_interval":     1,

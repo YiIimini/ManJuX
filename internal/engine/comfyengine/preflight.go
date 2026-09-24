@@ -168,6 +168,64 @@ func (e *Engine) UpscaleAssets(ctx context.Context, opt engine.UpscaleOptions) [
 	return missing
 }
 
+// ---------- 局部重绘链路的体检 ----------
+
+// maskNodes 局部重绘图依赖的节点。前两个来自 ComfyUI 内置(nodes_sam3),后两个
+// 来自自定义包 MaskVidExperiments —— 用户装了 ComfyUI 但没装那个包时,症状同样是
+// "点到一半才失败",所以一并前置体检。
+var maskNodes = []struct {
+	class     string
+	label     string
+	builtinIn bool
+}{
+	{"SAM3_VideoTrack", "SAM3 视频跟踪", true},
+	{"SAM3_TrackToMask", "SAM3 跟踪转遮罩", true},
+	{"MVEx_SubjectCrop", "MaskVidExperiments 按遮罩裁剪", false},
+	{"MVEx_SubjectUncrop", "MaskVidExperiments 回贴原画面", false},
+}
+
+// MaskAssets 局部重绘的**节点 + 权重**体检,返回缺失清单(空=齐备)。
+//
+// 为什么单独一条(2026-09-24 审计):这条链路此前既不在 Preflight 的节点体检里,
+// 也没有权重体检 —— 缺 SAM3 checkpoint 或缺 MaskVidExperiments 时,用户点「局部重绘」
+// 只会看到 ComfyUI 抛出的 CheckpointLoaderSimple / 未知节点原始报文。而它恰恰是
+// 最需要"事前说清"的功能:一次要上传源视频、跑十几分钟。
+//
+// 引擎不可达时返回空:与 Preflight/UpscaleAssets 同一条原则 —— 连不上不等于资产缺失。
+func (e *Engine) MaskAssets(ctx context.Context) []string {
+	if !e.client().Alive(ctx) {
+		return nil
+	}
+	var missing []string
+	for _, n := range maskNodes {
+		if !e.client().HasNode(ctx, n.class) {
+			src := "ComfyUI 内置(请升级 ComfyUI)"
+			if !n.builtinIn {
+				src = "自定义包 MaskVidExperiments(请把该包放进 custom_nodes/ 后重启 ComfyUI)"
+			}
+			missing = append(missing, fmt.Sprintf("%s:缺少节点 %s —— 它来自 %s", n.label, n.class, src))
+		}
+	}
+	// 权重:以 ComfyUI 自己给出的可选值为准(不要在本地 os.Stat 猜路径)
+	if list, ok := e.client().ComboList(ctx, "CheckpointLoaderSimple", "ckpt_name"); !ok {
+		missing = append(missing, "读不到 CheckpointLoaderSimple 的可选值(节点缺失或输入已改名),无法确认 SAM3 权重")
+	} else {
+		found := false
+		for _, v := range list {
+			if v == sam3Checkpoint {
+				found = true
+				break
+			}
+		}
+		if !found {
+			missing = append(missing, fmt.Sprintf(
+				"SAM3 跟踪权重「%s」不在 ComfyUI 的模型目录里:请把该文件放进 models/checkpoints/(放好后不必重启)",
+				sam3Checkpoint))
+		}
+	}
+	return missing
+}
+
 // ---------- 已知冲突插件检测 ----------
 
 // knownConflictingPacks 已知会破坏 ManJuX 渲染的插件包(目录名片段 + 机制说明)。

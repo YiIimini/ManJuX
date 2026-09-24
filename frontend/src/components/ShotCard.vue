@@ -14,22 +14,48 @@ const idx = computed(() => (props.shot?.id ?? 1) - 1)
 const enhanceBusy = ref(false)
 
 // 局部重绘:用 SAM3 跟踪目标,只重生成该区域,其余画面逐帧保留(省一个数量级成本)
+//
+// **必须问用户"要重绘什么"**(2026-09-24 审计):SAM3 是开放词表跟踪器,不告诉它找什么
+// 节点就直接 raise ValueError —— 这张图从建立起两个必需输入一个都没传,于是"局部重绘"
+// 一直是个有按钮、必然失败的死功能。现在目标由用户给(英文名词短语,SAM3 的词表是英文)。
 async function maskFix() {
   const mf = props.manifestItem
   if (!mf || mf.status !== 'done') { ElMessage.info('镜头尚未渲染完成'); return }
+  const guess = shotCharHint()
+  let target
   try {
-    await ElMessageBox.confirm(
-      `对镜头 ${props.shot.id} 做局部重绘?\n\n将用 SAM3 跟踪画面中的目标,只重新生成该区域,其余画面逐帧保留。` +
+    const r = await ElMessageBox.prompt(
+      `要重绘画面里的**哪一块**?填英文名词短语(如 the young man / the bronze sparrow / the hands / the lantern)。\n\n` +
+      `SAM3 会跨帧跟踪这个目标,只重新生成它所在的区域,其余画面逐帧保留 —— ` +
       `适合"只有手部/道具/人脸崩坏"的情形。结果作为独立文件产出,原镜头不变。`,
-      '局部重绘', { type: 'info', confirmButtonText: '开始重绘', cancelButtonText: '取消' })
+      `局部重绘 · 镜头 ${props.shot.id}`,
+      { confirmButtonText: '开始重绘', cancelButtonText: '取消', inputValue: guess, inputPlaceholder: 'the young man' })
+    target = (r.value || '').trim()
   } catch { return }
+  if (!target) { ElMessage.warning('未填写要重绘的目标'); return }
   enhanceBusy.value = true
   try {
-    const d = await api.maskFix(pj.value.project.id, props.shot.id)
-    ElMessage.success('局部重绘完成:' + (d.file || ''))
+    const d = await api.maskFix(pj.value.project.id, props.shot.id, target)
+    ElMessage.success(`局部重绘完成(目标:${target}):` + (d.file || ''))
     refreshProject()
   } catch (e) { ElMessage.error('局部重绘失败:' + e.message) }
   enhanceBusy.value = false
+}
+
+// shotCharHint 该镜出场角色的英文提示词里挑一个名词短语当默认值:
+// 角色卡的 image_prompt 是英文,取开头那段身份描述的前几个词即可(SAM3 只认名词短语)。
+// 取不到就给中性默认值,由用户改 —— 不猜具体目标,猜错会把重绘打到错误的区域。
+function shotCharHint() {
+  const chars = (pj.value.project?.plan?.characters) || []
+  const ids = props.shot?.characters || []
+  for (const id of ids) {
+    const c = chars.find(x => x.id === id)
+    if (!c) continue
+    if (c.kind === 'object' || c.kind === 'spirit_pet' || c.kind === 'beast') return c.name || 'the object'
+    const m = (c.image_prompt || '').match(/^(A|An|The)\s+[\w-]+(\s+[\w-]+){0,3}/i)
+    if (m) return m[0].toLowerCase()
+  }
+  return 'the character'
 }
 
 // 音频驱动:给一个配音文件路径,重渲时人物口型与动作节奏会跟随该音频

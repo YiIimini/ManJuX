@@ -113,18 +113,33 @@ func (s *Server) relFile(projectID, abs string) string {
 }
 
 // handleShotMaskFix POST /api/projects/{id}/shot/{shotID}/mask-fix
-// body { prompt?, object_index? } —— 局部重绘:只重生成跟踪到的目标区域。
+// body { prompt?, target, object_index? } —— 局部重绘:只重生成跟踪到的目标区域。
+//
+// target 是**必填**的英文名词短语(SAM3 是开放词表跟踪器,不给目标它就无法判断
+// 该重绘哪一块;引擎侧同样会拦)。缺它时这里就返回 400 并说清楚要填什么,
+// 不要让请求跑到 ComfyUI 才抛原始报文。
 func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Prompt      string `json:"prompt"`
+		Target      string `json:"target"`
 		ObjectIndex string `json:"object_index"`
 	}
 	if err := readBody(r, &in); err != nil {
 		writeErr(w, 400, err)
 		return
 	}
+	if strings.TrimSpace(in.Target) == "" {
+		writeErr(w, 400, fmt.Errorf("%s", comfyengine.MaskTargetHint))
+		return
+	}
 	ctx, ok := s.prepareShotEnhance(w, r, "maskfix")
 	if !ok {
+		return
+	}
+	// 事前体检:节点(SAM3/MaskVidExperiments)+ 权重(sam3 checkpoint)。这条链路
+	// 要上传源视频、跑十几分钟,缺件必须在点下去之前说清,而不是跑到一半抛原始报文。
+	if miss := ctx.engineCE.MaskAssets(r.Context()); len(miss) > 0 {
+		writeErr(w, 409, fmt.Errorf("局部重绘前置条件不满足:\n- %s", strings.Join(miss, "\n- ")))
 		return
 	}
 	rp := ctx.proj.Config.Params.Render
@@ -140,9 +155,10 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
 
-	s.opLog("✨ 局部重绘:%s 镜 %d 开始", ctx.proj.ID, ctx.shot.ID)
+	s.opLog("✨ 局部重绘:%s 镜 %d 开始(目标:%s)", ctx.proj.ID, ctx.shot.ID, strings.TrimSpace(in.Target))
 	if _, err := ctx.engineCE.MaskFix(r.Context(), ctx.src, comfyengine.MaskOptions{
 		Prompt:      prompt,
+		Target:      strings.TrimSpace(in.Target),
 		ObjectIndex: in.ObjectIndex,
 	}, engine.Job{
 		ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
