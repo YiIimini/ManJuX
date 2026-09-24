@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
@@ -93,6 +94,8 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Request) {
 	var name, desc, prompt, imgPath string
 	uploaded := false
+	// uploadedKind 看图判定的实体类型(空 = 没判出来,退回按名称/描述推断)
+	uploadedKind := ""
 	// wantWhiten 上传图是否白底化(默认**开**:用户 2026-09-24 定调"上传后也走
 	// Qwen-Image-Edit 生成白底角色");显式传 whiten=false 可跳过。
 	wantWhiten := true
@@ -203,10 +206,49 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 			}
 		}
 	}
+	// 上传图自动补「中文描述 + 英文提示词」(用户 2026-09-24:「上传图片直接成角色
+	// 定妆照,没有生成对应的中英文提示词」)。提示词不是装饰 —— 重抽一张、换背景、
+	// 补多视角、渲染锚定都靠它,空着等于这些能力对该条目全都不存在。
+	//
+	// 顺序放在白底化**之后**:描述的是最终入库的那张图(白底、主体居中),而不是
+	// 用户随手拍的那张;用户自己填了描述就保留他的,只补提示词。
+	descNote := ""
+	if uploaded {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+		d, p, via, ek, derr := s.describePortrait(ctx, name, desc, imgPath)
+		cancel()
+		if derr != nil {
+			descNote = "未生成描述与提示词(" + derr.Error() + ")"
+		} else {
+			if strings.TrimSpace(desc) == "" {
+				desc = d
+			}
+			prompt = p
+			// 类型由**看图**判定:调用方随后落库(多视角/渲染都按它走)
+			if ek != "" {
+				uploadedKind = ek
+			}
+			descNote = "描述与提示词已生成(" + map[string]string{"vlm": "看图", "llm": "文本"}[via] + ")"
+		}
+	}
+	if note != "" && descNote != "" {
+		note += ";"
+	}
+	note += descNote
+
 	entry, err := s.lib.Put("characters", name, desc, prompt, imgPath, "", source)
 	if err != nil {
 		writeErr(w, 500, err)
 		return
+	}
+	if uploadedKind != "" {
+		if e2, kerr := s.lib.SetEntityKind("characters", name, uploadedKind); kerr == nil {
+			entry = e2
+			if note != "" {
+				note += ";"
+			}
+			note += "类型判定:" + pipeline.EntityKindLabel(pipeline.EntityKind(uploadedKind))
+		}
 	}
 	s.pipe.ReleaseVRAMIfIdle("自定义新建完成")
 	writeJSON(w, 200, map[string]any{"entry": entry, "note": note})
@@ -391,7 +433,10 @@ func (s *Server) libraryViews(w http.ResponseWriter, r *http.Request) {
 		//     铜雀按人形转身提示词去转(实体类型那轮修的就是这个);
 		//   - 介质由定妆照提示词反推:动画线的定妆照(带 ANIMATED MATTE RENDER 标记)
 		//     必须锁同介质,否则 H3 用自己的默认介质重画成写实版,逐帧校验必然不过。
-		Kind:      pipeline.InferEntityKind(name, e.Description, prompt),
+		// 生效实体类型:① 库里已记的**看图判定** → ② 现判一次(有 VLM 时)并落库
+		// → ③ 按名称/描述推断。用户报的正是缺①②时的后果:上传一张器物图,名字
+		// 像人名,于是按"人"去做原地转身 —— 器物本该转台自转。
+		Kind:      s.resolveEntityKind(r.Context(), kind, name, e, prompt),
 		Realistic: pipeline.RealisticForPrompt(prompt),
 		Steps:     steps,
 		Verify:    pipeline.TurnaroundVerifier(g.VLM),
@@ -437,33 +482,32 @@ func (s *Server) librarySetMeta(w http.ResponseWriter, r *http.Request) {
 // libraryDescribe AI 生成中文描述与英文提示词:优先用视觉模型**看图**写
 // (VLM 配置在设置页,智谱 glm-4.6v-flash 免费),VLM 不可用/失败时退回文本模型
 // 依名字与现有描述扩写。结果直接落库并回传,前端可再编辑后保存。
-func (s *Server) libraryDescribe(w http.ResponseWriter, r *http.Request) {
-	if s.lib == nil {
-		writeErr(w, 500, fmt.Errorf("资产库未启用"))
-		return
-	}
-	kind, name := r.PathValue("kind"), r.PathValue("name")
-	e, master, ok := s.lib.Match(kind, name)
-	if !ok {
-		writeErr(w, 404, fmt.Errorf("库资产不存在"))
-		return
-	}
+// describePortrait 让模型看图写「中文描述 + 英文提示词」(VLM 看图优先,文本模型兜底)。
+// 返回 (描述, 提示词, 走哪条路, 错误);**纯逻辑,不落盘** —— 调用方决定写回哪里。
+//
+// 抽出来的原因(用户 2026-09-24:「上传图片直接成定妆照,没有生成对应的中英文提示词」):
+// 这段逻辑原先只长在「重新生成描述」这个**手动按钮**后面,于是上传入库的条目
+// 描述与提示词都是空的 —— 而提示词正是后续"重抽一张""换背景""补多视角"的依据,
+// 空着等于这些能力对该条目全都不存在。现在上传时也用同一条逻辑自动补。
+func (s *Server) describePortrait(ctx context.Context, name, desc, imgPath string) (string, string, string, string, error) {
 	g := s.cfg.Get()
-	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
-	defer cancel()
-
 	var card struct {
 		Description string `json:"description"`
 		ImagePrompt string `json:"image_prompt"`
+		// EntityKind 由**看图**判定(用户 2026-09-24:「多角度图没有判断上传图是人
+		// 还是其他的」)。搭在同一次视觉调用里问,不额外花钱;文本兜底也会给一个
+		// 猜测值,但只有 VLM 看的才算数(见返回值的 via)。
+		EntityKind string `json:"entity_kind"`
 	}
 	via := ""
-
 	// ① 视觉模型看图(最准:描述的是这张图里的角色,而不是名字听起来的样子)
 	vlm := llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 180)
-	if vlm.Configured() {
-		if dataURL, err := s.imageDataURL(ctx, master); err == nil {
+	if vlm.Configured() && strings.TrimSpace(imgPath) != "" {
+		if dataURL, err := s.imageDataURL(ctx, imgPath); err == nil {
 			const sys = `你是角色设定师。看参考图,输出严格 JSON(无 markdown 包裹):` +
-				`{"description":"中文外貌/服装/气质描述,80-120字,具体可画,包含发型发色","image_prompt":"英文文生图提示词,半身定妆照(面部特征+发型+服装+气质+光线),120词内"}`
+				`{"description":"中文外貌/服装/气质描述,80-120字,具体可画,包含发型发色",` +
+				`"image_prompt":"英文文生图提示词,半身定妆照(面部特征+发型+服装+气质+光线),120词内",` +
+				`"entity_kind":"这张图里的主体属于哪一类:human(人)/object(器物·机关·傀儡·雕像·灯笼这类非生命体)/spirit_pet(小型灵物·宠物)/beast(大型或凶猛的非人生物)/incorporeal(鬼魂·灵体·无形体)/chibi(Q版大头身)。只填这一个英文键值。"}`
 			out, err := vlm.ChatVision(ctx, sys, []llm.VisionContent{
 				{Role: "user", Text: "角色名:" + name + "。请据此图输出设定。", Images: []string{dataURL}},
 			}, true)
@@ -480,28 +524,65 @@ func (s *Server) libraryDescribe(w http.ResponseWriter, r *http.Request) {
 	if via == "" {
 		client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, 180)
 		if !client.Configured() {
-			writeErr(w, 400, fmt.Errorf("需要配置 LLM(或 VLM)才能自动生成描述与提示词"))
-			return
+			return "", "", "", "", fmt.Errorf("需要配置 LLM(或 VLM)才能自动生成描述与提示词")
 		}
 		out, err := client.Chat(ctx, []llm.Message{
 			{Role: "system", Content: "你是角色设定师。输出严格 JSON(无 markdown 包裹):" +
-				`{"description":"中文外貌/服装/气质描述,80-120字","image_prompt":"英文文生图提示词,半身定妆照(面部+发型+服装+光线),120词内"}`},
-			{Role: "user", Content: "角色名:" + name + "\n现有描述(可为空,可扩写):" + e.Description},
+				`{"description":"中文外貌/服装/气质描述,80-120字","image_prompt":"英文文生图提示词,半身定妆照(面部+发型+服装+光线),120词内","entity_kind":"human/object/spirit_pet/beast/incorporeal/chibi 之一"}`},
+			{Role: "user", Content: "角色名:" + name + "\n现有描述(可为空,可扩写):" + desc},
 		}, true)
 		if err != nil {
-			writeErr(w, 500, fmt.Errorf("生成失败:%w", err))
-			return
+			return "", "", "", "", fmt.Errorf("生成失败:%w", err)
 		}
 		if err := json.Unmarshal([]byte(trimJSON(out)), &card); err != nil || card.ImagePrompt == "" {
-			writeErr(w, 500, fmt.Errorf("生成结果解析失败(模型返回异常)"))
-			return
+			return "", "", "", "", fmt.Errorf("生成结果解析失败(模型返回异常)")
 		}
 		via = "llm"
 	}
+	if strings.TrimSpace(card.Description) == "" {
+		card.Description = desc
+	}
+	// 归一化 + 校验:模型可能回 "object(器物·机关)" 这类带解释的串,或回一个
+	// 不存在的类型 —— 认不出就不记(调用方退回文本推断),不硬塞一个错类型。
+	ek := ""
+	if k := pipeline.NormalizeEntityKind(card.EntityKind); k != "" {
+		ek = string(k)
+	}
+	return card.Description, card.ImagePrompt, via, ek, nil
+}
+
+func (s *Server) libraryDescribe(w http.ResponseWriter, r *http.Request) {
+	if s.lib == nil {
+		writeErr(w, 500, fmt.Errorf("资产库未启用"))
+		return
+	}
+	kind, name := r.PathValue("kind"), r.PathValue("name")
+	e, master, ok := s.lib.Match(kind, name)
+	if !ok {
+		writeErr(w, 404, fmt.Errorf("库资产不存在"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
+	defer cancel()
+	d, p, via, ek, derr := s.describePortrait(ctx, name, e.Description, master)
+	if derr != nil {
+		writeErr(w, 400, derr)
+		return
+	}
+	card := struct {
+		Description string `json:"description"`
+		ImagePrompt string `json:"image_prompt"`
+	}{d, p}
 	updated, err := s.lib.SetMeta(kind, name, card.Description, card.ImagePrompt)
 	if err != nil {
 		writeErr(w, 500, err)
 		return
+	}
+	// 手动"重新生成描述"同样带类型判定(看图更准),判出来就落库
+	if ek != "" {
+		if e2, kerr := s.lib.SetEntityKind(kind, name, ek); kerr == nil {
+			updated = e2
+		}
 	}
 	s.opLog("🪄 库资产「%s」描述与提示词已生成(%s)", name, map[string]string{"vlm": "视觉模型看图", "llm": "文本模型"}[via])
 	writeJSON(w, 200, map[string]any{"entry": updated, "via": via})
@@ -559,4 +640,57 @@ func trimJSON(s string) string {
 		s = s[:j+1]
 	}
 	return s
+}
+
+// resolveEntityKind 库条目的**生效实体类型**:看图判定优先,文本推断兜底。
+//
+// 为什么不能只看名字/描述(用户 2026-09-24:「多角度图没有判断上传的图片是人还是
+// 其他的」):上传图的描述可能是空的,名字又常常像人名 —— 文本推断会把一张铜雀判成
+// "人",于是多视角走原地转身(器物本该转台自转),渲染的身份锁也用错条款。
+//
+// 只在**需要时**判一次(有 VLM、且库里没记过),判出来就落库:后续补多视角/重抽
+// 直接用,不会每次都花钱,也不会同一张图两次判出不同类型。
+func (s *Server) resolveEntityKind(ctx context.Context, category, name string, e *library.Entry, prompt string) pipeline.EntityKind {
+	if e != nil && strings.TrimSpace(e.EntityKind) != "" {
+		if k := pipeline.NormalizeEntityKind(e.EntityKind); k != "" {
+			return k
+		}
+	}
+	// 文本推断先算一份,作为"判不出来"时的兜底
+	fallback := pipeline.InferEntityKind(name, e.Description, prompt)
+	g := s.cfg.Get()
+	vlm := llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 120)
+	if !vlm.Configured() || s.lib == nil {
+		return fallback
+	}
+	_, master, ok := s.lib.Match(category, name)
+	if !ok {
+		return fallback
+	}
+	cctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+	defer cancel()
+	dataURL, err := s.imageDataURL(cctx, master)
+	if err != nil {
+		return fallback
+	}
+	const sys = `看参考图,只回答一个英文键值(不要 JSON、不要解释):` +
+		`human | object | spirit_pet | beast | incorporeal | chibi。` +
+		`判据是这张图里的主体**事实上是什么**,不是它有没有名字、会不会说话:` +
+		`器物/机关/傀儡/雕像/灯笼 → object;小型灵物宠物 → spirit_pet;` +
+		`大型或凶猛的非人生物 → beast;鬼魂/灵体/无形体 → incorporeal;Q版大头身 → chibi。`
+	out, cerr := vlm.ChatVision(cctx, sys, []llm.VisionContent{
+		{Role: "user", Text: "这是角色「" + name + "」的参考图。它属于哪一类?", Images: []string{dataURL}},
+	}, false)
+	if cerr != nil {
+		s.opLog("⚠ 类型判定(看图)失败,按描述推断:%v", cerr)
+		return fallback
+	}
+	k := pipeline.NormalizeEntityKind(out)
+	if k == "" {
+		return fallback
+	}
+	if _, err := s.lib.SetEntityKind(category, name, string(k)); err == nil {
+		s.opLog("🏷 库资产「%s」类型由看图判定为:%s", name, pipeline.EntityKindLabel(k))
+	}
+	return k
 }

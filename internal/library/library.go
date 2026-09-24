@@ -33,12 +33,17 @@ type Entry struct {
 	// (机关人 / 阿枢(一三七四一号) / 机关人(一三七四一)),按名字精确匹配就会为
 	// "同一个角色"反复生成定妆照(2026-09-12 用户报「相同角色无中生有多产生出定妆照」,
 	// 名称一致与不一致都有)。首次命中后把新叫法记在这里,之后按名秒级复用。
-	Aliases       []string  `json:"aliases,omitempty"`
-	Fingerprint   string    `json:"fingerprint"`    // 内容指纹
-	SourceProject string    `json:"source_project"` // 首次入库项目
-	Source        string    `json:"source"`         // krea2 / upload
-	CreatedAt     time.Time `json:"created_at"`
-	UsedCount     int       `json:"used_count"` // 复用计数
+	Aliases       []string `json:"aliases,omitempty"`
+	Fingerprint   string   `json:"fingerprint"`    // 内容指纹
+	SourceProject string   `json:"source_project"` // 首次入库项目
+	Source        string   `json:"source"`         // krea2 / upload / ...
+	// EntityKind **生效实体类型**(human/object/spirit_pet/beast/incorporeal/chibi)。
+	// 上传图由视觉模型**看图**判定后记在这里 —— 不能拿名字猜:用户上传一张铜雀,
+	// 名字叫「阿凿」,按文本推断会当成"人"去做原地转身,而器物该走转台自转。
+	// 为空时调用方退回按名称/描述推断(存量条目)。
+	EntityKind string    `json:"entity_kind,omitempty"`
+	CreatedAt  time.Time `json:"created_at"`
+	UsedCount  int       `json:"used_count"` // 复用计数
 }
 
 // normName 名字归一化:去掉空格/常见标点/「的」,并把「一三七四一号」这类序号尾
@@ -417,6 +422,41 @@ func (l *Library) SetMeta(kind, name, description, imagePrompt string) (*Entry, 
 	if strings.TrimSpace(imagePrompt) != "" {
 		e.ImagePrompt = strings.TrimSpace(imagePrompt)
 	}
+	out, _ := json.MarshalIndent(&e, "", "  ")
+	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
+		return nil, err
+	}
+	return &e, nil
+}
+
+// SetEntityKind 记下**看图判定的生效实体类型**(空值忽略,不覆盖已有判断)。
+//
+// 为什么要落库而不是每次现判:类型决定整套渲染方法(定妆照取景/多视角方式/
+// 镜头身份锁),而判定要走一次视觉模型。判一次记下来,后续"补全多视角""重抽"
+// 直接用,既省钱也稳定(同一张图每次判出不同类型才是灾难)。
+func (l *Library) SetEntityKind(kind, name, ek string) (*Entry, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if strings.TrimSpace(ek) == "" {
+		// 空值忽略:不覆盖已有判断(调用方判不出来时不该把已知类型抹掉)
+		if e, _, ok := l.Match(kind, name); ok {
+			return e, nil
+		}
+		return nil, fmt.Errorf("库资产不存在")
+	}
+	dir, err := l.entryDir(kind, name)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "asset.json"))
+	if err != nil {
+		return nil, fmt.Errorf("库资产不存在")
+	}
+	var e Entry
+	if err := json.Unmarshal(raw, &e); err != nil {
+		return nil, err
+	}
+	e.EntityKind = strings.TrimSpace(ek)
 	out, _ := json.MarshalIndent(&e, "", "  ")
 	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
 		return nil, err

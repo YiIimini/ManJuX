@@ -50,7 +50,9 @@ func TestUploadWhitenDegradesGracefully(t *testing.T) {
 		t.Errorf("白底化未完成时来源应仍是 upload,实际 %q", src)
 	}
 
-	// 显式 whiten=false:不该产生任何 note(用户自己选的原图)
+	// 显式 whiten=false:跳过白底化,但**仍要如实说清提示词情况** ——
+	// 测试环境没配 LLM,所以这里应当报"未生成描述与提示词",而不是假装做过了,
+	// 也不该出现白底化相关的降级文案。
 	body2 := map[string]any{
 		"name": "白底化跳过测试", "image_path": img, "whiten": false,
 	}
@@ -58,8 +60,12 @@ func TestUploadWhitenDegradesGracefully(t *testing.T) {
 	if code2 != 200 {
 		t.Fatalf("跳过白底化应成功,实际 %d %v", code2, out2)
 	}
-	if n2, _ := out2["note"].(string); n2 != "" {
-		t.Errorf("显式跳过时不该有 note,实际 %q", n2)
+	n2, _ := out2["note"].(string)
+	if strings.Contains(n2, "白底化未完成") {
+		t.Errorf("显式跳过白底化时不该报白底化降级,实际 %q", n2)
+	}
+	if !strings.Contains(n2, "未生成描述与提示词") {
+		t.Errorf("没配 LLM 时应如实说明提示词未生成(用户报的正是「没有生成中英文提示词」),实际 %q", n2)
 	}
 }
 
