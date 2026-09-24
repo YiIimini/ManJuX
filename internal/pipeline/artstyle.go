@@ -35,6 +35,16 @@ import "strings"
 // (RealisticForPrompt)—— 没有项目上下文的调用方(资产库「补全多视角」)只能这么判断。
 const MediumMarker = "ANIMATED MATTE RENDER"
 
+// RenderMediumMarker **渲染侧**介质块的唯一标记串。
+//
+// 为什么和 MediumMarker 分开:两块内容不可互换(image 块是纯正面描述、一个否定词都
+// 不许有;render 块才允许写 NEGATIVE),标记串也必须分开 —— 否则"这张定妆照是不是
+// 动画线"会被渲染侧的标记误判成真。两侧的标记都由测试钉住(mediumMarker 一致性)。
+//
+// 它的第二个用途是闸门:所有"会出像素"的路径(主渲染/单镜2K/成片2K/局部重绘/音频驱动)
+// 的提示词都必须含它 —— 成片 2K 曾用一句裸字面量绕过全部约束(见 final2k.go 的说明)。
+const RenderMediumMarker = "MATTE ANIMATED LOOK"
+
 // animatedMediumImageBlock Krea-2 侧的**通用介质块**(不含任何身体部位词)。
 //
 // 只能用"它是什么"来描述:手绘线稿 + 赛璐璐平涂 + 宽而软的平涂阴影 + 哑光暗哑质感 +
@@ -63,7 +73,7 @@ func animatedFaceImageBlock() string {
 // 通用排除句里保留"真人照片脸/演员/影射真实人物"三条 —— 它们对任何实体都成立
 // (一件器物也不该长着一张明星脸)。皮肤专属的排除项(油光/汗湿高光)放在人类条款里。
 func animatedMediumRenderBlock() string {
-	return "\n\nMATTE ANIMATED LOOK (mandatory, applies to every frame of this video):\n" +
+	return "\n\n" + RenderMediumMarker + " (mandatory, applies to every frame of this video):\n" +
 		"- The whole video is stylized 2D/2.5D animation (donghua): hand-drawn line art, flat cel-shaded colour with wide soft shadow shapes.\n" +
 		"- Every surface reads MATTE: flat even shading, with each highlight staying dull, wide and low in contrast.\n" +
 		"- Everything stays dry and powdery throughout: the finish remains dull and even.\n" +

@@ -55,6 +55,11 @@ func newTestServer(t *testing.T) *Server {
 }
 
 // doReq 发一个请求并解析响应体为 map(空体返回 nil)。
+//
+// Host 必须显式设成回环地址:httptest.NewRequest 默认给的是 example.com,
+// 而生产装配上套了来源守卫(guardAPI,审计 P0-10)—— 用默认 Host 会被 403,
+// 于是"守卫不在"这件事反而看不出来。显式设回环 Host 本身就是守卫生效的反向证据:
+// 谁把守卫摘掉,就会有专门的用例(TestAPIGuard*)变红。
 func doReq(t *testing.T, s *Server, method, path string, body any) (int, map[string]any) {
 	t.Helper()
 	var rdr io.Reader
@@ -66,6 +71,7 @@ func doReq(t *testing.T, s *Server, method, path string, body any) (int, map[str
 		rdr = bytes.NewReader(b)
 	}
 	req := httptest.NewRequest(method, path, rdr)
+	req.Host = "127.0.0.1:8790"
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

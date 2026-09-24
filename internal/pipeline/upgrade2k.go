@@ -101,7 +101,25 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		base = filepath.Join(c.store.Dir(projectID), "output", "final.mp4")
 		out = filepath.Join(c.store.Dir(projectID), "output", "final_2k.mp4")
 		label = "成片"
-		prompt = "Upscale and refine this video to 2K resolution with In-context Regeneration; keep all subjects, motion, timing, dialogue and audio identical; enhance textures, skin detail and micro-structures."
+		// 成片 2K 与其余四条出像素路径**共用同一套介质锁与身份锚定**:
+		// 旧实现这里是一句裸字面量提示词(enhance textures, skin detail and
+		// micro-structures),refs 也只声明不赋值 —— 一整部哑光动画会被按写实皮肤
+		// 先验重画一遍,是"付费把片子改坏"的典型(审计 P0-7)。
+		var projPtr *project.Project
+		if p, ok := c.store.Get(projectID); ok {
+			projPtr = p
+		}
+		var planPtr *project.Plan
+		if pl, err := c.store.LoadPlan(projectID); err == nil {
+			planPtr = pl
+		}
+		prompt = final2KPrompt(projPtr, planPtr)
+		assets, _ := c.store.LoadAssets(projectID)
+		refs = final2KRefs(c.store.Dir(projectID), planPtr, assets)
+		if len(refs) > 0 {
+			c.emit(projectID, "pipeline", shotID, "info", 3,
+				"成片 2K:已带上 %d 个主要角色的定妆照作身份锚定", len(refs))
+		}
 	}
 
 	if _, err := os.Stat(base); err != nil {

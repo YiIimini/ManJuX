@@ -112,14 +112,23 @@ type Asset struct {
 
 // ClipManifest 镜头产物清单(断点续跑与时效管理)。
 type ClipManifest struct {
-	ShotID    int        `json:"shot_id"`
-	Status    ShotStatus `json:"status"`
-	Engine    string     `json:"engine"`   // comfy / api
-	File      string     `json:"file"`     // 相对项目目录
-	InputFP   string     `json:"input_fp"` // 渲染输入指纹(提示词+资产+参数)
-	TaskID    string     `json:"task_id"`  // 云端任务 id(如有)
-	Error     string     `json:"error"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ShotID  int        `json:"shot_id"`
+	Status  ShotStatus `json:"status"`
+	Engine  string     `json:"engine"`   // comfy / api
+	File    string     `json:"file"`     // 相对项目目录
+	InputFP string     `json:"input_fp"` // 渲染输入指纹(提示词+资产+参数)
+	// Length 本镜产物**实际渲出的帧数**(= duration × 24)。
+	//
+	// 为什么不并进 InputFP(2026-09-24 审计 P0-8):指纹串是老项目断点续跑的判据,
+	// 往里加字段会让**存量项目全部重渲**。而"改了时长却没重渲"是真实故障:用户把
+	// 4 秒改成 6 秒(为了装下被截断的台词),指纹不变 → 走跳过分支 → 旧片原样留着,
+	// 界面还报成功。所以单独一个字段,跳过条件追加 `m.Length == shot.Duration*24`;
+	// 老 manifest 里没有这个键 → Length=0 → 与任何非零时长都不等 → 正确地重渲一次
+	// (改过时长的镜头本来就该重渲),此后就稳定了。
+	Length    int       `json:"length,omitempty"`
+	TaskID    string    `json:"task_id"` // 云端任务 id(如有)
+	Error     string    `json:"error"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ProjectConfig 项目级配置(创建时从全局默认拷贝,之后独立调优)。

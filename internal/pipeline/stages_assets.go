@@ -349,7 +349,7 @@ func copyAssetRelated(related []string, destDir, destBase string) int {
 // 成本:每个角色一次单镜渲染(数分钟 H3 Ref2V),因此只对**本次真要渲的 ref2va
 // 镜头里出现、且确实没有转台图**的角色做;补完立刻写回资产库,后续项目复用即连
 // 角度图一起带走 —— 同一个角色全局只付一次这个成本。
-func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Project, plan *project.Plan, assets map[string]project.Asset) {
+func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Project, plan *project.Plan, assets map[string]project.Asset, need *assetNeed) {
 	ap := proj.Config.Params.Assets
 	if !ap.ViewsOn() || ap.Source == "skip" {
 		return
@@ -366,6 +366,10 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 			continue
 		}
 		for _, cid := range s.Characters {
+			// 范围:单镜重渲时只补这一镜的角色多视角(见 asset_scope.go,审计 P0-9)
+			if !need.wantsChar(cid) {
+				continue
+			}
 			if seen[cid] {
 				continue
 			}
@@ -464,7 +468,7 @@ func nameSeed(kind, name string) int64 {
 // 写实真人(2026-09-11 实证:同一本书木偶系角色因自带"wooden android"
 // 描述正常,人类系全部照片质感)。按关键词展开确定性英文渲染词汇追加;
 // 中文原风格保留(跨集一致性锚),真人剧关键词放行写实(合法风格)。
-func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project, plan *project.Plan, assets map[string]project.Asset) bool {
+func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project, plan *project.Plan, assets map[string]project.Asset, need *assetNeed) bool {
 	if proj.Config.Params.Assets.Source == "skip" {
 		return true
 	}
@@ -488,9 +492,17 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		list = append(list, miss{kind, id, name, desc, prompt, ek})
 	}
 	for _, ch := range plan.Characters {
+		// 范围:单镜重渲时只补这一镜会用到的角色(否则会顺手生成全片资产,
+		// 见 asset_scope.go 的说明 —— 审计 P0-9)。
+		if !need.wantsChar(ch.ID) {
+			continue
+		}
 		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
+		if !need.wantsScene(sc.ID) {
+			continue
+		}
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt, "")
 	}
 	if len(list) == 0 {

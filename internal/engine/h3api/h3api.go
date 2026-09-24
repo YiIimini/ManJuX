@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,10 +29,96 @@ const defaultAPITimeout = 20 * time.Minute
 // Engine 云端 H3 引擎。
 type Engine struct {
 	cfg func() config.MiniMaxSettings
+	// pollEvery 轮询间隔;0 = 官方建议的 10s。测试把它调小,免得一条断言等 10 秒。
+	pollEvery time.Duration
 }
 
 // New 创建引擎。
 func New(cfg func() config.MiniMaxSettings) *Engine { return &Engine{cfg: cfg} }
+
+// apiError 云端 HTTP 错误(可判别)。
+//
+// 为什么需要一个类型(2026-09-24 审计 P0-6):轮询原先对**任何**非 200 都 `continue`
+// ("网络抖动容忍"),401/403 也照吞 —— 一个无效 Key 会白等 20 分钟才以"超时"收场,
+// 而管线拿这个哨兵判定"显存挤压"、**再跑一轮**,于是重新 create 一个云端任务:
+// 一次鉴权失败 = 两个计费任务 + 约 40 分钟。
+type apiError struct {
+	Status int
+	Msg    string
+}
+
+func (e *apiError) Error() string {
+	return fmt.Sprintf("HTTP %d: %s", e.Status, e.Msg)
+}
+
+// fatal 是否属于"重试也没用"的错误(鉴权/参数/模型名):必须立刻失败。
+func (e *apiError) fatal() bool {
+	switch e.Status {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest, http.StatusNotFound:
+		return true
+	}
+	return false
+}
+
+// awaitTask 提交之后的**统一等待逻辑**:轮询 → 成败判定,返回成片 url。
+// Render 与 Regenerate2K 共用(两处曾各自踩同一组坑,见 apiError 的说明)。
+func (e *Engine) awaitTask(ctx context.Context, c config.MiniMaxSettings, taskID string, timeout time.Duration, onProgress func(pct int, note string)) (string, error) {
+	if timeout <= 0 {
+		timeout = defaultAPITimeout
+	}
+	poll := e.pollEvery
+	if poll <= 0 {
+		poll = 10 * time.Second
+	}
+	// 到点立刻返回,不必等下一次 tick:旧实现只在 tick 之后检查 deadline,
+	// 超时最多晚 10 秒才被发现(测试里更明显)。
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	tick := time.NewTicker(poll)
+	defer tick.Stop()
+
+	consecutive := 0
+	for {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timer.C:
+			return "", fmt.Errorf("%w(云端任务 %s 超过 %v;已请求取消,避免空跑计费)", engine.ErrRenderTimeout, taskID, timeout)
+		case <-tick.C:
+		}
+		st, url, err := e.query(ctx, c, taskID)
+		if err != nil {
+			var ae *apiError
+			if errors.As(err, &ae) && ae.fatal() {
+				// 鉴权/参数类错误**不包装**成 ErrRenderTimeout:管线据此判断"要不要
+				// 释放显存重试一轮",把 401 报成超时会直接导致第二个计费任务。
+				return "", fmt.Errorf("云端拒绝请求(%w):请检查 MiniMax API Key、模型名与账号额度", ae)
+			}
+			consecutive++
+			if consecutive >= 3 {
+				return "", fmt.Errorf("云端查询连续失败 %d 次(任务 %s):%w", consecutive, taskID, err)
+			}
+			if onProgress != nil {
+				onProgress(40, fmt.Sprintf("云端查询失败(%d/3),继续重试:%v", consecutive, err))
+			}
+			continue
+		}
+		consecutive = 0
+		switch st {
+		case "succeed", "succeeded", "success":
+			if url == "" {
+				return "", fmt.Errorf("任务成功但缺少成片 url: %s", taskID)
+			}
+			return url, nil
+		case "failed", "cancelled":
+			return "", fmt.Errorf("云端任务失败(%s): %s", st, taskID)
+		default: // queued / running / processing
+			if onProgress != nil {
+				onProgress(40, "云端生成中("+st+")")
+			}
+		}
+	}
+}
 
 // Name 引擎名。
 func (e *Engine) Name() string { return "api" }
@@ -112,61 +199,39 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	if job.OnProgress != nil {
 		job.OnProgress(3, "云端任务已提交 "+taskID)
 	}
+	// 提交之后**任何**一条退出路径都必须让远端停下来:否则超时/下载失败时云端
+	// 继续跑并计费(旧实现只在 ctx.Done() 分支取消,与 docs/架构.md 宣称的
+	// "取消防空跑计费"相反 —— 审计 P0-6)。
+	settled := false
+	defer func() {
+		if !settled {
+			e.cancel(c, taskID)
+		}
+	}()
 
-	// 轮询(官方建议 10s 间隔;上限由作业超时决定,未指定时 defaultAPITimeout)
-	timeout := job.Timeout
-	if timeout <= 0 {
-		timeout = defaultAPITimeout
+	url, err := e.awaitTask(ctx, c, taskID, job.Timeout, job.OnProgress)
+	if err != nil {
+		return nil, err
 	}
-	deadline := time.Now().Add(timeout)
-	tick := time.NewTicker(10 * time.Second)
-	defer tick.Stop()
-	for {
+	if job.OnProgress != nil {
+		job.OnProgress(90, "下载成片")
+	}
+	var dlErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		if dlErr = download(ctx, url, final); dlErr == nil {
+			break
+		}
 		select {
 		case <-ctx.Done():
-			// 尽力取消云端任务,避免空跑计费
-			go e.cancel(c, taskID)
 			return nil, ctx.Err()
-		case <-tick.C:
-		}
-		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("%w(云端任务 %s 超过 %v)", engine.ErrRenderTimeout, taskID, timeout)
-		}
-		st, url, err := e.query(ctx, c, taskID)
-		if err != nil {
-			continue // 网络抖动容忍
-		}
-		switch st {
-		case "succeed", "succeeded", "success":
-			if url == "" {
-				return nil, fmt.Errorf("任务成功但缺少成片 url: %s", taskID)
-			}
-			if job.OnProgress != nil {
-				job.OnProgress(90, "下载成片")
-			}
-			var dlErr error
-			for attempt := 0; attempt < 2; attempt++ {
-				if dlErr = download(ctx, url, final); dlErr == nil {
-					break
-				}
-				select {
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				case <-time.After(3 * time.Second):
-				}
-			}
-			if dlErr != nil {
-				return nil, fmt.Errorf("下载成片失败(已重试): %w", dlErr)
-			}
-			return &engine.Result{VideoPath: final, TaskID: taskID, Engine: e.Name()}, nil
-		case "failed", "cancelled":
-			return nil, fmt.Errorf("云端任务失败(%s): %s", st, taskID)
-		default: // queued / running / processing
-			if job.OnProgress != nil {
-				job.OnProgress(40, "云端生成中("+st+")")
-			}
+		case <-time.After(3 * time.Second):
 		}
 	}
+	if dlErr != nil {
+		return nil, fmt.Errorf("下载成片失败(已重试): %w", dlErr)
+	}
+	settled = true // 成片已落到本地,远端任务无需再取消
+	return &engine.Result{VideoPath: final, TaskID: taskID, Engine: e.Name()}, nil
 }
 
 func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[string]any) (string, error) {
@@ -185,7 +250,7 @@ func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("提交失败 HTTP %d: %s", resp.StatusCode, textutil.Truncate(string(out), 400))
+		return "", &apiError{Status: resp.StatusCode, Msg: textutil.Truncate(string(out), 400)}
 	}
 	var r struct {
 		TaskID   string `json:"task_id"`
@@ -220,7 +285,7 @@ func (e *Engine) query(ctx context.Context, c config.MiniMaxSettings, taskID str
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return "", "", fmt.Errorf("查询失败 HTTP %d", resp.StatusCode)
+		return "", "", &apiError{Status: resp.StatusCode, Msg: textutil.Truncate(string(out), 300)}
 	}
 	var r struct {
 		Task struct {

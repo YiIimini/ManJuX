@@ -66,46 +66,29 @@ func (e *Engine) Regenerate2K(ctx context.Context, baseVideo string, prompt stri
 	if onProgress != nil {
 		onProgress(5, "2K 再生任务已提交 "+taskID)
 	}
+	// 与 Render 同一条纪律:提交之后任何非成功路径都要取消远端任务,避免空跑计费。
+	settled := false
+	defer func() {
+		if !settled {
+			e.cancel(c, taskID)
+		}
+	}()
 
-	// 轮询
-	deadline := time.Now().Add(30 * time.Minute)
-	for {
-		select {
-		case <-ctx.Done():
-			go e.cancel(c, taskID)
-			return "", ctx.Err()
-		case <-time.After(10 * time.Second):
-		}
-		if time.Now().After(deadline) {
-			return "", fmt.Errorf("2K 再生超时(30 分钟): %s", taskID)
-		}
-		st, url, err := e.query(ctx, c, taskID)
-		if err != nil {
-			continue
-		}
-		switch st {
-		case "succeed", "succeeded", "success":
-			if url == "" {
-				return "", fmt.Errorf("任务成功但缺少成片 url: %s", taskID)
-			}
-			if onProgress != nil {
-				onProgress(90, "下载 2K 成片")
-			}
-			if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
-				return "", err
-			}
-			if err := download(ctx, url, outPath); err != nil {
-				return "", err
-			}
-			return taskID, nil
-		case "failed", "cancelled":
-			return "", fmt.Errorf("2K 再生失败(%s): %s", st, taskID)
-		default:
-			if onProgress != nil {
-				onProgress(40, "云端 2K 再生中("+st+")")
-			}
-		}
+	url, err := e.awaitTask(ctx, c, taskID, 30*time.Minute, onProgress)
+	if err != nil {
+		return "", err
 	}
+	if onProgress != nil {
+		onProgress(90, "下载 2K 成片")
+	}
+	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {
+		return "", err
+	}
+	if err := download(ctx, url, outPath); err != nil {
+		return "", err
+	}
+	settled = true
+	return taskID, nil
 }
 
 // Validate2KBase 预校验源视频是否符合 regeneration 规格(fail-loud)。

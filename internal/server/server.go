@@ -11,7 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"path/filepath"
+	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -34,8 +36,8 @@ type Server struct {
 	ff    *ff.FF
 	bus   *pipeline.Bus
 	lib   *library.Library
-	mux   *http.ServeMux
-	quit  func() // 桌面模式注入的优雅退出
+	mux   http.Handler // 已套上来源守卫(见 guardAPI)
+	quit  func()       // 桌面模式注入的优雅退出
 }
 
 // SetQuitFunc 注入桌面模式的退出函数(Wails runtime.Quit)。
@@ -46,7 +48,8 @@ func (s *Server) SetQuitFunc(f func()) {
 // New 创建服务。
 func New(cfg *config.Manager, store *project.Store, reg *engine.Registry,
 	pipe *pipeline.Coordinator, f *ff.FF, bus *pipeline.Bus, lib *library.Library) *Server {
-	s := &Server{cfg: cfg, store: store, reg: reg, pipe: pipe, ff: f, bus: bus, lib: lib, mux: http.NewServeMux()}
+	s := &Server{cfg: cfg, store: store, reg: reg, pipe: pipe, ff: f, bus: bus, lib: lib}
+	// routes() 里装配 mux 并套上来源守卫(见 guardAPI)
 	// 拆集任务状态落盘:此前纯内存,重启即丢 —— 首页占位卡会卡在「AI 拆集中」
 	// 直到 20 分钟孤儿清理兜底。落盘后重启可看到上次拆到哪、并明确标注"被中断"。
 	SetJobsPath(filepath.Join(cfg.Get().DataDir, "novel_jobs.json"))
@@ -75,7 +78,7 @@ func (s *Server) Start(basePort int) (int, error) {
 func (s *Server) APIHandler() http.Handler {
 	m := http.NewServeMux()
 	s.registerAPI(m)
-	return m
+	return guardAPI(m)
 }
 
 // WebAssets 返回前端静态资源(Wails 桌面模式)。
@@ -85,9 +88,116 @@ func WebAssets() fs.FS {
 }
 
 func (s *Server) routes() {
-	s.registerAPI(s.mux)
+	m := http.NewServeMux()
+	s.registerAPI(m)
 	// 前端静态(SPA fallback → index.html)
-	s.mux.HandleFunc("/", s.serveWeb)
+	m.HandleFunc("/", s.serveWeb)
+	// 守卫包住**整个** mux:两条装配路径(独立 HTTP 服务 routes()、Wails 桌面
+	// AssetServer APIHandler())用的是同一道门 —— 分别加中间件正是"改一处漏一处"。
+	s.mux = guardAPI(m)
+}
+
+// ---------- 本地服务的来源守卫(审计 P0-10) ----------
+//
+// 背景:这个 HTTP 服务监听本机端口,而 92 条路由**没有任何来源校验**。于是任何网页
+// 只要诱导浏览器发一个请求,就能打到副作用端点:
+//
+//	POST /api/quit        退出应用
+//	POST /api/comfy/stop  停掉渲染引擎
+//	POST /api/cleanup     删中间产物与条件缓存
+//	POST /api/open-url    用系统浏览器打开任意 URL
+//
+// 关键点在于"text/plain + JSON body"这种请求**不触发 CORS 预检**(简单请求),
+// 所以它一定送得到服务端 —— 不能指望浏览器替我们拦。反过来说,真正能拦住的判据是:
+//
+//	① Host 必须是回环地址(挡 DNS rebinding:攻击者把自己的域名解析到 127.0.0.1);
+//	② Origin/Referer 若存在,必须是回环来源(挡普通跨站请求);
+//	③ 写操作必须声明 Content-Type: application/json —— 简单请求只能带
+//	   text/plain / form-urlencoded / multipart 三种,于是"跨站写"在第一步就被挡下,
+//	   而应用自己的 fetch 一定带 JSON 头。
+//
+// 例外:multipart 上传(浏览器模式的封面/资产上传)是合法写操作,单独放行 ——
+// 它同样受 ①② 约束。
+func guardAPI(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !isLoopbackHost(hostOnly(r.Host)) {
+			writeErr(w, 403, fmt.Errorf("拒绝非本机来源的请求(Host=%s)", r.Host))
+			return
+		}
+		if o := strings.TrimSpace(r.Header.Get("Origin")); o != "" && !originIsLoopback(o) {
+			writeErr(w, 403, fmt.Errorf("拒绝跨站来源的请求(Origin=%s)", o))
+			return
+		} else if o == "" {
+			if ref := strings.TrimSpace(r.Header.Get("Referer")); ref != "" && !originIsLoopback(ref) {
+				writeErr(w, 403, fmt.Errorf("拒绝跨站来源的请求(Referer=%s)", ref))
+				return
+			}
+		}
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+		default:
+			if !writableContentType(r.Header.Get("Content-Type")) {
+				writeErr(w, 415, fmt.Errorf("写操作必须使用 application/json(或 multipart/form-data):"+
+					"当前 Content-Type=%q。这条校验用来挡住不触发预检的跨站简单请求", r.Header.Get("Content-Type")))
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writableContentType 允许的写请求 Content-Type。
+func writableContentType(ct string) bool {
+	base := strings.ToLower(strings.TrimSpace(strings.SplitN(ct, ";", 2)[0]))
+	switch base {
+	case "application/json", "multipart/form-data", "":
+		// 空 Content-Type 放行:部分原生/桌面调用不带这个头,而它们不是浏览器发起的
+		// 跨站请求(跨站请求一定由浏览器补上头)。真正拦跨站的判据是 ①②。
+		return true
+	}
+	return false
+}
+
+// hostOnly 去掉端口(IPv6 亦适用)。
+func hostOnly(h string) string {
+	h = strings.TrimSpace(h)
+	if strings.HasPrefix(h, "[") {
+		if i := strings.Index(h, "]"); i > 0 {
+			return h[1:i]
+		}
+	}
+	if i := strings.LastIndex(h, ":"); i > 0 {
+		return h[:i]
+	}
+	return h
+}
+
+// isLoopbackHost 回环主机判据。
+//
+// 除了 127.0.0.1/localhost/::1,还要接受 `*.localhost`:Wails 桌面模式的页面来源是
+// http://wails.localhost/**,而它由 Wails 自己的 scheme 处理器映射到本机 —— 把应用
+// 自己挡在门外比不设防还糟(所有请求 403)。判据因此是"回环 + 保留域"而不是"字面等于 127.0.0.1"。
+func isLoopbackHost(h string) bool {
+	h = strings.ToLower(strings.TrimSuffix(h, "."))
+	if h == "" {
+		return false
+	}
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return true
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
+}
+
+// originIsLoopback Origin/Referer 是否是本机来源(它们带 scheme 与端口)。
+func originIsLoopback(o string) bool {
+	u, err := url.Parse(o)
+	if err != nil {
+		return false
+	}
+	return isLoopbackHost(u.Hostname())
 }
 
 func (s *Server) registerAPI(m *http.ServeMux) {

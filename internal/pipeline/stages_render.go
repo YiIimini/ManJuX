@@ -109,11 +109,25 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			return fmt.Errorf("ComfyUI 节点缺失:%s", msg)
 		}
 	}
-	// 渲染前补齐缺失参考图(不问资产来源模式,除 skip;缺图先生成再渲染)
-	c.backfillAssets(ctx, proj, plan, assets)
-	// 多视角转台图补齐:角色只有单张正面照时,渲染前补出转身多视角
-	// (库复用/手动上传/存量项目三类不会重跑资产阶段,只能在这里兜)
-	c.backfillAssetViews(ctx, proj, plan, assets)
+	// 渲染前补齐缺失参考图(不问资产来源模式,除 skip;缺图先生成再渲染)。
+	//
+	// 范围:本次只渲一部分镜头时,**只补这些镜头会用到的资产** —— 旧实现传的是整份
+	// plan,于是"只改一镜 seed"可能顺手生成全片所有缺失定妆照与所有角色的多视角
+	// (每个角色数分钟 H3),白烧 GPU(审计 P0-9)。
+	need := needForShots(shots)
+	if len(only) > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "info", 0, "本次仅重渲 %d 个镜头:资产补齐只针对这些镜头需要的角色/场景", len(shots))
+	}
+	// 本次显式选了云端引擎时不做本地资产补齐:那是用户明确不要本地 GPU 时间的语义,
+	// 而补齐必然要起 Krea-2/H3(旧实现忽略了这个覆盖,审计 P0-9 附带项)。
+	if need != nil && engName != "comfy" {
+		c.emit(proj.ID, PhaseRender, 0, "info", 0, "本次引擎=%s:跳过本地资产补齐(单镜范围内缺图将降级纯文生)", engName)
+	} else if !need.isEmpty() {
+		c.backfillAssets(ctx, proj, plan, assets, need)
+		// 多视角转台图补齐:角色只有单张正面照时,渲染前补出转身多视角
+		// (库复用/手动上传/存量项目三类不会重跑资产阶段,只能在这里兜)
+		c.backfillAssetViews(ctx, proj, plan, assets, need)
+	}
 	// 阶段起点清一次遗留队列(仅本地引擎;绝不在逐镜循环内清,防误杀排队任务)
 	// 并释放残留显存:上一阶段(Krea-2 定妆/抽卡等)模型常驻会把 H3 主模型
 	// (~20GB)挤出显存触发 dynamic VRAM loading——每步在 CPU↔GPU 搬权重,
@@ -197,8 +211,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		inputFP := renderFingerprint(prompt, refs, rp, mode, rp.Seed)
 		outName := fmt.Sprintf("shot_%03d", shot.ID)
 
-		// 断点续跑:同输入指纹且文件存在 → 跳过
-		if m, ok := manifest[strconv.Itoa(shot.ID)]; ok && m.Status == project.ShotDone && m.InputFP == inputFP {
+		// 断点续跑:同输入指纹 + 帧数对得上 + 文件存在 → 跳过
+		wantFrames := shotFrames(shot)
+		if m, ok := manifest[strconv.Itoa(shot.ID)]; ok && shotArtifactValid(m, inputFP, wantFrames) {
 			full := filepath.Join(c.store.Dir(proj.ID), m.File)
 			if st, err := os.Stat(full); err == nil && st.Size() > 0 {
 				skipped++
@@ -220,7 +235,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				ProjectID: proj.ID, ShotID: shot.ID,
 				Prompt: prompt, Mode: mode, RefImages: refs,
 				Width: rp.Width, Height: rp.Height,
-				Length: shot.Duration * 24, Seed: seed, Steps: rp.Steps,
+				Length: wantFrames, Seed: seed, Steps: rp.Steps,
 				Accel:     rp.Accel,
 				OutputDir: clipsDir, OutputName: outName,
 				Timeout:  shotTimeout,
@@ -260,7 +275,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
-		c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "")
+		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", wantFrames)
 		if res.TaskID != "" {
 			manifest[strconv.Itoa(shot.ID)] = mergeTask(manifest[strconv.Itoa(shot.ID)], res.TaskID)
 		}
@@ -315,7 +330,40 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, accelTag, "q1"), strings.Join(files, ","))
 }
 
+// shotFrames 镜头时长 → 帧数(H3 侧 24fps)。
+//
+// 收成一个函数是因为它有两个消费者:提交给引擎的 Job.Length,以及"这个已有产物还能
+// 不能复用"的判据。以前只有前者,后者缺位 —— 于是"改了时长却跳过重渲"能一路走到成片。
+func shotFrames(shot project.Shot) int { return shot.Duration * 24 }
+
+// shotArtifactValid 判定**已有产物能否复用**(断点续跑的核心判据),抽成纯函数以便穷举。
+//
+// 2026-09-24 修(审计 P0-8):判据原先是"状态 Done + 输入指纹一致",而指纹串里**不含时长**
+// (往指纹里加字段会让存量项目全部重渲,不能那么修)。于是用户把 4 秒改成 6 秒(为了装下
+// 被截断的台词)、点「保存并重渲本镜」,指纹不变 → 走跳过分支 → 旧片原样保留,界面还报成功。
+//
+// Length 的兼容语义:`Length == 0` 表示这份清单是**本字段引入之前**写的,判据不推翻
+// 指纹结论 —— 否则升级一版就会让所有存量项目的已渲镜头集体重渲(几十集的代价),
+// 而它并不比"照旧"更正确。渲染过一次之后 Length 就有值了,从此改动必被抓住。
+func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int) bool {
+	if m.Status != project.ShotDone || m.File == "" || m.InputFP != inputFP {
+		return false
+	}
+	if m.Length > 0 && m.Length != wantFrames {
+		return false
+	}
+	return true
+}
+
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {
+	c.setShotStatusLen(projectID, manifest, shotID, st, eng, file, fp, errMsg, 0)
+}
+
+// setShotStatusLen 同上,并记录**本镜实际渲出的帧数**(0 = 调用方不关心,保留原值)。
+//
+// 帧数单独记的原因是"改了时长却没重渲"(审计 P0-8):指纹串里不能加字段(会让存量
+// 项目全部重渲),而时长又不该被忽略 —— 于是跳过判据额外比一次帧数,见 renderStage。
+func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string, length int) {
 	key := strconv.Itoa(shotID)
 	m := manifest[key]
 	m.ShotID = shotID
@@ -324,6 +372,9 @@ func (c *Coordinator) setShotStatus(projectID string, manifest map[string]projec
 	m.File = file
 	m.InputFP = fp
 	m.Error = errMsg
+	if length > 0 {
+		m.Length = length
+	}
 	m.UpdatedAt = time.Now()
 	manifest[key] = m
 	c.store.SaveManifest(projectID, manifest) // 每次落盘,崩溃可恢复
