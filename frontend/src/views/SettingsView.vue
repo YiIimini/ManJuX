@@ -216,7 +216,10 @@ async function testConn(target) {
             <el-input-number v-model="form.comfy.idle_stop_min" :min="0" :max="240" :step="5" style="width:100%" />
           </el-form-item>
           <el-form-item label="显存预留(GB;引擎启动时留给系统/浏览器,防渲染时整机卡顿,0=自定)">
-            <el-input-number v-model="form.comfy.reserve_vram_gb" :min="0" :max="8" :step="0.5" style="width:100%" />
+            <!-- :precision="0" 不只是美观:该字段后端是 int,而 el-input-number 默认允许
+                 手输小数,一旦落成 2.5 保存就会被 json.Unmarshal 拒掉(400),
+                 若以任何方式写进 settings.json 更会让启动 fatalIf 直接退出。 -->
+            <el-input-number v-model="form.comfy.reserve_vram_gb" :min="0" :max="8" :step="1" :precision="0" style="width:100%" />
           </el-form-item>
           <el-form-item label="Sage 注意力加速(官方推荐:生成约快一倍、显存占用更低;需已装 sageattention 包)">
             <el-switch v-model="form.comfy.sage_attention" />
