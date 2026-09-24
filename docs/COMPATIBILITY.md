@@ -160,6 +160,62 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 
 ## 八、升级记录
 
+### 2026-09-24:H3 底模换成 Minimax-h3_Singularity v1.3(ref2va 槽,**已生效**)
+
+**它是什么**:[WarmBloodAban/Minimax-h3_Singularity](https://huggingface.co/WarmBloodAban/Minimax-h3_Singularity)
+——AIGC-Singularity 团队把 H3 的 `ref`/`fl`/`b25-49` 等多个检查点融合后,再做三天高步数深度微调 + 精确剪枝
+得到的社区微调底模(Apache-2.0,base_model = MiniMaxAI/MiniMax-H3)。官方列出的针对性改进:
+HDR 训练减少高速动作的拖影 / 中远景人脸不再崩 / **去掉重度"上油"光泽** / 剑斗与武打动态更强 /
+法术粒子等 VFX 更好 / 运镜响应更好。README 称"100% 保留原模型的提示词遵循与风格广度"。
+推荐搭配本机已在用的 `minimax_h3_ref2v_turbo_4step_v0.1` 加速 LoRA。
+
+**为什么值得换**:它的第二条与第三条正好命中本项目两条已明确的画风要求 ——
+用户 2026-09-24 定调「角色一律动漫化、不要真人脸,画面要**哑光不油腻**」,而基线 H3 的
+"缎面高光衬衫 + 磨皮脸"正是当时报障的对象。
+
+**落地文件**(`shared/models/diffusion_models/`,两个都已按上游 sha256 逐位校验):
+
+| 文件 | 大小 | 用途 |
+|---|---|---|
+| `Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors` | 19.53 GiB | **已启用**(作者推荐档) |
+| `Minimax-h3_Singularity_ref2va_v1.3_Pruned_w4a8.safetensors` | 10.96 GiB | 备用,未启用(见下) |
+
+**实测(768×1344 / 124 帧 / 8 步 / turbo LoRA / `reserve_vram_gb=4`;复现脚本见
+`D:\Ai\ComfyUI\_maintenance\20260924-upgrade\profile-vram.py`)**:
+
+| 底模 | 单镜耗时(两次) | 峰值显存 |
+|---|---|---|
+| 原 `MiniMax_H3_ref2va_pruned_int8_convrot` | 223.0s / 214.2s | 19,551–19,554 MiB(79.9%) |
+| **Singularity v1.3 int8** | 202.5s / 213.9s | 19,554–19,582 MiB(80.0%) |
+| Singularity v1.3 w4a8 | **179.7s** | 19,103 MiB(78.1%) |
+
+**画质**:同一 prompt / 同一 seed / 同一组参考图,抽帧对比 —— 基线版衬衫是缎面高光、皮肤偏磨皮;
+Singularity 两版都是哑光棉布(可见织物褶皱)且皮肤纹理更自然。客观代理指标(拉普拉斯方差,
+高频细节量):基线 54.5 / 46.9,**Singularity int8 111.1 / 99.8(约 2 倍)**,w4a8 仅 46.2 / 37.5。
+⚠️ 三组帧的构图并不相同(换了权重,同 seed 也出不同样本),所以这是**倾向性证据不是受控测量**;
+但"int8 细节约为基线两倍 / w4a8 明显低于基线"两条差距足够大,方向可信。
+
+**为什么不用 w4a8**(虽然快 16%、省显存):4-bit 权重的代价正好落在高频细节上(上表),
+而本项目要的是中远景人脸与材质细节。**它是可选项不是默认**:要试的话改
+`settings.json` 的 `unet_ref2va` 即可 —— 代码侧已经铺好(见下条)。
+
+**为什么只换 ref2va 槽**:Singularity 只发布 ref2va 权重。实测它**也能跑**
+`MiniMaxH3ImageToVideo`(t2v/fl2va 图,success,208.8s,峰值 80.0%),所以统一两个槽位在技术上可行;
+但 `turbo_lora_fl2va` 是为 fl2va 底模训的,与 ref2va 血统的 Singularity 配对是**错配**
+(作者推荐的是 `ref2v` 那条 LoRA)。要统一得先把"按镜头模式选 LoRA"改成"按底模血统选 LoRA",
+那是另一件事,故本轮只换 ref2va 槽(生产里绝大多数镜头都是 ref2va)。
+
+**代码侧配套**:`engine.go` 里质量档的量化守卫由 `strings.Contains(unet,"int8")` 改为
+`isQuantizedBase(unet)`(排除 int8 / w4a8 / nvfp4 / mxfp8,`fp8_scaled` 保持原行为)——
+否则选 quality 档时会把 Acc-8Step LoRA 挂到 w4a8 底模上(与 int8 同类的不兼容)。
+
+**验证**:`scripts/check.ps1` 六道全过;重建后启动实测 `ManJuX v0.37.2`、
+`[WebView2] Environment created successfully`、窗口就绪,`GET /api/settings` 返回
+`unet_ref2va = Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors`。
+
+**回滚**:`settings.json` 的 `unet_ref2va` 改回 `MiniMax_H3_ref2va_pruned_int8_convrot.safetensors`
+(原文件未删,仍在 `shared/models/diffusion_models/`)。
+
 ### 2026-09-24:设置页「显存预留」步进与后端 `int` 类型不匹配(**已修复并重建**)
 
 **症状**:设置页里「显存预留(GB)」的输入框步进是 `0.5`,点两下就能得到 `2.5`。
