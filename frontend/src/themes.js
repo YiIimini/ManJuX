@@ -18,11 +18,23 @@
 //        linear-gradient(amber-hi → amber-deep) 的两端,必须同色相,否则按钮会跳色);
 //     4. cyan / purple = 剩下两色按与 accent 的色相距离分配(次级/数据色);
 //     5. text/text2/text3 = 近白/中灰/暗灰,**强制满足对比度下限**
-//        (≥16 / ≥4.5 / ≥3.0 对 bg2);onAccent↔amber 与 amber↔bg2 也各自有下限
-//        (否则按钮"糊"在暗底里:实测某套紫被夹到 L=0.52 时只有 3.4);
+//        —— 下限是相对**卡片面**(= 调色后的面板底色)而非 bg2 量的:
+//        文字压在面上、不是压在背景上,面板一旦调色,拿 bg2 算就是自欺。
+//        现行下限:text ≥10 / text2 ≥4.5 / text3 ≥3.0(见 internal/server 的
+//        theme_contract_test.go,它会把上述下限连同"面与描边必须带色相"一起断言住)。
+//        text 由 16 放到 10:卡片面参与调色后必然变亮,10:1 仍远高于 WCAG AAA 的 7:1;
+//        text3(暗灰辅助字)在 5 套里被就地重推过一档 —— 它原先是按"平铺深色面"调的,
+//        面上多了主题涂层之后就压不住 3.0 了。重推值用
+//        `MANJUX_SUGGEST=1 go test ./internal/server/ -run TestSuggestText3 -v` 得到。
+//        onAccent↔amber 与 amber↔bg2 也各自有下限(否则按钮"糊"在暗底里:
+//        实测某套紫被夹到 L=0.52 时只有 3.4);
 //     6. green / red / yellow = **语义色固定不随主题变**(成功/失败/警告必须一眼认得出,
 //        旧 6 套主题本来也是同一套绿红黄);
 //     7. swatch = 海报上的 4 个原色(主题卡上就显示这 4 个)。
+//     8. 面板材质 = 强调色按固定比例调进上述深色(亮度几乎不变),再由 style.css 的
+//        --mx-sheen(卡片一角自发光晕)与 --mx-card-bd(描边)把色相铺到"面"上。
+//        **主题色相必须出现在面上**,不能只活在按钮/激活态里 —— 否则大面积的
+//        卡片区看起来就是一片灰黑(用户 2026-09-24 报障:数据卡片没有主题配色)。
 //   全套数值由一次性生成器算出后落成活数据(生成器不入库),改配色只需按上述规则重算。
 
 export const THEMES = [
@@ -43,6 +55,10 @@ export const THEMES = [
     },
     onAccent: '#08080a', // 强调色背景上的文字色(反转显示)
     panelRGB: '16, 16, 19',
+    // 极简墨黑 = 刻意的**无彩**主题(swatch 就是银白),底色不吃强调色:
+    // 它的强调色近白,按 10% 调进底色只会把面提亮、白白压掉 text3 的对比度,
+    // 还不产生任何色相。其余 8 套一律 10%(见 applyTheme 的 tint)。
+    tint: 0,
   },
   {
     id: 'cream-gold-teal', name: '奶油金青', desc: '奶油粉金 × 青瓷蓝',
@@ -64,7 +80,7 @@ export const THEMES = [
       '--mx-purple': '#EF95BB',
       '--mx-text': '#F5F4F2',
       '--mx-text2': '#A0ACBA',
-      '--mx-text3': '#5E728D',
+      '--mx-text3': '#6C7E97',
       '--mx-glow1': 'rgba(246, 194, 90, 0.46)',
       '--mx-glow2': 'rgba(94, 201, 200, 0.34)',
       '--mx-glow3': 'rgba(239, 149, 187, 0.26)',
@@ -93,7 +109,7 @@ export const THEMES = [
       '--mx-purple': '#95D4EF',
       '--mx-text': '#F5F2F3',
       '--mx-text2': '#A0ABBA',
-      '--mx-text3': '#5E718D',
+      '--mx-text3': '#61738F',
       '--mx-glow1': 'rgba(246, 90, 162, 0.46)',
       '--mx-glow2': 'rgba(69, 186, 227, 0.34)',
       '--mx-glow3': 'rgba(149, 212, 239, 0.26)',
@@ -122,7 +138,9 @@ export const THEMES = [
       '--mx-purple': '#CE6EBC',
       '--mx-text': '#F2F3F5',
       '--mx-text2': '#A2A0BA',
-      '--mx-text3': '#615E8D',
+      // 原 #615E8D:蓝紫的暗灰压在"被蓝强调色调过色"的卡片面上只剩 2.80
+      // (契约下限 3.0,见 theme_contract_test.go),提亮一档到 3.4
+      '--mx-text3': '#6E6B9C',
       '--mx-glow1': 'rgba(90, 139, 246, 0.46)',
       '--mx-glow2': 'rgba(244, 113, 173, 0.34)',
       '--mx-glow3': 'rgba(206, 110, 188, 0.26)',
@@ -209,7 +227,7 @@ export const THEMES = [
       '--mx-purple': '#E66756',
       '--mx-text': '#F2F4F5',
       '--mx-text2': '#BAA0AD',
-      '--mx-text3': '#8D5E74',
+      '--mx-text3': '#966A7F',
       '--mx-glow1': 'rgba(90, 187, 246, 0.46)',
       '--mx-glow2': 'rgba(244, 179, 113, 0.34)',
       '--mx-glow3': 'rgba(230, 103, 86, 0.26)',
@@ -238,7 +256,7 @@ export const THEMES = [
       '--mx-purple': '#7B7DDB',
       '--mx-text': '#F4F2F5',
       '--mx-text2': '#B3A0BA',
-      '--mx-text3': '#805E8D',
+      '--mx-text3': '#866692',
       '--mx-glow1': 'rgba(165, 110, 207, 0.46)',
       '--mx-glow2': 'rgba(244, 113, 115, 0.34)',
       '--mx-glow3': 'rgba(123, 125, 219, 0.26)',
@@ -267,7 +285,7 @@ export const THEMES = [
       '--mx-purple': '#72CABB',
       '--mx-text': '#F5F3F2',
       '--mx-text2': '#A0AFBA',
-      '--mx-text3': '#5E798D',
+      '--mx-text3': '#627D90',
       '--mx-glow1': 'rgba(246, 155, 90, 0.46)',
       '--mx-glow2': 'rgba(94, 153, 201, 0.34)',
       '--mx-glow3': 'rgba(114, 202, 187, 0.26)',
@@ -328,17 +346,36 @@ export function applyTheme({ themeId, glass, glassAlpha } = {}) {
   // `[data-glass=on] .xxx` 选择器逐个点名 —— 变量在哪儿用,玻璃就在哪儿生效,
   // 新增面板/卡片不必回头改 CSS(旧写法漏了书卡/日志条这些,质感就不统一)。
   const veil = 'linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.045) 52%, rgba(255,255,255,.02))'
+  // 面板底色必须**带上主题色相**。旧口径是 rgb(panelRGB) 平铺:panelRGB 是低饱和
+  // 深色(bg2 量级),再被 CSS 里那层纯白/纯黑渐变一压,整块面就是中性灰黑 ——
+  // 主题只剩按钮/激活态上那点强调色,大面积卡片区看起来"没有主题配色"
+  // (用户 2026-09-24 两次报障:数据卡片没体现主题)。这里把强调色调进底色,
+  // 色相完全由 --mx-amber 驱动:改主题/加主题都不必回来改这里。
+  const tint = `color-mix(in srgb, var(--mx-amber) ${(t.tint === undefined ? 0.10 : t.tint) * 100}%, rgb(${t.panelRGB}))`
+  // 主题色薄涂层(--mx-glaze,用法见 style.css):**自带 alpha 的层**。
+  // 这一层是"卡片上看得见主题色"的主力 —— 玻璃透明度是用户可调的,拉到 0.18 时
+  // 面板底色只占最终像素的 18%,底下 82% 是近黑的页面背景,再好看的底色也显不出来
+  // (实测:只把强调色调进底色,界面像素只挪 3~4/255)。涂层不吃那个透明度,玻璃开多大它都在。
+  // 无彩主题(tint=0,即极简墨黑)给一层**透明**渐变:它的强调色是银白,压上去只提亮
+  // 面色、白白吃掉 text3 的对比度,还带不来任何色相 —— 它要的是"纯黑高对比 × 银白描边"。
+  root.style.setProperty('--mx-glaze', (t.tint === undefined || t.tint > 0)
+    ? 'linear-gradient(0deg, color-mix(in srgb, var(--mx-amber) 10%, transparent) 0%, ' +
+      'color-mix(in srgb, var(--mx-amber) 3.5%, transparent) 38%, transparent 66%)'
+    : 'linear-gradient(0deg, transparent, transparent)')
+  // 玻璃要的是"透明度",所以把已调色的材质按 alpha 转成半透明(color-mix 的
+  // P% 配 transparent 等价于 rgba 的 alpha,实测本运行时 WebView2/Chromium 一致)。
+  const tintA = (p) => `color-mix(in srgb, ${tint} ${Math.round(p * 100)}%, transparent)`
   if (on) {
-    root.style.setProperty('--mx-panel-bg', `${veil}, rgba(${t.panelRGB}, ${a})`)
-    root.style.setProperty('--mx-panel-bg2', `${veil}, rgba(${t.panelRGB}, ${Math.min(1, a + 0.14)})`)
+    root.style.setProperty('--mx-panel-bg', `${veil}, ${tintA(a)}`)
+    root.style.setProperty('--mx-panel-bg2', `${veil}, ${tintA(Math.min(1, a + 0.14))}`)
     // 模糊要够重才"像玻璃";brightness 把背后的氛围色提亮一点,玻璃才"透"
     root.style.setProperty('--mx-bd-filter', 'blur(20px) saturate(1.5) brightness(1.15)')
     root.style.setProperty('--mx-bd-border', 'rgba(255, 255, 255, .13)')
   } else {
-    root.style.setProperty('--mx-panel-bg', `rgb(${t.panelRGB})`)
-    root.style.setProperty('--mx-panel-bg2', `rgb(${t.panelRGB})`)
+    root.style.setProperty('--mx-panel-bg', tint)
+    root.style.setProperty('--mx-panel-bg2', tint)
     root.style.setProperty('--mx-bd-filter', 'none')
-    root.style.setProperty('--mx-bd-border', 'var(--mx-line)')
+    root.style.setProperty('--mx-bd-border', 'var(--mx-card-bd)')
   }
   return { theme: t, prefs }
 }

@@ -35,6 +35,29 @@
   --mx-mono: 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
   --mx-shadow: 0 8px 32px rgba(0, 0, 0, .45);
   --mx-glow-amber: 0 0 24px rgba(200, 208, 224, .18);
+  /* ---- 主题材质三件套(卡片/面板的"面"上怎么体现主题) ----
+     全部由 --mx-amber / --mx-line 派生,所以跟着主题自动变,不必每加一套主题就
+     回来补一遍。为什么需要它们(2026-09-24 用户报障"数据卡片没有主题配色"):
+     卡片底色再深也只是"暗",眼睛真正读到主题的是这三处 ——
+       ① --mx-sheen  卡片一角的自发光晕:自带 alpha,**不受玻璃透明度影响**
+          (玻璃拉到 0.18 时底色几乎全透,只有它还能把色相留在卡片上);
+       ② --mx-card-bd 描边:最细,但对比最锐利,是最容易被识别为"主题色"的一笔;
+       ③ --mx-card-glow 悬停辉光:把"这张卡被选中"的反馈也交给主题色。 */
+  --mx-sheen: radial-gradient(130% 95% at 100% 0%, color-mix(in srgb, var(--mx-amber) 15%, transparent), transparent 58%);
+  --mx-card-bd: color-mix(in srgb, var(--mx-amber) 26%, var(--mx-line));
+  --mx-card-bd-hi: color-mix(in srgb, var(--mx-amber) 55%, var(--mx-line-hi));
+  --mx-card-glow: 0 14px 34px color-mix(in srgb, var(--mx-amber) 15%, transparent);
+  /* 主题色薄涂层 —— 卡片面上"真正留住主题色"的那一层。
+     为什么非有它不可:玻璃透明度是滑块的,用户实测把它拉到 0.18 时面板底色
+     只占最终像素的 18%,其余 82% 是**近黑的页面背景** —— 这时无论把面板底色
+     调成什么色,卡片看起来都还是黑的(实测把强调色调进底色后,
+     界面像素只挪了 3~4/255,肉眼无感)。所以色相必须由**自带 alpha 的层**承担:
+     这一层不吃面板透明度,玻璃开多大它都在。
+     压在下缘是因为数据卡(书卡/作品卡/项目卡/分镜卡)的可见面就是封面下方
+     那条文字带 —— 色要压在那儿才看得见。
+     内容由 themes.js 按主题写入(无彩主题给的是透明渐变);这里与下面几项一样,
+     只是**首屏兜底**,取默认主题(极简墨黑 = 无涂层)的值。 */
+  --mx-glaze: linear-gradient(0deg, transparent, transparent);
 }
 
 html, body {
@@ -188,14 +211,16 @@ body::after {
 /* ============ 通用面板 ============ */
 .panel {
   background:
+    var(--mx-sheen),
+    var(--mx-glaze),
     linear-gradient(165deg, rgba(255, 255, 255, .022), rgba(0, 0, 0, .1)),
     var(--mx-panel-bg, linear-gradient(165deg, color-mix(in srgb, var(--mx-bg3) 55%, transparent), color-mix(in srgb, var(--mx-bg2) 90%, transparent)));
   backdrop-filter: var(--mx-bd-filter, none);
-  border: 1px solid var(--mx-bd-border, var(--mx-line));
+  border: 1px solid var(--mx-card-bd, var(--mx-line));
   border-radius: 14px;
   position: relative;
 }
-.panel-glow { box-shadow: var(--mx-shadow); }
+.panel-glow { box-shadow: var(--mx-shadow), var(--mx-card-glow); }
 
 /* ---------- 玻璃配件(仅"流体玻璃"开启时) ----------
    为什么单靠"半透明 + 模糊"看不出开关差别(用户实测 + 像素采样确认):
@@ -213,6 +238,8 @@ body::after {
 :root[data-glass="on"] .el-drawer,
 :root[data-glass="on"] .el-popper.is-dark {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .13), 0 14px 38px color-mix(in srgb, var(--mx-bg0) 58%, transparent);
+  /* 玻璃态保留"白边"的厚度感,但不把主题色丢掉:白与主题描边混一层 */
+  border-color: color-mix(in srgb, #fff 22%, var(--mx-card-bd));
 }
 :root[data-glass="on"] .sidebar {
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, .07), inset 0 1px 0 rgba(255, 255, 255, .10);
@@ -233,9 +260,11 @@ body::after {
 .stage-card {
   position: relative;
   background:
+    var(--mx-sheen),
+    var(--mx-glaze),
     linear-gradient(170deg, color-mix(in srgb, var(--mx-bg3) 55%, transparent), color-mix(in srgb, var(--mx-bg1) 88%, transparent)),
-    var(--mx-bg2);
-  border: 1px solid var(--mx-line);
+    var(--mx-panel-bg, #101013);
+  border: 1px solid var(--mx-card-bd, var(--mx-line));
   border-radius: 14px;
   padding: 14px 16px 12px;
   overflow: hidden;
@@ -251,7 +280,7 @@ body::after {
   background: linear-gradient(180deg, var(--mx-line-hi), transparent);
   transition: background .3s;
 }
-.stage-card:hover { border-color: var(--mx-line-hi); transform: translateY(-2px); }
+.stage-card:hover { border-color: var(--mx-card-bd-hi, var(--mx-line-hi)); transform: translateY(-2px); box-shadow: var(--mx-card-glow); }
 .stage-card.done::before { background: linear-gradient(180deg, var(--mx-green), transparent); }
 .stage-card.warn::before { background: linear-gradient(180deg, var(--mx-yellow), transparent); }
 .stage-card.bad::before { background: linear-gradient(180deg, var(--mx-red), transparent); }
@@ -285,22 +314,23 @@ body::after {
 .stage-card.active .stage-num { -webkit-text-stroke: 1px color-mix(in srgb, var(--mx-amber) 70%, transparent); }
 .stage-card.done .stage-num { -webkit-text-stroke: 1px rgba(61, 220, 132, .55); }
 
-/* ============ 镜头卡 ============ */
+/* ============ 镜头卡 / 数据卡(书卡·作品卡·项目卡同族) ============ */
 .shot-card {
   background:
-    linear-gradient(175deg, rgba(255, 255, 255, .03), rgba(0, 0, 0, .1)),
+    var(--mx-sheen),
+    var(--mx-glaze),
+    linear-gradient(175deg, transparent, rgba(0, 0, 0, .12)),
     var(--mx-panel-bg, #101013);
   backdrop-filter: var(--mx-bd-filter, none);
-  border-top-color: var(--mx-bd-border, #1f1f24);
-  border: 1px solid var(--mx-line);
+  border: 1px solid var(--mx-card-bd, var(--mx-line));
   border-radius: 14px;
   overflow: hidden;
   transition: border-color .2s, transform .14s, box-shadow .25s;
 }
 .shot-card:hover {
-  border-color: var(--mx-line-hi);
+  border-color: var(--mx-card-bd-hi, var(--mx-line-hi));
   transform: translateY(-3px);
-  box-shadow: var(--mx-shadow);
+  box-shadow: var(--mx-shadow), var(--mx-card-glow);
 }
 .badge-mode {
   font-family: var(--mx-mono);
@@ -431,10 +461,11 @@ body::after {
   display: flex;
   flex-direction: column;
   background:
+    linear-gradient(180deg, color-mix(in srgb, var(--mx-amber) 6%, transparent), transparent 26%),
     linear-gradient(180deg, rgba(255, 255, 255, .02), rgba(0, 0, 0, .18)),
     var(--mx-panel-bg, rgba(13, 17, 28, .94));
   backdrop-filter: var(--mx-bd-filter, none);
-  border-right: 1px solid var(--mx-line);
+  border-right: 1px solid var(--mx-card-bd, var(--mx-line));
   transition: width .22s ease;
   position: relative;
   z-index: 30;
@@ -485,7 +516,7 @@ body::after {
   white-space: nowrap;
   position: relative;
 }
-.side-item:hover { color: var(--mx-text); background: rgba(45, 55, 82, .18); }
+.side-item:hover { color: var(--mx-text); background: color-mix(in srgb, var(--mx-amber) 8%, transparent); }
 .side-item.on {
   color: var(--mx-amber-hi);
   background: linear-gradient(100deg, color-mix(in srgb, var(--mx-amber) 13%, transparent), color-mix(in srgb, var(--mx-amber) 3%, transparent));
@@ -546,10 +577,11 @@ body::after {
   align-items: center;
   justify-content: center;
   background:
+    linear-gradient(180deg, color-mix(in srgb, var(--mx-amber) 5%, transparent), transparent 70%),
     linear-gradient(180deg, rgba(255, 255, 255, .025), rgba(0, 0, 0, .14)),
     var(--mx-panel-bg2, color-mix(in srgb, var(--mx-bg1) 78%, transparent));
   backdrop-filter: var(--mx-bd-filter, none);
-  border-bottom: 1px solid var(--mx-line);
+  border-bottom: 1px solid var(--mx-card-bd, var(--mx-line));
   user-select: none;
 }
 .sysbar {
@@ -572,7 +604,7 @@ body::after {
     linear-gradient(180deg, rgba(0, 0, 0, .16), rgba(0, 0, 0, .28)),
     var(--mx-panel-bg2, color-mix(in srgb, var(--mx-bg0) 96%, transparent));
   backdrop-filter: var(--mx-bd-filter, none);
-  border-top: 1px solid var(--mx-line);
+  border-top: 1px solid var(--mx-card-bd, var(--mx-line));
 }
 .vdiv {
   width: 1px;
@@ -682,15 +714,15 @@ body::after {
 .theme-card {
   position: relative;
   border-radius: 12px;
-  border: 1px solid var(--mx-line);
-  background: linear-gradient(175deg, rgba(255, 255, 255, .025), rgba(0, 0, 0, .15)), var(--mx-panel-bg, #101013);
+  border: 1px solid var(--mx-card-bd, var(--mx-line));
+  background: var(--mx-sheen), var(--mx-glaze), linear-gradient(175deg, rgba(255, 255, 255, .025), rgba(0, 0, 0, .15)), var(--mx-panel-bg, #101013);
   backdrop-filter: var(--mx-bd-filter, none);
   padding: 12px 13px;
   cursor: pointer;
   transition: all .16s;
   overflow: hidden;
 }
-.theme-card:hover { border-color: var(--mx-line-hi); transform: translateY(-2px); }
+.theme-card:hover { border-color: var(--mx-card-bd-hi, var(--mx-line-hi)); transform: translateY(-2px); box-shadow: var(--mx-card-glow); }
 .theme-card.on { border-color: color-mix(in srgb, var(--mx-amber) 60%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 25%, transparent), var(--mx-glow-amber); }
 .theme-swatch { display: flex; gap: 5px; margin-bottom: 9px; }
 .theme-swatch i {
@@ -1231,6 +1263,7 @@ body::after {
   border: none;
   border-radius: 8px;
   background: color-mix(in srgb, var(--mx-bg0) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 26%, transparent);
   backdrop-filter: blur(4px);
   color: var(--mx-text2);
   cursor: pointer;
@@ -1259,6 +1292,7 @@ body::after {
   border: none;
   border-radius: 8px;
   background: color-mix(in srgb, var(--mx-bg0) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 26%, transparent);
   backdrop-filter: blur(4px);
   color: var(--mx-text2);
   cursor: pointer;
