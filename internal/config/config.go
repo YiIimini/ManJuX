@@ -107,14 +107,25 @@ type SplitSettings struct {
 	PrevSummary  int `json:"prev_summary"`   // 前情提要截断(字,0=400)
 	BriefMin     int `json:"brief_min"`      // 每集大纲最短(字,0=400)
 	BriefMax     int `json:"brief_max"`      // 每集大纲最长(字,0=700)
-	ShotLimit    int `json:"shot_limit"`     // 镜头数安全网上限(0=30)
+	// ShotLimit 镜头数安全网上限;0 = 用内置安全网(project.MaxShotsCeiling = 120)。
+	//
+	// 2026-09-24 审计 P1-1:这个字段此前**只有一个界面**,Go 侧零读取点 ——
+	// 内容驱动模式下真正的上限一直是硬编码的 120。现在它真的生效;默认值同时从
+	// 30 改成 0(= 与旧行为一致),否则把字段接上的那一刻起,所有内容驱动项目都会
+	// 从"上限 120"悄悄变成"上限 30",方案结尾会被截掉。
+	ShotLimit int `json:"shot_limit"`
 }
 
 // Settings 全局设置根。
+//
+// 注意:这里**只放真的会被读到的东西**。"有界面、能保存、Go 侧零读取点"的设置项
+// 是审计 P1-1 点名的一类缺陷(用户调了它、系统毫无反应,而且不报错)。已据此清掉
+// `auto_open_ui`:桌面模式下工作台就是那个原生窗口,再弹一个浏览器标签只会更吵,
+// 也就是说这个开关在当前架构里没有正确语义 —— 留着比删掉更糟。
+// 新增字段请一并确认它有读取点(internal/config/fields_contract_test.go 会扫)。
 type Settings struct {
 	ServerPort int             `json:"server_port"`
 	DataDir    string          `json:"data_dir"`
-	AutoOpenUI bool            `json:"auto_open_ui"` // 启动时自动打开浏览器工作台
 	LLM        LLMSettings     `json:"llm"`
 	Comfy      ComfySettings   `json:"comfy"`
 	MiniMax    MiniMaxSettings `json:"minimax"`
@@ -131,7 +142,6 @@ func Default() *Settings {
 		ServerPort: 8790,
 		DataDir:    "", // 由 Manager 依 exe 位置填充
 		NovelDir:   "", // 由 Manager 默认填 <DataDir>/Novel(存在时)
-		AutoOpenUI: true,
 		LLM: LLMSettings{
 			BaseURL: "https://api.deepseek.com/v1",
 			APIKey:  "",
@@ -191,7 +201,7 @@ func Default() *Settings {
 			PrevSummary:  400,
 			BriefMin:     400,
 			BriefMax:     700,
-			ShotLimit:    30,
+			ShotLimit:    0, // 0=内容驱动(用内置安全网 120);与其字段说明同源
 		},
 	}
 }

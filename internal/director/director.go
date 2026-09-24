@@ -188,6 +188,12 @@ type Options struct {
 	// 开启时在提示词最前面钉一条角色画风锁 —— 分镜这一层不定,后面两头(定妆照
 	// 的 image 块、视频的 render 块)都是在给一个已经写成"写实电影感"的方案打补丁。
 	AnimeFaces bool
+	// ShotLimit 镜头数**安全网上限**(设置页 split.shot_limit;0 = 用 project.MaxShotsCeiling)。
+	//
+	// 用途只有一个:内容驱动(不指定镜头数)时,LLM 失控吐出几百个镜头要有个闸。
+	// 此前这个设置项只有界面、没有读取点(审计 P1-1),而代码里写死 MaxShotsCeiling,
+	// 于是"我把上限调到 30"这句话在系统里完全没有效果 —— 典型的假开关。
+	ShotLimit int
 	// OnBatch 分批生成进度(批 i/n,负责镜号区间);仅分批路径触发。
 	OnBatch func(batch, total, fromShot, toShot int)
 	// OnNote 非致命提示(降级/兜底时用)。用于把"方案不完整但我们继续了"这类
@@ -357,19 +363,54 @@ func generateSingle(ctx context.Context, client *llm.Client, sourceText string, 
 	if err != nil {
 		return nil, err
 	}
-	if err := validate(plan, shotLimitOf(opt, contentDriven)); err != nil {
+	if err := validateAndNote(plan, opt, contentDriven); err != nil {
 		return nil, err
 	}
 	return plan, nil
 }
 
-// shotLimitOf 本次生成的镜头数上限:内容驱动时是安全网 MaxShotsCeiling
-// (0=该多少就多少,不能拿内部兜底值 12 去砍),指定镜头数时就是该值。
+// validateAndNote 收口"截断必须说出来"这一条(两条生成路径共用)。
+//
+// 为什么要收口:镜头数上限截断会**丢掉方案结尾**(用户反复强调“不跳段、不省略”),
+// 而旧实现是静默截断 —— 用户只看到成片短了,不知道原因,也没人告诉他上限在哪调。
+// 收成一个函数,是为了让"新增生成路径"不可能再漏掉这句提示。
+func validateAndNote(plan *project.Plan, opt Options, contentDriven bool) error {
+	limit := shotLimitOf(opt, contentDriven)
+	before := len(plan.Shots)
+	if err := validate(plan, limit); err != nil {
+		return err
+	}
+	if dropped := before - len(plan.Shots); dropped > 0 && opt.OnNote != nil {
+		opt.OnNote("分镜被镜头数上限收窄:LLM 给出 %d 镜,按上限 %d 镜截断(丢了 %d 镜,方案结尾会短)。"+
+			"上限在「设置 → 拆分」的「镜头数安全上限」里调;填 0 = 按内容自决(内置安全网 %d 镜)",
+			before, limit, dropped, project.MaxShotsCeiling)
+	}
+	return nil
+}
+
+// shotLimitOf 本次生成的镜头数上限:内容驱动时是安全网(设置页 split.shot_limit,
+// 未配置则 project.MaxShotsCeiling),指定镜头数时就是该值。
+//
+// 为什么上限要可配(审计 P1-1):这个开关此前只在设置页存在、没有任何读取点,
+// 而"内容驱动"是默认模式 —— 也就是说绝大多数用户跑的分镜,上限永远是代码里那个
+// 120,与界面上写的数字无关。现在它真的生效,并且**仍然**受 MaxShotsCeiling 保护:
+// 设置里填一个更大的值不该让安全网失效(那正是安全网存在的意义)。
 func shotLimitOf(opt Options, contentDriven bool) int {
 	if contentDriven {
-		return project.MaxShotsCeiling
+		return clampShotLimit(opt.ShotLimit)
 	}
 	return opt.MaxShots
+}
+
+// clampShotLimit 归一化来自设置的镜头上限:>0 且不超过 MaxShotsCeiling 才采用。
+func clampShotLimit(n int) int {
+	if n <= 0 {
+		return project.MaxShotsCeiling
+	}
+	if n > project.MaxShotsCeiling {
+		return project.MaxShotsCeiling
+	}
+	return n
 }
 
 // chatPlan 单次方案请求 + 一次 JSON 修复重试。
@@ -856,7 +897,7 @@ Produce ONLY this batch's shots as STRICT JSON now.`, cards, head.Style, hint, s
 		}
 		plan.Shots = append(plan.Shots, shots...)
 	}
-	if err := validate(plan, shotLimitOf(opt, contentDriven)); err != nil {
+	if err := validateAndNote(plan, opt, contentDriven); err != nil {
 		return nil, err
 	}
 	return plan, nil

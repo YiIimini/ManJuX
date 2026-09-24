@@ -116,9 +116,15 @@ type AssembleParams struct {
 	Transition    string  `json:"transition"`     // cut / fade / dissolve
 	BurnSubtitles bool    `json:"burn_subtitles"` // 烧录字幕
 	Loudness      int     `json:"loudness"`       // 目标响度 LUFS(默认 -16)
-	Peak          float64 `json:"peak"`           // 峰值归一(默认 0.92)
+	Peak          float64 `json:"peak"`           // 峰值归一(默认 0.92 → loudnorm 的 TP≈-0.72 dBTP)
 	SubtitleSize  int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 5)
-	Upgrade2K     bool    `json:"upgrade_2k"`     // 云端 2K 定稿:合成完成后自动 regeneration 升 2K(消耗云额度)
+	// FadeSec 转场时长(秒;fade/dissolve 用)。0 = 用设置页的 render.fade_sec。
+	//
+	// 为什么要单独一个字段(审计 P1-1):`render.fade_sec` 一直是纯摆设 ——
+	// 合成阶段写死 0.5,用户在设置页把它改成 1.0 之后成片里毫无变化。
+	// 现在改成"项目参数优先、其次设置页、最后兜底 0.5",两边都真的生效。
+	FadeSec   float64 `json:"fade_sec"`
+	Upgrade2K bool    `json:"upgrade_2k"` // 云端 2K 定稿:合成完成后自动 regeneration 升 2K(消耗云额度)
 	// Denoise 音频净化(高通去隆隆声 + 频谱降噪去底噪/嘶声)。
 	//
 	// 用户报「视频有杂音」时,声源侧有两条:H3 自己生成的环境底噪,以及各镜 AAC 拼接

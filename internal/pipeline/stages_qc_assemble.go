@@ -138,6 +138,20 @@ func audioLabel(has bool) string {
 
 // ---------- 阶段五:assemble ----------
 
+// resolveFadeSec 转场时长的取值顺序:项目参数 > 全局设置 > 兜底 0.5。
+//
+// 抽成纯函数是为了让"设置页到底算不算数"可被穷举验证 —— 这类缺陷(字段有界面、
+// 能保存、而实际生效处写死常量)不会报错、不会有日志,只有针对性断言能钉住。
+func resolveFadeSec(projectSec, globalSec float64) float64 {
+	if projectSec > 0 {
+		return projectSec
+	}
+	if globalSec > 0 {
+		return globalSec
+	}
+	return 0.5
+}
+
 func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
@@ -164,11 +178,16 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	p := proj.Config.Params.Assemble
 	outDir := filepath.Join(c.store.Dir(proj.ID), "output")
 	_ = os.MkdirAll(outDir, 0o755)
-	c.emit(proj.ID, PhaseAssemble, 0, "info", 2, "开始合成(%d 镜,转场=%s,字幕=%v)", len(clips), p.Transition, p.BurnSubtitles)
+	// 转场时长:项目参数优先 → 设置页 render.fade_sec → 兜底 0.5(见 resolveFadeSec)
+	fade := resolveFadeSec(p.FadeSec, c.cfg.Get().Render.FadeSec)
+	c.emit(proj.ID, PhaseAssemble, 0, "info", 2, "开始合成(%d 镜,转场=%s %.1fs,字幕=%v)", len(clips), p.Transition, fade, p.BurnSubtitles)
 	res, err := compose.Compose(ctx, c.ff, clips, plan, outDir, compose.Params{
 		Width: proj.Config.Params.Render.Width, Height: proj.Config.Params.Render.Height,
 		Transition: p.Transition, BurnSubtitles: p.BurnSubtitles,
-		SubtitleSize: p.SubtitleSize, Loudness: p.Loudness, FadeSec: 0.5,
+		SubtitleSize: p.SubtitleSize, Loudness: p.Loudness, FadeSec: fade,
+		// 峰值归一:同一个"假开关"的另一半 —— 参数一直存在,而真正生效的
+		// loudnorm TP 写死 -1.5(审计 P1-1)。
+		Peak:    p.Peak,
 		Denoise: p.DenoiseOn(),
 	}, func(pct int, note string) {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", pct, "%s", note)

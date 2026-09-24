@@ -69,6 +69,9 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
 		ExtraHint: hint, Chibi: p.Chibi,
 		AnimeFaces: p.FacesOn(),
+		// 镜头数安全网(设置页 split.shot_limit):此前只在界面上存在、没有读取点,
+		// 内容驱动模式下上限永远是代码里的常量(审计 P1-1)。
+		ShotLimit: c.cfg.Get().Split.ShotLimit,
 		OnBatch: func(batch, total, fromShot, toShot int) {
 			c.emit(proj.ID, PhaseScript, 0, "info", 15, "▸ 分批分镜 %d/%d:镜 %d-%d 生成中…", batch, total, fromShot, toShot)
 		},

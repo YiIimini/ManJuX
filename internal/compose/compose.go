@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,8 +39,29 @@ type Params struct {
 	SubtitleSize  int     // 字号(屏高百分比)
 	Loudness      int     // LUFS
 	FadeSec       float64 // 转场时长
+	// Peak 真峰值上限 dBTP(loudnorm 的 TP;项目参数 assemble.peak,默认 0.92 线性
+	// 即约 -0.72 dBTP)。
+	//
+	// 为什么必须由调用方给(审计 P1-1):`assemble.peak` 这个参数一直存在、界面能调、
+	// Sanitize 也在校验,但真正生效的地方(两处 loudnorm 滤镜串)写死 `TP=-1.5` ——
+	// 调它没有任何效果。0 表示"用默认值"(调用方不关心时的安全行为)。
+	Peak float64
 	// Denoise 音频净化:高通去隆隆声 + 频谱降噪去嘶声/底噪(默认开)。
 	Denoise bool
+}
+
+// defaultPeakLinear peak 参数的默认值(0.92 线性 ≈ -0.72 dBTP)。
+const defaultPeakLinear = 0.92
+
+// peakDBTP 把项目的线性 peak 参数折算成 loudnorm 的 TP(dBTP)。
+//
+// 换算:dBTPS = 20·log10(线性峰值)。0.92 → -0.72 dBTP,比旧写死的 -1.5 略紧
+// (更响一点),这正是设置页那个数字原本的意思。
+func peakDBTP(linear float64) float64 {
+	if linear <= 0 || linear > 1 {
+		linear = defaultPeakLinear
+	}
+	return 20 * math.Log10(linear)
 }
 
 // Result 合成产物。
@@ -230,7 +252,8 @@ type loudnormReport struct {
 // 返回最终可用的音频链与说明。为什么要逐级回退:净化滤镜要较新的 ffmpeg,
 // 而用户机器上的 ffmpeg 来自系统 PATH —— 缺滤镜时就该降级而不是整片合成失败。
 func prepareAudio(ctx context.Context, f *ff.FF, master string, p Params) (string, *loudnormMeasured, string) {
-	base := fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", p.Loudness)
+	tp := peakDBTP(p.Peak)
+	base := peakBaseFilter(p.Loudness, tp)
 	cands := []struct{ chain, label string }{}
 	if p.Denoise {
 		cands = append(cands, struct{ chain, label string }{denoiseChain() + ",", "音频净化"})
@@ -239,7 +262,7 @@ func prepareAudio(ctx context.Context, f *ff.FF, master string, p Params) (strin
 
 	for _, c := range cands {
 		if meas := measureLoudness(ctx, f, master, c.chain+base); meas != nil {
-			return c.chain + loudnormApplied(meas, p.Loudness), meas,
+			return c.chain + loudnormApplied(meas, p.Loudness, tp), meas,
 				c.label + " + 两遍响度归一(线性增益,不抽气)"
 		}
 		// 测量失败多为滤镜不可用:同一条链退回单遍写法再试
@@ -254,13 +277,22 @@ func prepareAudio(ctx context.Context, f *ff.FF, master string, p Params) (strin
 	return base, nil, "⚠ 音频链全部回退失败,按单遍响度归一继续(音质可能不稳)"
 }
 
+// peakBaseFilter loudnorm 的基础滤镜串(含目标响度与真峰值上限)。
+//
+// 抽成函数是为了让"项目的 peak 参数到底有没有进滤镜串"可被断言 ——
+// 这正是审计 P1-1 里 `assemble.peak` 那个假开关的根因:参数存在、界面能调,
+// 而真正生效的 filture 串里写死 TP=-1.5。
+func peakBaseFilter(loudness int, tp float64) string {
+	return fmt.Sprintf("loudnorm=I=%d:TP=%.2f:LRA=11", loudness, tp)
+}
+
 // loudnormApplied 用测量值构造第二遍(linear=true)的 loudnorm 滤镜串。
-func loudnormApplied(m *loudnormMeasured, target int) string {
+func loudnormApplied(m *loudnormMeasured, target int, tp float64) string {
 	if m == nil || m.InputI == "" {
-		return fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11", target)
+		return fmt.Sprintf("loudnorm=I=%d:TP=%.2f:LRA=11", target, tp)
 	}
-	return fmt.Sprintf("loudnorm=I=%d:TP=-1.5:LRA=11:measured_I=%s:measured_TP=%s:measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true",
-		target, m.InputI, m.InputTP, m.InputLRA, m.InputThresh, m.TargetOffset)
+	return fmt.Sprintf("loudnorm=I=%d:TP=%.2f:LRA=11:measured_I=%s:measured_TP=%s:measured_LRA=%s:measured_thresh=%s:offset=%s:linear=true",
+		target, tp, m.InputI, m.InputTP, m.InputLRA, m.InputThresh, m.TargetOffset)
 }
 
 // measureLoudness 第一遍:只分析不输出,从 stderr 里抠出 loudnorm 的 JSON 报告。

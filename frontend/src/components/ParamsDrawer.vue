@@ -234,15 +234,27 @@ async function save() {
         <el-form-item label="转场">
           <el-select v-model="form.assemble.transition">
             <el-option value="cut" label="硬切(最稳)" />
-            <el-option value="fade" label="闪黑叠化(0.5s)" />
-            <el-option value="dissolve" label="交叉叠化(0.5s)" />
+            <el-option value="fade" label="闪黑叠化(默认 0.5s,可调)" />
+            <el-option value="dissolve" label="交叉叠化(默认 0.5s,可调)" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="转场时长(秒;0 = 用设置页的「转场时长」)">
+          <el-input-number v-model="form.assemble.fade_sec" :min="0" :max="3" :step="0.1" :precision="1" style="width:100%" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            两镜画面重叠的时长,成片总长按此扣除 (n-1)×时长。留 0 表示跟随设置页的统一值。
+          </div>
         </el-form-item>
         <el-form-item label="烧录字幕(台词金色/旁白白色)">
           <el-switch v-model="form.assemble.burn_subtitles" />
         </el-form-item>
         <el-form-item label="目标响度(LUFS)">
           <el-slider v-model="form.assemble.loudness" :min="-30" :max="-6" :step="1" show-input />
+        </el-form-item>
+        <el-form-item label="峰值上限(loudnorm 的真峰值 TP;0.92 ≈ -0.7 dBTP)">
+          <el-slider v-model="form.assemble.peak" :min="0.5" :max="1" :step="0.01" show-input />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            越小越安全(不易在手机扬声器上削顶),越大越响。默认 0.92。
+          </div>
         </el-form-item>
         <el-form-item label="音频净化(高通去隆隆声 + 频谱降噪去底噪/嘶声)">
           <el-switch v-model="form.assemble.denoise" />

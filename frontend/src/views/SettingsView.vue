@@ -11,7 +11,7 @@ import { ElMessage } from 'element-plus'
 // 'base_url')",而且 getSettings 返回前会连抛三次(base_url/model/api_key),
 // 用户看到的就是设置页一进去满屏「界面错误」。
 const emptyForm = () => ({
-  server_port: 8790, data_dir: '', novel_dir: '', auto_open_ui: true,
+  server_port: 8790, data_dir: '', novel_dir: '',
   llm: { base_url: '', api_key: '', model: '', timeout_seconds: 600 },
   comfy: {
     base_url: '', root_dir: '', auto_start: true, idle_stop_min: 10, cond_cache: true,
@@ -23,7 +23,7 @@ const emptyForm = () => ({
   render: { default_engine: 'auto', fade_sec: 0.5, shot_timeout: 45 },
   split: {
     chunk_size: 12000, concurrency: 3, max_orig_chars: 9000,
-    prev_summary: 400, brief_min: 400, brief_max: 700, shot_limit: 30,
+    prev_summary: 400, brief_min: 400, brief_max: 700, shot_limit: 0,
   },
 })
 const form = reactive(emptyForm())
@@ -338,8 +338,11 @@ async function testConn(target) {
           <el-form-item label="每集大纲字数上限">
             <el-input-number v-model="form.split.brief_max" :min="400" :max="1500" :step="100" style="width:100%" />
           </el-form-item>
-          <el-form-item label="镜头数安全上限(0=LLM 按内容自决)">
-            <el-input-number v-model="form.split.shot_limit" :min="0" :max="50" style="width:100%" />
+          <el-form-item label="镜头数安全上限(0 = 按内容自决,用内置安全网 120 镜)">
+            <el-input-number v-model="form.split.shot_limit" :min="0" :max="120" style="width:100%" />
+            <div class="text-xs mt-1" style="color:var(--mx-text3)">
+              超过上限的镜头会被**截断并告警**(方案结尾变短)。原文很长、需要更多镜头时把它调大,或填 0 让 LLM 按内容决定。
+            </div>
           </el-form-item>
         </el-form>
       </div>
@@ -352,9 +355,9 @@ async function testConn(target) {
           <el-form-item label="HTTP 端口(占用自动 +1)">
             <el-input-number v-model="form.server_port" :min="1024" :max="65535" style="width:100%" />
           </el-form-item>
-          <el-form-item label="启动时自动打开工作台">
-            <el-switch v-model="form.auto_open_ui" />
-          </el-form-item>
+          <!-- 原「启动时自动打开工作台」开关已移除:桌面模式下工作台就是原生窗口,
+               这个开关在架构里没有正确语义(开了只会多弹一个浏览器标签),属于
+               "有界面、能保存、后端零读取点"的假开关(2026-09-24 审计 P1-1)。 -->
           <el-form-item label="小说库目录(小说库页扫描;书=子文件夹,推荐 全本/封面/正文 结构)" class="col-span-2">
             <el-input v-model="form.novel_dir" placeholder="D:/Ai/ManJuX/data/Novel" />
           </el-form-item>
