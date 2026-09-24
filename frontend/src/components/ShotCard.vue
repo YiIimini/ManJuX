@@ -199,8 +199,8 @@ const sceneName = computed(() => {
         <span class="timecode" v-if="manifestItem?.status === 'rendering'" style="color:var(--mx-amber)">渲染中…</span>
       </div>
       <div v-if="manifestItem?.status === 'done'" class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
-           style="background:rgba(4,6,10,.35)">
-        <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:rgba(6,8,14,.6);border:1px solid rgba(255,180,84,.5)">
+           style="background:color-mix(in srgb, var(--mx-bg0) 35%, transparent)">
+        <div class="w-12 h-12 rounded-full flex items-center justify-center" style="background:color-mix(in srgb, var(--mx-bg0) 60%, transparent);border:1px solid color-mix(in srgb, var(--mx-amber) 50%, transparent)">
           <el-icon :size="20" color="var(--mx-amber-hi)"><VideoPlay /></el-icon>
         </div>
       </div>

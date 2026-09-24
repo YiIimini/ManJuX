@@ -117,7 +117,7 @@ onBeforeUnmount(() => {
         </el-tooltip>
       </div>
       <div class="flex-1 overflow-y-auto py-1.5">
-        <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="tl-dot"></span><span class="body"><span class="m" style="color:#46536f">等待管线事件…(运行任意阶段后实时输出)</span></span></div>
+        <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="tl-dot"></span><span class="body"><span class="m" style="color:var(--mx-text3)">等待管线事件…(运行任意阶段后实时输出)</span></span></div>
         <div v-for="(l, i) in reversed" :key="i" class="log-line" :class="l.level">
           <span class="t">{{ fmtTime(l.at) }}</span>
           <span class="tl-dot"></span>

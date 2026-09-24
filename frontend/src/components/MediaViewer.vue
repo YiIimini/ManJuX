@@ -39,7 +39,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
           <el-button circle text @click="visible = false"><el-icon><Close /></el-icon></el-button>
         </div>
         <!-- 媒体区 -->
-        <div class="flex-1 flex items-center justify-center relative" style="min-height:0;background:#04060b">
+        <div class="flex-1 flex items-center justify-center relative" style="min-height:0;background:var(--mx-bg0)">
           <video v-if="cur.type === 'video'" :src="cur.src" controls autoplay playsinline
                  class="mv-media" style="object-fit:contain" />
           <img v-else-if="cur.type === 'image'" :src="cur.src" class="mv-media" style="object-fit:contain" />
@@ -63,7 +63,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
      弹窗/抽屉里点图打开预览时,预览器被压在弹窗底下(看不见也点不到)。
      现取 2700:高于弹层计数器与运行日志悬浮窗(2600),低于永远最高的 Tip(3000)。 */
   z-index: 2700;
-  background: rgba(3, 5, 9, .82);
+  background: color-mix(in srgb, var(--mx-bg0) 82%, transparent);
   backdrop-filter: blur(10px);
   display: flex; align-items: center; justify-content: center;
   padding: 32px;

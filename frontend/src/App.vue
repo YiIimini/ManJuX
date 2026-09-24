@@ -428,7 +428,7 @@ const env = computed(() => G.status?.env)
           <span class="tick-text" v-else-if="lastLog" :class="lastLog.level">
             <template v-if="lastLog.project_id && lastLog.project_id !== (G.project?.project?.id)">【{{ projName(lastLog.project_id) }}】</template>{{ lastLog.message }}
           </span>
-          <span class="tick-text" v-else style="color:#46536f">运行日志待命…</span>
+          <span class="tick-text" v-else style="color:var(--mx-text3)">运行日志待命…</span>
           <el-icon :size="12"><ArrowUp v-if="G.logPanelOpen" /><ArrowDown v-else /></el-icon>
         </button>
         <div class="vdiv"></div>
@@ -466,7 +466,7 @@ const env = computed(() => G.status?.env)
     <!-- 关闭确认:后台运行 / 直接退出 -->
     <el-dialog v-model="closeDlg" title="关闭 ManJuX" width="480px" append-to-body>
       <div v-if="runningCount > 0" class="text-xs p-3 mb-4 rounded-lg"
-           style="background:rgba(255,180,84,.08);border:1px solid rgba(255,180,84,.35);color:var(--mx-amber-hi)">
+           style="background:color-mix(in srgb, var(--mx-amber) 8%, transparent);border:1px solid color-mix(in srgb, var(--mx-amber) 35%, transparent);color:var(--mx-amber-hi)">
         ⚠ 有 {{ runningCount }} 个项目管线正在运行,直接退出将中止渲染任务。
       </div>
       <div class="grid gap-3" style="grid-template-columns:1fr 1fr">

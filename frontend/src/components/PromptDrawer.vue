@@ -17,7 +17,7 @@ const shot = computed(() => G.promptShot)
         <span v-if="shot" class="badge-mode" :class="shot.mode">{{ shot.mode?.toUpperCase() }}</span>
       </div>
     </template>
-    <pre class="text-xs leading-relaxed p-3 rounded-lg" style="white-space:pre-wrap;word-break:break-word;background:#0a0d12;color:#c8d2e4;font-family:var(--mx-mono)">{{ shot?.h3_prompt }}</pre>
+    <pre class="text-xs leading-relaxed p-3 rounded-lg" style="white-space:pre-wrap;word-break:break-word;background:var(--mx-bg1);color:var(--mx-text2);font-family:var(--mx-mono)">{{ shot?.h3_prompt }}</pre>
     <div class="text-xs mt-3" style="color:var(--mx-text2)">
       提示词由 LLM 按 MiniMax-H3 官方规范直出(Ref2VA 六段式 / T2VA 三段式);对白逐字保留于 &lt;d&gt; 标签,由 H3 原生配音。
       修改请回到「剧本分镜」阶段调整源文本或风格要求后重新生成。

@@ -231,7 +231,7 @@ const doneShots = computed(() =>
               <circle cx="26" cy="26" r="21" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="4.5" />
               <circle cx="26" cy="26" r="21" fill="none" :stroke="ringColor" stroke-width="4.5"
                       stroke-linecap="round" :stroke-dasharray="ringDash" transform="rotate(-90 26 26)"
-                      style="transition: stroke-dasharray .6s ease; filter: drop-shadow(0 0 4px rgba(255,180,84,.45))" />
+                      style="transition: stroke-dasharray .6s ease; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--mx-amber) 45%, transparent))" />
               <text x="26" y="30" text-anchor="middle" class="ring-pct">{{ ringPct }}</text>
             </svg>
             <span class="ring-label">{{ doneShots }}/{{ totalShots }} 镜</span>
@@ -478,7 +478,7 @@ const doneShots = computed(() =>
              class="cursor-pointer rounded-lg overflow-hidden relative" style="border:2px solid var(--mx-line)"
              :style="frameDlg.pick === i ? 'border-color:var(--mx-accent, var(--mx-amber))' : ''" @click="frameDlg.pick = i">
           <img :src="f.url + '?t=' + Date.now()" style="width:100%;aspect-ratio:3/4;object-fit:cover;display:block" />
-          <div class="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5" style="background:rgba(0,0,0,.5);color:#fff">{{ Math.round(f.ratio * 100) }}%</div>
+          <div class="absolute bottom-0 left-0 right-0 text-center text-xs py-0.5" style="background:color-mix(in srgb, var(--mx-bg0) 58%, transparent);color:var(--mx-text)">{{ Math.round(f.ratio * 100) }}%</div>
         </div>
         <div v-if="!frameDlg.busy && !frameDlg.frames.length" class="col-span-3 text-center text-xs py-10" style="color:var(--mx-text3)">截帧中…</div>
       </div>

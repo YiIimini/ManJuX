@@ -71,7 +71,7 @@ function stateChip(p) {
         </div>
         <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
           <div class="px-3 py-1.5 rounded-lg flex items-center gap-2"
-               style="background:rgba(6,8,14,.55);border:1px solid rgba(255,180,84,.4);backdrop-filter:blur(4px)">
+               style="background:color-mix(in srgb, var(--mx-bg0) 55%, transparent);border:1px solid color-mix(in srgb, var(--mx-amber) 40%, transparent);backdrop-filter:blur(4px)">
             <el-icon :size="16" color="var(--mx-amber-hi)"><Folder /></el-icon>
             <span class="text-xs" style="color:var(--mx-amber-hi)">剧集合集</span>
           </div>

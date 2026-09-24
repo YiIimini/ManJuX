@@ -190,7 +190,7 @@ async function batchDelete() {
           </div>
           <div class="absolute inset-0 flex items-center justify-center" style="pointer-events:none">
             <div v-if="it.final || it.final_2k" class="w-14 h-14 rounded-full flex items-center justify-center"
-                 style="background:rgba(6,8,14,.55);border:1px solid rgba(255,180,84,.5);backdrop-filter:blur(4px)">
+                 style="background:color-mix(in srgb, var(--mx-bg0) 55%, transparent);border:1px solid color-mix(in srgb, var(--mx-amber) 50%, transparent);backdrop-filter:blur(4px)">
               <el-icon :size="22" color="var(--mx-amber-hi)"><VideoPlay /></el-icon>
             </div>
             <span v-else-if="it.cover" class="timecode">未合成</span>
@@ -206,7 +206,7 @@ async function batchDelete() {
             <el-icon :size="13"><Delete /></el-icon>
           </button>
           <div v-if="it.final" class="absolute bottom-3 right-3 timecode px-2 py-0.5 rounded"
-               style="background:rgba(6,8,14,.7)">{{ fmtDur(it.duration) }}</div>
+               style="background:color-mix(in srgb, var(--mx-bg0) 70%, transparent)">{{ fmtDur(it.duration) }}</div>
         </div>
         <div class="px-3.5 py-3 flex flex-col gap-2">
           <div class="flex items-center gap-2">

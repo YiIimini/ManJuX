@@ -351,7 +351,7 @@ async function remove(e) {
         </el-button>
       </el-tooltip>
       <div v-if="gachaResult" class="w-full flex items-center gap-2 text-xs p-2 rounded-lg"
-           style="background:rgba(255,180,84,.06);border:1px solid rgba(255,180,84,.25)">
+           style="background:color-mix(in srgb, var(--mx-amber) 6%, transparent);border:1px solid color-mix(in srgb, var(--mx-amber) 25%, transparent)">
         <img :src="`/api/library/characters/${encodeURIComponent(gachaResult.entry.name)}/image`"
              style="width:34px;height:44px;object-fit:cover;border-radius:6px" />
         <div class="flex-1 min-w-0">
@@ -402,7 +402,7 @@ async function remove(e) {
                style="width:100%;height:100%;object-fit:cover" loading="lazy"
                @error="$event.target.style.display='none'"
                @load="$event.target.style.display=''" />
-          <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:rgba(4,6,10,.4)">
+          <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:color-mix(in srgb, var(--mx-bg0) 40%, transparent)">
             <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
           </div>
           <button class="cover-del" title="删除该库资产" @click.stop="remove(e)">
@@ -502,7 +502,7 @@ async function remove(e) {
                  @click="previewDetail(i)">
               <img :src="imgURL(detail, f)" style="width:100%;height:100%;object-fit:cover" loading="lazy" />
               <span class="absolute text-xs px-1 py-0.5"
-                    style="left:0;right:0;bottom:0;background:rgba(0,0,0,.5);color:#fff">{{ labelOf(f) }}</span>
+                    style="left:0;right:0;bottom:0;background:color-mix(in srgb, var(--mx-bg0) 58%, transparent);color:var(--mx-text)">{{ labelOf(f) }}</span>
             </div>
           </div>
         </div>

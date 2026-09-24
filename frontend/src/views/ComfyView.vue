@@ -361,7 +361,7 @@ function verCellCls(row, which) {
             <span class="text-xs font-bold">{{ d.label }}</span>
           </div>
           <div class="text-xs cursor-pointer truncate font-mono p-1 rounded"
-               style="color:var(--mx-amber);background:rgba(255,180,84,.06)"
+               style="color:var(--mx-amber);background:color-mix(in srgb, var(--mx-amber) 6%, transparent)"
                :title="'点击打开: ' + d.path"
                @click="openDir(d.path)">{{ d.path }}</div>
           <div class="text-xs mt-1.5" style="color:var(--mx-text3);line-height:1.5">{{ d.desc }}</div>
