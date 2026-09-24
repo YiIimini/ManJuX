@@ -73,8 +73,26 @@ func (s *Server) handleNovels(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	// 默认**倒序**(用户 2026-09-24 定调):书名降序 —— 列表新加的书名排在前面。
+	sortNovels(out, novelSortDesc(r))
 	writeJSON(w, 200, map[string]any{"root": root, "novels": out})
+}
+
+// novelSortDesc 解析排序方向:只有显式 ?sort=asc 才升序,其余一律默认**倒序**。
+// 单独成函数是为了让"默认倒序"这条约定可被测试钉住(见 novels_sort_test.go):
+// 口径散在 handler 里时,谁都能顺手改回去而没人发现。
+func novelSortDesc(r *http.Request) bool {
+	return !strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("sort")), "asc")
+}
+
+// sortNovels 小说库排序。desc=true 为默认的倒序。
+func sortNovels(items []novelItem, desc bool) {
+	sort.Slice(items, func(i, j int) bool {
+		if desc {
+			return items[i].Name > items[j].Name
+		}
+		return items[i].Name < items[j].Name
+	})
 }
 
 // scanNovelDir 一本书(子文件夹):全本优先,正文分卷为章节;封面取「封面」内首图。
