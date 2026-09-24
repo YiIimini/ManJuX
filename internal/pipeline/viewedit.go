@@ -152,7 +152,13 @@ func GenerateViewsEdit(ctx context.Context, ce engine.Engine, f *ff.FF, o Turnar
 				Seed:      baseSeed + int64(attempt-1)*7919 + int64(i)*104729,
 				Steps:     o.Steps,
 				UseTurbo:  true,
-				UseAngles: true,
+				// UseAngles 默认**关**:Multiple-Angles LoRA 在实测里没有转动机位,
+				// 反而把训练集里的背景(星空+极光)带了进来(2026-09-24,另一处同类用途
+				// 的实测:改用基座模型 + 一句自然语言机位指令才真的转,4 步/20 步都成功)。
+				// 我们的编辑指令本身就是自然语言机位描述(viewEditPrompt),所以先按
+				// "不用 LoRA"跑;权重下齐后若发现转角度不足,把它改回 true 做 A/B ——
+				// 这个开关留着就是为这一次对比。
+				UseAngles: false,
 				Timeout:   0,
 			}, out)
 			if err != nil {
