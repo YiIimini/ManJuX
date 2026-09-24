@@ -600,14 +600,21 @@ func isQuantizedBase(name string) bool {
 
 // modelFileExists 在模型子目录探测文件存在(质量档/极速档的文件守卫)。
 // 同时覆盖 ComfyUI/models 与 shared/models(extra_model_paths 映射的两个根)。
+// modelFileExists 权重文件是否存在(仅作**提交前**的尽力判断,权威答案在
+// ComfyUI 自己的 combo 列表里 —— 见 UpscaleAssets/MaskAssets/EditAssets)。
+//
+// 2026-09-24 修(审计 P1-2 权重判据):这里原先只猜 `<root>/ComfyUI/models` 与
+// `<root>/shared/models`,漏了本机实际在用的 `<root>/ComfyUI/shared/models`
+// (extra_model_paths.yaml 的 base_path)—— 于是 express 档的 int8 VAE 与 quality 档的
+// Acc-8Step 在这台机器上被判"不存在",**静默降级**:用户以为开了极速/高画质,
+// 实际跑的是默认档,而且没有任何提示。现在目录解析与清理/管理页共用同一份实现。
 func modelFileExists(c config.ComfySettings, name string, subs []string) bool {
-	roots := []string{
-		filepath.Join(c.RootDir, "ComfyUI", "models"),
-		filepath.Join(c.RootDir, "shared", "models"),
+	if strings.TrimSpace(name) == "" {
+		return false
 	}
-	for _, root := range roots {
-		for _, sub := range subs {
-			if _, err := os.Stat(filepath.Join(root, sub, name)); err == nil {
+	for _, sub := range subs {
+		for _, dir := range ModelDirs(c.RootDir, sub) {
+			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
 				return true
 			}
 		}
