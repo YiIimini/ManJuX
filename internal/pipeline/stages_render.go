@@ -65,7 +65,13 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return err
 	}
 	c.emit(proj.ID, PhaseRender, 0, "info", 0, "引擎=%s(%s)", engName, engineLabel(engName))
-	if rp.Seam && engName == "comfy" {
+	// 引擎能力表:本地专属动作(接缝/清队列/释放显存/本地预检/本地资产补齐)
+	// 一律按"它实际能做什么"判断,不再比较引擎名 —— 见 engine.Caps 的说明。
+	caps := engine.CapsOf(engName)
+	if note := unsupportedParamNote(caps, rp); note != "" {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", note)
+	}
+	if rp.Seam && caps.Seam {
 		c.emit(proj.ID, PhaseRender, 0, "info", 0, "镜间连续接缝已开启:每镜尾部 22 帧钉入下一镜(仅本地引擎;重渲某镜后建议后续镜头一并重渲保持链一致)")
 	}
 
@@ -92,7 +98,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// 渲染前节点体检:把「插件节点缺失」这类注定失败的问题挡在生成参考图与
 	// 排队之前。此前只有打开管理页才查节点(且只查 2 个),渲染跑到一半才失败,
 	// 用户只看到 ComfyUI 转述的原始报文,分不清缺插件还是缺模型。
-	if ce, ok := eng.(*comfyengine.Engine); ok && engName == "comfy" {
+	if ce, ok := eng.(*comfyengine.Engine); ok && caps.Local {
 		// 已知冲突插件(只告警不阻断):例如 MiniMaxH3-Cache 的启动期 monkeypatch
 		// 会让镜间接缝必然失败,而用户可能为其它工作流有意保留它。
 		for _, warn := range ce.Conflicts() {
@@ -120,7 +126,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	}
 	// 本次显式选了云端引擎时不做本地资产补齐:那是用户明确不要本地 GPU 时间的语义,
 	// 而补齐必然要起 Krea-2/H3(旧实现忽略了这个覆盖,审计 P0-9 附带项)。
-	if need != nil && engName != "comfy" {
+	if need != nil && !caps.Local {
 		c.emit(proj.ID, PhaseRender, 0, "info", 0, "本次引擎=%s:跳过本地资产补齐(单镜范围内缺图将降级纯文生)", engName)
 	} else if !need.isEmpty() {
 		c.backfillAssets(ctx, proj, plan, assets, need)
@@ -132,7 +138,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// 并释放残留显存:上一阶段(Krea-2 定妆/抽卡等)模型常驻会把 H3 主模型
 	// (~20GB)挤出显存触发 dynamic VRAM loading——每步在 CPU↔GPU 搬权重,
 	// 实测 150s/步(正常 ~2s),极端时整镜 45 分钟超时(2026-09-10 血案)。
-	if engName == "comfy" {
+	if caps.Queue {
 		eng.ClearQueue(ctx)
 		b, hasB := sysmon.VRAMUsedMB()
 		_ = eng.FreeVRAM(ctx)
@@ -231,7 +237,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				Accel:     rp.Accel,
 				OutputDir: clipsDir, OutputName: outName,
 				Timeout:  shotTimeout,
-				Seam:     rp.Seam && engName == "comfy",
+				Seam:     rp.Seam && caps.Seam,
 				PrevShot: shot.ID - 1,
 				OnProgress: func(p int, note string) {
 					total := base + p/len(shots)
@@ -251,7 +257,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				break
 			}
 			c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "⚠ 镜头 %d 超时,释放显存后重试一次:%v", shot.ID, err)
-			if engName == "comfy" {
+			if caps.VRAM {
 				_ = eng.FreeVRAM(ctx)
 			}
 		}
