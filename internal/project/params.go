@@ -1,5 +1,7 @@
 package project
 
+import "strings"
+
 // StageParams 管线各阶段参数(项目级完整快照,创建项目时从全局默认拷贝,
 // 之后与全局默认互不影响 —— 实现「单项目独立调优」)。
 type StageParams struct {
@@ -53,6 +55,28 @@ type AssetsParams struct {
 	// 锐利的脸(锁脸锚点),转台图负责其它角度。仅在明确不需要角度参考、只要省显存时
 	// 才打开(显式 true)。
 	CompactRefs *bool `json:"compact_refs"`
+	// ViewsSource 多视角用哪条路生成:"auto"(默认,见下)/ "edit" / "h3"。
+	//
+	//   edit = Qwen-Image-Edit-2511 图像编辑:拿定妆照本体改一个角度,身份/配色/画风
+	//          按像素保住。每张几秒。
+	//   h3   = H3 转身视频抽帧(旧路径)。视频模型会**顺手重新设计**角色(实测:赛璐璐
+	//          少年→写实真人、插画铜雀→3D 机械鸟),逐帧身份校验因此拒绝,多视角拿不到。
+	//   auto = 编辑链路就绪(权重在 ComfyUI 模型目录里、服务在线)就用 edit,否则 h3。
+	//          留空/不识别都按 auto。
+	//
+	// 之所以留这个开关:①权重没下完的人应当照旧可用;②换模型时需要能 A/B 对比。
+	ViewsSource string `json:"views_source"`
+}
+
+// ViewsSourceOf 归一化多视角生成方式,返回 "auto" / "edit" / "h3"(不识别一律 auto)。
+func (a AssetsParams) ViewsSourceOf() string {
+	switch strings.ToLower(strings.TrimSpace(a.ViewsSource)) {
+	case "edit", "qwen", "qwen-edit":
+		return "edit"
+	case "h3", "video":
+		return "h3"
+	}
+	return "auto"
 }
 
 // CompactRefsOn 参考图是否去冗余(未表态 = **关**,见 CompactRefs 的实测说明)。

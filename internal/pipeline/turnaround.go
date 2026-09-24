@@ -10,6 +10,7 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/qc"
@@ -17,13 +18,14 @@ import (
 
 // 多视角转台图(角色转身参考)生成。
 //
-// 为什么必须是 H3 Ref2V 而不是 Krea-2 img2img:实测 Krea-2 是**纯文生图模型,
-// 没有身份条件注入机制**,只能靠 denoise 在"改动幅度"与"保住身份"之间猜 ——
-// denoise 0.7 会把人整个换掉(木偶角色被改写成人类),0.55 则身份勉强保住但
-// 角度几乎不变。这条路是模型的固有限制,不是参数调优能解决的。
-//
-// 正解是让**有身份参考机制**的 H3 Ref2V 来完成:以定妆照为参考生成一段转身视频,
-// 身份由 ref 图锁住、角度由提示词驱动,两者不再互斥。
+// 【两条路,默认走编辑】本文件负责**分流与视频路径**,编辑路径见 viewedit.go:
+//   - 编辑路径(默认):Qwen-Image-Edit-2511 拿定妆照本体改角度 —— 身份/配色/画风按像素
+//     保住,每张几秒。这是 2026-09-24 之后的默认。
+//   - 视频路径(回退):H3 Ref2V 生成一段转身视频再抽帧。它比 Krea-2 img2img 强
+//     (Krea-2 是纯文生图模型,没有身份条件注入机制,denoise 0.7 会把角色整个换掉、
+//     0.55 则角度几乎不变 —— 模型固有限制,不是调参能解决的),但视频模型会**顺手重新
+//     设计**角色:实测赛璐璐少年被画成写实真人、插画铜雀被画成 3D 机械鸟,逐帧身份校验
+//     因此正确拒绝、多视角永远拿不到。只在编辑链路未就绪(权重没下/服务离线)时使用。
 //
 // 产物命名(**全部与定妆照同目录**):
 //   - <dir>/<base>_view_threequarter|side|back.png  多视角原图
@@ -52,6 +54,11 @@ type TurnaroundOptions struct {
 	// 妖兽绕行/转身、无实体原地旋动、Q 版 Q 版转身(见 entity_prompts.go)。
 	// 零值("")按 human 处理,保证老调用方行为不变。
 	Kind EntityKind
+	// Source 多视角的生成方式:
+	//   "edit" = 图像编辑(Qwen-Image-Edit-2511,首选:改你给的那张图,身份/画风按像素保住)
+	//   "h3"   = H3 转身视频抽帧(旧路径;视频模型会顺手重新设计角色,校验多半拒绝)
+	//   空 = 自动:配置了编辑模型就用 edit,否则退回 h3。
+	Source string
 	// Realistic 用户显式要求真人写实(script.stylized_faces 关掉)。
 	// **零值是"动漫化"**:与项目策略一致(未表态即开),也让漏传的调用方
 	// 拿到的是安全行为(带介质锁)而不是静默丢锁。
@@ -73,17 +80,18 @@ type TurnaroundOptions struct {
 	Emit           func(format string, args ...any)
 }
 
-// GenerateTurnaround 定妆照 → 原地转身视频 → 抽帧 → 校验 → 横向拼转台图。
-// 返回转台图绝对路径。任何一步失败都返回错误(由调用方决定告警还是阻断)。
+// GenerateTurnaround 定妆照 → 多视角图 → 校验 → 横向拼转台图(返回转台图绝对路径)。
+// 生成方式按 o.Source 分流:默认走图像编辑(见 viewedit.go),回退到 H3 转身视频。
+// 任何一步失败都返回错误(由调用方决定告警还是阻断)。
 //
 // **为什么必须校验后才交付(2026-09-24 用户报「多视角/转台图和参考的定妆照不一致」)**:
-// 转身视频是 H3 生成的,它有创作自由,可以把人转着转着画成另一个人。旧实现对此毫无
+// 生成模型(视频路径尤其)有创作自由,可以把人转着转着画成另一个人。旧实现对此毫无
 // 察觉,而且这张"另一个人"的拼图会作为该角色的**第二张参考图**喂回渲染 —— 主动把成片
-// 的人脸往错误方向拉,比"没有多视角"更糟。所以:
+// 的人脸往错误方向拉,比"没有多视角"更糟。所以两条路都装同一道闸门:
 //
-//  1. 抽帧之后、拼图之前逐帧判"像不像本人"(视觉模型,见 qc.IdentityJudge);
+//  1. 出图之后、拼图之前逐张判"像不像本人"(视觉模型,见 qc.IdentityJudge);
 //  2. 不一致就换种子重出(VerifyRetries 次);
-//  3. 仍不一致 —— **拒绝交付**:删掉本次抽出的角度帧、不生成转台图、返回错误。
+//  3. 仍不一致 —— **拒绝交付**:删掉本次产出的角度帧、不生成转台图、返回错误。
 //     调用方照旧只告警,于是该角色退回"单张正面照"渲染(锁脸锚点仍在,只是少了
 //     其它角度),既不污染一致性也不阻断出片。
 //
@@ -95,6 +103,16 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	if _, err := os.Stat(o.MasterPath); err != nil {
 		return "", fmt.Errorf("定妆照不可读:%w", err)
 	}
+	// 生成方式分流。编辑路径原地改这张图,不重新设计角色,所以是默认首选;
+	// 只在编辑模型缺失(用户没下权重)或引擎不是本地 ComfyUI 时退回视频路径。
+	if source, reason := resolveViewSource(ctx, ce, o); source == "edit" {
+		return GenerateViewsEdit(ctx, ce, f, o)
+	} else if reason != "" {
+		if o.Emit != nil {
+			o.Emit("%s", reason)
+		}
+	}
+
 	dir := o.Dir
 	if dir == "" {
 		dir = filepath.Dir(o.MasterPath)
@@ -232,6 +250,79 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	return "", fmt.Errorf("多视角与定妆照不一致,已拒绝使用:%s", lastReason)
 }
 
+// resolveViewSource 决定本次多视角走哪条路,返回 (source, 需要告知用户的原因)。
+//
+// 为什么要有分流而不是"统一改成编辑路径":编辑路径需要用户真的把 Qwen-Image-Edit 的
+// 权重下下来(约 30GB)。没下完就硬走编辑,结果是多视角每次都以"模型未配置"失败,
+// 比"用旧路径多花几分钟"更糟。所以规则是:**能走编辑就走编辑**(它才是不会改写角色的那条),
+// 走不了才退回视频路径,并且把"为什么退回、怎么升级"明确说出来。
+func resolveViewSource(ctx context.Context, ce engine.Engine, o TurnaroundOptions) (string, string) {
+	requested := strings.ToLower(strings.TrimSpace(o.Source))
+	// 显式指定就照做:用户要 A/B 或明确不要某条路时,不做"自作聪明"的回退。
+	if requested == "edit" || requested == "h3" || requested == "video" {
+		s, _ := viewSourceDecision(requested, true, nil)
+		return s, ""
+	}
+	ee, ok := ce.(*comfyengine.Engine)
+	if !ok {
+		return viewSourceDecision(requested, false, nil)
+	}
+	return viewSourceDecision(requested, true, ee.EditReady(ctx))
+}
+
+// viewSourceDecision 纯函数:把"用户要什么"与"编辑链路是否就绪"折算成实际走哪条路。
+//
+// 抽成纯函数是为了让分流规则可以被穷举测试(见 turnaround_source_test.go)——分流
+// 判错的两种后果都很难在事后发现:要么白白多等几分钟视频,要么拿到一张"另一个角色"
+// 的角度图并被当作第二张参考喂进渲染。
+//
+//	requested:   "edit" / "h3" / "video" / ""(auto)
+//	editCapable: 引擎是否支持图像编辑(非本地 ComfyUI 一律 false)
+//	editMissing: 编辑链路缺什么(空 = 就绪)
+func viewSourceDecision(requested string, editCapable bool, editMissing []string) (source, reason string) {
+	switch requested {
+	case "edit":
+		return "edit", ""
+	case "h3", "video":
+		return "h3", ""
+	}
+	if editCapable && len(editMissing) == 0 {
+		return "edit", ""
+	}
+	if !editCapable {
+		return "h3", "多视角:当前引擎不支持图像编辑(需本地 ComfyUI),本次走 H3 转身视频路径"
+	}
+	return "h3", fmt.Sprintf(
+		"多视角:图像编辑链路还没就绪(%s)—— 本次走 H3 转身视频路径。"+
+			"把 Qwen-Image-Edit-2511 的底模/文本编码器/VAE 放进 ComfyUI 的 models 目录后,"+
+			"多视角会自动改用编辑路径:一样是这张定妆照,只转角度、不改画风(不再出现"+
+			"「转台图是另一个人」)", strings.Join(editMissing, ";"))
+}
+
+// assembleTurnaround 把定妆照 + 各角度帧横向拼成转台图(两条多视角路径共用)。
+// 抽成函数是为了保证"产物命名与拼法"只有一个实现点 —— 视频路径与图像编辑路径
+// 必须产出**一模一样**的文件,否则渲染时的第二张参考会因路径不同而落空。
+func assembleTurnaround(ctx context.Context, f *ff.FF, o TurnaroundOptions, views []string) (string, error) {
+	dir := o.Dir
+	if dir == "" {
+		dir = filepath.Dir(o.MasterPath)
+	}
+	base := o.Base
+	if base == "" {
+		base = strings.TrimSuffix(filepath.Base(o.MasterPath), filepath.Ext(o.MasterPath))
+	}
+	frames := make([]string, 0, len(views)+1)
+	if _, err := os.Stat(o.MasterPath); err == nil {
+		frames = append(frames, o.MasterPath) // 左起第一格 = 正面定妆照
+	}
+	frames = append(frames, views...)
+	turn := filepath.Join(dir, base+"_turnaround.png")
+	if err := hstackImages(ctx, f, frames, turn); err != nil {
+		return "", fmt.Errorf("转台图拼接失败(各角度帧已保留在 %s):%w", dir, err)
+	}
+	return turn, nil
+}
+
 // removeFiles 尽力删除文件(校验不通过时清掉角度帧,不让它们被资产库扫进去)。
 func removeFiles(paths []string) {
 	for _, p := range paths {
@@ -314,18 +405,44 @@ var compactStripWords = []string{
 var reStripWord = regexp.MustCompile("\x5cb(?:" + strings.Join(compactStripWords, "|") + ")\x5cb")
 
 // tidyCompact 清理删除后留下的空格与孤立标点(残句会误导模型,如 "long narrow with a sharp ,")。
+//
+// 2026-09-24 追加**尾部孤儿词**处理:整词删除会把一个修饰语留在句尾而不带走它修饰的名词
+// (实测 "…with rosy cheeks and a long chin" → "…with and a long")。这种残句比"少一句描述"
+// 更糟 —— "long" 悬在那里,模型很可能把它接到别处(比如把脸画长),正好制造我们要消除的漂移。
+// 判据只作用于**句尾**:中间内容一个词都不动,不干扰已有的身份锚点(服装/发型/族群)。
 func tidyCompact(s string) string {
 	s = strings.Join(strings.Fields(s), " ")
 	for _, bad := range []string{" ,", " .", " ;", "with a ,", ", ,"} {
 		s = strings.ReplaceAll(s, bad, "")
 	}
+	s = strings.ReplaceAll(s, "with and", "with")
 	s = strings.ReplaceAll(s, " ,", ",")
 	s = strings.ReplaceAll(s, ",,", ",")
 	s = strings.ReplaceAll(s, "  ", " ")
+	// 句尾孤儿词:连接词/冠词/量词/无名词可修饰的形容词。它们单独留着没有任何信息量。
+	for {
+		f := strings.Fields(s)
+		if len(f) == 0 {
+			break
+		}
+		if !tidyTrailingJunk[strings.Trim(f[len(f)-1], ",;.")] {
+			break
+		}
+		s = strings.Join(f[:len(f)-1], " ")
+	}
 	if r := []rune(s); len(r) > 400 {
 		s = string(r[:400])
 	}
 	return strings.TrimSpace(strings.Trim(strings.TrimSpace(s), ",;"))
+}
+
+// tidyTrailingJunk 句尾允许被剥掉的词(见 tidyCompact 的说明)。
+var tidyTrailingJunk = map[string]bool{
+	"with": true, "and": true, "of": true, "in": true, "on": true, "over": true, "under": true,
+	"a": true, "an": true, "the": true, "his": true, "her": true, "its": true, "their": true,
+	"one": true, "two": true, "very": true,
+	"long": true, "short": true, "big": true, "small": true, "wide": true, "narrow": true,
+	"thick": true, "thin": true, "sharp": true, "round": true, "flat": true, "deep": true,
 }
 
 // hstackImages 横向拼接多张图(ffmpeg hstack):统一缩放到同一高度后并排,

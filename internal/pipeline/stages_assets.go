@@ -302,6 +302,7 @@ func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Proje
 		Name:       name,
 		Prompt:     imagePrompt,
 		Kind:       kind,
+		Source:     proj.Config.Params.Assets.ViewsSourceOf(),
 		Realistic:  !proj.Config.Params.Script.FacesOn(),
 		Steps:      proj.Config.Params.Render.Steps,
 		Accel:      proj.Config.Params.Render.Accel,
@@ -403,7 +404,7 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 		return
 	}
 	// 已在资产阶段补过的角色不再提示;首次补齐要明确告知"这一步要等"
-	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 个角色只有单张正面照,渲染前自动补多视角(H3 原地转身,每个约数分钟)…", len(list))
+	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 个角色只有单张正面照,渲染前自动补多视角(图像编辑每张数秒;若退回 H3 转身则每人数分钟)…", len(list))
 	for _, w := range list {
 		if ctx.Err() != nil {
 			return
@@ -428,6 +429,7 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 			Name:       w.name,
 			Prompt:     prompt,
 			Kind:       w.kind,
+			Source:     proj.Config.Params.Assets.ViewsSourceOf(),
 			Realistic:  !proj.Config.Params.Script.FacesOn(),
 			Steps:      proj.Config.Params.Render.Steps,
 			Accel:      proj.Config.Params.Render.Accel,

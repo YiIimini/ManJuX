@@ -26,6 +26,10 @@ watch(stageId, () => {
   // 多视角 / 参考图去冗余:缺省 = 开(与后端 ViewsOn()/CompactRefsOn() 的「未表态即开」同一语义)
   form.assets.views = form.assets.views !== false
   form.assets.compact_refs = form.assets.compact_refs === true // 默认关(只喂转台图会让锁脸变弱)
+  // 多视角生成方式:缺省 = auto(与后端 ViewsSourceOf() 的「认不出就当 auto」同一语义)。
+  // 必须在这里兜底成字符串:老项目快照里没有这个键,留 undefined 会让下拉显示空白,
+  // 用户以为"没选",保存后仍是 auto 但界面看起来像坏了。
+  form.assets.views_source = ['edit', 'h3'].includes(form.assets.views_source) ? form.assets.views_source : 'auto'
   // 角色动漫化 / 音频净化:同样「未表态即开」——老项目参数快照里没有这两个键,
   // 若不在这里兜底成 true,抽屉一开就会把用户亲手关掉(false)的开关也显示成开。
   form.script.stylized_faces = form.script.stylized_faces !== false
@@ -136,8 +140,19 @@ async function save() {
             <el-option value="skip" label="跳过(全部镜头纯文生 t2va)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="角色多视角转台图(H3 原地转身 → 抽帧转台图,渲染时作该角色第二张参考)">
+        <el-form-item label="角色多视角转台图(渲染时作该角色第二张参考;缺了渲染前自动补)">
           <el-switch v-model="form.assets.views" />
+        </el-form-item>
+        <el-form-item label="多视角生成方式">
+          <el-select v-model="form.assets.views_source">
+            <el-option value="auto" label="自动(编辑模型就绪就用图像编辑,否则 H3 转身;推荐)" />
+            <el-option value="edit" label="图像编辑(Qwen-Image-Edit-2511:只转角度,不改画风)" />
+            <el-option value="h3" label="H3 转身视频(旧路径:会重新设计角色,身份校验多半拒绝)" />
+          </el-select>
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            图像编辑拿定妆照本体改一个角度,身份/配色/画风按像素保住,每张几秒;它才是"转台图与定妆照是同一人"的那条路。
+            权重没下齐时自动退回 H3 转身视频(每个角色数分钟,且可能被身份校验拒绝)。
+          </div>
         </el-form-item>
         <el-form-item label="参考图去冗余(只喂转台图省一张;注意:拼合图缩放后脸部细节变弱,锁脸会变差,默认关)">
           <el-switch v-model="form.assets.compact_refs" />
@@ -146,7 +161,7 @@ async function save() {
       <el-alert type="info" :closable="false"
         title="Krea-2 生成:角色半身竖幅 832×1248 / 场景按项目画幅;已有资产自动复用,可上传替换。" />
       <el-alert type="warning" :closable="false"
-        title="多视角:角色只有单张正面照时,渲染前会自动补一次 H3 转身渲染(每个角色数分钟,仅首次;补完写回资产库,后续项目直接复用)。不想要这个耗时可以关掉。" />
+        title="多视角:角色只有单张正面照时,渲染前会自动补一次(编辑路径每张数秒;退回 H3 转身则每个角色数分钟,仅首次;补完写回资产库,后续项目直接复用)。不想要这个耗时可以关掉。" />
     </div>
 
     <div v-else-if="stageId === 'render'" class="flex flex-col gap-4">

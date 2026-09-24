@@ -75,3 +75,41 @@ func TestSanitizeDoesNotTouchOtherStages(t *testing.T) {
 		t.Errorf("非法 Render.Engine 应回退 auto,实际 %q", p.Render.Engine)
 	}
 }
+
+// TestViewsSourceOfNormalizes 多视角来源设置要容错:认不出的值一律当 auto。
+//
+// 为什么"认不出就当 auto"而不是当 h3:用户填错一个词(比如 "qwen2")时,结果应当是
+// "尽力用最好的那条路",而不是被静默钉死在会把角色重画成别人的旧路径上。
+func TestViewsSourceOfNormalizes(t *testing.T) {
+	cases := map[string]string{
+		"":          "auto",
+		"auto":      "auto",
+		"EDIT":      "edit",
+		" edit ":    "edit",
+		"qwen":      "edit",
+		"qwen-edit": "edit",
+		"h3":        "h3",
+		"Video":     "h3",
+		"随便写的":      "auto",
+		"true":      "auto",
+	}
+	for in, want := range cases {
+		a := AssetsParams{ViewsSource: in}
+		if got := a.ViewsSourceOf(); got != want {
+			t.Errorf("ViewsSourceOf(%q) 应为 %q,实际 %q", in, want, got)
+		}
+	}
+}
+
+// TestViewsOnDefault 多视角默认开(*bool 语义:老项目 json 里没有这个键,
+// 解成 false 会让新能力在存量项目上默认关闭 —— 而那些项目恰恰是用户在用的)。
+func TestViewsOnDefault(t *testing.T) {
+	var a AssetsParams
+	if !a.ViewsOn() {
+		t.Error("未表态时多视角应为开")
+	}
+	a.Views = Bool(false)
+	if a.ViewsOn() {
+		t.Error("显式 false 时应关闭")
+	}
+}

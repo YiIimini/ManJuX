@@ -299,8 +299,9 @@ func (s *Server) libraryViews(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
-	// 转身视频是一次完整单镜渲染(数分钟)+ 抽帧拼接,给足上限;不做"假进度",
-	// 完成后一次性回结果,期间前端按钮保持 loading。外层上限同样要给排队留余地
+	// 两条路都可能走:图像编辑(每张几秒,首选)或 H3 转身视频(完整单镜渲染,数分钟)
+	// + 抽帧拼接。两者都按最坏情况给足上限;不做"假进度",完成后一次性回结果,
+	// 期间前端按钮保持 loading。外层上限同样要给排队留余地
 	// (见 genOuterTimeout):排在别的长任务后面时,等待时间与任务本身无关。
 	ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
 	defer cancel()

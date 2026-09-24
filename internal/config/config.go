@@ -41,6 +41,18 @@ type ComfySettings struct {
 	ImageUNet string `json:"image_unet"` // 默认 krea2_turbo_fp8_scaled.safetensors
 	ImageCLIP string `json:"image_clip"` // 默认 qwen3vl_4b_fp8_scaled.safetensors(type=krea2)
 	ImageVAE  string `json:"image_vae"`  // 默认 qwen_image_vae.safetensors
+	// 多视角图像编辑(Qwen-Image-Edit-2511)—— 角色多视角的**首选**路径。
+	//
+	// 为什么换掉"H3 转身视频抽帧":视频模型会顺手重新设计角色(实测赛璐璐角色被
+	// 画成写实真人、插画铜雀被画成 3D 机械鸟),逐帧身份校验必然拒绝,多视角永远拿不到。
+	// 编辑式模型是**改你给的那张图**:身份/配色/画风按像素保住,只把视角转过去。
+	// 详见 docs/AUDIT-2026-09-24.md 与 docs/多视角方案.md。
+	EditUNet       string `json:"edit_unet"`        // 默认 qwen_image_edit_2511_fp8mixed.safetensors
+	EditCLIP       string `json:"edit_clip"`        // 默认 qwen_2.5_vl_7b_fp8_scaled.safetensors(type=qwen_image)
+	EditVAE        string `json:"edit_vae"`         // 默认 qwen_image_vae.safetensors(与 Krea-2 同一个 VAE)
+	EditTurboLoRA  string `json:"edit_turbo_lora"`  // 默认 Lightning 4 步加速 LoRA(空=不用,走 20 步)
+	EditAnglesLoRA string `json:"edit_angles_lora"` // 默认 Multiple-Angles LoRA(转角度专用;空=不用)
+
 	// ReserveVRAMGB 启动 ComfyUI 时预留的显存(GB),留给系统/浏览器。
 	// 实测渲染前别的进程已占 1-2GB,不预留就等于和桌面抢最后几 GB(CUDA OOM 或
 	// 整机卡顿)。0 = 交给 ComfyUI 自定(见 comfyLaunchArgs)。
@@ -142,6 +154,11 @@ func Default() *Settings {
 			ImageUNet:       "krea2_turbo_fp8_scaled.safetensors",
 			ImageCLIP:       "qwen3vl_4b_fp8_scaled.safetensors",
 			ImageVAE:        "qwen_image_vae.safetensors",
+			EditUNet:        "qwen_image_edit_2511_fp8mixed.safetensors",
+			EditCLIP:        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+			EditVAE:         "qwen_image_vae.safetensors",
+			EditTurboLoRA:   "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+			EditAnglesLoRA:  "qwen-image-edit-2511-multiple-angles-lora.safetensors",
 			ReserveVRAMGB:   1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
 		},
 		MiniMax: MiniMaxSettings{

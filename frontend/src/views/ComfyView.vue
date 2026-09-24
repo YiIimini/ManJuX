@@ -129,6 +129,15 @@ const modelFields = [
   { key: 'image_unet', label: '定妆照模型(Krea-2 UNet)' },
   { key: 'image_clip', label: '定妆照编码器(CLIPLoader type=krea2)' },
   { key: 'image_vae', label: '定妆照 VAE' },
+  // 多视角图像编辑(Qwen-Image-Edit-2511):这套决定「角色多视角」走哪条路 ——
+  // 齐了就自动用编辑路径(拿定妆照本体转角度,身份/画风按像素保住),缺了退回
+  // H3 转身视频(会把角色重新设计,校验多半拒绝)。默认文件名与 Comfy-Org 官方
+  // 打包一致,换 repack 权重时在这里改。
+  { key: 'edit_unet', label: '多视角编辑 UNet(Qwen-Image-Edit-2511)', span2: true },
+  { key: 'edit_clip', label: '多视角编辑 CLIP(Qwen2.5-VL-7B)' },
+  { key: 'edit_vae', label: '多视角编辑 VAE(qwen_image_vae)' },
+  { key: 'edit_turbo_lora', label: '多视角加速 LoRA(Lightning 4 步)' },
+  { key: 'edit_angles_lora', label: '多视角转角度 LoRA(Multiple-Angles)' },
 ]
 // 从 st.models 里拿 ComfyUI 实际注册的文件名清单(下拉选项)
 function modelOptions(key) {

@@ -202,6 +202,29 @@ func TestCompactIdentityStripsFacialWords(t *testing.T) {
 	}
 }
 
+// TestCompactIdentityDropsTrailingOrphans 整词删除后**句尾**不能留下孤儿修饰语。
+//
+// 回归 2026-09-24:剥掉 "chin" 后句子变成 "a chinese young man with and a long" ——
+// 悬空的 "long" 会被模型接到别处(把脸画长),正好制造我们要消除的身份漂移;
+// 中部内容一个词都不许动(服装/发型/族群都是身份锚)。
+func TestCompactIdentityDropsTrailingOrphans(t *testing.T) {
+	got := compactIdentity("a Chinese young man with rosy cheeks and a long chin")
+	if got != "a chinese young man" {
+		t.Errorf("句尾孤儿词应被剥净,期望 %q,实际 %q", "a chinese young man", got)
+	}
+	// 中部锚点不受影响。
+	mid := compactIdentity("a Chinese young man with a distinct black mole, greasy dark hair up in a small topknot, brown short jacket")
+	low := strings.ToLower(mid)
+	for _, keep := range []string{"brown short jacket", "topknot"} {
+		if !strings.Contains(low, keep) {
+			t.Errorf("中部锚点应保留「%s」:%s", keep, mid)
+		}
+	}
+	if strings.HasSuffix(strings.TrimSpace(low), "with") {
+		t.Errorf("句尾不该留下连接词:%s", mid)
+	}
+}
+
 // TestUniformCivilianClarify 民用制服"去警用化"说明只在相关角色上追加。
 //
 // 回归 2026-09-12(用户实证「保安制服不要渲染的和警察服一样啊」):中式保安服与警服

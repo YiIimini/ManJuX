@@ -86,6 +86,15 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 		{"定妆照 UNet · Krea2", "image_unet", "UNETLoader", "unet_name"},
 		{"定妆照 CLIP", "image_clip", "CLIPLoader", "clip_name"},
 		{"定妆照 VAE", "image_vae", "VAELoader", "vae_name"},
+		// 多视角图像编辑(Qwen-Image-Edit-2511):这套缺件不会让渲染失败,只会让
+		// 多视角静默退回 H3 转身视频(那条路会把角色重画成别人、校验拒绝)。所以在
+		// 管理页把每一项都列出来核对,缺了就看得见 —— 与 MaskAssets 的"点下去之前
+		// 就说清"同一原则。
+		{"多视角编辑 UNet · Qwen-Image-Edit", "edit_unet", "UNETLoader", "unet_name"},
+		{"多视角编辑 CLIP · Qwen2.5-VL", "edit_clip", "CLIPLoader", "clip_name"},
+		{"多视角编辑 VAE", "edit_vae", "VAELoader", "vae_name"},
+		{"多视角编辑加速 LoRA · Lightning 4 步", "edit_turbo_lora", "LoraLoaderModelOnly", "lora_name"},
+		{"多视角编辑转角度 LoRA · Multiple-Angles", "edit_angles_lora", "LoraLoaderModelOnly", "lora_name"},
 	}
 	for _, ck := range checks {
 		mc := ModelCheck{Label: ck.label, Key: ck.key}
@@ -110,6 +119,16 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 			mc.Name = c.ImageCLIP
 		case "image_vae":
 			mc.Name = c.ImageVAE
+		case "edit_unet":
+			mc.Name = c.EditUNet
+		case "edit_clip":
+			mc.Name = c.EditCLIP
+		case "edit_vae":
+			mc.Name = c.EditVAE
+		case "edit_turbo_lora":
+			mc.Name = c.EditTurboLoRA
+		case "edit_angles_lora":
+			mc.Name = c.EditAnglesLoRA
 		}
 		if list, ok := e.client().ComboList(ctx, ck.node, ck.field); ok {
 			if mc.Name != "" {
