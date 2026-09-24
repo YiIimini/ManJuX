@@ -39,6 +39,24 @@ var (
 // 键 = 相对路径,值 = 允许出现的"名字.属性"片段。
 var refAllowlist = map[string][]string{}
 
+// TestFrontendDetectsLogGap 日志缺口判据必须留在前端(审计 P2)。
+//
+// 后端会丢事件(慢订阅者丢帧、环形历史 500 条滚过),而它**故意**不假装补齐 ——
+// 客户端凭 seq 跳号自己发现。这条闸门守的是"前端那段跳号提示没被删掉":
+// 少了它,用户看到的就是一段看起来连续的日志,永远不知道中间少了一段。
+func TestFrontendDetectsLogGap(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "store.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	for _, want := range []string{"G.logSeq + 1", "未送达"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("store.js 里找不到日志缺口判据(%q)—— 丢了它用户就不会知道日志少了一段", want)
+		}
+	}
+}
+
 func TestFrontendRefsAreDereferenced(t *testing.T) {
 	root := filepath.Join("..", "..", "frontend", "src")
 	var offenders []string

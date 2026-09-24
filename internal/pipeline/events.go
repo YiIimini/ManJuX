@@ -56,7 +56,7 @@ func (b *Bus) Publish(ev Event) {
 	for _, ch := range b.subs {
 		select {
 		case ch <- ev:
-		default: // 慢订阅者丢帧(SSE 客户端会通过项目状态兜底)
+		default: // 慢订阅者丢帧:客户端凭 **seq 跳号** 自己发现(见 store.js 的 pushEvent)
 		}
 	}
 }

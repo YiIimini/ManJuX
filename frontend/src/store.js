@@ -241,6 +241,17 @@ export function connectEvents() {
 
 function pushEvent(ev) {
   if (ev.seq && ev.seq <= G.logSeq) return // 轮询去重
+  // 序号跳号 = 中间的事件**确实丢了**(慢订阅者丢帧,或环形历史 500 条已滚过)。
+  // 旧实现对此毫无察觉:日志面板看起来是连续的,用户以为"就这些日志"。
+  // 不假装没发生 —— 插一条醒目的缺口提示(游标还没建立时不报,避免首帧误判)。
+  if (ev.seq && G.logSeq > 0 && ev.seq > G.logSeq + 1) {
+    G.logs.push({
+      seq: G.logSeq, phase: 'system', level: 'warn', progress: ev.progress || 0,
+      message: `⚠ 有 ${ev.seq - G.logSeq - 1} 条日志未送达(已被丢弃或滚出缓冲区);`
+        + '完整记录见 data/logs/manjux.log',
+      at: ev.at,
+    })
+  }
   if (ev.seq) G.logSeq = ev.seq
   G.logs.push(ev)
   if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
