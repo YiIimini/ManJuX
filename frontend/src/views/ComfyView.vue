@@ -8,6 +8,8 @@ const loading = ref(false)
 // Sage 加速:状态 + 一键安装(轮子与本机 torch 绑定,升级后需重装)
 const sage = ref(null)
 const sageBusy = ref(false)
+// sageEnabled 状态灯:装了且当前设置下会被启用才算"绿"
+const sageEnabled = computed(() => !!(sage.value?.installed && sage.value?.enabled))
 async function loadSage() {
   try { sage.value = await api.comfySage() } catch { sage.value = null }
 }
@@ -307,6 +309,31 @@ function verCellCls(row, which) {
             </div>
             <el-tooltip content="卸载已加载模型释放显存(长任务前清理)" placement="top">
               <el-button size="small" :disabled="!st.alive" :loading="acting==='free'" @click="act('free')">释放</el-button>
+            </el-tooltip>
+          </div>
+          <el-divider style="margin:6px 0" />
+          <!-- Sage 加速:状态 + 一键安装。此前只有函数与 8 秒轮询、模板里一处都没用
+               (README 却写着"管理页可一键安装" —— 典型的文档漂移 + 假入口)。
+               现在真把入口做出来:标题行给状态,说明行给"为什么没启用",
+               未装或未生效时给安装按钮(按本机 torch/CUDA 自动匹配官方轮子)。 -->
+          <div class="flex items-start gap-3">
+            <i class="dot" :class="sageEnabled ? 'ok' : 'warn'" style="margin-top:6px"></i>
+            <div class="flex-1">
+              <div class="text-sm">
+                Sage Attention 加速
+                <span class="timecode ml-2">{{ sage?.installed ? (sage.version || '已安装') : '未安装' }}</span>
+              </div>
+              <div class="text-xs" style="color:var(--mx-text3)">
+                {{ sage?.detail || '按本机 torch + CUDA 匹配官方轮子;装好后重启引擎自动启用(官方实测约提速一倍)' }}
+              </div>
+              <div v-if="sage && (sage.torch_version || sage.cuda_version)" class="text-xs mt-1" style="color:var(--mx-text3)">
+                本机 torch {{ sage.torch_version || '未知' }} · CUDA {{ sage.cuda_version || '未知' }}
+              </div>
+            </div>
+            <el-tooltip :content="sage?.installed ? '重新安装/更新 Sage 加速(升级 ComfyUI 或 torch 后需要)' : '按本机 torch+CUDA 自动匹配并安装(只装这一个包,不动 torch)'" placement="top">
+              <el-button size="small" :loading="sageBusy" @click="installSage">
+                {{ sage?.installed ? '重装/更新' : '一键安装' }}
+              </el-button>
             </el-tooltip>
           </div>
         </div>
