@@ -136,5 +136,5 @@ onBeforeUnmount(() => {
 .pj { color: var(--mx-purple); margin-right: 8px; }
 .pj.cur { color: var(--mx-amber); }
 .logbar-ico { padding: 4px 7px !important; }
-.logbar-ico:hover { color: var(--mx-amber-hi) !important; background: rgba(255, 180, 84, .1) !important; }
+.logbar-ico:hover { color: var(--mx-amber-hi) !important; background: color-mix(in srgb, var(--mx-amber) 10%, transparent) !important; }
 </style>

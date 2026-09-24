@@ -84,7 +84,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   position: absolute; top: 50%; transform: translateY(-50%);
   width: 46px; height: 46px; border-radius: 50%;
   border: 1px solid var(--mx-line-hi);
-  background: rgba(10, 13, 22, .7); color: var(--mx-text2);
+  background: color-mix(in srgb, var(--mx-bg1) 70%, transparent); color: var(--mx-text2);
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: all .2s;
 }

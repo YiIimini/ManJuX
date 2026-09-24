@@ -1,7 +1,7 @@
 <script setup>
 import { G, api, refreshStatus } from '../store'
 import { Reading } from '@element-plus/icons-vue'
-import { THEMES, loadPrefs, applyTheme } from '../themes'
+import { THEMES, DEFAULT_THEME_ID, themeById, loadPrefs, applyTheme } from '../themes'
 import { reactive, onMounted, onBeforeUnmount, ref, computed, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 
@@ -62,8 +62,8 @@ async function loadSettings(force = false) {
 watch(() => G.tick.settings, () => loadSettings())
 
 // 个性化:主题与玻璃拟态(纯前端偏好,即时生效即时保存)
-const appear = reactive({ theme: 'midnight-amber', glass: false, glassAlpha: 0.72 })
-const curTheme = computed(() => THEMES.find(t => t.id === appear.theme))
+const appear = reactive({ theme: DEFAULT_THEME_ID, glass: false, glassAlpha: 0.72 })
+const curTheme = computed(() => themeById(appear.theme))
 function pickTheme(id) {
   appear.theme = id
   applyTheme({ themeId: id })
@@ -77,7 +77,9 @@ function onAlpha(v) {
 
 onMounted(async () => {
   const p = loadPrefs()
-  appear.theme = p.theme || 'midnight-amber'
+  // 存量偏好可能指向已删除的主题(旧版有 6 套,现在只保留极简墨黑 + 8 套新配色):
+  // 解析不到的 id 一律回落到默认,否则卡片列表里一个都点不亮
+  appear.theme = themeById(p.theme).id
   appear.glass = !!p.glass
   appear.glassAlpha = p.glassAlpha || 0.72
   await loadSettings(true) // 首次进入强制拉一次(此前有 2 个 onMounted 各拉一次,重复请求)
@@ -133,7 +135,10 @@ async function testConn(target) {
             <div class="theme-swatch">
               <i v-for="c in t.swatch" :key="c" :style="{ background: `linear-gradient(135deg, ${c}, ${c}cc)` }"></i>
             </div>
-            <div class="theme-name">{{ t.name }}</div>
+            <div class="theme-name">
+              {{ t.name }}
+              <span v-if="t.id === DEFAULT_THEME_ID" class="theme-default">默认</span>
+            </div>
             <div class="theme-desc">{{ t.desc }}</div>
             <el-icon v-if="appear.theme === t.id" class="theme-check"><CircleCheckFilled /></el-icon>
           </div>

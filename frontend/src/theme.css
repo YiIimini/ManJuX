@@ -12,10 +12,10 @@
   --el-color-primary-dark-2: color-mix(in srgb, var(--mx-accent, #f0a24a) 80%, #000);
   /* 表单控件主题化:开关/滑块/勾选/单选随主题 accent */
   --el-switch-on-color: var(--mx-accent, #f0a24a);
-  --el-switch-off-color: var(--mx-bg3, #161b2b);
+  --el-switch-off-color: var(--mx-bg3, #18181c);
   --el-switch-border-color: var(--mx-line-hi, #2a3247);
   --el-slider-main-bg-color: var(--mx-accent, #f0a24a);
-  --el-slider-runway-bg-color: var(--mx-bg3, #161b2b);
+  --el-slider-runway-bg-color: var(--mx-bg3, #18181c);
   --el-slider-stop-bg-color: var(--mx-line-hi, #2a3247);
   --el-checkbox-checked-bg-color: var(--mx-accent, #f0a24a);
   --el-checkbox-checked-input-border-color: var(--mx-accent, #f0a24a);
@@ -24,7 +24,7 @@
   --el-radio-checked-color: var(--mx-accent, #f0a24a);
   --el-radio-input-border-color: var(--mx-line-hi, #2a3247);
   --el-radio-button-checked-bg-color: var(--mx-accent, #f0a24a);
-  --el-radio-button-checked-text-color: var(--mx-on-accent, #10141f);
+  --el-radio-button-checked-text-color: var(--mx-on-accent, #101013);
   --el-radio-button-checked-border-color: var(--mx-accent, #f0a24a);
   --el-radio-button-bg-color: var(--mx-bg2, #101623);
   --el-radio-button-text-color: var(--mx-text2, #93a0b4);
@@ -52,11 +52,11 @@
 
 /* 输入/选择深色底 + 发光聚焦 */
 .el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
-  background-color: rgba(10, 13, 22, .85);
+  background-color: color-mix(in srgb, var(--mx-bg1) 85%, transparent);
   transition: box-shadow .2s, border-color .2s;
 }
 .el-input__wrapper.is-focus, .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px rgba(255, 180, 84, .5) inset !important;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 50%, transparent) inset !important;
 }
 .el-drawer, .el-dialog {
   background: linear-gradient(170deg, var(--mx-bg3), var(--mx-bg2)) !important;
@@ -70,14 +70,14 @@
 .el-select__popper.el-popper.is-light,
 .el-dropdown__popper.el-popper.is-light,
 .el-picker__popper.el-popper.is-light {
-  background: var(--mx-panel-bg2, #161b2b) !important;
+  background: var(--mx-panel-bg2, #18181c) !important;
   border: 1px solid var(--mx-line-hi) !important;
   backdrop-filter: var(--mx-bd-filter, none);
 }
 .el-select__popper .el-popper__arrow::before,
 .el-dropdown__popper .el-popper__arrow::before,
 .el-picker__popper .el-popper__arrow::before {
-  background: var(--mx-panel-bg2, #161b2b) !important;
+  background: var(--mx-panel-bg2, #18181c) !important;
   border-color: var(--mx-line-hi) !important;
 }
 .el-select-dropdown__item { color: var(--mx-text); }
@@ -113,12 +113,12 @@
 
 /* el-table 深色主题化:表头去亮底、行透明、悬停微亮(2026-09-10 视觉实勘) */
 .el-table {
-  --el-table-header-bg-color: var(--mx-bg2, #10141f);
-  --el-table-header-text-color: var(--mx-text2, #93a0bd);
+  --el-table-header-bg-color: var(--mx-bg2, #101013);
+  --el-table-header-text-color: var(--mx-text2, #a2a9b8);
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
-  --el-table-border-color: var(--mx-line, #1e2537);
-  --el-table-text-color: var(--mx-text, #edf1fa);
+  --el-table-border-color: var(--mx-line, #1f1f24);
+  --el-table-text-color: var(--mx-text, #f5f6fa);
   --el-table-row-hover-bg-color: rgba(255, 255, 255, .045);
   --el-table-fixed-box-shadow: none;
   background: transparent;
