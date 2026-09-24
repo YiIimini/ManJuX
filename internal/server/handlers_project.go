@@ -85,6 +85,11 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	if plan, err := s.store.LoadPlan(id); err == nil {
 		out["plan"] = plan
 	}
+	// 每个角色的**生效实体类型**由后端下发(审计 P1-2):前端原先各自保留一份
+	// 关键词推断表,而那份表已经和后端漂移过 —— 界面显示"器物"、渲染按"人"走,
+	// 或者相反,用户看到的就是"改了类型没生效"。类型决定整套渲染方法
+	// (定妆照取景/多视角方式/镜头身份锁),不允许有两个真源。
+	out["char_kinds"] = planCharKinds(id, s)
 	if assets, err := s.store.LoadAssets(id); err == nil {
 		out["assets"] = assets
 	}
@@ -114,6 +119,23 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	}
 	out["output"] = outReady
 	writeJSON(w, 200, out)
+}
+
+// planCharKinds 角色的**生效实体类型**映射(id → kind),供前端显示与选择器使用。
+//
+// 为什么不把推断结果写回方案:方案里的 `kind` 是用户显式指定的东西,
+// "未指定则推断"是渲染时的兜底语义。把兜底结果持久化,等于把一次关键词命中
+// 固化成了用户的决定 —— 之后改描述也不会改变类型,反而更难理解。
+func planCharKinds(projectID string, s *Server) map[string]string {
+	plan, err := s.store.LoadPlan(projectID)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(plan.Characters))
+	for _, ch := range plan.Characters {
+		out[ch.ID] = string(pipeline.ResolveEntityKind(ch))
+	}
+	return out
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {

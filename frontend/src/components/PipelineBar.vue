@@ -1,11 +1,15 @@
 <script setup>
-import { G, PHASES, api, refreshProject, logDot } from '../store'
+import { G, phases, api, refreshProject, logDot } from '../store'
 import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps({ phase: String, progress: Number })
 
 const project = computed(() => G.project?.project)
+
+// 阶段清单以后端 /api/meta 为准(前端只兜底):后端新增/改名一个阶段,
+// 这里的流水线栏会自动跟着变 —— 这正是审计 P1-2 里"阶段清单两份"的收口。
+const stageList = computed(() => phases())
 
 // 数据推断:该阶段是否已产出完整结果(不依赖运行 phase,all/续跑时兜底)
 function dataDone(id) {
@@ -57,7 +61,7 @@ function stageState(id) {
   if (!pj) return ''
   if (pj.project.running) {
     if (props.phase === id) return 'active'
-    const order = PHASES.map(p => p.id)
+    const order = phases().map(p => p.id)
     const cur = order.indexOf(props.phase)
     const me = order.indexOf(id)
     if (cur >= 0 && me < cur) return 'done'
@@ -111,7 +115,7 @@ async function runStage(id) {
   if (!project.value) return
   try {
     await api.run(project.value.id, id)
-    const label = PHASES.find(p => p.id === id)?.name || '全流程'
+    const label = phases().find(p => p.id === id)?.name || '全流程'
     ElMessage.success(`「${label}」已启动`)
     refreshProject()
   } catch (e) { ElMessage.error(e.message) }
@@ -137,7 +141,7 @@ async function runAll() { await runStage('all') }
       <span>产线 PIPELINE</span>
     </div>
 
-    <div v-for="(s, i) in PHASES" :key="s.id" class="stage-card stage-rail" :class="stageState(s.id)">
+    <div v-for="(s, i) in stageList" :key="s.id" class="stage-card stage-rail" :class="stageState(s.id)">
       <div class="rail-head">
         <div class="stage-ico sm" :class="stageState(s.id)">
           <el-icon :size="15"><component :is="s.icon" /></el-icon>

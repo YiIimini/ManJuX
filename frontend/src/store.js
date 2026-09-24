@@ -25,6 +25,12 @@ export const G = reactive({
                            // 前端只回显 —— 不在这里再写一份文件名字面量。
 })
 
+// 阶段清单的**兜底**副本(后端 /api/meta 是唯一真源)。
+//
+// 为什么还要留一份:后端未就绪时(启动瞬间/接口异常)流水线栏不能空着。
+// 但真源必须只有一个 —— 见 phases():只要 metaPhases 有值就用后端的,
+// 前端这份只提供"图标/描述"这类纯展示信息,阶段 id 与名称以后端为准。
+// 后端加了新阶段而这里没跟上时,用户的界面照旧能看到它(而不是"没这个阶段")。
 export const PHASES = [
   { id: 'script',   name: '剧本分镜', icon: 'EditPen',      desc: 'LLM 直出角色/场景/分镜与完整 H3 提示词' },
   { id: 'assets',   name: '资产定妆', icon: 'PictureFilled', desc: '角色定妆照与场景参考图(上传/盘点)' },
@@ -33,11 +39,26 @@ export const PHASES = [
   { id: 'assemble', name: '合成成片', icon: 'Film',         desc: '拼接+字幕+响度归一+faststart' },
 ]
 
-// phase 显示名:all/upgrade2k 等非阶段值映射为人话,具体阶段用中文名
+// phases 当前生效的阶段清单:后端优先,前端兜底补齐展示字段。
+export function phases() {
+  const meta = Array.isArray(G.metaPhases) ? G.metaPhases : []
+  if (!meta.length) return PHASES
+  return meta.map(p => {
+    const local = PHASES.find(x => x.id === p.id) || {}
+    return {
+      id: p.id,
+      name: p.name || local.name || p.id,
+      icon: local.icon || 'Document',
+      desc: p.desc || local.desc || '',
+    }
+  })
+}
+
+// phase 显示名:all/upgrade2k 等非阶段值映射为人话,具体阶段用中文名(后端清单优先)
 export function phaseLabel(p) {
   if (!p) return ''
   const m = { all: '全流程', upgrade2k: '2K 精修', compose: 'AI 创作', pipeline: '管线', novel: '小说产线', system: '系统', comfy: '引擎' }
-  return m[p] || PHASES.find(x => x.id === p)?.name || p
+  return m[p] || phases().find(x => x.id === p)?.name || p
 }
 
 // ---------- API ----------

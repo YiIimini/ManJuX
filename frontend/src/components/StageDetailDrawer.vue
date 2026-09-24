@@ -1,6 +1,6 @@
 <!-- 管线阶段详情管理:script/assets/render/qc/assemble 五面板 -->
 <script setup>
-import { G, PHASES, api, refreshProject } from '../store'
+import { G, api, refreshProject } from '../store'
 import { computed, reactive, watch, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -34,22 +34,17 @@ const FALLBACK_KINDS = [
   { key: 'chibi', name: 'Q版', hint: 'Q 版/大头身比例:按 Q 版取景与转身渲染' },
 ]
 const kindOptions = computed(() => (G.metaEntityKinds?.length ? G.metaEntityKinds : FALLBACK_KINDS))
-// 角色卡上的类型:有显式 kind 用它,没有则按与后端一致的关键词规则**显示推断结果**
-// (后端 ResolveEntityKind 也是"显式优先、缺失则推断",这里保持同口径,免得 UI 显示
-// 成"人"而渲染按"物"走 —— 那会让人以为改动没生效)。
-function inferKind(c) {
-  const hay = `${c.name || ''}\n${c.description || ''}\n${c.imagePrompt || ''}`.toLowerCase()
-  const hit = (arr) => arr.some(w => hay.includes(w))
-  if (hit(['鬼魂', '幽灵', '幽魂', '魂魄', '灵体', '虚影', '残影', '幻影', '无形', '无实体', '半透明', '投影', '意识体', 'ghost', 'phantom', 'incorporeal', 'translucent spirit'])) return 'incorporeal'
-  if (hit(['铜雀', '器物', '机关', '傀儡', '木偶', '偶人', '人偶', '提线', '纸人', '雕像', '石像', '铜像', '灯笼', '机械', '铆钉', '齿轮', 'puppet', 'marionette', 'doll', 'statue', 'automaton', 'mechanical', 'clockwork', 'artefact', 'artifact', 'golem'])) return 'object'
-  if (hit(['妖兽', '魔兽', '妖怪', '巨龙', '麒麟', '巨狼', '巨蟒', '猛兽', '凶兽', 'demon', 'monster', 'beast', 'dragon', 'serpent'])) return 'beast'
-  if (hit(['灵宠', '宠物', '小兽', '灵狐', '灵鹤', '灵蝶', '灵雀', '幼兽', 'spirit pet', 'familiar'])) return 'spirit_pet'
-  if (hit(['q版', 'q 版', '呆萌', '大头身', 'chibi', 'super deformed'])) return 'chibi'
-  return 'human'
-}
+// 角色卡上的类型:**显式 kind 优先,否则用后端下发的生效类型**(pj.char_kinds)。
+//
+// 这里曾经有一份与后端 `ResolveEntityKind` 重复的关键词推断表 —— 两份表漂移过一次
+// (用户看到的类型与渲染实际用的类型不一致,表现就是"改了类型没生效")。类型决定整套
+// 渲染方法,只能有一个真源:后端在项目投影里下发 `char_kinds`,前端只负责显示。
 function kindOf(c) {
   const k = String(c.kind || '').trim()
-  return kindOptions.value.some(o => o.key === k) ? k : inferKind(c)
+  if (kindOptions.value.some(o => o.key === k)) return k
+  const resolved = pj.value?.char_kinds?.[c.id]
+  if (resolved && kindOptions.value.some(o => o.key === resolved)) return resolved
+  return 'human'
 }
 function kindName(c) {
   const k = kindOf(c)
@@ -70,7 +65,7 @@ async function setKind(c, key) {
     ElMessage.success(`「${c.name}」类型已改为 ${r?.name || key}`)
     await refreshProject()
     ElMessageBox.confirm(
-      '类型已保存,但**已生成**的定妆照/多视角图仍是按旧类型渲染的(比如铜雀那张还是人像)。要重出定妆照请点这张卡右侧的 ✨(Krea-2 重新生成),多视角会随后按新类型重建。',
+      '类型已保存,但**已生成**的定妆照/多视角图仍是按旧类型渲染的(比如器物那张还是人像)。要重出定妆照请点这张卡右侧的 ✨(Krea-2 重新生成),多视角会随后按新类型重建。',
       '下一步:重新生成定妆照', { confirmButtonText: '知道了', showCancelButton: false, type: 'warning' },
     ).catch(() => {})
   } catch (e) { ElMessage.error(e.message) }
