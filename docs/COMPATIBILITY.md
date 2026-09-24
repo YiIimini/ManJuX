@@ -49,7 +49,7 @@ ManJuX 的渲染图**直接依赖**下列节点类,任何升级改名都会让�
 | 包 | 当前 commit (2026-09-24 全表刷新) | 被谁使用 |
 |---|---|---|
 | ComfyUI-H3-Motion-Context | `5335715`(未变) | 镜间接缝(`MiniMaxH3MotionContext*` 四个节点) |
-| ComfyUI-H3-ConditioningCache | `239d21e`(未变) | 两阶段条件缓存(`MiniMaxH3CondSave/Load`) |
+| ComfyUI-H3-ConditioningCache | `4eead31`(原 `239d21e`,2026-09-24 整改;回退点 `239d21e`) | 两阶段条件缓存(`MiniMaxH3CondSave/Load`) |
 | ComfyUI-MiniMax-H3-PDD-Acc | `311a65d`(未变) | quality 加速档(Acc-8Step LoRA / `MiniMaxH3SigmaShift`) |
 | ComfyUI-MiniMaxH3-Easy | `61ceb3c`(旧表记 `d100200`,实测早已不符,本次按实测改回) | H3 相关辅助节点 |
 | ComfyUI-KJNodes | `d3cfe21`(旧 `5710537`) | 通用图像节点 |
@@ -85,7 +85,7 @@ ManJuX 的渲染前体检会自动检测该目录并告警(见 `internal/engine/
 
 ### 同名易混淆:ComfyUI-H3-ConditioningCache ≠ ComfyUI-MiniMaxH3-Cache
 
-- `ComfyUI-H3-ConditioningCache`(`239d21e`)是 ManJuX **正在使用**的条件缓存,与上述冲突无关。
+- `ComfyUI-H3-ConditioningCache`(`4eead31`,2026-09-24 整改后)是 ManJuX **正在使用**的条件缓存,与上述冲突无关;整改只动了缓存写入与读取校验(原子写/越界拒绝/错误可执行/日志即时),**节点类名、输入输出与 .pt 载荷格式未变**,故本表其余结论不受影响。
 - 冲突的是 `ComfyUI-MiniMaxH3-Cache`(lihaoyun6 系)。两者名字相似但完全不同,排查时勿混。
 
 ## 四、模型文件
