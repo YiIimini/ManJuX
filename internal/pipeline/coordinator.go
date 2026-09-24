@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -180,17 +179,28 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if kind == "" {
 		return fmt.Errorf("资产不存在于方案: %s", assetID)
 	}
-	// Q 版(chibi)方形画幅,其余竖版半身
+	// Q 版(chibi)方形画幅,其余竖版半身/整件
 	isChibi := strings.HasSuffix(assetID, "_chibi")
+	// 实体类型(按类型重写取景与画风;Q 版资产强制按 Q 版那一套渲染)
+	ek := ResolveEntityKind(project.Character{Name: name, Description: desc, ImagePrompt: prompt})
+	if isChibi {
+		ek = KindChibi
+	}
 	// 同剧对比+风格具象化注入:重生成与产线生成同规则;已含的块不重复追加
+	// (只对角色做 —— 场景不该被塞角色身份/画风块;此前这里判的是资产类别,别混淆)
 	if kind == "characters" && !isChibi {
 		if !strings.Contains(prompt, "RENDER STYLE") {
 			prompt = normalizeUniformWording(prompt) // 名词短语层面的去警用化
-			prompt += styleExpand(plan.Style, proj.Config.Params.Script.FacesOn())
+			// 取景按类型重写:器物若沿用 LLM 写的"半身正面",重新生成又会长成一个人
+			prof := EntityProfileOf(ek)
+			if prof.RewriteSheetFraming {
+				prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
+			}
+			prompt += styleExpand(plan.Style, proj.Config.Params.Script.FacesOn(), ek)
 			prompt += uniformCivilianClarify(desc)
 		}
 		if !strings.Contains(prompt, "CAST DISTINCTNESS") {
-			prompt += castContrastBlock(plan, name)
+			prompt += castContrastBlock(plan, name, ek)
 		}
 	}
 	eng, err := c.reg.Get("comfy")
@@ -201,7 +211,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if err := eng.Available(ctx); err != nil {
 		return fmt.Errorf("单资产重生成需要本地 ComfyUI: %w", err)
 	}
-	c.emit(projectID, PhaseAssets, 0, "info", 0, "重新生成:%s「%s」…", kindLabel(kind), name)
+	c.emit(projectID, PhaseAssets, 0, "info", 0, "重新生成:%s「%s」(%s)…", kindLabel(kind), name, EntityKindLabel(ek))
 	w, h := 832, 1248
 	if isChibi {
 		w, h = 1024, 1024
@@ -237,14 +247,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	//     后续剧集仍在复用旧脸(实测:同一角色在库里还是修复前的圆脸大眼版本)。
 	// 清掉派生图后,多位图会在渲染前自动补齐(或用户点「补全多视角」重建)。
 	if !strings.HasSuffix(assetID, "_chibi") {
-		base := strings.TrimSuffix(path, filepath.Ext(path))
-		for _, pat := range []string{base + "_view_*.png", base + "_turnaround.png"} {
-			if ms, gerr := filepath.Glob(pat); gerr == nil {
-				for _, m := range ms {
-					_ = os.Remove(m)
-				}
-			}
-		}
+		ClearDerivedViews(path)
 		if c.lib != nil {
 			c.lib.ClearRelated(kind, name)
 			if _, err := c.lib.Put(kind, name, desc, prompt, path, projectID, "krea2"); err != nil {

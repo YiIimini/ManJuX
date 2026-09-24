@@ -48,10 +48,14 @@ type TurnaroundOptions struct {
 	TempVideo  bool   // VideoDir 由本函数建临时目录并在结束时清理(库内生成用,不把 30MB 视频留在库里)
 	Name       string // 角色名(日志与默认种子)
 	Prompt     string // 定妆照提示词(取身份描述用)
-	Steps      int
-	Accel      string
-	Length     int   // 帧数;0 = 124(约 5.2 秒)
-	Seed       int64 // 0 = 按角色名派生稳定种子
+	// Kind 实体类型:决定用哪一套"多视角方法" —— 人原地转身、器物转台自转、
+	// 妖兽绕行/转身、无实体原地旋动、Q 版 Q 版转身(见 entity_prompts.go)。
+	// 零值("")按 human 处理,保证老调用方行为不变。
+	Kind   EntityKind
+	Steps  int
+	Accel  string
+	Length int   // 帧数;0 = 124(约 5.2 秒)
+	Seed   int64 // 0 = 按角色名派生稳定种子
 	// Verify 视觉模型客户端:非 nil 时逐帧核对"是不是定妆照里那个人",不一致就换种子
 	// 重出;全部重试仍不一致则**拒绝使用**(详见 GenerateTurnaround 的说明)。
 	Verify         *llm.Client
@@ -118,6 +122,12 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	if length <= 0 {
 		length = 124 // 17k+5 网格,约 5.2 秒
 	}
+	prof := EntityProfileOf(o.Kind)
+	kindLabel := EntityKindLabel(NormalizeEntityKind(string(o.Kind)))
+	if NormalizeEntityKind(string(o.Kind)) == "" {
+		kindLabel = "人"
+	}
+	turnVerb := o.Kind.TurnVerb()
 	baseSeed := o.Seed
 	if baseSeed == 0 {
 		baseSeed = nameSeed("turnaround", o.Name)
@@ -127,7 +137,7 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 		attempts += o.VerifyRetries
 	}
 	if o.Verify == nil {
-		emit("多视角:未配置视觉模型,本次不做「与定妆照是否同一个人」的校验")
+		emit("多视角:未配置视觉模型,本次不做「与定妆照是否同一%s」的校验", kindLabel)
 	}
 
 	// 时间点:1.3s 四分之三 → 2.6s 侧面 → 3.9s 背面。
@@ -142,13 +152,13 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	for attempt := 1; attempt <= attempts; attempt++ {
 		seed := baseSeed + int64(attempt-1)*7919 // 重试换种子(质数步进,避开同种子的复现)
 		if attempt == 1 {
-			emit("多视角:「%s」转身视频生成中(H3 Ref2V,约数分钟)…", o.Name)
+			emit("多视角:「%s」(%s)%s视频生成中(H3 Ref2V,约数分钟)…", o.Name, kindLabel, turnVerb)
 		} else {
 			emit("多视角:「%s」第 %d 次重出(上一次与定妆照不一致:%s)", o.Name, attempt, lastReason)
 		}
 		job := engine.Job{
 			ProjectID: "turnaround", ShotID: 0,
-			Prompt:    turnaroundPrompt(o.Name, o.Prompt),
+			Prompt:    prof.TurnaroundPrompt(o.Name, o.Prompt),
 			Mode:      "ref2va",
 			RefImages: []engine.RefImage{{Kind: "character", Path: o.MasterPath}},
 			Width:     832, Height: 1248,
@@ -181,7 +191,7 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 			return "", fmt.Errorf("多视角可用帧不足(仅 %d 张)", len(views))
 		}
 		if o.Verify != nil {
-			rep, err := qc.IdentityJudge(ctx, o.Verify, o.MasterPath, views, o.VerifyMinScore)
+			rep, err := qc.IdentityJudge(ctx, o.Verify, o.MasterPath, views, o.VerifyMinScore, prof.JudgePoints, kindLabel)
 			if err != nil {
 				emit("多视角校验不可用(%v):本次按未校验交付,建议在设置页配好视觉模型", err)
 			} else if !rep.Pass {
@@ -208,7 +218,8 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	}
 	// 全部尝试都不一致:拒绝交付,并如实说清后果(该角色退回单张正面照)
 	emit("✕「%s」多视角校验未通过(%d 次尝试):%s —— 已丢弃本次角度帧,"+
-		"该角色本次按单张正面照渲染(宁缺勿错:错误的第二张参考会把脸往错的方向拉)", o.Name, attempts, lastReason)
+		"该角色本次按单张正面照渲染(宁缺勿错:错误的第二张参考会把%s往错的方向拉)",
+		o.Name, attempts, lastReason, kindLabel)
 	return "", fmt.Errorf("多视角与定妆照不一致,已拒绝使用:%s", lastReason)
 }
 
@@ -217,6 +228,31 @@ func removeFiles(paths []string) {
 	for _, p := range paths {
 		_ = os.Remove(p)
 	}
+}
+
+// ClearDerivedViews 作废某资产的全部派生角度图(`<base>_view_*.png` 与 `<base>_turnaround.*`),
+// 返回删除数量。被三处共用:
+//   - 单资产重生成(换了脸,旧角度图对应上一张脸);
+//   - 资产库重抽(library.ClearRelated 管库侧,这边管项目侧);
+//   - **改实体类型**(putCharacter):类型决定了取景与多视角方式,旧角度图是按旧类型出的,
+//     留着会被当成"该角色的第二张参考"喂回渲染 —— 那正是"错的参考比没有更糟"的场景。
+//
+// 只删派生图,绝不动定妆照本体(用户可能就是想留着它做对比)。
+func ClearDerivedViews(assetPath string) int {
+	base := strings.TrimSuffix(assetPath, filepath.Ext(assetPath))
+	n := 0
+	for _, pat := range []string{base + "_view_*.png", base + "_turnaround.png", base + "_turnaround.*"} {
+		ms, err := filepath.Glob(pat)
+		if err != nil {
+			continue
+		}
+		for _, m := range ms {
+			if os.Remove(m) == nil {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // TurnaroundVerifier 由视觉模型配置构造多视角校验客户端;未配置返回 nil。
@@ -228,54 +264,6 @@ func TurnaroundVerifier(v config.VLMSettings) *llm.Client {
 		return nil
 	}
 	return llm.New(v.BaseURL, v.APIKey, v.Model, 120)
-}
-
-// turnaroundPrompt 组装 H3 Ref2V 的转身视频提示词(六段式,与 director 的
-// sysH3Format 同构)。
-//
-// **2026-09-12 重写(用户报「定妆照与多位图角色不一致」「多位图有小红鼻小红脸」)**:
-// 旧版把定妆照的文字描述塞进 subject_definitions(`<Subject 1> is <描述> in <Picture 1>`):
-// ①描述里的细节(如"圆钝的小红鼻子")与定妆照画面冲突时,模型按文字补细节 ——
-// 于是转台图长了定妆照没有的红鼻子;②"character turnaround reference"这个说法在
-// 训练数据里大量对应**角色设定图**,模型自作主张换成 Q 版/贴纸体型:大头、圆身、
-// 腮红(实测张屠的定妆照是成年胖脸差役,转台图第二帧起变成红脸蛋的大头娃娃)。
-//
-// 现在:①身份完全交给参考图,文字只声明"照抄 <Picture 1>",不再复述外貌细节;
-// ②显式禁止换体型/换画风/加腮红与红鼻头/改景别;③四帧都锁同一景别与构图
-// (旧版只对第 1 帧说了上半身中景,后三帧模型就自由拉到全身)。
-func turnaroundPrompt(name, imagePrompt string) string {
-	desc := compactIdentity(imagePrompt)
-	subject := "the EXACT SAME individual as <Picture 1> in <Picture 1>"
-	if strings.TrimSpace(desc) != "" {
-		subject = "the EXACT SAME individual as <Picture 1>, " + desc + ", in <Picture 1>"
-	}
-	return `subject_definitions:
-<Subject 1> is ` + subject + `.
-
-summary:
-[reference generation]
-A character turnaround reference: the character stands still in the centre of frame and slowly rotates in place, showing the front view first, then turning through three-quarter and full profile to the back view. Plain seamless background, even studio lighting, the character never leaves the frame and never changes appearance.
-
-retention_analysis:
-- <Picture 1> : fully_preserved - this is an IDENTITY COPY, not a re-design. The subject is the SAME PERSON as <Picture 1>: same ethnicity and facial type, same face, same age — never cast a different-looking or different-ethnicity person. Face shape, facial features, eyebrows, nose shape and colour, skin tone, hairstyle, hair colour, costume, accessories and body proportions must stay exactly the same as <Picture 1> in every frame. FACE LOCK: copy the facial features, bone structure and skin details from <Picture 1> exactly; do NOT blend, average, beautify, slim, age or de-age the face, and do NOT substitute any other face. Do NOT restyle the subject: same character, same art style, same age, same body proportion as <Picture 1>.
-- Keep the SAME framing as <Picture 1> in all four shots (the same upper-body medium shot throughout). Do NOT zoom out, do NOT switch to a full-body view, do NOT change the camera distance.
-- Everything must be COPIED from <Picture 1>, never re-invented: hairstyle (same length and same colour), costume, accessories, the objects the character is holding (same objects, same colours, no lettering added anywhere) and body proportions. Do not restyle, do not recolour, do not change the subject's age or art style.
-
-detailed_description:
-Character turnaround on a plain seamless background, soft even studio lighting. Static camera, constant framing, constant lighting and constant colour grading across the whole clip. Keep the SAME props and hand items as <Picture 1> (do not add, remove or recolour them) and the same plain background; no on-screen text anywhere.
-[Shot 1] The character stands centred, facing the camera directly, arms relaxed at the sides, neutral expression; upper-body medium shot, identical to <Picture 1>.
-[Shot 2] At 00:01.300 The character has rotated about forty-five degrees, now seen from a three-quarter angle; the face is still exactly the face of <Picture 1>, hair colour, hair length and costume unchanged; same upper-body medium shot.
-[Shot 3] At 00:02.600 The character has rotated about ninety degrees, now in full profile; the silhouette of the hairstyle (same hair colour) and costume stays identical; same upper-body medium shot.
-[Shot 4] At 00:03.900 The character has rotated about one hundred and eighty degrees, now seen from behind; the back of the hairstyle and the costume are visible, still identical; same upper-body medium shot.
-NOTE FOR THE RENDERER: never mention a feature you do not want (saying "no grey hair" makes grey hair appear) — copy everything from <Picture 1> instead of re-inventing it.
-NEGATIVE (must not happen): no change of body proportion (an adult must stay an adult; a stylized or doll-like character must keep exactly the stylization shown in <Picture 1>), no oversized head, no cartoon restyling, no rosy cheeks or blush, no red nose unless <Picture 1> shows one, no change of skin tone, no added make-up, no added facial marks, no costume change, no change of framing or background, no face close-up.
-The whole clip is one continuous slow rotation with no cuts, no camera movement and no background change. No on-screen text, no subtitles, no watermarks, no logos. Subjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.
-
-overall_soundscape:
-Quiet room tone, no speech, no music, no sound effects.
-
-non_diegetic_music:
-N/A`
 }
 
 // compactIdentity 从定妆照提示词里提取**极简**身份锚点(年龄感+性别+服装),

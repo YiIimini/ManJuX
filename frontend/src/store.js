@@ -19,6 +19,7 @@ export const G = reactive({
   tick: { library: 0, outputs: 0, comfy: 0, settings: 0, novels: 0 }, // 顶栏「刷新」触发各视图自刷新
   metaStyles: [],          // /api/meta 的风格清单(key+name);空=用内置兜底
   metaPhases: [],          // /api/meta 的阶段清单
+  metaEntityKinds: [],     // /api/meta 的实体类型清单(key+name+hint);角色卡的渲染方法选择器用
   metaUpscale: {},         // /api/meta 的放大默认值 {default_type,default_model,default_ltx_vae}
                            // 权重文件名的事实来源在后端(它决定 ComfyUI 模型目录里该有什么),
                            // 前端只回显 —— 不在这里再写一份文件名字面量。
@@ -75,6 +76,8 @@ export const api = {
   assetFrameApply: (id, assetId, shot, ratio) =>
     req('POST', `/api/projects/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}/frame-apply`, { shot_id: shot, ratio }),
   importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
+  // 角色卡编辑(目前用于改**实体类型**:人/物/灵宠/妖兽/无实体/Q版 —— 决定走哪套渲染方法)
+  putCharacter: (id, payload) => req('PUT', `/api/projects/${encodeURIComponent(id)}/character`, payload),
   novelProduce: (path, max) => req('POST', '/api/novels/produce', { path, max_episodes: max }),
   novelSplit: (name, text, max) => req('POST', '/api/novel-split', { name, text, max_episodes: max }),
   novelBatchStart: (prefix) => req('POST', '/api/novel-batch', { prefix }),
@@ -154,6 +157,8 @@ export async function loadMeta() {
     const m = await req('GET', '/api/meta')
     if (Array.isArray(m?.styles)) G.metaStyles = m.styles
     if (Array.isArray(m?.phases)) G.metaPhases = m.phases
+    // 实体类型清单(角色卡渲染方法):同样以后端为准,前端不硬编 key
+    if (Array.isArray(m?.entity_kinds)) G.metaEntityKinds = m.entity_kinds
     if (m?.upscale && typeof m.upscale === 'object') G.metaUpscale = m.upscale
   } catch { /* 用内置兜底 */ }
 }

@@ -63,9 +63,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// H3,模型各加载一次,资产阶段整体快得多(2026-09-12「管线生产需要合理化」)。
 	type pendingView struct {
 		id, name, prompt, master, description string
+		kind                                  EntityKind
 	}
 	var pendingViews []pendingView
-	check := func(kind, id, name, description, imagePrompt string) {
+	check := func(kind, id, name, description, imagePrompt string, ek EntityKind) {
 		if len(onlySet) > 0 && !onlySet[id] {
 			return
 		}
@@ -137,12 +138,12 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					File: filepath.ToSlash(rel), ImagePrompt: imagePrompt,
 					Source: "krea2", Fingerprint: project.FingerprintFile(path),
 				}
-				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」", kindLabel(kind), name)
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」(%s)", kindLabel(kind), name, EntityKindLabel(ek))
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
 				if kind == "characters" && p.ViewsOn() {
 					pendingViews = append(pendingViews, pendingView{
 						id: "char:" + id, name: name, prompt: imagePrompt,
-						master: path, description: description,
+						master: path, description: description, kind: ek,
 					})
 				}
 				if c.lib != nil {
@@ -166,10 +167,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt, "")
 	}
 
 	// Q 版形象(chibi):主定妆照就绪的角色同步生成 Q 版,内心活动镜头的表达素材。
@@ -185,8 +186,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			// 复用同 seed 机制,保证同角色 Q 版稳定
 			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
 			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
-			chibiPrompt := "cute chibi SD figure of the same character, big head, tiny body, full body, simple pastel background, " +
-				"expressive face, figure product photography, " + normalizeUniformWording(ch.ImagePrompt) + styleExpand(plan.Style, proj.Config.Params.Script.FacesOn()) + castContrastBlock(plan, ch.Name) + uniformCivilianClarify(ch.Description)
+			// Q 版走**Q 版那一套渲染方法**(取景/忠实度/画风都不同:大头小身、保留身份
+			// 记号、不得拉回真人头身比)。此前这里手写了一句 chibi 前缀再套人类条款 ——
+			// 非人角色(器物/灵宠/妖兽/灵体)的 Q 版因此仍然长着人脸。
+			chibiPrompt := EntityProfileOf(KindChibi).SheetFraming + ", " +
+				normalizeUniformWording(ch.ImagePrompt) + " " +
+				styleExpand(plan.Style, proj.Config.Params.Script.FacesOn(), KindChibi) +
+				castContrastBlock(plan, ch.Name, KindChibi) + uniformCivilianClarify(ch.Description)
 			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
@@ -206,13 +212,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// ---------- 第二阶段:多视角转台图(H3 一次加载,批量出完) ----------
 	// 与定妆照分阶段跑:本段全部是 H3 作业,模型只需加载一次(见 pendingViews 注释)。
 	if len(pendingViews) > 0 && ctx.Err() == nil {
-		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "阶段②:多视角转台图 %d 个角色(H3 原地转身,每个约数分钟)…", len(pendingViews))
+		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "阶段②:多视角 %d 个角色(按类型分别用转身/转台/旋动,每个约数分钟)…", len(pendingViews))
 		viewsDone := 0
 		for _, v := range pendingViews {
 			if ctx.Err() != nil {
 				break
 			}
-			c.genCharacterViews(ctx, proj, comfyGen, strings.TrimPrefix(v.id, "char:"), v.name, v.prompt, v.master)
+			c.genCharacterViews(ctx, proj, comfyGen, strings.TrimPrefix(v.id, "char:"), v.name, v.prompt, v.master, v.kind)
 			viewsDone++
 			// 多视角写回资产库:同一个角色全局只付一次转身成本,后续项目复用直接带走
 			if c.lib != nil {
@@ -290,11 +296,12 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 // 具体实现与产物命名契约见 turnaround.go 的 GenerateTurnaround(资产库详情弹窗的
 // 「补全多视角」与渲染前自动补齐共用同一份实现)。本函数只负责"项目侧上下文":
 // 产物目录取项目资产目录,失败只告警不阻断资产阶段(增强项)。
-func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Project, ce engine.Engine, id, name, imagePrompt, masterPath string) string {
+func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Project, ce engine.Engine, id, name, imagePrompt, masterPath string, kind EntityKind) string {
 	turn, err := GenerateTurnaround(ctx, ce, c.ff, TurnaroundOptions{
 		MasterPath: masterPath,
 		Name:       name,
 		Prompt:     imagePrompt,
+		Kind:       kind,
 		Steps:      proj.Config.Params.Render.Steps,
 		Accel:      proj.Config.Params.Render.Accel,
 		Verify:     TurnaroundVerifier(c.cfg.Get().VLM),
@@ -346,7 +353,10 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 		return
 	}
 	dir := c.store.Dir(proj.ID)
-	type want struct{ id, name, prompt string }
+	type want struct {
+		id, name, prompt string
+		kind             EntityKind
+	}
 	var list []want
 	seen := map[string]bool{}
 	for _, s := range plan.Shots {
@@ -368,7 +378,14 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 				continue // 已有转台图(资产阶段生成的或复用带进来的)
 			}
 			seen[cid] = true
-			list = append(list, want{id: cid, name: a.Name, prompt: a.ImagePrompt})
+			ek := KindHuman
+			for _, ch := range plan.Characters {
+				if ch.ID == cid {
+					ek = ResolveEntityKind(ch)
+					break
+				}
+			}
+			list = append(list, want{id: cid, name: a.Name, prompt: a.ImagePrompt, kind: ek})
 		}
 	}
 	if len(list) == 0 {
@@ -409,6 +426,7 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 			MasterPath: master,
 			Name:       w.name,
 			Prompt:     prompt,
+			Kind:       w.kind,
 			Steps:      proj.Config.Params.Render.Steps,
 			Accel:      proj.Config.Params.Render.Accel,
 			Verify:     TurnaroundVerifier(c.cfg.Get().VLM),
@@ -449,9 +467,12 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	if notice := photorealOverrideNotice(proj, plan); notice != "" {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", notice)
 	}
-	type miss struct{ kind, id, name, desc, prompt string }
+	type miss struct {
+		kind, id, name, desc, prompt string
+		ek                           EntityKind
+	}
 	var list []miss
-	check := func(kind, id, name, desc, prompt string) {
+	check := func(kind, id, name, desc, prompt string, ek EntityKind) {
 		if strings.TrimSpace(prompt) == "" {
 			return
 		}
@@ -460,13 +481,13 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 				return
 			}
 		}
-		list = append(list, miss{kind, id, name, desc, prompt})
+		list = append(list, miss{kind, id, name, desc, prompt, ek})
 	}
 	for _, ch := range plan.Characters {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt)
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt, "")
 	}
 	if len(list) == 0 {
 		return true
@@ -494,7 +515,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 			File: filepath.ToSlash(rel), ImagePrompt: m.prompt,
 			Source: "krea2", Fingerprint: project.FingerprintFile(path),
 		}
-		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 已补齐:%s「%s」", kindLabel(m.kind), m.name)
+		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 已补齐:%s「%s」(%s)", kindLabel(m.kind), m.name, EntityKindLabel(m.ek))
 		if c.lib != nil {
 			_, _ = c.lib.Put(m.kind, m.name, m.desc, m.prompt, path, proj.ID, "krea2")
 		}

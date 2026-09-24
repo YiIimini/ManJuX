@@ -29,19 +29,26 @@ import (
 // 现在改成:长相照抄参考图(Ref2VA 锁脸的标准做法),文字只许用于服装/道具/姿态/
 // 情绪/台词,并显式禁止添加参考图里没有的面部标记 —— 定妆照没有的,视频里也不会
 // 凭空长出来。
+//
+// **2026-09-24 再按实体类型分发**(用户报「阿凿是一只铜雀却渲染成人物」):身份锁不能
+// 只有"脸"这一种写法。器物锁的是结构/材质/部件,无实体锁的是形体与透明感,妖兽锁的是
+// 物种与体量 —— 给一只铜雀写"脸型/五官/肤色/年龄感照抄参考图",模型当然给你画一个人。
 func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
-	type named struct{ name, desc string }
+	type named struct {
+		name, desc string
+		kind       EntityKind
+	}
 	var chars, scenes []named
 	for _, cid := range shot.Characters {
 		for _, ch := range plan.Characters {
 			if ch.ID == cid && strings.TrimSpace(ch.Description) != "" {
-				chars = append(chars, named{ch.Name, strings.TrimSpace(ch.Description)})
+				chars = append(chars, named{ch.Name, strings.TrimSpace(ch.Description), ResolveEntityKind(ch)})
 			}
 		}
 	}
 	for _, sc := range plan.Scenes {
 		if sc.ID == shot.Scene && strings.TrimSpace(sc.Description) != "" {
-			scenes = append(scenes, named{sc.Name, strings.TrimSpace(sc.Description)})
+			scenes = append(scenes, named{name: sc.Name, desc: strings.TrimSpace(sc.Description)})
 		}
 	}
 	if len(chars) == 0 && len(scenes) == 0 {
@@ -53,21 +60,26 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	var sb strings.Builder
 	sb.WriteString("【身份锚定(全片统一,优先级最高)】\n")
 	if len(chars) > 0 {
-		sb.WriteString("本镜出场人物 —— 参考图里出现的人就是他们本人(同一角色可能有两张参考图:" +
-			"**锐利的正面定妆照(脸的唯一权威)** + 横向拼合的转身图;转身图的左起第一格就是同一张正面照、" +
-			"其余格是同一个人的其它角度,**它不是第二个角色**):\n")
+		sb.WriteString("本镜出场角色 —— **按类型分别渲染**(参考图里的东西就是它们本体;同一角色可能有两张参考图:" +
+			"**锐利的正面定妆照(唯一权威)** + 横向拼合的多视角图 —— 左起第一格就是同一张正面照," +
+			"其余格是同一个主体/同一件东西的其它角度,**它不是第二个角色**):\n")
 		for _, c := range chars {
-			fmt.Fprintf(&sb, "- 「%s」\n", c.name)
+			fmt.Fprintf(&sb, "- 「%s」类型=%s\n", c.name, EntityKindLabel(c.kind))
 		}
-		sb.WriteString("身份锁:画面中每个人物的脸型/五官/发型发色/肤色/年龄感/体型必须**照抄参考图里对应的那个人**," +
-			"逐项一致 —— 参考图拍的就是这个人物本人,不是风格参考;脸部细节(脸型/眼睛/眉毛/发型长度与形状)" +
-			"**以正面定妆照为准**;不得按文字重画、不得美化/年轻化/换成更俊美的版本、" +
-			"不得把多人的脸平均化成同一张脸。\n" +
-			"禁止添加参考图里没有的面部标记:痣、疤、胎记、腮红红晕、红鼻头、夸张大眼睛、额外的胡须与首饰,一律不得无中生有;" +
-			"反过来,参考图里有的特征一个都不能丢(发型/发饰/服饰细节同样照抄)。\n" +
-			"下面的文字描述只用于「服装/道具/姿态/情绪/台词」,不得用来改写长相:\n")
+		// 逐类型条款(同类型只写一次,避免多个器物时把同一段重复三遍)
+		seen := map[EntityKind]bool{}
+		for _, c := range chars {
+			if seen[c.kind] {
+				continue
+			}
+			seen[c.kind] = true
+			p := EntityProfileOf(c.kind)
+			sb.WriteString("【" + EntityKindLabel(c.kind) + "条款】" + p.AnchorRefNote + "\n")
+			sb.WriteString(p.AnchorLock + "\n")
+			sb.WriteString(p.AnchorUseFor + ":\n")
+		}
 		for i, c := range chars {
-			fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, c.name, normalizeUniformWording(c.desc))
+			fmt.Fprintf(&sb, "%d. %s[%s]:%s\n", i+1, c.name, EntityKindLabel(c.kind), normalizeUniformWording(c.desc))
 			if extra := uniformCivilianClarify(c.desc); extra != "" {
 				sb.WriteString("   " + strings.TrimSpace(extra) + "\n")
 			}
@@ -77,6 +89,25 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 		sb.WriteString("场景同样以参考图为准(同一地点不得改造型/改结构):\n")
 		for i, sc := range scenes {
 			fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, sc.name, sc.desc)
+		}
+	}
+	if len(chars) > 0 {
+		// 类型质感 + 反错误形态(不得拟人化/不得实体化/不得缩水)。
+		// AntiForm **不受角色动漫化开关影响**:它不是画风选择,而是"这东西本来是什么形态"的
+		// 正确性问题 —— 关了动画化也不该把铜雀画成人。
+		seen := map[EntityKind]bool{}
+		for _, c := range chars {
+			if seen[c.kind] {
+				continue
+			}
+			seen[c.kind] = true
+			p := EntityProfileOf(c.kind)
+			if facesOn && p.RenderLook != "" {
+				sb.WriteString(strings.TrimRight(p.RenderLook, "\n") + "\n")
+			}
+			if p.AntiForm != "" {
+				sb.WriteString(p.AntiForm + "\n")
+			}
 		}
 	}
 	sb.WriteString(styleAndMediumBlock(plan, facesOn))
@@ -153,17 +184,27 @@ func EnsureChineseDialogue(prompt string) string {
 }
 
 // LibraryPortraitPrompt 资产库侧(不持有项目上下文的路径:抽卡 / 自定义新建 / 重抽)
-// 的定妆照提示词:补上**同一套**动画哑光画风块。
+// 的定妆照提示词:**按实体类型**补上取景、忠实度与画风块。
 //
-// 为什么这里用"总是加"而不是跟着项目开关:资产库是跨项目的全局资产,而全应用现在默认
-// 就是动漫化角色。若库里生成的是真人脸,它被复用到任一项目后都会与渲染侧"MATTE ANIMATED
-// LOOK"打架(定妆照是写实、视频是动画 = 又回到"两张脸")。要真人脸的角色走**上传**
-// 那条路(上传路径不做任何改写);要全片真人剧则关项目开关并把定妆照换成上传图。
-func LibraryPortraitPrompt(prompt string) string {
-	if strings.Contains(prompt, "ANIMATED MATTE CHARACTER") {
-		return prompt
+// 为什么这里能用推断:库里存着角色的 name/description/image_prompt 三样,正好是
+// `InferEntityKind` 的输入 —— 于是"库里那只铜雀"与"项目里那只铜雀"走的是同一套渲染
+// 方法,不会出现"项目里是器物、库里当人"的分叉。
+//
+// 为什么用"总是加"而不是跟着项目开关:资产库是跨项目的全局资产,而全应用现在默认
+// 就是动漫化角色。若库里生成的是真人脸,复用到任一项目后都会与渲染侧的介质块打架
+// (定妆照写实、视频动画 = 又回到"两张脸")。要真人脸的角色走**上传**那条路
+// (上传路径不做任何改写);要全片真人剧则关项目开关并把定妆照换成上传图。
+func LibraryPortraitPrompt(name, description, prompt string) string {
+	kind := InferEntityKind(name, description, prompt)
+	prof := EntityProfileOf(kind)
+	out := prompt
+	if prof.RewriteSheetFraming {
+		out = rewriteSheetFraming(out, prof.SheetFraming)
 	}
-	return prompt + animatedFaceImageBlock()
+	if strings.Contains(out, prof.SheetMarker) {
+		return out // 已经是该类型的装配结果:不重复叠加
+	}
+	return out + prof.SheetIdentity + prof.SheetLook
 }
 
 // ShotRenderPrompt **渲染期**提示词的唯一装配点:身份锚定(以定妆照为准)+ 角色画风
@@ -183,18 +224,91 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 }
 
 // characterImagePrompt 角色定妆照提示词的**唯一装配点**(资产阶段、渲染前补齐、
-// 单资产重生成三处共用)。
+// 单资产重生成三处共用),并按**实体类型**分发取景与忠实度条款。
 //
 // 为什么必须收口:这四段(normalizeUniformWording / styleExpand / castContrastBlock /
 // uniformCivilianClarify)此前在 3 处逐字重复,改一处漏一处就会让"重新生成的那张定妆照"
 // 与产线那张不是同一套约束 —— 而两者是同一个角色的脸,不一致就是换脸。
+//
+// 为什么必须按类型分发(2026-09-24 用户报「阿凿是一只铜雀却渲染成人物」):
+// LLM 给每张 image_prompt 的尾巴统一写着 `plain background, upper-body framing,
+// front-facing`(人像取景)。器物照这条渲染,只会得到"半身、正面"的一个人形 ——
+// 实测该项目的铜雀定妆照就是一个女孩的半身肖像。所以非人类型要**重写取景尾巴**,
+// 并换成该类自己的忠实度与画风条款(见 entity_prompts.go)。
 func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.Character) string {
 	facesOn := true
 	if proj != nil {
 		facesOn = proj.Config.Params.Script.FacesOn()
 	}
-	return normalizeUniformWording(ch.ImagePrompt) + styleExpand(plan.Style, facesOn) +
-		castContrastBlock(plan, ch.Name) + uniformCivilianClarify(ch.Description)
+	kind := ResolveEntityKind(ch)
+	p := EntityProfileOf(kind)
+	prompt := normalizeUniformWording(ch.ImagePrompt)
+	if p.RewriteSheetFraming {
+		prompt = rewriteSheetFraming(prompt, p.SheetFraming)
+	}
+	return prompt + styleExpand(plan.Style, facesOn, kind) +
+		castContrastBlock(plan, ch.Name, kind) + uniformCivilianClarify(ch.Description)
+}
+
+// sheetFramingWords LLM 写在 image_prompt 尾部的人像取景短语。
+//
+// 为什么要逐个剥掉而不是"整句替换":这些短语散落在语句中(且大小写/连字符写法不一),
+// 剥干净再追加类型取景,才能保证"器物不会同时被要求半身正面"。
+var sheetFramingWords = []string{
+	"plain background", "plain seamless background", "plain pastel background", "dark background",
+	"upper-body framing", "upper body framing", "upper-body", "upper body",
+	"front-facing", "front facing",
+	"full body", "full-body", "head and shoulders", "portrait",
+}
+
+// rewriteSheetFraming 剥掉人像取景短语,追加该类型自己的取景(非人类型专用)。
+func rewriteSheetFraming(prompt, framing string) string {
+	out := prompt
+	for _, w := range sheetFramingWords {
+		// 大小写不敏感地整词剥离(replaceAllFold 见下)
+		out = replaceAllFold(out, w, "")
+	}
+	out = strings.Join(strings.Fields(out), " ")
+	out = strings.TrimRight(strings.TrimSpace(out), ",;")
+	// 剥掉碎片后可能留下 ", ," 这类空档:反复折叠直到稳定(实测
+	// "…STYLE, Plain Background, upper-body framing, Front-Facing" → "…STYLE, , ")
+	for i := 0; i < 4; i++ {
+		before := out
+		out = strings.ReplaceAll(out, ", ,", ",")
+		out = strings.ReplaceAll(out, " ,", ",")
+		out = strings.ReplaceAll(out, ",,", ",")
+		out = strings.ReplaceAll(out, "; ;", ";")
+		out = strings.ReplaceAll(out, ",;", ",")
+		out = strings.ReplaceAll(out, "  ", " ")
+		if out == before {
+			break
+		}
+	}
+	out = strings.Trim(out, " ,;")
+	if strings.TrimSpace(framing) != "" {
+		out += ", " + strings.TrimSpace(framing)
+	}
+	return out
+}
+
+// replaceAllFold 大小写不敏感的子串替换(strings.ReplaceAll 是大小写敏感的)。
+func replaceAllFold(s, old, new string) string {
+	if old == "" {
+		return s
+	}
+	low, lowOld := strings.ToLower(s), strings.ToLower(old)
+	var sb strings.Builder
+	for {
+		i := strings.Index(low, lowOld)
+		if i < 0 {
+			sb.WriteString(s)
+			return sb.String()
+		}
+		sb.WriteString(s[:i])
+		sb.WriteString(new)
+		s = s[i+len(old):]
+		low = low[i+len(old):]
+	}
 }
 
 // photorealOverrideNotice 风格要真人、但角色动漫化开关开着时的告警文案(空 = 无冲突)。
@@ -298,10 +412,11 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	return sb.String(), len(chars)
 }
 
-func styleExpand(style string, facesOn bool) string {
+func styleExpand(style string, facesOn bool, kind EntityKind) string {
 	if strings.TrimSpace(style) == "" && !facesOn {
 		return ""
 	}
+	prof := EntityProfileOf(kind)
 	s := strings.ToLower(style)
 	has3D := strings.Contains(s, "3d") || strings.Contains(s, "bjd") || strings.Contains(style, "虚拟人") || strings.Contains(style, "虚拟偶像")
 	hasAnime := strings.Contains(style, "国漫") || strings.Contains(style, "动漫") || strings.Contains(style, "动画") || strings.Contains(s, "anime") || strings.Contains(s, "donghua")
@@ -327,9 +442,15 @@ func styleExpand(style string, facesOn bool) string {
 		// 大眼,而视频按文字走,两边永远对不上(2026-09-12 用户报一致性丢失,根因即此)。
 		// 风格只描述材质与渲染方式(表面/光泽/媒介),形状类词汇一律不写。
 		// 2026-09-24:原措辞 "smooth poreless synthetic skin"(光滑无孔合成皮肤)正是
-		// 用户报的"人物油腻"的一半来源 —— 无孔 = 塑料 = 皮脂高光。改成哑光粉质。
-		terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
-			"matte powdery skin shading with a dull even finish, collectible virtual figure look")
+		// 用户报的"人物油腻"的一半来源 —— 无孔 = 塑料 = 皮脂高光。改成哑光粉质;
+		// 同时**去掉皮肤/五官类词汇对非人类型的影响**:器物只有材质,没有皮肤。
+		if kind == KindHuman || kind == KindSpiritPet || kind == KindBeast || kind == KindChibi {
+			terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
+				"matte powdery skin shading with a dull even finish, collectible virtual figure look")
+		} else {
+			terms = append(terms, "next-generation 3D CG render, stylized sculpted forms, "+
+				"matte dull even finish across every surface, collectible virtual figure look")
+		}
 		if hasAnime {
 			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
 		}
@@ -343,22 +464,32 @@ func styleExpand(style string, facesOn bool) string {
 		terms = append(terms, "photorealistic cinematic portrait, realistic skin texture") // 真人剧是合法风格(需关掉角色动漫化)
 		stylized = false
 	default:
-		return "" // 无已知关键词:不强行改写用户自定义风格
+		// 无已知风格关键词:不强行改写用户的风格描述,**但类型忠实度与画风块必须留下** ——
+		// 那段不是"风格",是"这件东西长什么样"的地基(器物抄结构 / 灵体抄形体)。
+		// 旧实现这里直接 return "",连忠实度块一起丢了。
+		stylized = false
 	}
 	if hasQ {
 		terms = append(terms, "cute chibi proportions")
 	}
+	// 忠实度与画风块**按类型取**(人类抄脸 / 器物抄结构 / 灵体抄形体):同一句 human 条款
+	// 套在铜雀身上,就是在要求它长一张脸。
+	byKind := prof.SheetIdentity
+	if facesOn {
+		// 动漫化 + 哑光硬约束:与渲染侧的介质块是同一件事的两头,改动要成对。
+		byKind += prof.SheetLook
+	}
+	if len(terms) == 0 {
+		return byKind
+	}
 	tail := ". Render strictly in this exact art style."
 	if stylized {
-		tail = ". The output must read as a stylized character render in this exact art style."
+		tail = ". The output must read as a stylized render in this exact art style."
 	}
-	out := "\n\nRENDER STYLE (mandatory): " + strings.TrimSpace(style) + " — " + strings.Join(terms, "; ") + tail +
-		identityFidelityBlock()
-	if facesOn {
-		// 动漫化 + 哑光硬约束:与 RenderLookBlock(视频侧)是同一件事的两头,改动要成对。
-		out += animatedFaceImageBlock()
+	if strings.TrimSpace(style) == "" {
+		return "\n\nRENDER STYLE (mandatory): " + strings.Join(terms, "; ") + tail + byKind
 	}
-	return out
+	return "\n\nRENDER STYLE (mandatory): " + strings.TrimSpace(style) + " — " + strings.Join(terms, "; ") + tail + byKind
 }
 
 // identityFidelityBlock 忠实度硬约束:定妆照必须与角色卡描述逐项一致,风格不得改写长相。
@@ -439,12 +570,16 @@ func normalizeUniformWording(text string) string {
 }
 
 // castContrastBlock 同剧班底对比块:列出本剧其它角色的关键形象,追加到
-// Krea-2 提示词尾部,强制与同剧角色拉开面部差异(2026-09-11 用户定调
+// Krea-2 提示词尾部,强制与同剧角色拉开差异(2026-09-11 用户定调
 // 「不同角色脸不能相似」)。实证:LLM 已写了 fat/scar/narrow face 等
 // 差异化特征,但逐字相同的巨型风格前缀+模型帅哥先验把特征吞掉(肥胖
 // →清瘦、疤→无疤)。生成时给模型看全剧班底,它才知道"要和谁不同"。
 // 注入的提示词随资产入库,库内重生成/跨集复用自带对比上下文。
-func castContrastBlock(plan *project.Plan, selfName string) string {
+//
+// kind 决定"差异"落在哪:人/Q 版比脸,器物比形制与材质,妖兽比物种与体量。
+// 同一段"脸型、年龄、肤色调开"的措辞套在铜雀上,就是在要求它长一张脸
+// (2026-09-24 用户报「阿凿是一只铜雀却渲染成人物」的连带根因)。
+func castContrastBlock(plan *project.Plan, selfName string, kind EntityKind) string {
 	if plan == nil {
 		return ""
 	}
@@ -467,13 +602,30 @@ func castContrastBlock(plan *project.Plan, selfName string) string {
 	if len(parts) == 0 {
 		return ""
 	}
+	traits := "different face shape, age, build, skin tone and unique markers; these identity traits MUST dominate the image; " +
+		"never average them into a generic handsome/pretty face"
+	one := "exactly ONE person appears in the frame"
+	switch NormalizeEntityKind(string(kind)) {
+	case KindObject:
+		traits = "a different silhouette, form, part count, material, colour and finish — it must never be mistaken for a person " +
+			"or for a living creature; these traits MUST dominate the image"
+		one = "exactly ONE object appears in the frame"
+	case KindSpiritPet, KindBeast:
+		traits = "a different species, size class, build, coat or scale pattern and unique markers; these traits MUST dominate the image; " +
+			"never turn it into a generic cute mascot"
+		one = "exactly ONE creature appears in the frame"
+	case KindIncorporeal:
+		traits = "a different form, colour, glow and degree of transparency; these traits MUST dominate the image"
+		one = "exactly ONE presence appears in the frame"
+	case KindChibi:
+		one = "exactly ONE chibi figure appears in the frame"
+	}
 	return "\n\nCAST DISTINCTNESS (reference note, NOT to be drawn) — other cast members of this series: " + strings.Join(parts, "; ") +
-		". They are listed ONLY so that the character depicted here (「" + self + "」) is clearly distinguishable from every one of them: " +
-		"different face shape, age, build, skin tone and unique markers; these identity traits MUST dominate the image; " +
-		"never average them into a generic handsome/pretty face. " +
+		". They are listed ONLY so that the subject depicted here (「" + self + "」) is clearly distinguishable from every one of them: " +
+		traits + ". " +
 		// 实测(2026-09-12):不点明"不要画出来"时,模型会把名单里的其他角色当画面元素塞进角落
-		// (郑伯的定妆照里出现了小尺寸的卫东与 Q 版江砚)。名单只作差异化参考:画面里只能有本人一个。
-		"Do NOT depict any of these other characters: exactly ONE person appears in the frame — 「" + self + "」."
+		// (郑伯的定妆照里出现了小尺寸的卫东与 Q 版江砚)。名单只作差异化参考:画面里只能有本体一个。
+		"Do NOT depict any of these other characters: " + one + " — 「" + self + "」."
 }
 
 // backfillAssets 渲染前自动补齐缺失的参考图:资产阶段未跑/未生成全时,

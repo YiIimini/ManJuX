@@ -71,8 +71,8 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Krea-2 定妆照(竖版半身)
-	imgPath, err := s.genLibraryPortrait(ctx, card.ImagePrompt, time.Now().UnixNano()&0x7fffffff)
+	// Krea-2 定妆照(按实体类型取景:抽卡也可能抽出一只器物/妖兽)
+	imgPath, err := s.genLibraryPortrait(ctx, card.Name, card.Description, card.ImagePrompt, time.Now().UnixNano()&0x7fffffff)
 	if err != nil {
 		writeErr(w, 500, fmt.Errorf("抽卡定妆失败(Krea-2):%w", err))
 		return
@@ -162,7 +162,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
 		defer cancel()
-		p, err := s.genLibraryPortrait(ctx, prompt, time.Now().UnixNano()&0x7fffffff)
+		p, err := s.genLibraryPortrait(ctx, name, desc, prompt, time.Now().UnixNano()&0x7fffffff)
 		if err != nil {
 			writeErr(w, 500, fmt.Errorf("定妆生成失败(Krea-2):%w", err))
 			return
@@ -214,7 +214,7 @@ func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	seed := time.Now().UnixNano() & 0x7fffffff // 随机种子:每次抽到不同的图
-	tmp, err := s.genLibraryPortrait(r.Context(), prompt, seed)
+	tmp, err := s.genLibraryPortrait(r.Context(), name, e.Description, prompt, seed)
 	if err != nil {
 		writeErr(w, 503, fmt.Errorf("重抽失败(需要本地 ComfyUI):%w", err))
 		return
@@ -457,9 +457,9 @@ func (s *Server) imageDataURL(ctx context.Context, path string) (string, error) 
 
 // genLibraryPortrait 用本地 ComfyUI(Krea-2)生成资产库定妆照,返回临时文件路径。
 //
-// 提示词在这里补上动画哑光画风块(与项目内 characterImagePrompt 同一套):库是跨项目
-// 全局资产,库里出一条真人脸,复用到任何项目都会与渲染侧的"MATTE ANIMATED LOOK"打架。
-func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int64) (string, error) {
+// 提示词在这里按**实体类型**补上取景、忠实度与画风块(与项目内 characterImagePrompt
+// 同一套渲染方法):库是跨项目全局资产,库里把铜雀当人出图,复用到任何项目都会跟着错。
+func (s *Server) genLibraryPortrait(ctx context.Context, name, description, prompt string, seed int64) (string, error) {
 	eng, err := s.reg.Get("comfy")
 	if err != nil {
 		return "", err
@@ -470,7 +470,7 @@ func (s *Server) genLibraryPortrait(ctx context.Context, prompt string, seed int
 	}
 	tmp.Close()
 	out := tmp.Name()
-	if _, err := eng.GenerateImage(ctx, pipeline.LibraryPortraitPrompt(prompt), "", seed, 832, 1248, out); err != nil {
+	if _, err := eng.GenerateImage(ctx, pipeline.LibraryPortraitPrompt(name, description, prompt), "", seed, 832, 1248, out); err != nil {
 		os.Remove(out)
 		return "", err
 	}

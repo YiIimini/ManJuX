@@ -23,39 +23,65 @@ import "strings"
 //
 // 两块都**只描述渲染表面与画风**,绝不写五官形状(形状类词汇一律留在角色卡里)——
 // 这是 2026-09-12 那次"风格块把圆脸大眼塞给所有角色"事故的教训。
+//
+// 2026-09-24 第二轮(用户报「铜雀被渲染成人物」)把两块各自再切成**通用介质 + 类型条款**:
+// 通用部分(线稿/平涂/哑光/原创设计)对所有实体都成立;而"五官/肤色"只对人类成立 ——
+// 一件器物被要求"简化五官、哑光粉质肤色"就是在逼模型给它长一张脸。类型条款见
+// entity_prompts.go 的 entityProfiles(每类各自的渲染方法)。
 
-// animatedFaceImageBlock Krea-2(定妆照/Q 版/重抽)用的画风块:**纯正面**。
+// animatedMediumImageBlock Krea-2 侧的**通用介质块**(不含任何身体部位词)。
+//
+// 只能用"它是什么"来描述:手绘线稿 + 赛璐璐平涂 + 宽而软的平涂阴影 + 哑光暗哑质感 +
+// 柔和低对比散射光 + 原创设计。一个否定词都不写。
+func animatedMediumImageBlock() string {
+	return "\n\nANIMATED MATTE RENDER (mandatory): 2D/2.5D animation — hand-drawn clean line art, " +
+		"flat cel-shaded colour with wide soft shadow shapes, a matte dull even finish across every surface, " +
+		"soft diffuse low-contrast light that falls gently across the form. " +
+		"The subject is an original animation design." +
+		"(中文对照:动画化渲染——手绘线稿 + 赛璐璐平涂与宽软的平涂阴影 + 整体哑光暗哑质感(均匀、不反光)+ " +
+		"柔和低对比散射光;主体为原创设计。)"
+}
+
+// animatedFaceImageBlock Krea-2(人物定妆照/重抽)用的画风块 = 通用介质 + **人类专属条款**。
 //
 // 只能用"它是什么"来描述:手绘线稿 + 简化的图形化五官 + 赛璐璐平涂 + 宽而软的平涂
 // 阴影 + 哑光粉质肤色 + 柔和低对比散射光 + 原创动画设计。一个否定词都不写。
 func animatedFaceImageBlock() string {
-	return "\n\nANIMATED MATTE CHARACTER (mandatory): " +
-		"2D/2.5D animation character design — hand-drawn clean line art, simplified graphic facial features, " +
-		"flat cel-shaded colour with wide soft shadow shapes, matte powdery complexion with a dull even finish, " +
-		"soft diffuse low-contrast light that falls gently across the form. " +
-		"The subject is an original animation design." +
-		"(中文对照:动画化角色——手绘线稿 + 简化图形化五官 + 赛璐璐平涂与宽软的平涂阴影 + " +
-		"哑光粉质肤色(整体呈均匀的暗哑质感),柔和低对比散射光;角色为原创动画设计。)"
+	return animatedMediumImageBlock() + "\n- Human faces are hand-drawn with simplified graphic facial features, and skin reads as a " +
+		"matte powdery complexion with a dull even finish." +
+		"(中文对照:人物:五官为手绘简化图形化处理,肤色哑光粉质、整体暗哑均匀。)"
+}
+
+// animatedMediumRenderBlock H3 侧的**通用介质块**:画风 + 质感 + 通用排除句。
+//
+// 通用排除句里保留"真人照片脸/演员/影射真实人物"三条 —— 它们对任何实体都成立
+// (一件器物也不该长着一张明星脸)。皮肤专属的排除项(油光/汗湿高光)放在人类条款里。
+func animatedMediumRenderBlock() string {
+	return "\n\nMATTE ANIMATED LOOK (mandatory, applies to every frame of this video):\n" +
+		"- The whole video is stylized 2D/2.5D animation (donghua): hand-drawn line art, flat cel-shaded colour with wide soft shadow shapes.\n" +
+		"- Every surface reads MATTE: flat even shading, with each highlight staying dull, wide and low in contrast.\n" +
+		"- Everything stays dry and powdery throughout: the finish remains dull and even.\n" +
+		"- Lighting is soft, even and low-contrast with a gentle falloff, so nothing ever carries a hard hot spot.\n" +
+		"- Every design in this video is ORIGINAL.\n" +
+		"NEGATIVE (must not happen): a photographic or 3D-scanned human face, a live-action actor's face, any resemblance to a real person, " +
+		"celebrity or public figure, and a glossy plastic or wax finish."
+}
+
+// humanFaceRenderClause 人类专属的渲染条款(脸/皮肤),接在通用介质块之后。
+func humanFaceRenderClause() string {
+	return "\n- Every human face is a hand-drawn line-art face with simplified graphic features; skin reads as a flat matte complexion " +
+		"with a dull even finish.\n" +
+		"- Skin specifically: no oily or greasy skin, no wet or sweaty highlights, and no hard specular on the forehead, nose bridge or cheekbones.\n" +
+		"(中文对照:人物:手绘线稿脸、五官简化;肤色哑光均匀,额头/鼻梁/颧骨的高光宽而暗哑;" +
+		"全片不许出现油光、汗湿反光、塑料蜡质感、真人照片脸或任何影射真实人物/演员/公众人物的长相。)"
 }
 
 // animatedFaceRenderBlock H3(渲染出片/2K 重生成/局部重绘/音频驱动)用的画风块:
-// 正面约束 + 散文式排除句(官方指南允许,且实测 H3 吃得进)。
+// 通用介质块 + 人类条款(默认/人类镜头的组合形态)。
 //
 // 这里才允许点名"不要什么":油光、湿汗高光、塑料蜡质、真人照片脸、演员明星相似度。
 func animatedFaceRenderBlock() string {
-	return "\n\nMATTE ANIMATED LOOK (mandatory, applies to every frame of this video):\n" +
-		"- Every on-screen character is a stylized animated character: hand-drawn line-art face, simplified graphic " +
-		"features, flat cel-shaded colour with wide soft shadow shapes — the look of a 2D/2.5D donghua, not a human being on camera.\n" +
-		"- Skin reads MATTE: a flat even complexion under soft diffuse shading. Any highlight on the forehead, nose bridge " +
-		"or cheekbones stays dull, wide and low in contrast.\n" +
-		"- The surfaces stay dry and powdery throughout: keep the finish dull and even.\n" +
-		"- Lighting is soft, even and low-contrast with a gentle falloff, so no face ever carries a hard hot spot.\n" +
-		"- Every face is an ORIGINAL animation design.\n" +
-		"NEGATIVE (must not happen): oily or greasy skin, wet or sweaty highlights, a glossy plastic or wax finish, " +
-		"a photographic or 3D-scanned human face, a live-action actor's face, and any resemblance to a real person, " +
-		"celebrity or public figure.\n" +
-		"(中文对照:动画化 + 哑光硬约束——手绘线稿、五官简化、赛璐璐平涂;肤色哑光均匀,额头/鼻梁/颧骨的高光宽而暗哑;" +
-		"全片不许出现油光、汗湿反光、塑料蜡质感、真人照片脸或任何影射真实人物/演员/公众人物的长相。)"
+	return animatedMediumRenderBlock() + humanFaceRenderClause()
 }
 
 // 开关本身在 project.ScriptParams(StylizedFaces / FacesOn),未表态即开 ——

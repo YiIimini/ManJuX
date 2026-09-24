@@ -65,12 +65,20 @@ type Shot struct {
 }
 
 // Character 角色卡。
+//
+// Kind 是**实体类型**,决定走哪一套渲染方法(定妆照取景/多视角方式/镜头身份锁都不同):
+// human 人 / object 物 / spirit_pet 灵宠 / beast 妖兽 / incorporeal 无实体 / chibi Q版。
+// 为什么它必须是数据而不是"渲染时猜":一只机关铜雀与一个少年,在提示词层需要的是
+// 完全不同的取景与身份约束 —— 用同一套"半身正面、照抄脸"去渲染铜雀,模型只会画出
+// 一个人(2026-09-24 用户实证)。**空值合法**:存量方案没有这个字段,由代码按名称与
+// 描述推断(见 pipeline.ResolveEntityKind),UI 里可人工纠正。
 type Character struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	Description string `json:"description"`  // 外貌/服装/气质(供一致性)
-	ImagePrompt string `json:"image_prompt"` // 定妆照文生图提示词(英文)
-	Voice       string `json:"voice"`        // 声线描述(英文,进 H3 提示词)
+	Kind        string `json:"kind,omitempty"` // human / object / spirit_pet / beast / incorporeal / chibi
+	Description string `json:"description"`    // 外貌/服装/气质(供一致性)
+	ImagePrompt string `json:"image_prompt"`   // 定妆照文生图提示词(英文)
+	Voice       string `json:"voice"`          // 声线描述(英文,进 H3 提示词)
 }
 
 // Scene 场景卡。

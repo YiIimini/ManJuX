@@ -23,6 +23,59 @@ const titles = { script: '剧本分镜 · 详情', assets: '资产定妆 · 详�
 const charList = computed(() => (plan.value?.characters || []).map(c => ({ ...c, asset: assets.value['char:' + c.id] })))
 const sceneList = computed(() => (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
 
+// 实体类型清单(后端 /api/meta 的单一真源):决定这张角色卡走哪套渲染方法。
+// 兜底用本地简表,保证后端未就绪时选择器仍可用。
+const FALLBACK_KINDS = [
+  { key: 'human', name: '人', hint: '人物:半身正面定妆照 + 原地转身' },
+  { key: 'object', name: '物', hint: '器物/机关/傀儡/雕像等非生命体:整件居中取景 + 转台自转,并禁止拟人化' },
+  { key: 'spirit_pet', name: '灵宠', hint: '小型灵物/宠物:全身兽形取景,保留自身解剖结构' },
+  { key: 'beast', name: '妖兽', hint: '大型或凶猛的非人生物:全身取景,体型体量照原文' },
+  { key: 'incorporeal', name: '无实体', hint: '鬼魂/灵体/意识/投影:半透明形体,禁止落地成影与实体化' },
+  { key: 'chibi', name: 'Q版', hint: 'Q 版/大头身比例:按 Q 版取景与转身渲染' },
+]
+const kindOptions = computed(() => (G.metaEntityKinds?.length ? G.metaEntityKinds : FALLBACK_KINDS))
+// 角色卡上的类型:有显式 kind 用它,没有则按与后端一致的关键词规则**显示推断结果**
+// (后端 ResolveEntityKind 也是"显式优先、缺失则推断",这里保持同口径,免得 UI 显示
+// 成"人"而渲染按"物"走 —— 那会让人以为改动没生效)。
+function inferKind(c) {
+  const hay = `${c.name || ''}\n${c.description || ''}\n${c.imagePrompt || ''}`.toLowerCase()
+  const hit = (arr) => arr.some(w => hay.includes(w))
+  if (hit(['鬼魂', '幽灵', '幽魂', '魂魄', '灵体', '虚影', '残影', '幻影', '无形', '无实体', '半透明', '投影', '意识体', 'ghost', 'phantom', 'incorporeal', 'translucent spirit'])) return 'incorporeal'
+  if (hit(['铜雀', '器物', '机关', '傀儡', '木偶', '偶人', '人偶', '提线', '纸人', '雕像', '石像', '铜像', '灯笼', '机械', '铆钉', '齿轮', 'puppet', 'marionette', 'doll', 'statue', 'automaton', 'mechanical', 'clockwork', 'artefact', 'artifact', 'golem'])) return 'object'
+  if (hit(['妖兽', '魔兽', '妖怪', '巨龙', '麒麟', '巨狼', '巨蟒', '猛兽', '凶兽', 'demon', 'monster', 'beast', 'dragon', 'serpent'])) return 'beast'
+  if (hit(['灵宠', '宠物', '小兽', '灵狐', '灵鹤', '灵蝶', '灵雀', '幼兽', 'spirit pet', 'familiar'])) return 'spirit_pet'
+  if (hit(['q版', 'q 版', '呆萌', '大头身', 'chibi', 'super deformed'])) return 'chibi'
+  return 'human'
+}
+function kindOf(c) {
+  const k = String(c.kind || '').trim()
+  return kindOptions.value.some(o => o.key === k) ? k : inferKind(c)
+}
+function kindName(c) {
+  const k = kindOf(c)
+  return kindOptions.value.find(o => o.key === k)?.name || k
+}
+// 这张定妆照是不是**按当前类型**渲染的:资产表里存着当时装配出来的 image_prompt,
+// 它若不含当前类型的标记串,就说明图是按旧类型(或旧版本)出的 —— 典型症状是
+// "卡片上写着物、图却是一个人",必须先重出再渲染,否则错的图会被当第一参考喂回去。
+function sheetStale(c) {
+  const prompt = c.asset?.image_prompt
+  if (!prompt) return false
+  const marker = kindOptions.value.find(o => o.key === kindOf(c))?.marker
+  return !!marker && !String(prompt).includes(marker)
+}
+async function setKind(c, key) {
+  try {
+    const r = await api.putCharacter(pj.value.project.id, { id: c.id, kind: key })
+    ElMessage.success(`「${c.name}」类型已改为 ${r?.name || key}`)
+    await refreshProject()
+    ElMessageBox.confirm(
+      '类型已保存,但**已生成**的定妆照/多视角图仍是按旧类型渲染的(比如铜雀那张还是人像)。要重出定妆照请点这张卡右侧的 ✨(Krea-2 重新生成),多视角会随后按新类型重建。',
+      '下一步:重新生成定妆照', { confirmButtonText: '知道了', showCancelButton: false, type: 'warning' },
+    ).catch(() => {})
+  } catch (e) { ElMessage.error(e.message) }
+}
+
 function viewAsset(a, kind, name) {
   if (!a?.file) return
   G.viewer = { index: 0, items: [{ type: 'image', src: api.fileURL(pj.value.project.id, a.file), title: name, meta: a.source === 'library' ? '库复用' : (a.source === 'krea2' ? 'Krea-2' : '上传'), kindLabel: 'ASSET' }] }
@@ -118,11 +171,20 @@ function castOf(sh) {
           <img v-if="c.asset" :src="api.fileURL(pj.project.id, c.asset.file)" class="w-full h-full object-cover" />
         </div>
         <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <b class="text-sm">{{ c.name }}</b>
+            <el-select :model-value="kindOf(c)" size="small" style="width:92px" @change="(v)=>setKind(c,v)">
+              <el-option v-for="o in kindOptions" :key="o.key" :value="o.key" :label="o.name">
+                <span>{{ o.name }}</span>
+                <span class="text-xs" style="color:var(--mx-text3);margin-left:8px">{{ o.hint }}</span>
+              </el-option>
+            </el-select>
             <el-tag size="small" effect="plain" :type="c.asset?.source==='library'?'success':(c.asset?.source==='krea2'?'warning':'info')">
               {{ c.asset ? (c.asset.source==='library'?'库复用':c.asset.source==='krea2'?'Krea-2':'上传') : '缺失' }}
             </el-tag>
+            <el-tooltip v-if="sheetStale(c)" content="这张定妆照是按旧类型(或旧版本)渲染的 —— 请点右侧 ✨ 重新生成后再渲染,否则错的图会被当作第一参考喂回去" placement="top">
+              <el-tag size="small" effect="dark" type="danger">定妆照待重出</el-tag>
+            </el-tooltip>
           </div>
           <div class="text-xs truncate mt-1" style="color:var(--mx-text3)">{{ c.description }}</div>
         </div>

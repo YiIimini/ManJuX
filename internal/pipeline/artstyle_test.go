@@ -59,11 +59,11 @@ func TestAnimatedFaceRenderBlockHitsGreaseAndRealFaces(t *testing.T) {
 // TestStyleExpandOverridesPhotorealWhenFacesOn 角色动漫化开启时,真人/写实风格请求
 // 必须被**覆盖**而不是叠加 —— 两组互相打架的风格词同时给模型,只会得到"既写实又扁平"的糊图。
 func TestStyleExpandOverridesPhotorealWhenFacesOn(t *testing.T) {
-	on := styleExpand("真人实拍质感 + 港片胶片", true)
+	on := styleExpand("真人实拍质感 + 港片胶片", true, KindHuman)
 	if strings.Contains(on, "photorealistic cinematic portrait") {
 		t.Errorf("开启角色动漫化后不得再要求写实人像:%s", on)
 	}
-	if !strings.Contains(on, "ANIMATED MATTE CHARACTER") {
+	if !strings.Contains(on, "ANIMATED MATTE RENDER") {
 		t.Errorf("开启后必须带动画哑光画风块:%s", on)
 	}
 	// 用户自己的风格文本要保留(作为整体美术方向),只是不再驱动写实脸
@@ -75,11 +75,11 @@ func TestStyleExpandOverridesPhotorealWhenFacesOn(t *testing.T) {
 		t.Error("身份忠实度约束丢失")
 	}
 
-	off := styleExpand("真人实拍质感", false)
+	off := styleExpand("真人实拍质感", false, KindHuman)
 	if !strings.Contains(off, "photorealistic cinematic portrait") {
 		t.Errorf("关闭开关后真人风格是合法路线,不该被覆盖:%s", off)
 	}
-	if strings.Contains(off, "ANIMATED MATTE CHARACTER") {
+	if strings.Contains(off, "ANIMATED MATTE RENDER") {
 		t.Errorf("关闭开关后不得注入动画画风块:%s", off)
 	}
 }
@@ -87,7 +87,7 @@ func TestStyleExpandOverridesPhotorealWhenFacesOn(t *testing.T) {
 // TestStyleExpand3DNoLongerAsksForPlasticSkin 3D 分支原先写着 "smooth poreless
 // synthetic skin"(光滑无孔合成皮肤)—— 无孔即塑料即皮脂高光,正是"人物油腻"的一半来源。
 func TestStyleExpand3DNoLongerAsksForPlasticSkin(t *testing.T) {
-	got := styleExpand("次世代 3D·BJD 虚拟人", false)
+	got := styleExpand("次世代 3D·BJD 虚拟人", false, KindHuman)
 	if strings.Contains(got, "poreless") || strings.Contains(got, "synthetic skin") {
 		t.Errorf("3D 分支不得再要求无孔合成皮肤(那是油腻的来源):%s", got)
 	}
@@ -130,12 +130,12 @@ func TestCharacterImagePromptIsSingleAssemblyPoint(t *testing.T) {
 	if !strings.Contains(got, "RENDER STYLE") || !strings.Contains(got, "CAST DISTINCTNESS") {
 		t.Error("装配点必须同时带上风格块与同剧对比块")
 	}
-	if !strings.Contains(got, "ANIMATED MATTE CHARACTER") {
+	if !strings.Contains(got, "ANIMATED MATTE RENDER") {
 		t.Error("默认(未表态)应开启动画哑光画风")
 	}
 	// 关闭开关后不得带画风块
 	proj.Config.Params.Script.StylizedFaces = project.Bool(false)
-	if strings.Contains(characterImagePrompt(proj, plan, plan.Characters[0]), "ANIMATED MATTE CHARACTER") {
+	if strings.Contains(characterImagePrompt(proj, plan, plan.Characters[0]), "ANIMATED MATTE RENDER") {
 		t.Error("显式关闭后不得注入动画画风块")
 	}
 }
@@ -226,24 +226,32 @@ func TestRealWorldStyleStringStillGetsMediumOverride(t *testing.T) {
 	}
 }
 
-// TestLibraryPortraitPromptIsIdempotent 资产库定妆照的画风块不能重复叠加。
+// TestLibraryPortraitPromptIsIdempotent 资产库定妆照的类型块不能重复叠加。
 func TestLibraryPortraitPromptIsIdempotent(t *testing.T) {
 	base := "slim young man, grey work shirt"
-	once := LibraryPortraitPrompt(base)
-	if !strings.Contains(once, "ANIMATED MATTE CHARACTER") || !strings.Contains(once, base) {
+	once := LibraryPortraitPrompt("小凡", "十七岁少年", base)
+	if !strings.Contains(once, "ANIMATED MATTE RENDER") || !strings.Contains(once, base) {
 		t.Fatalf("应保留原提示词并补上画风块:%s", once)
 	}
-	if twice := LibraryPortraitPrompt(once); strings.Count(twice, "ANIMATED MATTE CHARACTER") != 1 {
-		t.Errorf("重复调用不得叠加画风块:%s", twice)
+	if twice := LibraryPortraitPrompt("小凡", "十七岁少年", once); strings.Count(twice, "IDENTITY FIDELITY") != 1 {
+		t.Errorf("重复调用不得叠加类型块:%s", twice)
+	}
+	// 库侧的器物也必须走器物那套(否则库里把铜雀当人出图,复用到项目里全是错的)
+	obj := LibraryPortraitPrompt("阿凿", "巴掌大的一只机关铜雀", "a palm-sized mechanical bronze sparrow")
+	if !strings.Contains(obj, "OBJECT FIDELITY") || strings.Contains(obj, "IDENTITY FIDELITY") {
+		t.Errorf("库侧器物应按器物渲染方法组装:\n%s", obj)
+	}
+	if strings.Contains(strings.ToLower(obj), "upper-body") {
+		t.Errorf("库侧器物不得保留半身取景:\n%s", obj)
 	}
 }
 
 // TestCharactersFromLibraryShareHouseStyle 库里的角色与项目里生成的角色必须是同一种画风,
 // 否则一个写实脸的库资产被复用到动画项目里,又变成"两张脸"。
 func TestCharactersFromLibraryShareHouseStyle(t *testing.T) {
-	lib := LibraryPortraitPrompt("mature man in a coat")
-	if !strings.Contains(lib, animatedFaceImageBlock()) {
-		t.Error("库侧定妆照必须带项目侧同一份画风块(单一来源,不得各写一份)")
+	lib := LibraryPortraitPrompt("小凡", "十七岁少年", "mature young man in a coat")
+	if !strings.Contains(lib, animatedMediumImageBlock()) {
+		t.Error("库侧定妆照必须带项目侧同一份介质块(单一来源,不得各写一份)")
 	}
 }
 

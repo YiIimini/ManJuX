@@ -34,9 +34,21 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		styles = append(styles, styleOut{Key: k, Name: pipeline.StylePresets[k].Name})
 	}
 	up := engine.DefaultUpscaleOptions()
+	// 实体类型清单(角色卡的"渲染方法"选择器):同样是后端单一真源 ——
+	// 前端硬编一份 key 列表,后端加一类就会漏(用户选不到),反之前端能选后端不认。
+	entityKinds := make([]map[string]string, 0, len(pipeline.EntityKinds))
+	for _, k := range pipeline.EntityKinds {
+		entityKinds = append(entityKinds, map[string]string{
+			"key":    string(k),
+			"name":   pipeline.EntityKindLabel(k),
+			"hint":   pipeline.KindHint(k),
+			"marker": pipeline.EntityKindMarker(k), // 前端据此判断"这张定妆照是不是按当前类型渲染的"
+		})
+	}
 	writeJSON(w, 200, map[string]any{
-		"phases": phases,
-		"styles": styles,
+		"phases":       phases,
+		"styles":       styles,
+		"entity_kinds": entityKinds,
 		// 放大链路的默认参数连同默认文件名一起下发:前端只回显、不自行记常量,
 		// 换权重/换默认 VAE 时改一处即可(此前那个 VAE 文件名只活在用户手打的
 		// 输入框里,打错一个字要到 ComfyUI 执行到节点才报错)。
