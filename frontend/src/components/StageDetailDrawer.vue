@@ -259,7 +259,7 @@ function castOf(sh) {
           <el-tag v-if="r.vlm" size="small" :type="r.vlm.pass ? 'success' : 'warning'" effect="plain">VLM {{ r.vlm.score }}</el-tag>
         </div>
         <div v-if="(r.problems||[]).length" class="text-xs mt-1.5" style="color:var(--mx-red)">{{ r.problems.join(';') }}</div>
-        <div v-if="r.vlm && !r.vlm.pass" class="text-xs mt-1.5 p-2 rounded" style="background:rgba(255,209,102,.06);color:var(--mx-yellow)">
+        <div v-if="r.vlm && !r.vlm.pass" class="text-xs mt-1.5 p-2 rounded" style="background:var(--mx-yellow-soft);color:var(--mx-yellow)">
           {{ (r.vlm.issues||[]).join(';') }}<template v-if="r.vlm.advice"> — {{ r.vlm.advice }}</template>
         </div>
       </div>

@@ -304,7 +304,7 @@ function verCellCls(row, which) {
             <span class="text-sm flex-1">{{ n.label }}</span>
             <span class="timecode">{{ n.ok ? '已安装' : '未检测到' }}</span>
           </div>
-          <div class="text-xs mt-2 p-3 rounded-lg" style="background:rgba(83,216,255,.05);color:var(--mx-text2)">
+          <div class="text-xs mt-2 p-3 rounded-lg" style="background:color-mix(in srgb, var(--mx-cyan) 5%, transparent);color:var(--mx-text2)">
             条件缓存:两阶段渲染(换 seed 不重编码);接缝:镜间 22 帧连续。缺失仅影响对应增强功能,基础渲染不受影响。
           </div>
         </div>
@@ -319,7 +319,7 @@ function verCellCls(row, which) {
       </h3>
       <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(440px,1fr))">
         <div v-for="m in st.models" :key="m.key" class="flex items-center gap-3 p-3 rounded-lg"
-             :style="{ background: m.ok ? 'rgba(61,220,132,.05)' : (m.name ? 'rgba(255,107,107,.06)' : 'transparent'), border: '1px solid var(--mx-line)' }">
+             :style="{ background: m.ok ? 'color-mix(in srgb, var(--mx-green) 5%, transparent)' : (m.name ? 'color-mix(in srgb, var(--mx-red) 6%, transparent)' : 'transparent'), border: '1px solid var(--mx-line)' }">
           <i class="dot" :class="m.ok ? 'ok' : (m.name ? 'bad' : '')"></i>
           <div class="flex-1 min-w-0">
             <div class="text-xs" style="color:var(--mx-text2)">{{ m.label }}</div>
@@ -438,7 +438,7 @@ function verCellCls(row, which) {
         <div v-for="(e, i) in browseDlg.entries" :key="i"
              class="flex items-center gap-2 px-3 py-1.5 rounded cursor-pointer"
              style="border-bottom:1px solid var(--mx-line)"
-             :style="i % 2 === 0 ? '' : 'background:rgba(255,255,255,.02)'"
+             :style="i % 2 === 0 ? '' : 'background:var(--mx-hover-soft)'"
              @click="e.isDir && openDir(browseDlg.path + '/' + e.name)">
           <el-icon :size="14" :color="e.isDir ? 'var(--mx-amber)' : 'var(--mx-text3)'">
             <FolderOpened v-if="e.isDir" /><Document v-else />

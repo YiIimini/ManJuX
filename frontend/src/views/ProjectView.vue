@@ -228,7 +228,7 @@ const doneShots = computed(() =>
                   <stop offset="100%" stop-color="var(--mx-amber-deep)" />
                 </linearGradient>
               </defs>
-              <circle cx="26" cy="26" r="21" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="4.5" />
+              <circle cx="26" cy="26" r="21" fill="none" stroke="var(--mx-line)" stroke-width="4.5" />
               <circle cx="26" cy="26" r="21" fill="none" :stroke="ringColor" stroke-width="4.5"
                       stroke-linecap="round" :stroke-dasharray="ringDash" transform="rotate(-90 26 26)"
                       style="transition: stroke-dasharray .6s ease; filter: drop-shadow(0 0 4px color-mix(in srgb, var(--mx-amber) 45%, transparent))" />

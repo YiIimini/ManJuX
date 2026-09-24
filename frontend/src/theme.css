@@ -1,69 +1,88 @@
-/* ===== Element Plus 暗色主题定制(须在 EP css 之后加载)=====
-   注:作用域用 :root 常驻——applyTheme 只写 CSS 变量、不挂 html.dark,
-   此前 html.dark 作用域导致整块从未生效(EP 一直跑浅色默认:白下拉/白
-   滑块把手/默认蓝开关)。主色接主题 accent(原钉死琥珀,六主题一个脸)。*/
-:root {
-  --el-color-primary: var(--mx-accent, var(--mx-amber));
-  --el-color-primary-light-3: color-mix(in srgb, var(--mx-accent, #f0a24a) 70%, #fff);
-  --el-color-primary-light-5: color-mix(in srgb, var(--mx-accent, #f0a24a) 50%, #fff);
-  --el-color-primary-light-7: color-mix(in srgb, var(--mx-accent, #f0a24a) 30%, #fff);
-  --el-color-primary-light-8: color-mix(in srgb, var(--mx-accent, #f0a24a) 20%, #fff);
-  --el-color-primary-light-9: color-mix(in srgb, var(--mx-accent, #f0a24a) 12%, #fff);
-  --el-color-primary-dark-2: color-mix(in srgb, var(--mx-accent, #f0a24a) 80%, #000);
-  /* 表单控件主题化:开关/滑块/勾选/单选随主题 accent */
-  --el-switch-on-color: var(--mx-accent, #f0a24a);
-  --el-switch-off-color: var(--mx-bg3, #18181c);
-  --el-switch-border-color: var(--mx-line-hi, #2a3247);
-  --el-slider-main-bg-color: var(--mx-accent, #f0a24a);
-  --el-slider-runway-bg-color: var(--mx-bg3, #18181c);
-  --el-slider-stop-bg-color: var(--mx-line-hi, #2a3247);
-  --el-checkbox-checked-bg-color: var(--mx-accent, #f0a24a);
-  --el-checkbox-checked-input-border-color: var(--mx-accent, #f0a24a);
-  --el-checkbox-input-border-color: var(--mx-line-hi, #2a3247);
-  --el-checkbox-bg-color: transparent;
-  --el-radio-checked-color: var(--mx-accent, #f0a24a);
-  --el-radio-input-border-color: var(--mx-line-hi, #2a3247);
-  --el-radio-button-checked-bg-color: var(--mx-accent, #f0a24a);
-  --el-radio-button-checked-text-color: var(--mx-on-accent, #101013);
-  --el-radio-button-checked-border-color: var(--mx-accent, #f0a24a);
-  --el-radio-button-bg-color: var(--mx-bg2, #101623);
-  --el-radio-button-text-color: var(--mx-text2, #93a0b4);
-  --el-radio-button-border-color: var(--mx-line-hi, #2a3247);
-  --el-radio-button-hover-text-color: var(--mx-text, #e7ecf4);
-  --el-bg-color: var(--mx-bg1);
-  --el-bg-color-overlay: var(--mx-bg3);
-  --el-bg-color-page: var(--mx-bg0);
-  --el-border-color: var(--mx-line);
-  --el-border-color-light: var(--mx-line);
-  --el-border-color-lighter: var(--mx-line);
-  --el-fill-color-blank: var(--mx-bg2);
-  --el-fill-color-light: var(--mx-bg3);
-  --el-text-color-primary: var(--mx-text);
-  --el-text-color-regular: var(--mx-text);
-  --el-text-color-secondary: var(--mx-text2);
-  --el-color-success: var(--mx-green);
-  --el-color-danger: var(--mx-red);
-  --el-color-warning: var(--mx-yellow);
-  --el-color-info: var(--mx-text3);
-  --el-mask-color: rgba(4, 6, 10, .75);
-  --el-font-family: 'Segoe UI', 'Microsoft YaHei', system-ui, sans-serif;
-  --el-border-radius-base: 10px;
-}
+/* ===== Element Plus 组件级主题补充(变量层在 themes.js,不在本文件)=====
+   【机制(2026-09-24 实测定案)】
+   index.html 上写死了 `class="dark"`,于是 EP 的 dark/css-vars.css 里 `html.dark{…}`
+   常驻生效,而它**重新声明了 --el-color-primary:#409eff 与一整套表单变量**;
+   特异性 (0,1,1) 恒大于 :root (0,1,0) —— 写在 CSS :root 里的主题覆盖会被整片压掉。
+   症状:按钮是主题色(靠 style.css 的 !important 抢回来的),可开关/滑块/勾选/单选/
+   输入框/下拉全是 EP 默认蓝灰,主题只生效了一半(用户连着报障两次)。
+   修法:**EP 的变量层改由 themes.js 的 applyElementPlusVars() 内联写到 <html>**
+   —— 内联优先级最高,不受选择器特异性、打包顺序、甚至解析器口味的影响。
+   本文件只保留**组件级补充样式**:下面这些类选择器与 EP 同级、且排在它后面,实测生效。
 
-/* 输入/选择深色底 + 发光聚焦 */
-.el-input__wrapper, .el-textarea__inner, .el-select__wrapper {
-  background-color: color-mix(in srgb, var(--mx-bg1) 85%, transparent);
-  transition: box-shadow .2s, border-color .2s;
+   【表单/控件主题化】EP 的表单控件默认"中性灰框 + 浅底",换主题时它们不跟着变,
+   看着就像主题没生效。这里把输入/选择/文本域/数字/开关/滑块/勾选/单选/日期/
+   上传/分页/表格/按钮的**交互态与形态**接到 --mx-\* 上(底色与描边吃 accent);
+   变量部分见 themes.js,新增主题只需改色板,不必回来改本文件。 */
+/* EP 的变量层**不在这里**(2026-09-24 实测定案):index.html 写死了 class="dark",
+   EP 的 html.dark{…} 特异性 (0,1,1) 恒大于 :root (0,1,0),写在这里的覆盖会被整片压掉
+   (症状:按钮是主题色,开关/滑块/勾选/输入框全是 EP 默认蓝灰)。
+   这些变量改由 themes.js 的 applyElementPlusVars() 内联写到 <html> —— 内联优先级
+   最高,不受选择器特异性与打包顺序影响。本文件只保留**组件级补充样式**(下方那些
+   类选择器):它们与 EP 同级且排在后面,实测生效。 */
+
+/* ---------- 输入 / 选择 / 文本域:底色吃主题薄涂,描边吃 accent ---------- */
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  background-color: var(--mx-input-bg, #131519);
+  box-shadow: 0 0 0 1px var(--mx-input-bd, #2a3247) inset;
+  transition: box-shadow .2s, background-color .2s;
 }
-.el-input__wrapper.is-focus, .el-select__wrapper.is-focused {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 50%, transparent) inset !important;
+.el-input__wrapper:hover,
+.el-textarea__inner:hover,
+.el-select__wrapper:hover {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 38%, var(--mx-line)) inset;
 }
+.el-input__wrapper.is-focus,
+.el-input__wrapper:focus-within,
+.el-select__wrapper.is-focused,
+.el-select__wrapper.is-hovering:not(.is-focused) {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 70%, transparent) inset,
+              0 0 0 3px color-mix(in srgb, var(--mx-amber) 16%, transparent) !important;
+}
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 70%, transparent) inset,
+              0 0 0 3px color-mix(in srgb, var(--mx-amber) 16%, transparent);
+}
+/* 数字输入:两侧加减按钮原先吃 EP 的浅灰填充,改主题悬浮色 */
+.el-input-number__decrease,
+.el-input-number__increase {
+  background: var(--mx-hover-soft, rgba(255, 255, 255, .04));
+  color: var(--mx-text2);
+  border-color: var(--mx-input-bd, #2a3247);
+}
+.el-input-number__decrease:hover,
+.el-input-number__increase:hover { color: var(--mx-amber); background: var(--mx-hover); }
+/* 前后缀/组合框 */
+.el-input-group__prepend,
+.el-input-group__append {
+  background: var(--mx-hover-soft, rgba(255, 255, 255, .04));
+  color: var(--mx-text2);
+  box-shadow: 0 0 0 1px var(--mx-input-bd, #2a3247) inset;
+}
+/* 拖拽上传区 */
+.el-upload-dragger {
+  background: var(--mx-hover-soft, rgba(255, 255, 255, .04));
+  border: 1px dashed var(--mx-input-bd, #2a3247);
+}
+.el-upload-dragger:hover,
+.el-upload-dragger.is-dragover {
+  border-color: var(--mx-amber);
+  background: var(--mx-hover);
+}
+/* 表单标签 */
+.el-form-item__label { color: var(--mx-text2); }
+
+/* ---------- 浮层(下拉/菜单/日期/气泡)---------- */
 .el-drawer, .el-dialog {
   background: linear-gradient(170deg, var(--mx-bg3), var(--mx-bg2)) !important;
-  border: 1px solid var(--mx-line);
+  border: 1px solid var(--mx-card-bd, var(--mx-line));
 }
 .el-drawer__header, .el-dialog__header { margin-bottom: 14px; color: var(--mx-text); }
-.el-message { border: 1px solid var(--mx-line-hi); background: var(--mx-bg3) !important; }
+.el-message { border: 1px solid var(--mx-card-bd, var(--mx-line-hi)); background: var(--mx-bg3) !important; }
+.el-message-box { border: 1px solid var(--mx-card-bd, var(--mx-line)); }
+.el-popover.el-popper { border-color: var(--mx-card-bd, var(--mx-line)); }
+.el-popper.is-light .el-popper__arrow::before { border-color: var(--mx-card-bd, var(--mx-line)); }
 
 /* 下拉/浮层面板主题化:is-light 类浮层(select 下拉、el-dropdown 菜单、
    日期选择等)原为 EP 浅色默认白底,统一接主题面板色 */
@@ -71,26 +90,60 @@
 .el-dropdown__popper.el-popper.is-light,
 .el-picker__popper.el-popper.is-light {
   background: var(--mx-panel-bg2, #18181c) !important;
-  border: 1px solid var(--mx-line-hi) !important;
+  border: 1px solid var(--mx-card-bd, var(--mx-line-hi)) !important;
   backdrop-filter: var(--mx-bd-filter, none);
 }
 .el-select__popper .el-popper__arrow::before,
 .el-dropdown__popper .el-popper__arrow::before,
 .el-picker__popper .el-popper__arrow::before {
   background: var(--mx-panel-bg2, #18181c) !important;
-  border-color: var(--mx-line-hi) !important;
+  border-color: var(--mx-card-bd, var(--mx-line-hi)) !important;
 }
 .el-select-dropdown__item { color: var(--mx-text); }
-.el-select-dropdown__item.is-hovering { background: rgba(255, 255, 255, .06); }
+.el-select-dropdown__item.is-hovering { background: var(--mx-hover, rgba(255, 255, 255, .06)); }
 .el-select-dropdown__item.is-selected { color: var(--mx-accent); font-weight: 600; }
 .el-dropdown-menu { background: transparent; }
 .el-dropdown-menu__item:not(.is-disabled):hover,
-.el-dropdown-menu__item:not(.is-disabled):focus { background: rgba(255, 255, 255, .06); color: var(--mx-text); }
+.el-dropdown-menu__item:not(.is-disabled):focus { background: var(--mx-hover); color: var(--mx-text); }
+
+/* 日期选择器 */
+.el-date-table td.available:hover { color: var(--mx-amber); }
+.el-date-table td.current:not(.disabled) .el-date-table-cell__text {
+  background: var(--mx-amber);
+  color: var(--mx-on-accent, #101013);
+}
+.el-date-table td.today .el-date-table-cell__text { color: var(--mx-amber); font-weight: 700; }
+.el-date-table td.in-range .el-date-table-cell { background: var(--mx-hover); }
+.el-picker-panel { background: transparent; border-color: var(--mx-line); color: var(--mx-text); }
+.el-picker-panel__footer { background: transparent; border-color: var(--mx-line); }
+.el-picker-panel__icon-btn { color: var(--mx-text2); }
+.el-picker-panel__icon-btn:hover { color: var(--mx-amber); }
+
 /* 滑块把手:原白底圆钮改 accent 填充 */
 .el-slider__button {
   background-color: var(--mx-accent, #f0a24a);
   border-color: var(--mx-bg0, #0b0e14);
 }
+.el-slider__button-wrapper:hover .el-slider__button { border-color: var(--mx-amber-hi); }
+.el-switch__core { border-color: var(--mx-input-bd, #2a3247); }
+.el-checkbox__inner, .el-radio__inner { background-color: var(--mx-input-bg, #131519); }
+
+/* 分段控件 */
+.el-segmented {
+  --el-segmented-bg-color: var(--mx-input-bg, #131519);
+  --el-segmented-color: var(--mx-text2);
+  --el-segmented-item-selected-bg-color: color-mix(in srgb, var(--mx-amber) 22%, transparent);
+  --el-segmented-item-selected-color: var(--mx-text);
+  --el-segmented-item-hover-bg-color: var(--mx-hover);
+}
+
+/* 分页/标签/进度:吃 accent */
+.el-pagination { --el-pagination-bg-color: transparent; --el-pagination-text-color: var(--mx-text2); --el-pagination-button-color: var(--mx-text2); }
+.el-pagination .el-pager li { background: var(--mx-hover-soft, rgba(255, 255, 255, .04)); color: var(--mx-text2); }
+.el-pagination .el-pager li:hover { color: var(--mx-amber); background: var(--mx-hover); }
+.el-pagination .el-pager li.is-active { background: var(--mx-amber); color: var(--mx-on-accent, #101013); }
+.el-tag { border-color: var(--mx-card-bd, var(--mx-line)); background: var(--mx-hover-soft, transparent); }
+.el-progress-bar__outer { background: var(--mx-bg3); }
 
 /* 所有 select 文本居中(全局规矩) */
 .el-select .el-select__wrapper .el-select__selected-item,
@@ -106,20 +159,20 @@
 .el-tabs__item:hover { color: var(--mx-text); }
 .el-tabs__item.is-active { color: var(--mx-amber); }
 .el-tabs__active-bar { background: linear-gradient(90deg, var(--mx-amber-hi), var(--mx-amber-deep)); height: 3px; border-radius: 3px; }
-.el-tabs__nav-wrap::after { background: var(--mx-line); }
+.el-tabs__nav-wrap::after { background: var(--mx-card-bd, var(--mx-line)); }
 
 /* 消息/通知 */
 .el-message { backdrop-filter: blur(10px); }
 
 /* el-table 深色主题化:表头去亮底、行透明、悬停微亮(2026-09-10 视觉实勘) */
 .el-table {
-  --el-table-header-bg-color: var(--mx-bg2, #101013);
+  --el-table-header-bg-color: var(--mx-input-bg, #101013);
   --el-table-header-text-color: var(--mx-text2, #a2a9b8);
   --el-table-bg-color: transparent;
   --el-table-tr-bg-color: transparent;
   --el-table-border-color: var(--mx-line, #1f1f24);
   --el-table-text-color: var(--mx-text, #f5f6fa);
-  --el-table-row-hover-bg-color: rgba(255, 255, 255, .045);
+  --el-table-row-hover-bg-color: var(--mx-hover, rgba(255, 255, 255, .045));
   --el-table-fixed-box-shadow: none;
   background: transparent;
   font-size: 12px;
@@ -127,5 +180,29 @@
 .el-table th.el-table__cell {
   font-weight: 600;
   letter-spacing: .5px;
+  background: var(--mx-input-bg, #101013);
 }
+.el-table td.el-table__cell { border-color: var(--mx-line); }
 .el-table .el-table__empty-block { background: transparent; }
+
+/* 按钮:默认/朴素/文字三类也要跟着主题走(原先只有 primary 吃 accent) */
+.el-button {
+  --el-button-bg-color: var(--mx-input-bg, #131519);
+  --el-button-border-color: var(--mx-input-bd, #2a3247);
+  --el-button-text-color: var(--mx-text);
+  --el-button-hover-bg-color: var(--mx-hover, rgba(255, 255, 255, .06));
+  --el-button-hover-border-color: color-mix(in srgb, var(--mx-amber) 55%, transparent);
+  --el-button-hover-text-color: var(--mx-text);
+  --el-button-disabled-bg-color: color-mix(in srgb, var(--mx-bg2) 70%, transparent);
+  --el-button-disabled-border-color: var(--mx-line);
+  --el-button-disabled-text-color: var(--mx-text3);
+}
+.el-button--primary {
+  --el-button-bg-color: color-mix(in srgb, var(--mx-amber) 88%, transparent);
+  --el-button-border-color: transparent;
+  --el-button-text-color: var(--mx-on-accent, #101013);
+  --el-button-hover-bg-color: var(--mx-amber);
+  --el-button-hover-border-color: transparent;
+  --el-button-hover-text-color: var(--mx-on-accent, #101013);
+  --el-button-active-bg-color: var(--mx-amber-deep);
+}

@@ -234,7 +234,7 @@ const sceneName = computed(() => {
         <div v-if="shot.narration" class="mt-1" style="font-style:italic">旁白:{{ shot.narration }}</div>
       </div>
       <div v-if="manifestItem?.status === 'failed' && manifestItem?.error"
-           class="text-xs p-2 rounded-lg" style="background:rgba(255,107,107,.07);color:var(--mx-red)">
+           class="text-xs p-2 rounded-lg" style="background:var(--mx-red-soft);color:var(--mx-red)">
         {{ manifestItem.error }}
       </div>
       <!-- 底部操作条:等宽三钮(提示词/微调 + 主操作 渲染|重渲 下拉),运行中整体禁用 -->

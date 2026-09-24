@@ -305,6 +305,97 @@ export function themeById(id) {
   return THEMES.find(t => t.id === id) || THEMES.find(t => t.id === DEFAULT_THEME_ID) || THEMES[0]
 }
 
+// ---------- Element Plus 变量:由 JS **内联**写到 <html> ----------
+//
+// 为什么不放在 CSS 里(2026-09-24 实测定案,踩了一整轮):
+//   index.html 写死了 `class="dark"`,EP 的 dark/css-vars.css 里 `html.dark{…}`
+//   于是常驻生效 —— 它**重新声明了 --el-color-primary 与一整套表单变量**,
+//   特异性 (0,1,1) 恒大于 `:root` (0,1,0)。也就是说,写在 CSS `:root` 里的主题
+//   覆盖会被它整片压掉(症状:按钮是主题色、开关/滑块/勾选/输入框全是 EP 默认蓝灰,
+//   用户连着报了两次)。实测把所有 `:root` 变体选择器都试了仍然不生效,
+//   而**内联到 <html> 的 style 优先级最高**,且不受选择器特异性/打包顺序影响。
+//   所以:EP 的变量层由主题系统直接写内联,值用 CSS 变量表达式表达(用到时才求值),
+//   CSS 里只留组件级的补充样式(描边/Focus 环等,那些是类选择器,不受影响)。
+export function applyElementPlusVars(root) {
+  const V = {
+    '--el-color-primary': 'var(--mx-accent, var(--mx-amber))',
+    '--el-color-primary-light-3': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 70%, #fff)',
+    '--el-color-primary-light-5': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 50%, #fff)',
+    '--el-color-primary-light-7': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 30%, #fff)',
+    '--el-color-primary-light-8': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 20%, #fff)',
+    '--el-color-primary-light-9': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 12%, #fff)',
+    '--el-color-primary-dark-2': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 80%, #000)',
+    // 表单控件:底色吃 accent 薄涂,描边吃 accent(见 style.css 的 --mx-input-*)
+    '--el-input-bg-color': 'var(--mx-input-bg, #131519)',
+    '--el-input-border-color': 'var(--mx-input-bd, #2a3247)',
+    '--el-input-hover-border-color': 'color-mix(in srgb, var(--mx-amber) 35%, var(--mx-line))',
+    '--el-input-focus-border-color': 'var(--mx-amber)',
+    '--el-input-text-color': 'var(--mx-text)',
+    '--el-input-placeholder-color': 'var(--mx-text3)',
+    '--el-input-icon-color': 'var(--mx-text3)',
+    '--el-select-input-focus-border-color': 'var(--mx-amber)',
+    '--el-select-border-color-hover': 'color-mix(in srgb, var(--mx-amber) 35%, var(--mx-line))',
+    '--el-textarea-text-color': 'var(--mx-text)',
+    '--el-border-color-hover': 'color-mix(in srgb, var(--mx-amber) 35%, var(--mx-line))',
+    '--el-border-color-darker': 'var(--mx-line-hi)',
+    '--el-switch-on-color': 'var(--mx-accent, #f0a24a)',
+    '--el-switch-off-color': 'var(--mx-bg3, #18181c)',
+    '--el-switch-border-color': 'var(--mx-input-bd, #2a3247)',
+    '--el-slider-main-bg-color': 'var(--mx-accent, #f0a24a)',
+    '--el-slider-runway-bg-color': 'var(--mx-bg3, #18181c)',
+    '--el-slider-stop-bg-color': 'var(--mx-line-hi, #2a3247)',
+    '--el-checkbox-checked-bg-color': 'var(--mx-accent, #f0a24a)',
+    '--el-checkbox-checked-input-border-color': 'var(--mx-accent, #f0a24a)',
+    '--el-checkbox-checked-text-color': 'var(--mx-text)',
+    '--el-checkbox-input-border-color': 'var(--mx-input-bd, #2a3247)',
+    '--el-checkbox-bg-color': 'var(--mx-input-bg, #131519)',
+    '--el-checkbox-text-color': 'var(--mx-text2)',
+    '--el-radio-checked-color': 'var(--mx-accent, #f0a24a)',
+    '--el-radio-checked-text-color': 'var(--mx-text)',
+    '--el-radio-input-border-color': 'var(--mx-input-bd, #2a3247)',
+    '--el-radio-bg-color': 'var(--mx-input-bg, #131519)',
+    '--el-radio-text-color': 'var(--mx-text2)',
+    '--el-radio-button-checked-bg-color': 'var(--mx-accent, #f0a24a)',
+    '--el-radio-button-checked-text-color': 'var(--mx-on-accent, #101013)',
+    '--el-radio-button-checked-border-color': 'var(--mx-accent, #f0a24a)',
+    '--el-radio-button-bg-color': 'var(--mx-input-bg, #101623)',
+    '--el-radio-button-text-color': 'var(--mx-text2)',
+    '--el-radio-button-border-color': 'var(--mx-input-bd, #2a3247)',
+    '--el-radio-button-hover-text-color': 'var(--mx-text)',
+    '--el-bg-color': 'var(--mx-bg1)',
+    '--el-bg-color-overlay': 'var(--mx-panel-bg2, var(--mx-bg3))',
+    '--el-bg-color-page': 'var(--mx-bg0)',
+    '--el-border-color': 'var(--mx-card-bd, var(--mx-line))',
+    '--el-border-color-light': 'var(--mx-line)',
+    '--el-border-color-lighter': 'var(--mx-line)',
+    '--el-border-color-extra-light': 'var(--mx-line)',
+    '--el-fill-color': 'var(--mx-hover)',
+    '--el-fill-color-light': 'var(--mx-hover)',
+    '--el-fill-color-lighter': 'var(--mx-hover-soft)',
+    '--el-fill-color-blank': 'var(--mx-input-bg, var(--mx-bg2))',
+    '--el-text-color-primary': 'var(--mx-text)',
+    '--el-text-color-regular': 'var(--mx-text)',
+    '--el-text-color-secondary': 'var(--mx-text2)',
+    '--el-text-color-placeholder': 'var(--mx-text3)',
+    '--el-text-color-disabled': 'var(--mx-text3)',
+    '--el-disabled-bg-color': 'color-mix(in srgb, var(--mx-bg2) 70%, transparent)',
+    '--el-disabled-text-color': 'var(--mx-text3)',
+    '--el-disabled-border-color': 'var(--mx-line)',
+    '--el-color-success': 'var(--mx-green)',
+    '--el-color-danger': 'var(--mx-red)',
+    '--el-color-error': 'var(--mx-red)',
+    '--el-color-warning': 'var(--mx-yellow)',
+    '--el-color-info': 'var(--mx-text3)',
+    '--el-mask-color': 'color-mix(in srgb, var(--mx-bg0) 78%, transparent)',
+    '--el-table-border-color': 'var(--mx-line)',
+    '--el-table-text-color': 'var(--mx-text)',
+    '--el-table-header-text-color': 'var(--mx-text2)',
+    '--el-table-header-bg-color': 'var(--mx-input-bg, var(--mx-bg2))',
+    '--el-table-row-hover-bg-color': 'var(--mx-hover)',
+  }
+  for (const k in V) root.style.setProperty(k, V[k])
+}
+
 // ---------- 偏好读写与应用 ----------
 const KEY = 'mx-appearance'
 
@@ -330,6 +421,8 @@ export function applyTheme({ themeId, glass, glassAlpha } = {}) {
 
   const root = document.documentElement
   for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v)
+  // Element Plus 的变量层:必须内联写(原因见 applyElementPlusVars 上方注释)
+  applyElementPlusVars(root)
   // 强调色上的文字反转色(主按钮/激活 chip 等,随主题适配)
   root.style.setProperty('--mx-on-accent', t.onAccent)
   // --mx-accent:Element Plus 那一整套派生色(theme.css)都挂在这个名字上,

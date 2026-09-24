@@ -88,7 +88,7 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; transition: all .2s;
 }
-.mv-nav:hover { color: var(--mx-amber); border-color: var(--mx-amber); background: rgba(16,20,31,.95); }
+.mv-nav:hover { color: var(--mx-amber); border-color: var(--mx-amber); background: var(--mx-panel-bg2, #18181c); }
 .mv-nav.left { left: 14px; }
 .mv-nav.right { right: 14px; }
 </style>

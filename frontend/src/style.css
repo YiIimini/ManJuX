@@ -58,6 +58,23 @@
      内容由 themes.js 按主题写入(无彩主题给的是透明渐变);这里与下面几项一样,
      只是**首屏兜底**,取默认主题(极简墨黑 = 无涂层)的值。 */
   --mx-glaze: linear-gradient(0deg, transparent, transparent);
+  /* ---- 表单与交互态的主题派生(用法见 theme.css 与各组件) ----
+     这三件事以前是各写各的裸色:输入框底一律 "bg1 + 白 15%"、hover 一律
+     "var(--mx-line)"、语义色一律裸 rgba(61,220,132,…) —— 换主题时
+     按钮变了、这些还是灰的/旧的绿红,看着像主题只生效了一半。
+     现在统一从这里派生,色相全部随 --mx-amber 走。 */
+  --mx-input-bg: color-mix(in srgb, var(--mx-amber) 6%, var(--mx-bg1));
+  --mx-input-bd: color-mix(in srgb, var(--mx-amber) 20%, var(--mx-line));
+  --mx-hover: color-mix(in srgb, var(--mx-amber) 8%, transparent);
+  --mx-hover-soft: color-mix(in srgb, var(--mx-amber) 4%, transparent);
+  /* 语义态(成功/警告/失败)的软底与描边 —— 语义色本身不随主题变,
+     但它们的深浅要成体系,所以也收成变量,不再满代码裸写 rgba */
+  --mx-green-soft: color-mix(in srgb, var(--mx-green) 7%, transparent);
+  --mx-green-bd: color-mix(in srgb, var(--mx-green) 40%, transparent);
+  --mx-yellow-soft: color-mix(in srgb, var(--mx-yellow) 7%, transparent);
+  --mx-yellow-bd: color-mix(in srgb, var(--mx-yellow) 40%, transparent);
+  --mx-red-soft: color-mix(in srgb, var(--mx-red) 7%, transparent);
+  --mx-red-bd: color-mix(in srgb, var(--mx-red) 40%, transparent);
 }
 
 html, body {
@@ -187,9 +204,9 @@ body::after {
   flex: none;
   transition: all .3s;
 }
-.dot.ok { background: var(--mx-green); box-shadow: 0 0 10px rgba(61, 220, 132, .55); }
-.dot.warn { background: var(--mx-yellow); box-shadow: 0 0 8px rgba(255, 209, 102, .4); }
-.dot.bad { background: var(--mx-red); box-shadow: 0 0 10px rgba(255, 107, 107, .55); }
+.dot.ok { background: var(--mx-green); box-shadow: 0 0 10px color-mix(in srgb, var(--mx-green) 55%, transparent); }
+.dot.warn { background: var(--mx-yellow); box-shadow: 0 0 8px var(--mx-yellow-bd); }
+.dot.bad { background: var(--mx-red); box-shadow: 0 0 10px color-mix(in srgb, var(--mx-red) 55%, transparent); }
 .dot.run {
   background: var(--mx-amber);
   animation: breathe 1.3s ease-in-out infinite;
@@ -312,7 +329,7 @@ body::after {
   letter-spacing: 1px;
 }
 .stage-card.active .stage-num { -webkit-text-stroke: 1px color-mix(in srgb, var(--mx-amber) 70%, transparent); }
-.stage-card.done .stage-num { -webkit-text-stroke: 1px rgba(61, 220, 132, .55); }
+.stage-card.done .stage-num { -webkit-text-stroke: 1px color-mix(in srgb, var(--mx-green) 55%, transparent); }
 
 /* ============ 镜头卡 / 数据卡(书卡·作品卡·项目卡同族) ============ */
 .shot-card {
@@ -343,7 +360,7 @@ body::after {
   background: color-mix(in srgb, var(--mx-cyan) 8%, transparent);
   backdrop-filter: blur(4px);
 }
-.badge-mode.t2va { border-color: rgba(255, 209, 102, .4); color: var(--mx-yellow); background: rgba(255, 209, 102, .08); }
+.badge-mode.t2va { border-color: var(--mx-yellow-bd); color: var(--mx-yellow); background: color-mix(in srgb, var(--mx-yellow) 8%, transparent); }
 .badge-mode.dur { border-color: color-mix(in srgb, var(--mx-amber) 45%, transparent); color: var(--mx-amber); background: color-mix(in srgb, var(--mx-amber) 8%, transparent); }
 
 /* ============ 日志控制台(悬浮弹窗) ============ */
@@ -400,7 +417,7 @@ body::after {
 .proj-cover {
   aspect-ratio: 16/10;
   background:
-    linear-gradient(140deg, rgba(45, 55, 82, .25), color-mix(in srgb, var(--mx-bg1) 60%, transparent)),
+    linear-gradient(140deg, var(--mx-hover-soft), color-mix(in srgb, var(--mx-bg1) 60%, transparent)),
     repeating-linear-gradient(45deg, color-mix(in srgb, var(--mx-amber) 3%, transparent) 0 12px, transparent 12px 24px),
     var(--mx-bg2);
   border-bottom: 1px solid var(--mx-line);
@@ -777,11 +794,11 @@ body::after {
   border-radius: 6px;
   border: 1px solid var(--mx-line);
   color: var(--mx-text3);
-  background: rgba(255, 255, 255, .02);
+  background: var(--mx-hover-soft);
 }
-.ver-badge.ok { border-color: rgba(61, 220, 132, .4); color: var(--mx-green); background: rgba(61, 220, 132, .06); }
+.ver-badge.ok { border-color: var(--mx-green-bd); color: var(--mx-green); background: var(--mx-green-soft); }
 .ver-badge.warn { border-color: color-mix(in srgb, var(--mx-amber) 45%, transparent); color: var(--mx-amber); background: color-mix(in srgb, var(--mx-amber) 7%, transparent); }
-.ver-badge.bad { border-color: rgba(255, 107, 107, .4); color: var(--mx-red); background: rgba(255, 107, 107, .06); }
+.ver-badge.bad { border-color: var(--mx-red-bd); color: var(--mx-red); background: var(--mx-red-soft); }
 
 /* 新建项目:上传区 */
 .upload-zone {
@@ -797,7 +814,7 @@ body::after {
   padding: 14px;
   cursor: pointer;
   transition: all .18s;
-  background: rgba(255, 255, 255, .015);
+  background: var(--mx-hover-soft);
 }
 .upload-zone:hover { border-color: var(--mx-amber); background: color-mix(in srgb, var(--mx-amber) 5%, transparent); }
 .upload-zone.picked { border-style: solid; border-color: var(--mx-line-hi); cursor: default; min-height: 64px; align-items: stretch; }
@@ -828,7 +845,7 @@ body::after {
   display: grid;
   place-items: center;
   color: var(--mx-text3);
-  background: rgba(255, 255, 255, .03);
+  background: var(--mx-hover-soft);
   border: 1px solid var(--mx-line);
   flex: none;
   transition: all .2s;
@@ -836,8 +853,8 @@ body::after {
 .stage-card:hover .stage-ico { color: var(--mx-text); border-color: var(--mx-line-hi); }
 .stage-ico.done {
   color: var(--mx-green);
-  border-color: rgba(61, 220, 132, .35);
-  background: rgba(61, 220, 132, .08);
+  border-color: var(--mx-green-bd);
+  background: var(--mx-green-soft);
 }
 .stage-ico.active {
   color: var(--mx-amber-hi);
@@ -848,7 +865,7 @@ body::after {
 .stage-meter {
   height: 4px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, .05);
+  background: var(--mx-line);
   overflow: hidden;
 }
 .stage-meter-fill {
@@ -859,8 +876,8 @@ body::after {
   box-shadow: 0 0 8px color-mix(in srgb, var(--mx-amber) 40%, transparent);
 }
 .stage-card.done .stage-meter-fill {
-  background: linear-gradient(90deg, #3ddc84, #1e9e5a);
-  box-shadow: 0 0 8px rgba(61, 220, 132, .35);
+  background: linear-gradient(90deg, var(--mx-green), color-mix(in srgb, var(--mx-green) 55%, #000));
+  box-shadow: 0 0 8px var(--mx-green-bd);
 }
 
 /* ============================================================
@@ -876,7 +893,7 @@ body::after {
   padding: 4px 10px 4px 8px;
   border-radius: 8px;
   border: 1px solid var(--mx-line);
-  background: rgba(255, 255, 255, .022);
+  background: var(--mx-hover-soft);
   transition: border-color .2s;
   white-space: nowrap;
 }
@@ -903,7 +920,7 @@ body::after {
   width: 34px;
   height: 3.5px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, .07);
+  background: var(--mx-line);
   overflow: hidden;
   flex: none;
 }
@@ -940,7 +957,7 @@ body::after {
   cursor: pointer;
   transition: all .14s;
 }
-.topbtn:hover { background: rgba(45, 55, 82, .32); color: var(--mx-text); }
+.topbtn:hover { background: var(--mx-hover); color: var(--mx-text); }
 .topbtn.on { color: var(--mx-amber); }
 .topbtn.close:hover { background: #e81123; color: #fff; }
 .topctl-sep {
@@ -1049,16 +1066,16 @@ body::after {
 }
 /* 完成:整卡绿 */
 .stage-rail.done {
-  border-color: rgba(61, 220, 132, .45);
+  border-color: var(--mx-green-bd);
   background:
-    linear-gradient(175deg, rgba(61, 220, 132, .06), rgba(0, 0, 0, .1)),
+    linear-gradient(175deg, var(--mx-green-soft), rgba(0, 0, 0, .1)),
     var(--mx-panel-bg, #101013);
 }
-.stage-rail.done .stage-num { -webkit-text-stroke: 1px rgba(61, 220, 132, .55); }
+.stage-rail.done .stage-num { -webkit-text-stroke: 1px color-mix(in srgb, var(--mx-green) 55%, transparent); }
 .stage-rail.done .rail-count { color: var(--mx-green); }
 .stage-rail.done .stage-meter-fill {
-  background: linear-gradient(90deg, #3ddc84, #1e9e5a);
-  box-shadow: 0 0 8px rgba(61, 220, 132, .4);
+  background: linear-gradient(90deg, var(--mx-green), color-mix(in srgb, var(--mx-green) 55%, #000));
+  box-shadow: 0 0 8px var(--mx-green-bd);
 }
 /* 进行中:橙色 + 流光动效(边框呼吸扫描) */
 .stage-rail.active {
@@ -1193,7 +1210,7 @@ body::after {
   height: 34px;
   padding: 3px 4px;
   border-radius: 6px;
-  background: rgba(255, 255, 255, .04);
+  background: var(--mx-hover-soft);
   margin-top: 2px;
 }
 .core-grid i {
@@ -1220,7 +1237,7 @@ body::after {
   padding: 8px 10px;
   border-radius: 9px;
   border: 1px solid var(--mx-line);
-  background: rgba(255, 255, 255, .015);
+  background: var(--mx-hover-soft);
   color: var(--mx-text2);
   font-size: 12px;
   cursor: pointer;
@@ -1271,7 +1288,7 @@ body::after {
   transition: all .15s;
 }
 .proj-card:hover .cover-del, .shot-card:hover .cover-del, .cover-del:hover { opacity: 1; }
-.cover-del:hover:not(:disabled) { background: rgba(232, 17, 35, .88); color: #fff; }
+.cover-del:hover:not(:disabled) { background: color-mix(in srgb, var(--mx-red) 88%, transparent); color: #fff; }
 .cover-del:disabled { opacity: .28 !important; cursor: not-allowed; }
 
 /* 卡片内操作按钮组(间距规范:组内 ≥6px,组与卡片边缘 8px;常显半透明,悬停转清晰) */
@@ -1299,7 +1316,7 @@ body::after {
   transition: all .15s;
 }
 .cover-act:hover { background: color-mix(in srgb, var(--mx-amber) 88%, transparent); color: var(--mx-on-accent, #08080a); }
-.cover-act.danger:hover { background: rgba(232, 17, 35, .88); color: #fff; }
+.cover-act.danger:hover { background: color-mix(in srgb, var(--mx-red) 88%, transparent); color: #fff; }
 .cover-act:disabled { opacity: .35 !important; cursor: not-allowed; }
 
 /* 卡片操作条(分镜卡等:分隔线下方三列等宽操作按钮;重渲为主操作琥珀突出) */
@@ -1324,7 +1341,7 @@ body::after {
   padding: 0 4px;
   border-radius: 8px;
   border: 1px solid var(--mx-line);
-  background: rgba(255, 255, 255, .02);
+  background: var(--mx-hover-soft);
   color: var(--mx-text2);
   font-size: 11.5px;
   white-space: nowrap;
@@ -1372,7 +1389,7 @@ body::after {
   padding: 20px 14px 16px;
   border-radius: 13px;
   border: 1px solid var(--mx-line);
-  background: rgba(255, 255, 255, .015);
+  background: var(--mx-hover-soft);
   color: var(--mx-text);
   cursor: pointer;
   transition: all .16s;
@@ -1381,14 +1398,14 @@ body::after {
 .close-opt b { font-size: 14px; }
 .close-opt span { font-size: 11px; color: var(--mx-text3); line-height: 1.6; }
 .close-opt:hover { border-color: color-mix(in srgb, var(--mx-cyan) 50%, transparent); background: color-mix(in srgb, var(--mx-cyan) 5%, transparent); transform: translateY(-2px); }
-.close-opt.danger:hover { border-color: rgba(255, 107, 107, .5); background: rgba(255, 107, 107, .06); }
+.close-opt.danger:hover { border-color: var(--mx-red-bd); background: var(--mx-red-soft); }
 
 /* 批量管理模式选中态 */
 .sel-on { border-color: color-mix(in srgb, var(--mx-amber) 60%, transparent) !important; box-shadow: 0 0 0 1px color-mix(in srgb, var(--mx-amber) 30%, transparent); }
 .bg-black\/40 { background: color-mix(in srgb, var(--mx-bg0) 55%, transparent); backdrop-filter: blur(3px); }
 
 /* 剧集弹窗行 */
-.ep-row { border: 1px solid var(--mx-line); background: rgba(255, 255, 255, .015); transition: all .14s; }
+.ep-row { border: 1px solid var(--mx-line); background: var(--mx-hover-soft); transition: all .14s; }
 .ep-row:hover { border-color: color-mix(in srgb, var(--mx-amber) 50%, transparent); background: color-mix(in srgb, var(--mx-amber) 6%, transparent); }
 
 /* 小说详情:右侧目录树 */
@@ -1397,7 +1414,7 @@ body::after {
   flex: none;
   border: 1px solid var(--mx-line);
   border-radius: 10px;
-  background: rgba(255, 255, 255, .015);
+  background: var(--mx-hover-soft);
 }
 .tree-dir {
   display: flex;
@@ -1437,9 +1454,9 @@ body::after {
   background: color-mix(in srgb, var(--mx-text3) 55%, transparent); /* 待命 */
   transition: background .3s;
 }
-.tick-dot.ok   { background: var(--mx-green); animation: recblink 1.6s ease-in-out infinite; box-shadow: 0 0 8px rgba(61, 220, 132, .8); }
-.tick-dot.warn { background: var(--mx-yellow); box-shadow: 0 0 8px rgba(255, 209, 102, .7); }
-.tick-dot.bad  { background: var(--mx-red); animation: recblink 1.1s ease-in-out infinite; box-shadow: 0 0 8px rgba(255, 107, 107, .85); }
+.tick-dot.ok   { background: var(--mx-green); animation: recblink 1.6s ease-in-out infinite; box-shadow: 0 0 8px color-mix(in srgb, var(--mx-green) 80%, transparent); }
+.tick-dot.warn { background: var(--mx-yellow); box-shadow: 0 0 8px color-mix(in srgb, var(--mx-yellow) 70%, transparent); }
+.tick-dot.bad  { background: var(--mx-red); animation: recblink 1.1s ease-in-out infinite; box-shadow: 0 0 8px color-mix(in srgb, var(--mx-red) 85%, transparent); }
 
 /* ============================================================
    UI 精修层(2026-09-09,design-taste 适用规范):
@@ -1471,7 +1488,7 @@ body::after {
   display: grid;
   place-items: center;
   margin-bottom: 6px;
-  background: rgba(255, 255, 255, .028);
+  background: var(--mx-hover-soft);
   border: 1px solid var(--mx-line);
   color: var(--mx-text3);
 }
@@ -1509,7 +1526,7 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   margin-left: 2px; letter-spacing: .6px; font-weight: 800;
   background: linear-gradient(90deg,
     var(--mx-amber-hi, #ffffff) 0%, var(--mx-amber-deep, #9aa5b5) 30%,
-    #fff6e0 50%, var(--mx-amber, #e8ebf2) 70%, var(--mx-amber-hi, #ffffff) 100%);
+    var(--mx-amber-hi) 50%, var(--mx-amber, #e8ebf2) 70%, var(--mx-amber-hi, #ffffff) 100%);
   background-size: 220% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent;
   filter: drop-shadow(0 0 5px color-mix(in srgb, var(--mx-amber, #e8ebf2) 70%, transparent))
