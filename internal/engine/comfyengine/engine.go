@@ -220,18 +220,49 @@ func (e *Engine) ClearQueue(ctx context.Context) {
 	e.client().ClearPending(ctx)
 }
 
+// seamRenderLength 本次提交给引擎的帧数。
+//
+// 接缝模式会把上一镜的尾部 22 帧钉在本镜头部,再由 MiniMaxH3MotionContextTrim
+// 裁掉 —— 所以渲染长度要**加回**这 22 帧,否则成片比计划短。
+//
+// 关键在"只在接缝真正生效时加"(审计 P2):旧实现在探测到"上一镜没有接缝存档"
+// 而降级普通渲染时,只清了 PrevShot、**没有回滚 +22** —— 于是那一镜既不裁头
+// (降级后图里没有 Trim 节点),又多渲 22 帧(约 0.9 秒),逐镜累积到成片。
+// 现在降级与长度补偿是同一处决定,想漏也漏不掉。
+func seamRenderLength(jobLength int, seamActive bool) int {
+	if seamActive {
+		return engine.AlignLength(jobLength + seamHeadFrames)
+	}
+	return engine.AlignLength(jobLength)
+}
+
+// seamHeadFrames 接缝钉入的帧数(与 buildRenderGraph 里 MotionContext 的
+// context_length 一致;改一处必须改另一处,由测试钉住)。
+const seamHeadFrames = 22
+
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
 	touchBusy()
 	c := e.cfg()
 	if err := e.Available(ctx); err != nil {
 		return nil, err
 	}
-	length := engine.AlignLength(job.Length)
-	w, h := engine.SnapCanvas(job.Width, job.Height)
-	// 接缝模式补偿:pinned 头(22 帧)会被 Trim 裁掉,渲染长度须加回,保证成片时长不缩水
+	// 接缝前置探测必须**在条件缓存之前**(审计 P2):降级会改变渲染帧数,
+	// 而缓存键含 length —— 先算缓存再降级,就会拿"接缝长度"的条件去跑"普通长度"的
+	// 图(缓存与图不一致),而且要等渲完才发现时长多了 22 帧。
+	// 上一镜 AV latent 存档不存在(云端产物/旧渲染)时降级普通渲染。
 	if job.Seam && job.PrevShot > 0 {
-		length = engine.AlignLength(job.Length + 22)
+		if !e.seamPrevExists(ctx, job.ProjectID, job.PrevShot) {
+			if job.OnProgress != nil {
+				job.OnProgress(15, "上一镜无接缝存档(云端产物或旧渲染),本镜普通渲染")
+			}
+			job.PrevShot = 0
+		}
 	}
+	// 帧数(含接缝补偿):pinned 头(22 帧)会被 Trim 裁掉,接缝生效时须加回,
+	// 保证成片时长不缩水;**降级时必须不加**(见 seamRenderLength 的说明)。
+	seamActive := job.Seam && job.PrevShot > 0
+	length := seamRenderLength(job.Length, seamActive)
+	w, h := engine.SnapCanvas(job.Width, job.Height)
 
 	// 参考图上传(ComfyUI input 目录)
 	uploaded := make([]string, 0, len(job.RefImages))
@@ -278,15 +309,6 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 
 	if job.OnProgress != nil {
 		job.OnProgress(16, "采样渲染")
-	}
-	// 接缝前置探测:上一镜 AV latent 存档不存在(云端产物/旧渲染)则降级普通渲染
-	if job.Seam && job.PrevShot > 0 {
-		if !e.seamPrevExists(ctx, job.ProjectID, job.PrevShot) {
-			if job.OnProgress != nil {
-				job.OnProgress(15, "上一镜无接缝存档(云端产物或旧渲染),本镜普通渲染")
-			}
-			job.PrevShot = 0
-		}
 	}
 	graph := buildRenderGraph(job, c, condRef, uploaded, uploadedAudios, w, h, length)
 	hist, err := e.submitAndWait(ctx, graph, job.Timeout, func(p int, note string) {
@@ -649,7 +671,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 			"conditioning":         guiderCond,
 			"vae":                  link("2", 0),
 			"latent":               link(latentNode, latentSlot),
-			"context_length":       "22",
+			"context_length":       strconv.Itoa(seamHeadFrames),
 			"audio_context_length": 24,
 			"context_latent":       link("70", 0),
 		})
