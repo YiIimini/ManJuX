@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/config"
+	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
 
@@ -32,7 +33,21 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	for _, k := range keys {
 		styles = append(styles, styleOut{Key: k, Name: pipeline.StylePresets[k].Name})
 	}
-	writeJSON(w, 200, map[string]any{"phases": phases, "styles": styles})
+	up := engine.DefaultUpscaleOptions()
+	writeJSON(w, 200, map[string]any{
+		"phases": phases,
+		"styles": styles,
+		// 放大链路的默认参数连同默认文件名一起下发:前端只回显、不自行记常量,
+		// 换权重/换默认 VAE 时改一处即可(此前那个 VAE 文件名只活在用户手打的
+		// 输入框里,打错一个字要到 ComfyUI 执行到节点才报错)。
+		// default_ltx_vae 取 ltx 那一套而不是 up.LTXVAE —— 默认方式(esrgan)
+		// 根本不需要 VAE,DefaultUpscaleOptions() 的 LTXVAE 是空的。
+		"upscale": map[string]any{
+			"default_type":    up.Type,
+			"default_model":   up.ModelName,
+			"default_ltx_vae": engine.DefaultLTXUpscaleVAE,
+		},
+	})
 }
 
 // ---------- 设置 ----------

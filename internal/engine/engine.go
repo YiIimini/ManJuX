@@ -75,23 +75,57 @@ type UpscaleOptions struct {
 	//            细节更自然,是"保音频高清化"的成熟做法;
 	//   "esrgan" 帧级 2× —— 逐帧超分,快但对已干净素材更稳妥,容易放大噪点。
 	Type string
-	// ModelName 模型文件名(ltx 用 latent_upscale_models/ 下的,esrgan 用 upscale_models/ 下的)
+	// ModelName 模型文件名。**含义随 Type 而变**:ltx 用 latent_upscale_models/ 下的,
+	// esrgan 用 upscale_models/ 下的 —— 换 Type 时必须同时换它(用 UpscaleOptionsFor)。
 	ModelName string
-	// LTXVAE LTX 的 VAE 文件名(仅 ltx 方式需要)
+	// LTXVAE LTX 的视频 VAE 文件名(仅 ltx 方式需要;留空即用 DefaultLTXUpscaleVAE)。
+	// 与 ModelName 一样是**文件名**而不是路径:ComfyUI 只会按文件名在自己配置的
+	// 模型目录里找,给绝对路径反而匹配不上。
 	LTXVAE string
+}
+
+// 放大链路的默认权重名。放在 engine 包而不是各调用方:这是**引擎侧的事实** ——
+// 它们决定 ComfyUI 的模型目录里必须有什么,前端只负责回显与让用户覆盖。
+//
+// 此前这些文件名只存在于用户的输入框或调用方的字面量里,等于让用户替引擎记常量:
+// 打错一个字,报错要等 ComfyUI 执行到那个节点才浮出来。
+const (
+	// DefaultESRGANUpscaleModel 帧级超分权重,放在 models/upscale_models/。
+	DefaultESRGANUpscaleModel = "4x-UltraSharp.safetensors"
+	// DefaultLTXUpscaleModel 隐空间放大权重,放在 models/latent_upscale_models/。
+	DefaultLTXUpscaleModel = "ltx-2-spatial-upscaler-x2-1.0.safetensors"
+	// DefaultLTXUpscaleVAE LTX 视频 VAE,放在 models/vae/。
+	// 注意 Kijai 仓库里还有个 LTX2_video_vae_old_bf16:那是作者注明"抽错了"的旧版,
+	// 正确且细节更好的是不带 old 的这个。
+	DefaultLTXUpscaleVAE = "LTX2_video_vae_bf16.safetensors"
+)
+
+// UpscaleOptionsFor 返回某种放大方式的默认参数。
+//
+// 必须**按方式**给默认值,不能只给一份公共默认:`ModelName` 的含义随方式而变 ——
+// ltx 要去 latent_upscale_models/ 里找,esrgan 要去 upscale_models/ 里找。
+// 只把 Type 换成 ltx 而不换权重名,隐空间加载器就会拿着帧级超分的文件名去找,
+// 必然失败(实测踩到:界面选「隐空间」时正是这样,两个字段合起来才是一条能跑的路)。
+func UpscaleOptionsFor(kind string) UpscaleOptions {
+	if kind == "ltx" {
+		return UpscaleOptions{
+			Type:      "ltx",
+			ModelName: DefaultLTXUpscaleModel,
+			LTXVAE:    DefaultLTXUpscaleVAE,
+		}
+	}
+	return UpscaleOptions{
+		Type:      "esrgan",
+		ModelName: DefaultESRGANUpscaleModel,
+	}
 }
 
 // DefaultUpscaleOptions 返回放大的默认参数。
 //
-// 默认走 **esrgan** 而不是 ltx:esrgan 只要一个 upscale_models 权重即可运行,
-// 而 ltx 还额外依赖 LTX 的 VAE;在缺 VAE 的机器上默认选 ltx 会一上手就失败。
-// 两个权重名以本机实测存在的为准。
-func DefaultUpscaleOptions() UpscaleOptions {
-	return UpscaleOptions{
-		Type:      "esrgan",
-		ModelName: "4x-UltraSharp.safetensors",
-	}
-}
+// 默认走 **esrgan** 而不是 ltx:esrgan 只依赖一个 upscale_models 权重,
+// 不需要额外备齐 LTX 那套 2.3GB 视频 VAE,速度也更快 —— 对已经定稿的成片更保险
+// (逐帧超分对噪点的放大比隐空间放大更可控)。
+func DefaultUpscaleOptions() UpscaleOptions { return UpscaleOptionsFor("esrgan") }
 
 // Engine 渲染引擎。
 type Engine interface {

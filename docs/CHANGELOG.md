@@ -7,7 +7,86 @@
 > 条目直接取自 release 提交的完整描述,保留「根因 → 修复 → 验证」的原始结构:
 > 回溯时看到的不只是「改了什么」,还有「为什么这么改、当时怎么验证的」。
 >
-> 完整历史见 `git log`(当前版本 v0.34.0;release 提交共 94 条,此处列最近 20 个)。
+> 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
+> (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
+
+## 未发版 · 放大链路补齐 LTX 视频 VAE + 权重体检(2026-09-24)
+
+**起因(用户报「LTX VAE 缺失,ltx 放大这条路在本机跑不通」)**:上一轮把 2× 放大端到端接通了,
+但只对 **帧级(esrgan)** 那一半做了真机验证;隐空间那一半本机**从来没有跑通过**。深挖后
+发现不是一个缺口,而是两个叠在一起:
+
+1. **缺配套的 LTX 视频 VAE**。链路上的 `ltx-2-spatial-upscaler-x2-1.0` 权重早就装好了,
+   但 `VAEEncodeTiled`/`VAEDecodeTiled` 还要一个 LTX 视频 VAE,本机 `models/vae/` 里只有
+   H3 的音频/视频 VAE 与 Qwen 的 —— 缺的正是 LTX 那一个。
+2. **界面选「隐空间」时权重名没跟着换**(真 bug)。`UpscaleOptions.ModelName` 的含义随
+   `Type` 而变:ltx 要去 `latent_upscale_models/` 找、esrgan 要去 `upscale_models/` 找。
+   而前端只送 `type: 'ltx'`,后端沿用 `DefaultUpscaleOptions()` 的 `4x-UltraSharp.safetensors`
+   —— 于是隐空间加载器拿着帧级超分的文件名去自己的目录里找,**连权重都注定找不到**。
+   也就是说这条路即使把 VAE 装上,也还是跑不通。
+
+**修复**:
+
+- **补装 VAE**:`LTX2_video_vae_bf16.safetensors`(2331.7 MB)装入 `shared/models/vae/`,
+  与 LFS oid 逐字节校验一致。选它而不是同仓库的 `LTX2_video_vae_old_bf16`,依据是作者自己的
+  说明("初始蒸馏权重里的视频 VAE 一直是错的,现已换成正确的那个,细节更好");
+  并实测确认它命中 `sd.py` 的 `lightricks ltxv` 分支、`latent_channels=128`、带
+  `per_channel_statistics`(`LTXVLatentUpsampler` 必需)且 encoder/decoder 齐全。
+- **默认参数改为按方式成套**(`engine.UpscaleOptionsFor`):换 `Type` 必定同时换权重名与 VAE 名,
+  不再存在"只换一半"的组合。默认文件名(含 ltx 的 VAE)经 `GET /api/meta` 下发给前端回显,
+  前端不再自己记常量,用户也就不必再手打文件名(手打的既没校验、打错了也查不出来)。
+- **新增放大链路的权重体检**(`comfyengine.UpscaleAssets`,与 `Preflight` 的节点体检互补):
+  提交前向 ComfyUI 问 `VAELoader.vae_name` / `LatentUpscaleModelLoader.model_name` /
+  `UpscaleModelLoader.model_name` 三个 combo 输入,缺哪个文件直接点名并给出**该放进哪个目录**,
+  而不是让用户等一场长任务再收到一句听不懂的节点输入报文。引擎不可达时返回空
+  (与 `Preflight` 同一条原则:连不上 ≠ 资产缺失)。
+
+**真机验证时又挖出两个更隐蔽的 bug(都是"假成功",比报错更糟)**:
+
+- **③ `ExtractFiles` 把输入素材当成产物**:放大图的根节点是 `LoadVideo`,而 ComfyUI 会把
+  **从 input 读到的文件**也报进该节点的 outputs(同样带 `animated` 标志)。`Upscale` 取
+  "第一个 animated 文件",而 `outputs` 是 map、遍历顺序随机 —— 一半概率把**源片原样**
+  下载回来并提示"2× 放大完成"(实测:分辨率 320x192、字节数与原片完全相同)。
+  上一轮只验到"接口返回 200 + 有文件落盘"就以为接通了,正是这里漏掉的。修法:产物必须
+  是**做出来的**而不是**传进去的** —— `ExtractFiles` 排除 `type == "input"`;
+  同时补 `TestExtractFilesSkipsInputs`(跑 30 轮防 map 顺序侥幸)、`TestExtractFilesNoSaver`
+  (只有输入节点时返回空,让调用方明确报"未找到视频产物"而不是假成功)、
+  `TestExtractFilesStillFindsImage`(出图链路不受影响)。
+- **④ `ComboList` 只认旧式 combo schema**:ComfyUI 的 `object_info` 里 combo 有两种形态 ——
+  旧式 `[["a.safetensors",…], {…}]` 与新式 `["COMBO", {"options":[…,…]}]`。原实现只解析
+  `def[0]` 当字符串数组,于是新式节点一律返回 `ok=false`;而调用方普遍把 false 理解成
+  "节点不存在/输入已改名" —— 权重体检刚上线就会把"权重装好了"误报成"节点缺失",把一个
+  真实可用的链路说成坏的(实测 `LatentUpscaleModelLoader` / `UpscaleModelLoader` 都是新式)。
+  修法:两种形态都解析;补 `TestComboListBothSchemaShapes`(报文取自本机 ComfyUI 0.35.1 真实响应)。
+
+**真机实测结果(本机 24GB 卡 / ComfyUI 0.35.1)**:
+
+| 源片 | 帧级 esrgan | 隐空间 ltx |
+|---|---|---|
+| 320x192 / 60 帧(合成图) | 12.2s → 640x384 | 6.0s → 640x384 |
+| 1344x768 / 48 帧(真实漫剧镜头) | 183.1s → 2688x1536 | 18.3s → 2688x1536 |
+
+两条都满足:精确 2×、时长零漂移、音轨保留。**结论纠正了一个此前的想当然**:帧级并不比
+隐空间快,反而是隐空间快约 10 倍(逐帧 4× 超分要在像素域过 512 瓦片再收敛回 2×);
+隐空间的代价是学习式视频 VAE 会抹软**硬边细字**(片内字幕、路牌小字实测被糊),
+而真实漫剧画面的纹理(布料、缝线、材质底板)明显优于源片。据此改了界面标签与提示文案
+(原写"帧级 快且稳 · 推荐"与实际相反),并在 `docs/使用手册.md` 列出对照表与选择建议。
+另核实一处非隐患:`ImageUpscaleWithModel` 内部按 512 瓦片处理、OOM 时自动减半(最低 128),
+768P/48 帧实测无溢出,不需要额外做分块。
+
+**测试**:新增 `TestUpscaleOptionsFor`(锁"按方式成套",防第 2 个 bug 回归)、
+`TestUpscaleAssets`(假 ComfyUI 覆盖"齐备/缺 VAE/缺权重/节点缺失/文件名空白/引擎不可达"六种情形)、
+`TestHTTPContractMetaUpscaleDefaults`(meta 必须下发放大默认值);
+另加一条**默认跳过**的真机测试 `TestLiveUpscaleRoute` —— 图契约测试证明不了"这台机器上的权重够不够",
+更证明不了"产物是不是真的被放大了"(bug ③ 就是这样漏过去的),
+这类缺口只能对着真引擎验(设 `MANJUX_LIVE_COMFY` 与 `MANJUX_LIVE_SRC` 即启用,
+断言精确 2× + 时长零漂移 + 音轨保留)。
+
+**顺带修的文档结构缺陷**:`docs/CHANGELOG.md` 顶部「同轮追加(郑伯角色图/保安制服)」那一段
+自 `fef0c97` 起就没有 `##` 标题,挂在文档前言下面 —— 补上标题使其成为正常条目;
+前言里的版本号(v0.34.0)与条数(94 / 20)也已按实际核对更正为 v0.34.1 / 96 / 29。
+
+## 未发版 · 同轮追加:角色图异常与制服误画(2026-09-12)
 
 **同轮追加(用户「郑伯渲染角色图异常」「保安制服不要渲染的和警察服一样啊」)**:
 

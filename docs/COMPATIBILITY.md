@@ -142,17 +142,31 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 
 **回滚方式**:`git -C comfyui/ComfyUI checkout v0.34.6`(依赖需同步 `pip install -r requirements.txt`)。
 
-## 九、放大模型(2026-09-12 已落地)
+## 九、放大模型(2026-09-12 已落地;2026-09-24 补齐 LTX 视频 VAE)
 
 | 目录 | 文件 | 用途 | 大小 |
 |---|---|---|---|
 | `comfyui/shared/models/latent_upscale_models/` | `ltx-2-spatial-upscaler-x2-1.0.safetensors` | LTX 2× 隐空间放大 | 949.6 MB |
 | `comfyui/shared/models/upscale_models/` | `4x-UltraSharp.safetensors` | RTX / ESRGAN 帧级放大(ManJuX 的 RTX 放大档) | 63.8 MB |
+| `comfyui/shared/models/vae/` | `LTX2_video_vae_bf16.safetensors` | LTX 隐空间放大链路的**视频 VAE**(`VAEEncodeTiled`/`VAEDecodeTiled`) | 2331.7 MB |
 
-两个目录在 2026-09-11 建档时空缺,现均已就位 —— LTX 2× 与帧级放大档不再缺模型。
+前两个目录在 2026-09-11 建档时空缺,2026-09-12 就位;**第三个是 2026-09-24 才补上的** ——
+在此之前 LTX 隐空间那条链路虽然代码与图契约测试都齐备,却因为缺这个 VAE 而永远跑不通
+(报错要等 ComfyUI 执行到 `VAELoader` 才抛出来)。现在提交放大前会先做权重体检
+(`UpscaleAssets`),缺文件会直接点名并给出目标目录。
+
+**VAE 取哪一份**:同源仓库(Kijai/LTXV2_comfy)里还有个 `LTX2_video_vae_old_bf16`,
+是作者注明"当初从蒸馏权重里抽错了、细节更差"的旧版;**正确且细节更好的是不带 `old` 的这个**。
+判定该文件确实能被 ComfyUI 认成 LTX 视频 VAE 的依据:`sd.py` 的 `lightricks ltxv` 分支
+判据键 `decoder.up_blocks.0.res_blocks.0.conv1.conv.weight` 命中、`latent_channels=128`、
+带 `per_channel_statistics`(`LTXVLatentUpsampler` 必需)且 encoder/decoder 齐全。
+注意官方 `Lightricks/LTX-2` 仓库里的 `vae/diffusion_pytorch_model.safetensors` 是
+**diffusers 布局**,键名对不上 ComfyUI 的分支判据,不能直接丢进 `models/vae/`。
+
 注意位置是 `comfyui/shared/models/`(**不是** `comfyui/ComfyUI/models/`),由
-`comfyui/ComfyUI/extra_model_paths.yaml` 的 `shared` 段注册(base_path `D:/Ai/ManJuX/comfyui/shared/`),
-ComfyUI 启动时自动加载 —— 这也是桌面版与命令行版共享模型目录的方式。
+`comfyui/ComfyUI/extra_model_paths.yaml` 注册。该文件里有两段:`shared` 段的
+base_path 是 `D:/Ai/ManJuX/comfyui/shared/`(部署形态下的路径),`shared_current` 段
+指向 `D:/Ai/ComfyUI/shared/`(本机实际目录)—— ComfyUI 会合并多段加载,所以**两边都生效**。
 引擎层实现见 `internal/engine/comfyengine/upscalegraph.go`。
 
 已就位的 LoRA(H3 加速链完整):

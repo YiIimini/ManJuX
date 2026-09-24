@@ -19,6 +19,9 @@ export const G = reactive({
   tick: { library: 0, outputs: 0, comfy: 0, settings: 0, novels: 0 }, // 顶栏「刷新」触发各视图自刷新
   metaStyles: [],          // /api/meta 的风格清单(key+name);空=用内置兜底
   metaPhases: [],          // /api/meta 的阶段清单
+  metaUpscale: {},         // /api/meta 的放大默认值 {default_type,default_model,default_ltx_vae}
+                           // 权重文件名的事实来源在后端(它决定 ComfyUI 模型目录里该有什么),
+                           // 前端只回显 —— 不在这里再写一份文件名字面量。
 })
 
 export const PHASES = [
@@ -151,6 +154,7 @@ export async function loadMeta() {
     const m = await req('GET', '/api/meta')
     if (Array.isArray(m?.styles)) G.metaStyles = m.styles
     if (Array.isArray(m?.phases)) G.metaPhases = m.phases
+    if (m?.upscale && typeof m.upscale === 'object') G.metaUpscale = m.upscale
   } catch { /* 用内置兜底 */ }
 }
 

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/YiIimini/ManJuX/internal/engine"
 )
 
 // 节点类名常量:集中一处,避免同一字符串散落在 preflight/admin/engine 各处以
@@ -40,6 +42,9 @@ type PreflightOptions struct {
 // 此前只有「打开管理页」才做节点检测,而且只查 2 个节点;渲染要跑到一半才失败,
 // 用户看到的是 ComfyUI 转述的原始 node_errors 报文,分不清是缺插件还是缺模型。
 // 这里把检查提前到渲染开始,并给出可操作的中文提示。
+//
+// 注意本函数只管**节点**那一半;放大链路的**权重**缺失由 UpscaleAssets 负责 ——
+// 两者合起来才真的分得清「缺插件」与「缺模型」。
 //
 // 只覆盖 graph 根节点(生成链入口 + sigma 偏移):它们缺失必然全镜失败,提前
 // 阻断是净收益;可选能力(条件缓存/镜间接缝)刻意不列入,以免误判挡住生产。
@@ -88,6 +93,76 @@ func (e *Engine) Preflight(ctx context.Context, opt PreflightOptions) []string {
 	for _, c := range classes {
 		if !e.client().HasNode(ctx, c) {
 			missing = append(missing, fmt.Sprintf("%s(节点 %s)", required[c], c))
+		}
+	}
+	return missing
+}
+
+// ---------- 放大后处理的权重体检 ----------
+
+// upscaleAsset 放大链路对 ComfyUI 的一项**权重**依赖:某节点的某个 combo 输入
+// 必须能列出这个文件名,否则该节点在真正执行时才会报输入不合法。
+type upscaleAsset struct {
+	class string // 节点类名
+	field string // combo 输入名
+	file  string // 期望的文件名
+	label string // 给用户看的中文名
+	where string // 缺失时该把文件放进哪个模型目录(相对 ComfyUI 的 models/)
+}
+
+// UpscaleAssets 放大后处理的权重体检(与 Preflight 的**节点**体检互补)。
+//
+// 起因是实测踩到的:ltx 隐空间放大链路在代码里早已实现、也有图契约测试,但本机
+// ComfyUI 只装了 ltx-2-spatial-upscaler 权重、没装配套的 LTX 视频 VAE —— 于是
+// 这条路**一上手就失败**,而报错要等 ComfyUI 真正执行到那个节点才以原始报文
+// 的形式抛回来,用户分不清是缺插件、缺模型还是参数写错。Preflight 的注释里写着
+// 要帮用户分清「缺插件还是缺模型」,但当时只实现了节点那一半。
+//
+// 引擎不可达时返回空:与 Preflight 同理 —— 连不上不等于资产缺失,那是 Available
+// 的职责(只有它该按 AutoStart 决定要不要代管启动)。
+func (e *Engine) UpscaleAssets(ctx context.Context, opt engine.UpscaleOptions) []string {
+	if !e.client().Alive(ctx) {
+		return nil
+	}
+
+	// 两条链路依赖的权重不同,分开列出 —— 这也是它们前置条件不同的根源
+	var need []upscaleAsset
+	if opt.Type == "ltx" {
+		need = []upscaleAsset{
+			{class: "VAELoader", field: "vae_name", file: opt.LTXVAE, label: "LTX 视频 VAE", where: "vae"},
+			{class: "LatentUpscaleModelLoader", field: "model_name", file: opt.ModelName, label: "隐空间放大权重", where: "latent_upscale_models"},
+		}
+	} else {
+		need = []upscaleAsset{
+			{class: "UpscaleModelLoader", field: "model_name", file: opt.ModelName, label: "帧级超分权重", where: "upscale_models"},
+		}
+	}
+
+	var missing []string
+	for _, a := range need {
+		if strings.TrimSpace(a.file) == "" {
+			missing = append(missing, fmt.Sprintf("%s:未指定文件名", a.label))
+			continue
+		}
+		list, ok := e.client().ComboList(ctx, a.class, a.field)
+		if !ok {
+			// 取不到可选值 = 节点不存在或该输入已改名。放大链路的节点都来自
+			// ComfyUI 内置(nodes_hunyuan / nodes_lt_upsampler),通常是版本太旧。
+			missing = append(missing, fmt.Sprintf("%s:ComfyUI 侧读不到节点 %s 的可选值(节点缺失或输入已改名)", a.label, a.class))
+			continue
+		}
+		found := false
+		for _, v := range list {
+			if v == a.file {
+				found = true
+				break
+			}
+		}
+		if !found {
+			// folder_paths 按目录 mtime 失效缓存,放好文件后无需重启 ComfyUI
+			missing = append(missing, fmt.Sprintf(
+				"%s「%s」不在 ComfyUI 的模型目录里:请把该文件放进 models/%s/(放好后 ComfyUI 会自动重新扫描,不必重启)",
+				a.label, a.file, a.where))
 		}
 	}
 	return missing

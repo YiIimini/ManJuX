@@ -173,6 +173,9 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 //
 // 帧数与 fps **从源产物推**,不用项目当前参数:放大是逐帧后处理,帧数必须与原片一致,
 // 拿配置里的 length 会让放大后的时长与原镜对不上(且 8n+1 补齐与裁回都按这个数走)。
+//
+// 三个入参都可省:省了就用 engine.DefaultUpscaleOptions() 的默认值(含 ltx 链路要用的
+// VAE 文件名)—— 前端因此不必让用户手打文件名,只填自己想覆盖的那一项即可。
 func (s *Server) handleShotUpscale(w http.ResponseWriter, r *http.Request) {
 	// 用指针而不是 string:必须区分「**没传**(用默认值)」与「**传了空白**(非法,该拦)」。
 	// 用 string + TrimSpace(...) != "" 判断会把"传了空白"悄悄当成"没传"从而填回默认值,
@@ -187,33 +190,52 @@ func (s *Server) handleShotUpscale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	opt := engine.DefaultUpscaleOptions()
+	// 先定"方式",再按方式取默认权重:两者必须成套 —— ModelName 的含义随 Type 而变
+	// (ltx 去 latent_upscale_models/ 找,esrgan 去 upscale_models/ 找),
+	// 详见 engine.UpscaleOptionsFor 的说明。
+	kind := engine.DefaultUpscaleOptions().Type
 	if in.Type != nil {
-		opt.Type = strings.TrimSpace(*in.Type)
+		kind = strings.TrimSpace(*in.Type)
 	}
+	// 参数体检放在调引擎之前:ltx/esrgan 对依赖的要求不同,错在这里能给出人话,
+	// 到引擎里只会变成一句看不懂的节点缺失
+	if kind != "ltx" && kind != "esrgan" {
+		writeErr(w, 400, fmt.Errorf("放大方式只支持 ltx 或 esrgan,收到「%s」", kind))
+		return
+	}
+	opt := engine.UpscaleOptionsFor(kind)
 	if in.Model != nil {
 		opt.ModelName = strings.TrimSpace(*in.Model)
 	}
 	if in.LTXVAE != nil {
 		opt.LTXVAE = strings.TrimSpace(*in.LTXVAE)
 	}
-	// 参数体检放在调引擎之前:ltx/esrgan 对依赖的要求不同,错在这里能给出人话,
-	// 到引擎里只会变成一句看不懂的节点缺失
-	if opt.Type != "ltx" && opt.Type != "esrgan" {
-		writeErr(w, 400, fmt.Errorf("放大方式只支持 ltx 或 esrgan,收到「%s」", opt.Type))
-		return
-	}
 	if strings.TrimSpace(opt.ModelName) == "" {
 		writeErr(w, 400, fmt.Errorf("请指定放大模型文件名(model)"))
 		return
 	}
 	if opt.Type == "ltx" && strings.TrimSpace(opt.LTXVAE) == "" {
-		writeErr(w, 400, fmt.Errorf("LTX 隐空间放大需要同时指定 LTX 的 VAE 文件名(ltx_vae)"))
+		writeErr(w, 400, fmt.Errorf("LTX 隐空间放大需要 LTX 的 VAE 文件名(ltx_vae),留空即用默认的 %s", engine.DefaultLTXUpscaleVAE))
 		return
 	}
 
 	ctx, ok := s.prepareShotEnhance(w, r, "upscale2x")
 	if !ok {
+		return
+	}
+
+	// 先确认引擎可用再体检权重:UpscaleAssets 在引擎不可达时按设计返回空
+	// (不把"连不上"误判成"缺文件"),若跳过这一步,冷启动时体检会被静默跳过,
+	// 用户又要等 ComfyUI 起来、跑进节点才拿到那句看不懂的报错。
+	// 这里调 Available 不会多花时间 —— Upscale 内部同样要调它(含按 AutoStart 代管启动)。
+	if err := ctx.engineCE.Available(r.Context()); err != nil {
+		writeErr(w, 503, fmt.Errorf("2× 放大需要本地 ComfyUI:%w", err))
+		return
+	}
+	// 权重体检:放大是长任务,而缺权重只会在 ComfyUI 执行到那个节点时才暴露。
+	// 提前到提交之前,并把"缺哪个文件、该放进哪个目录"直接写进报错。
+	if miss := ctx.engineCE.UpscaleAssets(r.Context(), opt); len(miss) > 0 {
+		writeErr(w, 400, fmt.Errorf("无法执行 %s 放大:%s", opt.Type, strings.Join(miss, "; ")))
 		return
 	}
 

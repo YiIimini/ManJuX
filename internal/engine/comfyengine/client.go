@@ -228,9 +228,16 @@ type OutputFile struct {
 	Animated  bool
 }
 
-// ExtractFiles 遍历 outputs 收集全部文件对象(SaveVideo/SaveImage 等)。
+// ExtractFiles 遍历 outputs 收集**本次执行真正产出的**文件对象(SaveVideo/SaveImage 等)。
+//
 // 注意:新版 SaveVideo 的 animated 标志是与 images 平级的独立键([true]),
 // 而非文件项内字段;两者都要兼容。
+//
+// **`type == "input"` 的条目必须排除**(2026-09-24 修):任何从 input 读文件的节点
+// (LoadVideo/LoadImage/LoadAudio)都会把自己的输入文件报进 outputs,而那是**用户传进去的
+// 素材**、不是产物;它同样带 animated 标志,于是"取第一个 animated 文件"会有一半概率
+// 把**源片原样**当成结果返回 —— 放大链路实测踩到:界面提示"放大完成",拿到的却是一模一样
+// 的原视频(分辨率/字节数都没变)。outputs 是 map,遍历顺序随机,所以这个 bug 是间歇性的。
 func (h *HistoryEntry) ExtractFiles() []OutputFile {
 	var files []OutputFile
 	for _, nodeOut := range h.Outputs {
@@ -263,6 +270,9 @@ func (h *HistoryEntry) ExtractFiles() []OutputFile {
 			for _, it := range arr {
 				if it.Filename == "" {
 					continue
+				}
+				if it.Type == "input" {
+					continue // 输入素材,不是产物
 				}
 				animated := it.Animated || nodeAnimated || strings.Contains(it.Format, "video")
 				files = append(files, OutputFile{it.Filename, it.Subfolder, it.Type, animated})
@@ -614,6 +624,16 @@ func (c *Client) get(ctx context.Context, path string) ([]byte, error) {
 func (c *Client) HTTP() *http.Client { return c.http }
 
 // ComboList 读取节点某 combo 输入的可选值列表。
+//
+// ComfyUI 的 object_info 里 combo 有**两种形态**,必须都认(实测两者并存于同一版本):
+//
+//	旧式:  "vae_name":   [ ["a.safetensors","b.safetensors"], {…} ]
+//	新式:  "model_name": [ "COMBO", {"multiselect":false,"options":[…]} ]
+//
+// 旧式取 def[0] 当字符串数组;新式的 def[0] 是字符串 "COMBO",选项在 def[1].options
+// 里 —— 只认旧式时新式节点会一律返回 ok=false,而调用方普遍把 false 理解成
+// "节点不存在/输入已改名",于是本该报"缺哪个模型文件"的地方变成了一句误导人的
+// 节点缺失(实测:`LatentUpscaleModelLoader` 与 `UpscaleModelLoader` 都是新式)。
 func (c *Client) ComboList(ctx context.Context, classType, field string) ([]string, bool) {
 	raw, err := c.get(ctx, "/object_info/"+url.PathEscape(classType))
 	if err != nil {
@@ -643,6 +663,23 @@ func (c *Client) ComboList(ctx context.Context, classType, field string) ([]stri
 	if err := json.Unmarshal(defRaw, &def); err != nil || len(def) == 0 {
 		return nil, false
 	}
+
+	// 新式:def[0] 是 "COMBO" 标记,选项挂在 def[1].options
+	var tag string
+	if err := json.Unmarshal(def[0], &tag); err == nil && tag == "COMBO" {
+		if len(def) < 2 {
+			return nil, false
+		}
+		var meta struct {
+			Options []string `json:"options"`
+		}
+		if err := json.Unmarshal(def[1], &meta); err != nil {
+			return nil, false
+		}
+		return meta.Options, true
+	}
+
+	// 旧式:def[0] 直接就是字符串数组
 	var list []string
 	if err := json.Unmarshal(def[0], &list); err != nil {
 		return nil, false

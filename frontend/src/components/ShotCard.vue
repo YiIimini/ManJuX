@@ -110,30 +110,42 @@ async function rerender(cmd) {
 
 // 2× 放大后处理:放大**已完成的画面**,不是重新生成 —— 音轨沿用源片、时长不变。
 //
-// 两条链路的前置条件不同,所以分别询问:帧级(esrgan)只需要一个 upscale_models 权重;
-// LTX 隐空间还必须指定 VAE 文件名,少给这一个参数后端会直接 400(不给用户看节点缺失)。
+// 两条链路的前置条件不同,所以分别确认:帧级(esrgan)只要一个 upscale_models 权重;
+// LTX 隐空间还依赖 LTX 的视频 VAE。权重文件名**不在前端写死** —— 它是引擎侧的事实,
+// 由 /api/meta 下发(见 store 的 metaUpscale),这里只回显默认值并允许覆盖。
+// 副作用是"填错也没关系":后端提交前会体检权重,缺哪个文件、该放哪个目录都会讲清楚。
 async function upscale(cmd) {
   const mf = props.manifestItem
   if (!mf || mf.status !== 'done') { ElMessage.info('镜头尚未渲染完成'); return }
   let opts = { type: 'esrgan' }
   if (cmd === 'ltx') {
+    const defVae = G.metaUpscale?.default_ltx_vae || ''
     let vae
     try {
       const r = await ElMessageBox.prompt(
         `对镜头 ${props.shot.id} 做 LTX 隐空间 2× 放大。\n\n` +
-        `这条链路细节更自然,但需要 ComfyUI 的 vae 目录下已有 LTX 的 VAE 文件 —— 请填文件名。\n\n` +
+        `这条链路更快、实拍与动漫画面的纹理更干净(本机实测 768P 源片约 18 秒/48 帧),\n` +
+        `代价是学习式视频 VAE 会抹软硬边细字 —— 片内有字幕/小字时请改走帧级。\n\n` +
+        `它依赖 ComfyUI 已装好 LTX 的视频 VAE:下面填的是默认文件名,只有你装了别的 VAE\n` +
+        `才需要改;留空也等于用默认值。提交前会先体检权重,缺文件会直接告诉你该放哪。\n\n` +
         `只提升分辨率:音轨沿用源片、时长不变。结果作为独立文件产出,原镜头不变。`,
         '2× 放大 · 隐空间',
-        { confirmButtonText: '开始放大', cancelButtonText: '取消', inputPlaceholder: '如 ltx_vae.safetensors' })
+        {
+          confirmButtonText: '开始放大', cancelButtonText: '取消',
+          inputValue: defVae, inputPlaceholder: '如 LTX2_video_vae_bf16.safetensors'
+        })
       vae = (r.value || '').trim()
     } catch { return }
-    if (!vae) { ElMessage.warning('未填写 LTX 的 VAE 文件名'); return }
-    opts = { type: 'ltx', ltx_vae: vae }
+    // 与默认值相同(或留空)就**不透传**:让后端用它自己的默认值,
+    // 避免把"没改这一栏"变成"显式要一个空文件名"(后端对空白是直接 400 的)。
+    if (vae && vae !== defVae) opts = { type: 'ltx', ltx_vae: vae }
+    else opts = { type: 'ltx' }
   } else {
     try {
       await ElMessageBox.confirm(
         `对镜头 ${props.shot.id} 做 2× 放大?\n\n` +
-        `走帧级链路(4x-UltraSharp):快且稳,对已干净的素材更保险。\n\n` +
+        `走帧级链路(4x-UltraSharp):逐帧真超分,画面最忠实于源片 —— 片内硬边细字(字幕、路牌小字)\n` +
+        `也能保住笔画。代价是慢:本机实测 768P 源片约 3.8 秒/帧(48 帧 ≈ 3 分钟)。\n\n` +
         `只提升分辨率:音轨沿用源片、时长不变。结果作为独立文件产出,原镜头不变。`,
         '2× 放大 · 帧级', { type: 'info', confirmButtonText: '开始放大', cancelButtonText: '取消' })
     } catch { return }
@@ -248,8 +260,8 @@ const sceneName = computed(() => {
           </button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item command="esrgan">帧级 2×(快且稳 · 推荐)</el-dropdown-item>
-              <el-dropdown-item command="ltx">隐空间 2×(细节自然 · 需 LTX VAE)</el-dropdown-item>
+              <el-dropdown-item command="esrgan">帧级 2×(最省依赖 · 硬边细字更保真)</el-dropdown-item>
+              <el-dropdown-item command="ltx">隐空间 2×(更快 · 实拍质感更好)</el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>

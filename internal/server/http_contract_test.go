@@ -318,7 +318,9 @@ func TestLibraryOpsRoutes(t *testing.T) {
 //	① 路由确实注册(而不是落到 404);
 //	② 参数体检排在调引擎之前,且错误信息可执行(而不是让用户看到一句
 //	   看不懂的节点缺失);
-//	③ 项目/镜头不存在时给出准确的状态码。
+//	③ 项目/镜头不存在时给出准确的状态码;
+//	④ 可省的参数真的可省 —— 不传 type/model/ltx_vae 时由引擎侧默认值补齐,
+//	   前端因此不必让用户手打文件名(手打的打错了也校验不了)。
 //
 // 用例都不触碰外部资源:参数校验与项目校验都排在 ff.Probe 之前,
 // 因此 newTestServer 的零值 ff 不会被触发。
@@ -339,10 +341,20 @@ func TestHTTPContractShotUpscale(t *testing.T) {
 			want: 400, wantWord: "ltx",
 		},
 		{
-			name: "ltx 缺 VAE 要点明具体缺什么",
+			// 显式传了空白 = 用户明确要给一个空文件名,必须拦下;
+			// 而**不传**是另一回事:引擎侧有默认值,应当放行(见下一条用例)。
+			name: "ltx 传了空白 VAE 要拦下",
 			path: "/api/projects/p1/shot/1/upscale",
-			body: map[string]any{"type": "ltx", "model": "ltx-2-spatial-upscaler-x2-1.0.safetensors"},
+			body: map[string]any{"type": "ltx", "model": "ltx-2-spatial-upscaler-x2-1.0.safetensors", "ltx_vae": "   "},
 			want: 400, wantWord: "VAE",
+		},
+		{
+			// 不传 ltx_vae 不再是错误:默认值由 engine.UpscaleOptionsFor 给出。
+			// 这里用"项目不存在"的 404 作为放行证据 —— 参数体检若拦下它就会是 400。
+			name: "ltx 不传 VAE 时用默认值放行",
+			path: "/api/projects/p1/shot/1/upscale",
+			body: map[string]any{"type": "ltx"},
+			want: 404, wantWord: "项目",
 		},
 		{
 			name: "模型名为空白要拦下",
@@ -388,5 +400,34 @@ func TestHTTPContractShotUpscaleRouteRegistered(t *testing.T) {
 	}
 	if got != 400 {
 		t.Fatalf("非法参数应返回 400,实际 %d(%v)", got, out)
+	}
+}
+
+// TestHTTPContractMetaUpscaleDefaults /api/meta 必须下发放大链路的默认文件名。
+//
+// 前端不再自己记常量(此前那个 LTX VAE 文件名只活在用户手打的输入框里),
+// 而是按这里的默认值回显、只让用户覆盖想改的那一项。这个字段掉了,前端就退回
+// "空输入框 + 手打文件名",等于把刚补上的默认值又丢了。
+func TestHTTPContractMetaUpscaleDefaults(t *testing.T) {
+	s := newTestServer(t)
+	got, out := doReq(t, s, "GET", "/api/meta", nil)
+	if got != 200 {
+		t.Fatalf("GET /api/meta want 200 got %d(%v)", got, out)
+	}
+	up, ok := out["upscale"].(map[string]any)
+	if !ok {
+		t.Fatalf("/api/meta 必须带 upscale 默认值(前端据此回显),实际 %v", out)
+	}
+	for _, k := range []string{"default_type", "default_model", "default_ltx_vae"} {
+		v, _ := up[k].(string)
+		if v == "" {
+			t.Errorf("upscale.%s 不能为空,否则前端只能让用户手打文件名(实际 %v)", k, up)
+		}
+	}
+	if v, _ := up["default_type"].(string); v != engine.DefaultUpscaleOptions().Type {
+		t.Errorf("upscale.default_type 应与引擎默认一致,实际 %q", v)
+	}
+	if v, _ := up["default_ltx_vae"].(string); v != engine.DefaultLTXUpscaleVAE {
+		t.Errorf("upscale.default_ltx_vae 应为 %q,实际 %q", engine.DefaultLTXUpscaleVAE, v)
 	}
 }
