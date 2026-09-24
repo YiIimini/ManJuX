@@ -323,7 +323,11 @@ async function stopProjectRun(p) {
   } catch (e) { ElMessage.error(e.message) }
 }
 async function removeSeries(prefix, eps) {
-  if (batchStat && batchStat.prefix === prefix) {
+  // 批量产线正在跑这个系列时不许删(2026-09-24 修):旧写法是 `batchStat.prefix`,
+  // 而 batchStat 是 ref —— `.prefix` 恒为 undefined,守卫**永不触发**,
+  // 于是"正在逐集渲染"的整部系列能被一键删掉(把正在跑的集也删了)。
+  // 脚本里读 ref 必须解引用 `.value`;模板会自动解包,别照抄模板写法。
+  if (batchStat.value?.prefix === prefix) {
     ElMessage.warning('该系列正在批量产线运行中,请先停止批量再删除')
     return
   }

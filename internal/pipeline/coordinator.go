@@ -464,13 +464,27 @@ func (c *Coordinator) ReleaseVRAMIfIdle(why string) {
 	if err != nil {
 		return
 	}
-	if ce, ok := eng.(*comfyengine.Engine); ok {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		st, aerr := ce.Admin(ctx)
-		cancel()
-		if aerr == nil && st != nil && (st.Running+st.Pending) > 0 {
-			return // 队列非空:别人(或刚投的任务)正在用,不许抢
-		}
+	ce, ok := eng.(*comfyengine.Engine)
+	if !ok {
+		c.releaseVRAM("", why) // 非本地引擎:没有"卸权重"这回事,照旧交还
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	st, aerr := ce.Admin(ctx)
+	cancel()
+	if !vramReleaseAllowed(st, aerr) {
+		return // 队列非空 / 探测不到:不许抢(见函数说明)
 	}
 	c.releaseVRAM("", why)
+}
+
+// vramReleaseAllowed 是释放显存的**准入判据**,抽成纯函数以便穷举验证。
+//
+// 2026-09-24 修(审计 P0-5):旧判据是 `aerr == nil && (Running+Pending) == 0`,
+// 而 Admin() 恒返回 err=nil、/queue 查询失败时 Running/Pending 保持 0 ——
+// 于是"引擎忙到答不上探测"与"引擎彻底空闲"完全同构,护栏在最该生效的时候失效:
+// /free 把正在跑的权重卸掉,接下来每步重新流式加载(实测 150s/步,整镜 45 分钟超时)。
+// 现在要求 QueueKnown:探测不到就**不释放**(宁可多占一会儿显存,不可毁掉正在跑的任务)。
+func vramReleaseAllowed(st *comfyengine.AdminStatus, adminErr error) bool {
+	return adminErr == nil && st != nil && st.QueueKnown && st.Running+st.Pending == 0
 }

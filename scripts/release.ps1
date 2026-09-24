@@ -9,32 +9,52 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# 1) 版本号:显式指定 > 自动补丁号递增
+# 1) 版本号:显式指定 > 自动补丁号递增(基线取**版本真源 version.go**,不是 git tag)
+# 为什么不用 tag:tag 只在本机打过 tag 之后才存在,而"当前版本"这件事的真源一直是
+# internal/version/version.go(三处同源由 cmd/versync 维护)。用 tag 反推会让
+# "改了版本还没打 tag"的仓库算出错误的下一版(见审计 P0-4 同一类根因)。
 $ErrorActionPreference = "Continue"
-$last = (& git describe --tags --abbrev=0 2>$null | Select-Object -First 1)
+$srcVer = (& go run ./cmd/versync -root $root -check 2>$null | Out-String)
 $ErrorActionPreference = "Stop"
+$curVer = ""
+if (Test-Path "$root/internal/version/version.go") {
+  $m0 = [regex]::Match((Get-Content "$root/internal/version/version.go" -Raw), 'var Version = "([^"]*)"')
+  if ($m0.Success) { $curVer = $m0.Groups[1].Value.TrimStart("v") }
+}
 if (-not $Version) {
-  if ($last) {
-    $m = [regex]::Match($last.TrimStart("v"), '^(\d+)\.(\d+)\.(\d+)$')
-    if ($m.Success) {
-      $Version = "v{0}.{1}.{2}" -f [int]$m.Groups[1].Value, [int]$m.Groups[2].Value, ([int]$m.Groups[3].Value + 1)
+  $m = [regex]::Match($curVer, '^(\d+)\.(\d+)\.(\d+)$')
+  if ($m.Success) {
+    $Version = "v{0}.{1}.{2}" -f [int]$m.Groups[1].Value, [int]$m.Groups[2].Value, ([int]$m.Groups[3].Value + 1)
+  } elseif ($srcVer -match "三处版本同源:(v[\d.]+)") {
+    $base = $Matches[1].TrimStart("v")
+    $m2 = [regex]::Match($base, '^(\d+)\.(\d+)\.(\d+)$')
+    if ($m2.Success) {
+      $Version = "v{0}.{1}.{2}" -f [int]$m2.Groups[1].Value, [int]$m2.Groups[2].Value, ([int]$m2.Groups[3].Value + 1)
     } else { $Version = "v1.0.1" }
-  } else { $Version = "v1.0.0" }
+  } else { $Version = "v1.0.1" }
 }
+Write-Host "==> 发布版本:$Version(当前 $curVer)" -ForegroundColor Cyan
 
-# 1.5) 交付体检门禁:FAIL 立即中止,禁止带病发布
-# (外部程序 stderr 在 EAP=Stop 下会被当作错误终止,门禁段内临时放宽)
-$check = "C:/Mi/Ai/WorkBench/tools/deliver_check.py"
-if (Test-Path $check) {
-  $ErrorActionPreference = "Continue"
-  $out = (& python $check $root 2>&1 | Out-String)
-  $ErrorActionPreference = "Stop"
-  if ($out -match "FAIL") {
-    Write-Host $out -ForegroundColor Red
-    throw "deliver_check FAIL:修复后重跑,禁止带病交付"
-  }
-  Write-Host "==> deliver_check PASS" -ForegroundColor Green
+# 1.5) 交付体检门禁:**随仓入库**的 check.ps1(六道门)+ 版本同源校验。
+# 旧实现指向仓外绝对路径 C:/Mi/Ai/WorkBench/tools/deliver_check.py —— 本机不存在,
+# 于是整段门禁**静默跳过**;判据还是"输出里有没有 FAIL 字样",python 报错也会判 PASS。
+# 现在:门禁是本仓脚本,判据是**退出码**,不存在就 throw(审计 P1-4)。
+$gate = Join-Path $PSScriptRoot "check.ps1"
+if (-not (Test-Path $gate)) { throw "找不到门禁脚本 scripts/check.ps1(发布必须过门禁)" }
+$ErrorActionPreference = "Continue"
+& powershell -NoProfile -ExecutionPolicy Bypass -File $gate
+$gateCode = $LASTEXITCODE
+$verOut = (& go run ./cmd/versync -root $root -check 2>&1 | Out-String)
+$verCode = $LASTEXITCODE
+$ErrorActionPreference = "Stop"
+if ($verCode -ne 0) {
+  Write-Host $verOut -ForegroundColor Red
+  throw "版本三处不同源:修复后重跑(禁止带病发布)"
 }
+if ($gateCode -ne 0) {
+  throw "check.ps1 门禁未通过(退出码 $gateCode):修复后重跑,禁止带病交付"
+}
+Write-Host "==> 门禁通过(check.ps1 六道门 + 版本同源)" -ForegroundColor Green
 
 # 2) 构建(注入本次发布版本号,避免 git describe 带旧 tag 后缀)
 $env:MANJUX_VERSION = $Version

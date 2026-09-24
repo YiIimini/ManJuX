@@ -8,7 +8,6 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/audio"
 	"github.com/YiIimini/ManJuX/internal/ff"
@@ -83,7 +82,7 @@ func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Re
 		r.Warnings = append(r.Warnings, fmt.Sprintf("时长偏长 %.1fs", info.Duration))
 	}
 
-	dark, err := darkRatio(ctx, f, path)
+	dark, err := darkRatio(ctx, f, path, info.Duration)
 	if err == nil {
 		r.DarkRatio = dark
 		if dark >= p.DarkRatioFail {
@@ -92,31 +91,48 @@ func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Re
 			r.Warnings = append(r.Warnings, fmt.Sprintf("画面偏暗:暗像素占比 %.0f%%", dark*100))
 		}
 	} else {
-		r.Warnings = append(r.Warnings, "亮度抽帧失败:"+err.Error())
+		// 抽帧失败**必须是 Problem**:量不到就没资格说"通过"(旧实现把它降级成
+		// Warning 后照常给出 darkRatio=0 的结论,于是"质检通过"是假的)。
+		r.Problems = append(r.Problems, "黑屏检测不可信(抽帧失败):"+err.Error())
 	}
 	r.OK = len(r.Problems) == 0
 	return r
 }
 
-// darkRatio 抽 3 帧计算暗像素(<40/255)占比。
-func darkRatio(ctx context.Context, f *ff.FF, video string) (float64, error) {
+// darkRatio 按**实测时长**取 25% / 50% / 75% 三个时间点抽帧,统计暗像素占比。
+//
+// 2026-09-24 修(审计 P0-3):旧实现固定抽 1s/3s/5s,与时长无关,于是
+//   - 长镜只看得到前 5 秒:第 6 秒起全黑也判"通过";
+//   - 4 秒镜头的第三个采样点越界,ffmpeg exit=0 但没有产物,被 `continue` 吞掉,
+//     函数照样返回一个数字 —— 结论建立在"只看了一两帧"甚至"一帧都没看"之上。
+//
+// 现在:采样点按时长定位且保证落在片内;任何一帧抽不出来都直接返回错误,
+// 由调用方计入 Problems(见 Check)。
+func darkRatio(ctx context.Context, f *ff.FF, video string, duration float64) (float64, error) {
+	if duration <= 0 { // 调用方没给时长(或探测失败)时自己再探一次
+		if info, err := f.Probe(video); err == nil {
+			duration = info.Duration
+		}
+	}
+	if duration <= 0 {
+		return 0, fmt.Errorf("读不到视频时长,无法定位抽帧点")
+	}
 	tmpDir, err := os.MkdirTemp("", "manjux-qc-")
 	if err != nil {
 		return 0, err
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// 在 25% / 50% / 75% 处各抽一帧(依赖 ffmpeg 的 select+fps 简化:直接 3 个时间点)
 	totalDark, totalPix := 0, 0
-	for _, pos := range []string{"0.25", "0.5", "0.75"} {
-		out := filepath.Join(tmpDir, "f_"+strings.ReplaceAll(pos, ".", "_")+".png")
-		if _, err := f.Run(ctx, "-y", "-ss", posOf(pos), "-i", video,
+	for i, at := range samplePositions(duration) {
+		out := filepath.Join(tmpDir, fmt.Sprintf("f_%d.png", i))
+		if _, err := f.Run(ctx, "-y", "-ss", fmt.Sprintf("%.3f", at), "-i", video,
 			"-frames:v", "1", "-vf", "scale=160:-2", out); err != nil {
-			continue
+			return 0, fmt.Errorf("第 %d 帧(%.2fs)抽帧失败:%w", i+1, at, err)
 		}
 		d, n, err := pngDark(out)
 		if err != nil {
-			continue
+			return 0, fmt.Errorf("第 %d 帧(%.2fs)不可读:%w", i+1, at, err)
 		}
 		totalDark += d
 		totalPix += n
@@ -127,16 +143,22 @@ func darkRatio(ctx context.Context, f *ff.FF, video string) (float64, error) {
 	return float64(totalDark) / float64(totalPix), nil
 }
 
-// posOf 以比例近似(拿不到总时长时按秒)。此处直接用秒位置(短视频 4-15s)。
-func posOf(ratio string) string {
-	switch ratio {
-	case "0.25":
-		return "1"
-	case "0.5":
-		return "3"
-	default:
-		return "5"
+// samplePositions 25% / 50% / 75% 三个时间点,并保证都落在片内:
+// 末点回退 edge 秒 —— `-ss` 超过时长的常见后果是"exit 0 但没有输出文件",
+// 那正是旧实现静默吞掉的那种失败。
+func samplePositions(duration float64) []float64 {
+	const edge = 0.15
+	last := duration - edge
+	if last < 0 {
+		last = 0
 	}
+	ps := []float64{duration * 0.25, duration * 0.5, duration * 0.75}
+	for i := range ps {
+		if ps[i] > last {
+			ps[i] = last
+		}
+	}
+	return ps
 }
 
 // pngDark 解码 PNG 统计暗像素。

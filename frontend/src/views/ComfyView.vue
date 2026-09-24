@@ -274,8 +274,16 @@ function verCellCls(row, which) {
         <div class="flex flex-col gap-3">
           <div class="flex items-center gap-3">
             <div class="flex-1">
-              <div class="text-sm">队列任务</div>
-              <div class="text-xs" style="color:var(--mx-text3)">清空等待中的任务(不影响运行中)</div>
+              <div class="text-sm">
+                队列任务
+                <!-- 队列数字查不到时必须说出来:显示成 0/0 会让人以为"引擎闲着",
+                    而显存护栏正是按这个数字决定要不要卸权重(见后端 QueueKnown)。 -->
+                <span v-if="st.alive && st.queue_known === false" class="text-xs ml-2" style="color:var(--mx-yellow)">状态未知</span>
+                <span v-else-if="st.alive" class="text-xs ml-2 timecode">{{ st.queue_running || 0 }} 运行 / {{ st.queue_pending || 0 }} 等待</span>
+              </div>
+              <div class="text-xs" style="color:var(--mx-text3)">
+                {{ st.alive && st.queue_known === false ? 'ComfyUI 没答上队列查询(可能正忙):此时不会自动释放显存' : '清空等待中的任务(不影响运行中)' }}
+              </div>
             </div>
             <el-tooltip content="清空等待中的任务(不影响正在执行的任务)" placement="top">
               <el-button size="small" :disabled="!st.pending" :loading="acting==='queue-clear'" @click="act('queue-clear')">清空队列</el-button>

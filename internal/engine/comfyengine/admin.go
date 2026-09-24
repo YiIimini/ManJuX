@@ -9,17 +9,24 @@ import (
 
 // AdminStatus ComfyUI 管理状态聚合。
 type AdminStatus struct {
-	Alive   bool         `json:"alive"`
-	Version string       `json:"version"`
-	GPU     string       `json:"gpu"`
-	Running int          `json:"queue_running"`
-	Pending int          `json:"queue_pending"`
-	Owned   bool         `json:"owned"` // 是否为本应用代管启动(可停止)
-	RootDir string       `json:"root_dir"`
-	BaseURL string       `json:"base_url"`
-	Models  []ModelCheck `json:"models"`
-	Nodes   []NodeCheck  `json:"nodes"`
-	Sage    *SageStatus  `json:"sage,omitempty"` // Sage 加速状态(装了没/会不会启用)
+	Alive   bool   `json:"alive"`
+	Version string `json:"version"`
+	GPU     string `json:"gpu"`
+	Running int    `json:"queue_running"`
+	Pending int    `json:"queue_pending"`
+	// QueueKnown 队列数字是否**真的查到了**。
+	//
+	// 为什么必须单独一个字段(2026-09-24 审计 P0-5):/queue 查询失败时 Running/Pending
+	// 保持 0,于是"引擎忙到答不上探测"与"引擎彻底空闲"在返回值上完全同构 ——
+	// 显存护栏据此以为空闲、调 /free 把正在跑的权重卸掉(之后每步重新流式加载,
+	// 实测 150s/步,整镜 45 分钟超时)。加上这个字段,**探测不到就不许当空闲**。
+	QueueKnown bool         `json:"queue_known"`
+	Owned      bool         `json:"owned"` // 是否为本应用代管启动(可停止)
+	RootDir    string       `json:"root_dir"`
+	BaseURL    string       `json:"base_url"`
+	Models     []ModelCheck `json:"models"`
+	Nodes      []NodeCheck  `json:"nodes"`
+	Sage       *SageStatus  `json:"sage,omitempty"` // Sage 加速状态(装了没/会不会启用)
 }
 
 // ModelCheck 模型配置核对。
@@ -61,6 +68,7 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 	}
 	if run, pend, err := e.client().Queue(ctx); err == nil {
 		st.Running, st.Pending = len(run), len(pend)
+		st.QueueKnown = true // 只有真查到了才敢说"队列为空"(见 QueueKnown 的说明)
 	}
 
 	// GPU(从 system_stats devices)

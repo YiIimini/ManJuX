@@ -11,66 +11,54 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# 版本号:release 注入(MANJUX_VERSION)> git tag > short hash > dev
+# 版本:release 注入(MANJUX_VERSION)> internal/version/version.go 现值。
+# **不再从 git tag 反推** —— 旧写法(2026-09-24 审计 P0-4)在 HEAD 领先 tag 时会把
+# 已经升级的三处版本文件改回旧 tag(实测 v0.37.2 → v0.34.4)并弄脏工作区;
+# 当时靠"记得传 MANJUX_VERSION"躲开,等于把必然踩的坑留给人的记性。
+# 现在三处同源由 cmd/versync 完成(可测的逻辑,见 internal/version/sync.go):
+#   - 传了 MANJUX_VERSION:三处都写该版本;
+#   - 没传:以 version.go 为真源纠正两个 JSON,本来就一致则一个字节都不写。
 $ver = $env:MANJUX_VERSION
-if (-not $ver) {
+# exe 内显示用的串:带上 "tag 之后第几个提交" 便于区分构建,但**永不写进任何文件**。
+$verDisplay = $ver
+if (-not $verDisplay) {
   try {
     $ErrorActionPreference = "Continue"
-    # --tags:本仓的 tag 是轻量 tag(git cat-file -t v0.34.1 = commit),
-    # 不带 --tags 时 git describe 是否认它们取决于 git 版本,显式带上才稳。
-    $ver = (& git describe --tags --always 2>$null | Select-Object -First 1)
+    $verDisplay = (& git describe --tags --always 2>$null | Select-Object -First 1)
     $ErrorActionPreference = "Stop"
   } catch { $ErrorActionPreference = "Stop" }
 }
-if (-not $ver) { $ver = "dev" }
-# git describe 本身带 v 前缀;防双 v(vv1.5.0)
-if ($ver -notmatch '^v') { $ver = "v$ver" }
-Write-Host "==> ManJuX 构建版本: $ver" -ForegroundColor Cyan
+if (-not $verDisplay) { $verDisplay = "dev" }
+if ($verDisplay -notmatch '^v') { $verDisplay = "v$verDisplay" }
+Write-Host "==> ManJuX 构建版本: $verDisplay" -ForegroundColor Cyan
 
-# 版本的**基线**部分:去掉 git describe 在 tag 之后追加的 "-N-gHASH" 后缀。
-# 三个"同源"文件只写基线,exe 内显示仍用完整 describe 串(便于区分"这是 tag 之后
-# 第几个提交的构建")。此前直接拿完整串写文件:仓库一旦领先于 tag,独立跑一次
-# build.ps1 就会把 0.34.1-11-g4e18872 这类字符串写进 wails.json / package.json /
-# version.go 并把工作区弄脏(release.ps1 因为显式注入 MANJUX_VERSION 恰好躲开了,
-# 所以这个坑只在"按文档单独跑 build.ps1"时出现)。
-$verBase = ($ver -split '-')[0]
-$verNum = $verBase.TrimStart('v')
+# 工具链先在前面挂好(versync 是个 go 程序)
+$goroot = if ($env:MANJUX_GOROOT) { $env:MANJUX_GOROOT } else { "D:\Ai\Tools\go" }
+$gopath = if ($env:MANJUX_GOPATH) { $env:MANJUX_GOPATH } else { "D:\Ai\Tools\gopath" }
+if (Test-Path $goroot) {
+  $env:GOROOT = $goroot
+  $env:PATH = (Join-Path $goroot "bin") + ";" + $env:PATH
+}
+if (Test-Path $gopath) {
+  $env:GOPATH = $gopath
+  $env:PATH = (Join-Path $gopath "bin") + ";" + $env:PATH
+}
+# 国内直连 proxy.golang.org 不通;已设则不覆盖
+if (-not $env:GOPROXY) { $env:GOPROXY = "https://goproxy.cn,direct" }
+if (-not $env:GOSUMDB) { $env:GOSUMDB = "sum.golang.google.cn" }
 
-# 版本号单一真源 = git tag。构建前把同一版本同步进 wails.json、
-# frontend/package.json 与 internal/version/version.go —— 三处同源
-# (version.go 的注释即如此约定)。否则 exe 文件属性与安装包名会永远停在旧值。
-# 此前只同步前两处,version.go 靠 -ldflags 注入时才正确,go run / 未注入场景
-# 会读到漂移的旧值(实测漂到 v0.33.20 而 tag 已 v0.34.1)——根因是"三处同源"
-# 只落地了两处,这里补齐第三处,不再依赖人工记得改。
-#
-# 注意:**同步这三处只是必要条件,不是充分条件**。exe 右键「属性 → 详细信息」里的
-# 字段由 build/windows/info.json 渲染进 RT_VERSION 资源,而 wails 自带的模板把
-# 版本块写在语言 "0000"(中性)下 —— Windows 的版本 API(VerQueryValue / 资源管理器)
-# 根本不认这个语言键,于是资源明明在二进制里、属性面板却整片空白(2026-09-24 实测:
-# 字符串在 exe 字节流里搜得到,FileVersionInfo 读出来全是空)。已把该文件的语言键
-# 改成 "0409" 并补上 FileVersion/product_version。**若日后用 wails 脚手架重新生成
+# 版本三处同源(wails.json / frontend/package.json / internal/version/version.go)。
+# **同步这三处只是必要条件,不是充分条件**:exe 右键「属性 → 详细信息」里的字段由
+# build/windows/info.json 渲染进 RT_VERSION 资源,而 wails 自带的模板把版本块写在
+# 语言 "0000"(中性)下 —— Windows 的版本 API(VerQueryValue / 资源管理器)根本不认
+# 这个语言键,于是资源明明在二进制里、属性面板却整片空白(2026-09-24 实测:字符串在
+# exe 字节流里搜得到,FileVersionInfo 读出来全是空)。已把该文件的语言键改成 "0409"
+# 并补上 FileVersion/product_version。**若日后用 wails 脚手架重新生成
 # build/windows/info.json,记得把这两处改回来**,否则属性又会静默变空。
-# 用 UTF8Encoding($false) 写入,规避 Windows PowerShell 5.1 的 BOM 问题
-# (package.json 带 BOM 会让 pnpm 解析失败)。
-foreach ($vf in @("$root/wails.json", "$root/frontend/package.json")) {
-  if (-not (Test-Path $vf)) { continue }
-  $raw = [IO.File]::ReadAllText($vf, [Text.Encoding]::UTF8)
-  $new = $raw -replace '("(?:product)?version":\s*")[^"]*(")', ('${1}' + $verNum + '${2}')
-  if ($new -ne $raw) {
-    [IO.File]::WriteAllText($vf, $new, (New-Object Text.UTF8Encoding($false)))
-    Write-Host "    -> 版本已同步: $vf = $verNum" -ForegroundColor DarkGray
-  }
-}
-# version.go 用带 v 前缀的写法(与 tag 一致),故单独一条规则
-$vgFile = "$root/internal/version/version.go"
-if (Test-Path $vgFile) {
-  $raw = [IO.File]::ReadAllText($vgFile, [Text.Encoding]::UTF8)
-  $new = $raw -replace '(?m)^(var Version = ")[^"]*(")', ('${1}' + $verBase + '${2}')
-  if ($new -ne $raw) {
-    [IO.File]::WriteAllText($vgFile, $new, (New-Object Text.UTF8Encoding($false)))
-    Write-Host "    -> 版本已同步: $vgFile = $verBase" -ForegroundColor DarkGray
-  }
-}
+$versyncArgs = @("run", "./cmd/versync", "-root", $root)
+if ($ver) { $versyncArgs += @("-set", $ver) }
+& go @versyncArgs
+if ($LASTEXITCODE -ne 0) { throw "版本同步失败(cmd/versync)" }
 
 # 0) 静默清理运行中的实例(exe 被锁会导致复制失败;构建过程零弹窗零打扰)
 Get-Process ManJuX -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
@@ -92,24 +80,8 @@ if (Test-Path "$root/frontend/src") {
 
 # 2) Wails 桌面构建(-s 跳过 wails 自带前端钩子,前端已构建)
 #
-# 工具链定位与 check.ps1 同一口径:本机 go 与 wails 都是**便携安装、不在系统 PATH**
-# (go 在 D:\Ai\Tools\go、wails 在 GOPATH\bin),这里先把它们挂进本次进程的 PATH。
-# wails build 内部要调 `go`,所以只找到 wails.exe 还不够 —— go 必须也在 PATH 里,
-# 否则报 "unable to find compiler: go"。换机器可用 MANJUX_GOROOT / MANJUX_GOPATH 覆盖。
-$goroot = if ($env:MANJUX_GOROOT) { $env:MANJUX_GOROOT } else { "D:\Ai\Tools\go" }
-$gopath = if ($env:MANJUX_GOPATH) { $env:MANJUX_GOPATH } else { "D:\Ai\Tools\gopath" }
-if (Test-Path $goroot) {
-  $env:GOROOT = $goroot
-  $env:PATH = (Join-Path $goroot "bin") + ";" + $env:PATH
-}
-if (Test-Path $gopath) {
-  $env:GOPATH = $gopath
-  $env:PATH = (Join-Path $gopath "bin") + ";" + $env:PATH
-}
-# 国内直连 proxy.golang.org 不通;已设则不覆盖
-if (-not $env:GOPROXY) { $env:GOPROXY = "https://goproxy.cn,direct" }
-if (-not $env:GOSUMDB) { $env:GOSUMDB = "sum.golang.google.cn" }
-
+# 工具链已在版本同步前挂进 PATH(见上);wails build 内部要调 `go`,所以只找到
+# wails.exe 还不够 —— go 必须也在 PATH 里,否则报 "unable to find compiler: go"。
 $wails = if ($env:GOPATH) { Join-Path $env:GOPATH "bin/wails.exe" } else { "" }
 if (-not $wails -or -not (Test-Path $wails)) {
   $wails = (Get-Command wails -ErrorAction SilentlyContinue).Source
@@ -119,7 +91,9 @@ if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
   throw "PATH 里找不到 go:wails build 需要它(可设 MANJUX_GOROOT 指向 go 的根目录)"
 }
 Write-Host "==> Wails 桌面构建" -ForegroundColor Cyan
-& $wails build -s -ldflags "-X github.com/YiIimini/ManJuX/internal/version.Version=$ver"
+# ldflags 注入的是**显示串**(可含 describe 后缀,便于区分构建),文件里存的是基线 —— 两者刻意不同:
+# 前者给人看,后者给安装包名/文件属性用。
+& $wails build -s -ldflags "-X github.com/YiIimini/ManJuX/internal/version.Version=$verDisplay"
 if ($LASTEXITCODE -ne 0) { throw "Wails 构建失败" }
 
 # 3) 交付副本(项目根,双击即用)
