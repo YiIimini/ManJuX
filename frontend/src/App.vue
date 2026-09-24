@@ -149,10 +149,12 @@ function onSideResize(e) {
   window.addEventListener('mousemove', onMove)
   window.addEventListener('mouseup', onUp)
 }
-// ---- 一键清理:ComfyUI 中间产物 + 失败现场 + 孤儿缓存 + 临时文件 ----
+// ---- 一键清理:ComfyUI 中间产物 + 条件缓存数据文件 + 失败现场 + 孤儿缓存 + 临时文件 ----
+// 条件缓存要写清"ComfyUI 侧的数据文件":它可能不在 ComfyUI 本体目录下
+// (shared 模型布局),用户手动去翻会找不到 —— 清理结果里会写明清的是哪些目录。
 const cleaning = ref(false)
 async function cleanup() {
-  try { await ElMessageBox.confirm('将清理:ComfyUI 中间产物(不影响已有项目成片)、失败合成现场、孤儿条件缓存、系统临时文件。确认执行?','一键清理', { confirmButtonText: '清理', cancelButtonText: '取消', type: 'info' }) } catch { return }
+  try { await ElMessageBox.confirm('将清理:ComfyUI 中间产物(不影响已有项目成片)、条件缓存数据文件(models/conditioning/*.pt,含 shared 模型布局)、失败合成现场、孤儿条件缓存、系统临时文件。确认执行?','一键清理', { confirmButtonText: '清理', cancelButtonText: '取消', type: 'info' }) } catch { return }
   cleaning.value = true
   try {
     const d = await api.cleanup()
@@ -363,7 +365,7 @@ const env = computed(() => G.status?.env)
               <el-icon :size="15"><Setting /></el-icon>
             </button>
           </el-tooltip>
-          <el-tooltip content="一键清理:ComfyUI 中间产物 + 项目失败现场 + 孤儿条件缓存 + 系统临时文件" placement="bottom">
+          <el-tooltip content="一键清理:ComfyUI 中间产物 + 条件缓存数据文件(含 shared 模型布局)+ 项目失败现场 + 孤儿缓存 + 系统临时文件" placement="bottom">
             <button class="topbtn" :class="{ on: cleaning }" @click="cleanup">
               <el-icon :size="15"><Brush /></el-icon>
             </button>
