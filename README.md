@@ -83,13 +83,17 @@ D:\Ai\ManJuX\
 ├── internal\               # Go 模块(见 docs/架构.md)
 ├── frontend\               # Vue3 前端源码
 ├── build\                  # wails 图标/构建产物
-├── scripts\                # build.ps1 / release.ps1
+├── scripts\                # check.ps1(自检) / build.ps1 / release.ps1
 └── docs\                   # 文档
 ```
 
 ## 构建与发布
 
 ```powershell
+# 提交前自检:五道闸门一次跑完(gofmt / go vet / go build / go test / 前端构建)
+# 改完代码先跑这条 —— 尤其改了 frontend/src 时,不重建 webdist 就等于界面改动没生效
+powershell -ExecutionPolicy Bypass -File scripts\check.ps1
+
 # 日常构建(前端+桌面 exe)
 powershell -ExecutionPolicy Bypass -File scripts\build.ps1
 
