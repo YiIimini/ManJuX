@@ -63,12 +63,15 @@ func animatedFaceRenderBlock() string {
 
 // photorealRequested 风格文本里是否明确要真人/写实画风。
 //
-// 用途只有一个:开启了「动漫化」时,把这种自相矛盾的风格请求**覆盖**掉并如实告警
-// (写进提示词只会得到"既写实又扁平"的糊图,那不是用户要的,也不是能用的定妆照)。
+// 用途只有一个:开启了「动漫化」时,把这种自相矛盾的风格请求**告知用户**
+// (要真人剧请关掉开关)。**不再用它改写提示词** —— 关键词表永远追不上 LLM 的措辞
+// (实测本机真实项目的风格是 "gritty rural Chinese period realism",一个关键词都不命中,
+// 而它显然是要写实),所以提示词侧改用**无条件介质覆盖**(见 anchorPrompt 的
+// MEDIUM OVERRIDE):不管风格怎么写,"人物画法以介质段为准"。
 func photorealRequested(style string) bool {
 	s := strings.ToLower(style)
-	for _, k := range []string{"真人", "写实", "实拍", "photoreal", "live-action", "live action", "realistic photo"} {
-		if strings.Contains(style, k) || strings.Contains(s, k) {
+	for _, k := range []string{"真人", "写实", "实拍", "realis", "photoreal", "live-action", "live action", "liveaction", "photo-real"} {
+		if strings.Contains(s, k) || strings.Contains(style, k) {
 			return true
 		}
 	}

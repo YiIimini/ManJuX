@@ -180,20 +180,49 @@ func TestShotRenderPromptIsSingleSourceForAllRenderPaths(t *testing.T) {
 	if !strings.Contains(got, "身份锁") {
 		t.Error("渲染期提示词必须带身份锚定")
 	}
-	if strings.Contains(got, "【全片视觉风格】photorealistic cinematic") {
-		t.Error("风格段与画风开关冲突时必须把写实风格段本身换掉,不能两条打架的指令一起发")
+	// 介质覆盖**无条件**追加,不靠关键词:LLM 的措辞追不完(实测真实项目的
+	// "gritty rural Chinese period realism" 一个写实关键词都不命中)。
+	if !strings.Contains(got, "MEDIUM OVERRIDE") {
+		t.Error("开启画风开关时必须无条件追加介质覆盖,否则风格串里的写实措辞会与动画约束打架")
 	}
-	if !strings.Contains(got, "overridden") {
-		t.Error("被覆盖的风格应留下可追溯的说明")
+	if !strings.Contains(got, "treat the style line above as a reference for location") {
+		t.Error("介质覆盖必须说明「风格段只当场景/色调参考」")
 	}
-	// 关掉开关:风格段原样保留(真人剧合法)
+	if !strings.Contains(got, "【全片视觉风格】photorealistic cinematic") {
+		t.Error("风格段本身应原样保留(它仍是场景/色调/氛围的出题依据)")
+	}
+	// 关掉开关:不得注入介质覆盖,风格段也原样保留(真人剧合法)
 	proj.Config.Params.Script.StylizedFaces = project.Bool(false)
 	off := ShotRenderPrompt(proj, plan, shot)
 	if !strings.Contains(off, "【全片视觉风格】photorealistic cinematic") {
 		t.Errorf("关闭开关后风格段应原样保留:%s", off)
 	}
-	if strings.Contains(off, "MATTE ANIMATED LOOK") {
-		t.Error("关闭开关后不得注入画风硬约束")
+	if strings.Contains(off, "MATTE ANIMATED LOOK") || strings.Contains(off, "MEDIUM OVERRIDE") {
+		t.Error("关闭开关后不得注入画风硬约束与介质覆盖")
+	}
+}
+
+// TestRealWorldStyleStringStillGetsMediumOverride 真实数据的回归:
+// LLM 产出的风格串里常有**不含任何写实关键词**却明显是照片路线的措辞
+// (实测本机在跑的项目的风格串后半段就是 "natural dawn light, 35mm film grain,
+// shallow depth of field" —— 一个关键词都不命中)。
+// 关键词匹配必然漏,所以介质覆盖必须**无条件**生效,不能靠识别风格串。
+func TestRealWorldStyleStringStillGetsMediumOverride(t *testing.T) {
+	const photoish = "natural dawn light, 35mm film grain, shallow depth of field, desaturated earthy palette"
+	if photorealRequested(photoish) {
+		t.Fatalf("这条风格串本不该命中关键词(测试前提失效),请换一条:%q", photoish)
+	}
+	proj := &project.Project{}
+	proj.Config.Params = project.DefaultStageParams()
+	plan := &project.Plan{Style: photoish}
+	shot := &project.Shot{ID: 1, H3Prompt: "detailed_description:\n[Shot 1] ..."}
+	got := ShotRenderPrompt(proj, plan, shot)
+	if !strings.Contains(got, "MEDIUM OVERRIDE") || !strings.Contains(got, "MATTE ANIMATED LOOK") {
+		t.Errorf("未命中关键词的风格串下仍必须带介质覆盖与画风块:\n%s", got)
+	}
+	// 已知的写实措辞也要能识别出来(用于给用户那句"要真人剧请关掉开关"的告警)
+	if !photorealRequested("gritty rural Chinese period realism") {
+		t.Error("period realism 属于写实措辞,应能提示用户")
 	}
 }
 

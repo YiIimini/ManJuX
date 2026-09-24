@@ -45,10 +45,10 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 		}
 	}
 	if len(chars) == 0 && len(scenes) == 0 {
-		if facesOn {
-			return animatedFaceRenderBlock() + "\n" + shot.H3Prompt
-		}
-		return shot.H3Prompt
+		// 无角色也无场景(纯空镜):身份锚定没什么可锚的,但**风格段与介质覆盖仍必须带上**
+		// —— 空镜一样要服从全片画风。此前这条早退分支直接把风格与介质段丢了,
+		// 结果是"空镜写实、其余动画"的花片(实测真实项目第 1 镜正是无人物空镜)。
+		return styleAndMediumBlock(plan, facesOn) + shot.H3Prompt
 	}
 	var sb strings.Builder
 	sb.WriteString("【身份锚定(全片统一,优先级最高)】\n")
@@ -79,24 +79,50 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, sc.name, sc.desc)
 		}
 	}
-	if strings.TrimSpace(plan.Style) != "" {
-		st := strings.TrimSpace(plan.Style)
-		// 风格段与画风硬约束不能自相矛盾:方案里写的是"写实电影感"而开关要求动漫化时,
-		// 把风格段本身换掉 —— 同时给 H3 两条打架的风格指令,得到的是"既写实又扁平"的糊图,
-		// 而不是"硬约束赢"。
-		if facesOn && photorealRequested(st) {
-			st = "stylized Chinese animation (donghua): cel-shaded flat colour, hand-drawn line art, " +
-				"matte flat-shaded skin — the original live-action/photoreal style request was overridden " +
-				"by this project's 'animated characters' setting(原写实风格请求已被本项目的角色动漫化设置覆盖)"
-		}
-		sb.WriteString("【全片视觉风格】" + st + "\n")
-	}
-	if facesOn {
-		// 画风硬约束放在风格段之后、正文之前:既压住风格段里可能残留的写实词,
-		// 也让 H3 在读画面描述前先接受"哑光动画"的基调。
-		sb.WriteString(animatedFaceRenderBlock() + "\n")
-	}
+	sb.WriteString(styleAndMediumBlock(plan, facesOn))
 	return sb.String() + "\n" + shot.H3Prompt
+}
+
+// styleAndMediumBlock 全片风格段 + (开启角色动漫化时的)渲染介质覆盖 + 画风硬约束。
+//
+// 抽成独立函数是因为它**必须对每一镜都生效**,包括没有角色也没有场景的纯空镜 ——
+// 早退分支漏掉它,成片里就会出现"空镜写实、有人物的镜头动画"的花片。
+//
+// 两段的分工不能混:
+//   - 风格段:保留 LLM 写的原文,它是**场景/色调/光线/氛围**的出题依据;
+//   - 介质覆盖:无条件声明"人物与整体画法以本段为准",风格串里的 realism/胶片措辞
+//     只作用于布景与影调。**不做关键词匹配** —— LLM 的措辞追不完
+//     (实测本机真实项目的 "gritty rural Chinese period realism…35mm film grain" 一个词都不命中)。
+func styleAndMediumBlock(plan *project.Plan, facesOn bool) string {
+	var sb strings.Builder
+	style := ""
+	if plan != nil {
+		style = strings.TrimSpace(plan.Style)
+	}
+	if style != "" {
+		sb.WriteString("【全片视觉风格】" + style + "\n")
+	}
+	if !facesOn {
+		return sb.String()
+	}
+	if style != "" {
+		sb.WriteString("【渲染介质·最高优先级】上面的风格描述只当作**场景、色调、光线与氛围**的参考;" +
+			"**人物与整体画法以本段为准** —— 全片按二维/2.5 维动画渲染:手绘线稿、五官简化、赛璐璐平涂、" +
+			"哑光平涂肤色、柔和低对比光。风格串里的 realism / 写实 / 胶片 / 35mm 之类只作用于布景与影调," +
+			"不得把人物画成被拍摄的真人。\n" +
+			"MEDIUM OVERRIDE (highest priority): treat the style line above as a reference for location, palette, " +
+			"lighting and mood ONLY. Characters and the overall rendering are 2D/2.5D animation — hand-drawn line art, " +
+			"simplified graphic features, flat cel-shaded colour, matte flat-shaded skin, soft low-contrast light. " +
+			"Realism, live-action or film-grain wording in that style line applies to sets and grading only and must " +
+			"never turn a character into a photographed human being.\n")
+	} else {
+		// 方案没写风格(极少数):也把介质说清楚,免得只靠画面描述里的写实词
+		sb.WriteString("【渲染介质·最高优先级】全片按二维/2.5 维动画渲染:手绘线稿、五官简化、赛璐璐平涂、哑光平涂肤色、柔和低对比光。\n")
+	}
+	// 画风硬约束放在风格段之后、正文之前:既压住风格段里可能残留的写实词,
+	// 也让 H3 在读画面描述前先接受"哑光动画"的基调。
+	sb.WriteString(animatedFaceRenderBlock() + "\n")
+	return sb.String()
 }
 
 // 台词语言标记:H3 靠 <d>…</d> 里的语言标记决定用哪种语言说话;标记丢了模型就
