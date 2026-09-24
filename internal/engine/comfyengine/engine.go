@@ -549,6 +549,39 @@ func loaders(c config.ComfySettings, accel string) map[string]any {
 	}
 }
 
+// accelLoraFor 本次作业该挂的**加速 LoRA 文件名**(空 = 不挂)。唯一实现点。
+//
+// 为什么必须收口(审计 P2):整镜渲染有"quality 档换 Acc-8Step、量化底模不兼容就
+// 回退 Turbo"这套逻辑,而局部重绘/音频驱动的图**复制了模型链却漏了这段** ——
+// 同一个项目里,主渲染用 Acc-8Step、局部重绘用 Turbo,修补过的那一镜画质基线就与
+// 周围镜头不同(人物偏糊),而两边的代码看起来都对。
+//
+// 档位语义(知识库 2026-09 结论):
+//
+//	quality = Kijai Acc-8Step(并行解码蒸馏,人物质感/清晰度显著优于 Turbo,慢约 20%)
+//	turbo   = 官方 Turbo 4step(最快,人物偏糊)
+//	express = 官方 Turbo + int8 VAE(极速抽卡预览)
+//
+// Acc-8Step 对 int8 量化底模**不兼容**(tensor 32 vs 1024,官方修复未合并主线):
+// 量化底模自动回退 Turbo,配合 fp16 VAE + ref_image_size=max。
+func accelLoraFor(job engine.Job, c config.ComfySettings) string {
+	turbo := c.TurboLoRARef2VA
+	if job.Mode != "ref2va" {
+		turbo = c.TurboLoRAFL2VA
+	}
+	if job.Accel != "quality" {
+		return turbo
+	}
+	acc := "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors"
+	if job.Mode != "ref2va" {
+		acc = "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors"
+	}
+	if !isQuantizedBase(unetFor(job, c)) && modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
+		return acc
+	}
+	return turbo
+}
+
 // isQuantizedBase 判断底模文件名是否属于低位量化权重 —— Acc-8Step LoRA 挂不上这类底模
 // (int8 实测 tensor 32 vs 1024,官方修复未合并主线)。w4a8/nvfp4/mxfp8 与 int8 同属
 // 低位量化,一并排除;`fp8_scaled` 是官方原厂发布的底模格式,保持原有行为不动。
@@ -604,27 +637,12 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	//   quality = Kijai Acc-8Step(并行解码蒸馏,人物质感/清晰度/表情显著优于 Turbo,慢约 20%)
 	//   turbo   = 官方 Turbo 4step(最快,人物偏糊)
 	//   express = 官方 Turbo + int8 VAE(极速抽卡预览)
-	turbo := c.TurboLoRARef2VA
-	if job.Mode != "ref2va" {
-		turbo = c.TurboLoRAFL2VA
-	}
-	if job.Accel == "quality" {
-		// Acc-8Step(并行解码蒸馏)目前对 int8 量化底模不兼容
-		// (tensor 32 vs 1024,官方修复未合并主线——知识库 2026-09 实测结论)。
-		// int8 底模自动回退「官方 Turbo LoRA @ 8 步」:benchmark 实测 8 步质量
-		// 随步数单调上升、显著优于 4 步,配合 fp16 VAE + ref_image_size=max。
-		unet := unetFor(job, c)
-		acc := "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors"
-		if job.Mode != "ref2va" {
-			acc = "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors"
-		}
-		if !isQuantizedBase(unet) && modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
-			turbo = acc
-		}
-	}
+	// 选档收口在 accelLoraFor —— 局部重绘/音频驱动那条链也必须用同一个(LED 见该函数)
+	turbo := accelLoraFor(job, c)
+	unet := unetFor(job, c)
 	modelLink := link("30", 0)
 	g["30"] = nd("UNETLoader", map[string]any{
-		"unet_name":    unetFor(job, c),
+		"unet_name":    unet,
 		"weight_dtype": "default",
 	})
 	if turbo != "" {

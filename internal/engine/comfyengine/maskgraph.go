@@ -141,12 +141,12 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 		"divisible_by":    32,
 	})
 
-	// ④ 模型链:与整镜渲染共用同一套加载/加速档,保证画质基线一致
+	// ④ 模型链:与整镜渲染共用同一套加载/加速档,保证画质基线一致。
+	//    **加速 LoRA 必须走 accelLoraFor**(审计 P2):这段原先自己按"mode 取
+	//    Turbo LoRA",漏了 quality 档的 Acc-8Step 与量化底模的回退守卫 ——
+	//    于是"quality 档项目里修补过的那一镜"会用 Turbo 渲染,画质与周围镜头不同。
 	unet := unetFor(job, c)
-	turbo := c.TurboLoRARef2VA
-	if job.Mode != "ref2va" {
-		turbo = c.TurboLoRAFL2VA
-	}
+	turbo := accelLoraFor(job, c)
 	g["30"] = nd("UNETLoader", map[string]any{"unet_name": unet, "weight_dtype": "default"})
 	modelLink := link("30", 0)
 	if turbo != "" {
