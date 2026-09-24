@@ -1,11 +1,14 @@
 package server
 
 import (
-	"github.com/YiIimini/ManJuX/internal/project"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // TestCleanCondCacheFiles 清理条件缓存数据文件的判据:
@@ -82,7 +85,145 @@ func TestCleanCondCacheFilesNoDir(t *testing.T) {
 	}
 }
 
-// TestCollectLiveCondNamesEmpty 无 sidecar 目录时返回空集合(此时全部 .pt 视为孤儿)。
+// TestCleanupCoversSharedModelLayout 回归 2026-09-24(用户:「一键清理也要清掉
+// \ComfyUI\shared\models\conditioning\」):
+//
+// 清理代码原先只拼 `<root>/ComfyUI/models/conditioning`,而本机模型在
+// `<root>/ComfyUI/shared/models/`(extra_model_paths.yaml 的 base_path)——
+// 真正堆着 838 文件 / 17.4GB 的那份目录从未被清理,按钮却报"清理完成"。
+//
+// 判据:所有**实际存在**的布局都要清到,标准布局与 shared 布局各有一批残留时
+// 一个都不能漏;仍被 sidecar 引用的 .pt 在任何布局下都必须保留。
+func TestCleanupCoversSharedModelLayout(t *testing.T) {
+	s := newTestServer(t)
+	g := s.cfg.Get()
+
+	// 两种布局各放一份(现实里就是这样:换布局后旧目录的残留还在)
+	ptDirs := []string{
+		filepath.Join(g.Comfy.RootDir, "ComfyUI", "models", "conditioning"),
+		filepath.Join(g.Comfy.RootDir, "ComfyUI", "shared", "models", "conditioning"),
+	}
+	// 活缓存要有**对应的项目**才叫"活":③ 会先把没有项目的 sidecar 目录当孤儿清掉
+	// (连同它引用的 .pt)—— 那是正确行为,所以这里必须建一个真项目。
+	proj, err := s.store.Create("条件缓存清理测试", project.ProjectConfig{Params: project.DefaultStageParams()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveName := "s1_live0001"
+	condDir := filepath.Join(s.dataDir(), "cond_cache", "manjux_"+proj.ID)
+	if err := os.MkdirAll(condDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(condDir, liveName+".ok"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i, dir := range ptDirs {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		orphan := filepath.Join(dir, "s9_orphan000"+strconv.Itoa(i)+".pt")
+		if err := os.WriteFile(orphan, []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, liveName+".pt"), []byte("data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if code, _ := doReq(t, s, "POST", "/api/cleanup", map[string]any{}); code != 200 {
+		t.Fatalf("清理应 200,实际 %d", code)
+	}
+
+	for i, dir := range ptDirs {
+		orphan := filepath.Join(dir, "s9_orphan000"+strconv.Itoa(i)+".pt")
+		if _, err := os.Stat(orphan); !os.IsNotExist(err) {
+			t.Errorf("布局 %s 里的孤儿 .pt 应被清理(这正是 17.4GB 滞留的位置)", dir)
+		}
+		if _, err := os.Stat(filepath.Join(dir, liveName+".pt")); err != nil {
+			t.Errorf("布局 %s 里被 sidecar 引用的 .pt 不得删除", dir)
+		}
+	}
+}
+
+// TestComfyModelDirsFindsEveryLayout 目录解析本身要覆盖各布局,包括
+// extra_model_paths.yaml 里显式映射的位置(用户换布局时改的就是它)。
+func TestComfyModelDirsFindsEveryLayout(t *testing.T) {
+	root := t.TempDir()
+	want := []string{
+		filepath.Join(root, "ComfyUI", "models", "conditioning"),
+		filepath.Join(root, "ComfyUI", "shared", "models", "conditioning"),
+		filepath.Join(root, "shared", "models", "conditioning"),
+	}
+	for _, d := range want {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// yaml 里再映射一个自定义位置
+	custom := filepath.Join(root, "elsewhere")
+	if err := os.MkdirAll(custom, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "ComfyUI"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	yaml := "shared_current:\n    base_path: " + filepath.ToSlash(custom) + "\n    conditioning: pt-cache/\n"
+	if err := os.WriteFile(filepath.Join(root, "ComfyUI", "extra_model_paths.yaml"), []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(custom, "pt-cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(custom, "models", "conditioning"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := comfyModelDirs(root, "conditioning")
+	joined := strings.Join(got, "|")
+	for _, w := range want {
+		if !strings.Contains(joined, w) {
+			t.Errorf("应包含布局 %s,实际 %v", w, got)
+		}
+	}
+	if !strings.Contains(joined, filepath.Join(custom, "pt-cache")) {
+		t.Errorf("应解析 extra_model_paths.yaml 的自定义映射,实际 %v", got)
+	}
+	if !strings.Contains(joined, filepath.Join(custom, "models", "conditioning")) {
+		t.Errorf("应包含 yaml 段 base_path 下的默认模型目录,实际 %v", got)
+	}
+	// 不存在的目录不得出现在结果里(否则清理会对着空路径报"已清理")
+	if strings.Contains(joined, filepath.Join(root, "models", "conditioning")) {
+		t.Errorf("不存在的目录不该被返回:%v", got)
+	}
+	// 空 root 不得 panic
+	if dirs := comfyModelDirs("", "conditioning"); dirs != nil {
+		t.Errorf("空 root 应返回 nil,实际 %v", dirs)
+	}
+}
+
+// TestComfyRunDirsBothShapes output/input 可能在本体目录,也可能直接在 root 下。
+func TestComfyRunDirsBothShapes(t *testing.T) {
+	root := t.TempDir()
+	a := filepath.Join(root, "ComfyUI", "input")
+	b := filepath.Join(root, "input")
+	for _, d := range []string{a, b, filepath.Join(root, "ComfyUI", "output")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ins := comfyRunDirs(root, "input")
+	if len(ins) != 2 {
+		t.Fatalf("两种布局的 input 都应被找到,实际 %v", ins)
+	}
+	outs := comfyRunDirs(root, "output")
+	if len(outs) != 1 || outs[0] != filepath.Join(root, "ComfyUI", "output") {
+		t.Errorf("output 应只找到存在的那一份,实际 %v", outs)
+	}
+	if got := comfyRunDirs("", "input"); got != nil {
+		t.Errorf("空 root 应返回 nil,实际 %v", got)
+	}
+}
+
 func TestCollectLiveCondNamesEmpty(t *testing.T) {
 	if live := collectLiveCondNames(filepath.Join(t.TempDir(), "nope")); len(live) != 0 {
 		t.Errorf("无 sidecar 目录应返回空集合,实际 %d 项", len(live))

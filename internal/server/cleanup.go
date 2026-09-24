@@ -29,25 +29,30 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 
 	// ① ComfyUI output/manjux 中的中间产物(不影响项目 output/ 里的成片)
 	g := s.cfg.Get()
-	manjuxOut := filepath.Join(g.Comfy.RootDir, "ComfyUI", "output", "manjux")
-	if st, err := os.Stat(manjuxOut); err == nil && st.IsDir() {
-		var size int64
+	var outCount int
+	var outSize int64
+	for _, outRoot := range comfyRunDirs(g.Comfy.RootDir, "output") {
+		manjuxOut := filepath.Join(outRoot, "manjux")
+		if st, err := os.Stat(manjuxOut); err != nil || !st.IsDir() {
+			continue
+		}
 		count := 0
 		filepath.WalkDir(manjuxOut, func(p string, e os.DirEntry, err error) error {
 			if err != nil || e.IsDir() {
 				return nil
 			}
 			if fi, e2 := e.Info(); e2 == nil {
-				size += fi.Size()
+				outSize += fi.Size()
 			}
 			count++
 			return nil
 		})
-		if count > 0 {
-			if err := os.RemoveAll(manjuxOut); err == nil {
-				add(fmt.Sprintf("ComfyUI 中间产物 %d 个文件", count), size)
-			}
+		if count > 0 && os.RemoveAll(manjuxOut) == nil {
+			outCount += count
 		}
+	}
+	if outCount > 0 {
+		add(fmt.Sprintf("ComfyUI 中间产物 %d 个文件", outCount), outSize)
 	}
 
 	// ② 项目内失败合成现场(compose-*failed)与截帧预览(_frames)
@@ -108,12 +113,31 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 
 	// ⑤ 条件缓存**数据文件**(ComfyUI 侧 models/conditioning/*.pt)。
 	// ③ 只清了 sidecar 记账,而 .pt 数据在 ComfyUI 侧、文件名又只有 s{shot}_{hash}
-	// (项目号只参与 hash、不进文件名)—— 只清一侧会让数据永久滞留。实测该目录曾
-	// 堆到 227 个文件 / 4.9GB,其中 206 个是早期 manjux_ 命名格式留下的孤儿。
+	// (项目号只参与 hash、不进文件名)—— 只清一侧会让数据永久滞留。
 	// 判据:仍被某个现存 sidecar(.ok)引用的保留,其余一律清理。
-	ptDir := filepath.Join(g.Comfy.RootDir, "ComfyUI", "models", "conditioning")
-	if ptCount, ptSize, err := cleanCondCacheFiles(ptDir, collectLiveCondNames(condDir)); err == nil && ptCount > 0 {
-		add(fmt.Sprintf("条件缓存数据文件 %d 个(.pt)", ptCount), ptSize)
+	//
+	// 2026-09-24 修(用户报「一键清理也要清掉 \ComfyUI\shared\models\conditioning\」):
+	// 旧实现只拼 `<root>/ComfyUI/models/conditioning`,而本机模型在
+	// `<root>/ComfyUI/shared/models/`(extra_model_paths.yaml 的 base_path)——
+	// 于是真正堆着 838 文件 / 17.4GB 的那份目录从未被清理,按钮却报"清理完成"。
+	// 现在对所有**实际存在**的布局逐一清理(标准布局与 shared 布局可能各有一批残留)。
+	live := collectLiveCondNames(condDir)
+	var ptCount int
+	var ptSize int64
+	var ptDirs []string
+	for _, ptDir := range comfyModelDirs(g.Comfy.RootDir, "conditioning") {
+		n, sz, err := cleanCondCacheFiles(ptDir, live)
+		if err != nil {
+			continue
+		}
+		if n > 0 {
+			ptCount += n
+			ptSize += sz
+			ptDirs = append(ptDirs, ptDir)
+		}
+	}
+	if ptCount > 0 {
+		add(fmt.Sprintf("条件缓存数据文件 %d 个(.pt;目录 %s)", ptCount, strings.Join(ptDirs, "、")), ptSize)
 	}
 
 	// ④ 系统临时文件(mx-* 前缀,应用自身产生的)
@@ -141,11 +165,15 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	// 每次渲染/定妆都会把参考图上传到 ComfyUI 的 input 目录留一份,实测积到
 	// 252.8 MB / 202 个文件而从不清理。这些副本是可再生的(下一次渲染会重新上传),
 	// 所以安全;只删**超过 24 小时**的图片文件,且不动任何子目录(用户可能有自己的素材目录)。
-	inputDir := filepath.Join(g.Comfy.RootDir, "ComfyUI", "input")
-	if ents, err := os.ReadDir(inputDir); err == nil {
-		var n int
-		var sz int64
-		cut := time.Now().Add(-24 * time.Hour)
+	// 位置一律走 comfyRunDirs:input 可能在本体目录,也可能在 root 下(见 comfy_paths.go)。
+	var inputN int
+	var inputSize int64
+	cut := time.Now().Add(-24 * time.Hour)
+	for _, inDir := range comfyRunDirs(g.Comfy.RootDir, "input") {
+		ents, err := os.ReadDir(inDir)
+		if err != nil {
+			continue
+		}
 		for _, e := range ents {
 			if e.IsDir() {
 				continue // 子目录一律不动(可能是用户自己的素材)
@@ -158,14 +186,14 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 			if ierr != nil || info.ModTime().After(cut) {
 				continue
 			}
-			if os.Remove(filepath.Join(inputDir, e.Name())) == nil {
-				n++
-				sz += info.Size()
+			if os.Remove(filepath.Join(inDir, e.Name())) == nil {
+				inputN++
+				inputSize += info.Size()
 			}
 		}
-		if n > 0 {
-			add(fmt.Sprintf("ComfyUI 参考图上传副本 %d 个(24 小时前的)", n), sz)
-		}
+	}
+	if inputN > 0 {
+		add(fmt.Sprintf("ComfyUI 参考图上传副本 %d 个(24 小时前的)", inputN), inputSize)
 	}
 
 	// ⑦ 资产阶段的转身视频中间产物(<base>_views/ 目录):抽帧后视频本身不再作参考,
