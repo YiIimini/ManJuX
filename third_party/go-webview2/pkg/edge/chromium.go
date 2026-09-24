@@ -572,10 +572,12 @@ func (e *Chromium) NotifyParentWindowPositionChanged() error {
 func (e *Chromium) Focus() {
 	err := e.controller.MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC)
 	if err != nil {
-		// ManJuX 本地补丁(2026-09-09):原生文件对话框开闭期间 MoveFocus 会
-		// 返回瞬时错误(焦点尚在对话框),上游把它当致命错误 os.Exit(1) 整进程
-		// 退出——两次实测崩溃栈完全一致(onFocus→Focus→errorCallback)。
-		// 焦点获取失败可以安全忽略:webview 仍存活,下一次窗口事件会重试。
+		// ManJuX-LOCAL-PATCH(2026-09-09) —— 这行 ASCII 标记是补丁是否在位的判据,
+		// scripts/check.ps1 会查它;**重新同步上游后请一并恢复**。
+		// 原生文件对话框开闭期间 MoveFocus 会返回瞬时错误(焦点尚在对话框),
+		// 上游把它当致命错误 os.Exit(1) 整进程退出 —— 两次实测崩溃栈完全一致
+		// (onFocus→Focus→errorCallback)。焦点获取失败可以安全忽略:
+		// webview 仍存活,下一次窗口事件会重试。
 		log.Printf("[webview2] Focus 瞬时失败(已忽略,常见于原生对话框开闭): %v", err)
 	}
 }

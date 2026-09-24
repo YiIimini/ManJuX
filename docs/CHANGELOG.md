@@ -10,6 +10,48 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## v0.34.4 Wails 升级到 v2.16.0 + 给第三方补丁上闸门(2026-09-24)
+
+**起因**:构建期一直报 `Warning: go.mod is using Wails '2.15.0' but the CLI is 'v2.16.0'`。
+CLI 是 2026-09-23 装工具链时用 `go install ...@latest` 拿到的 v2.16.0,而 `go.mod` 还停在
+v2.15.0。官方口径是两者同步,不同步时 CLI 生成绑定/资源的行为与运行时未必对得上 ——
+属于"平时没事、出事很难查"的那类隐患,不该留着。
+
+**升级**:`go get github.com/wailsapp/wails/v2@v2.16.0` + `go mod tidy`,只动了
+`go.mod`/`go.sum`。`tidy` 未改 `go-webview2 v1.0.22` 那一行 —— 也就是说 `replace` 指向的
+本地 fork 基线版本正好就是 v2.16.0 所要求的,**补丁位点没变**(升级前后都实测确认过)。
+
+**升级后验证(逐项实测,不是"编译过了就算")**:
+
+| 检查 | 结果 |
+|---|---|
+| `scripts/check.ps1` | 六道全绿(gofmt/vet/build/test 8 包/前端构建/第三方补丁在位) |
+| 构建告警 | **已消失**(本次升级的目标) |
+| 前端绑定 | `wails build` 重新生成后 `git status` 无变化 → 2.16 与 2.15 生成的绑定完全一致 |
+| 窗口 | 0.7s 内出窗口,标题「ManJuX · 短视频创作工作台」 |
+| WebView2 | 25 个 `msedgewebview2` 子进程 + 日志 `[WebView2] Environment created successfully` |
+| 界面渲染 | `PrintWindow(PW_RENDERFULLCONTENT)` 截图确认首屏正常(导航/首页/空态/底栏指示灯/版本号) |
+
+**顺带整改了一个真隐患:`third_party/go-webview2` 这个 fork 在项目里毫无记载。**
+它是 `go.mod` 里 `replace` 指向的本地补丁 fork,相对上游 v1.0.22 只改一处 —— `Focus()`
+里把上游视为致命错误(`os.Exit(1)` 整进程退出)的原生对话框瞬时焦点错误降级为日志。
+此前它只有一个代码注释 + `架构.md` 里一句**把两种成因混为一谈**的描述:
+
+- 删掉 `replace`、或按 fork 自带 README 的 `task update` 重新同步上游,补丁就会静默消失,
+  症状是"应用莫名其妙整进程退出",既不报错也不留栈 —— 极难查。
+- 且 `架构.md` 的「WebView2 稳定性」把 `os.Exit(1)` 归因给 GPU 那条,**会误导排查方向**。
+
+整改为三件事:
+1. **文档**:新增 `third_party/README.md`(补丁内容、为什么、升级后必做项、自检命令);
+   `go.mod` 的 `replace` 上方加注释;`COMPATIBILITY.md` 新增「ManJuX 自身构建栈」表、
+   第五/七节补约束、第八节加升级记录;`架构.md` 把两个成因拆成两条独立修法。
+2. **判据用纯 ASCII**:补丁里加了一行 `ManJuX-LOCAL-PATCH` 标记作为在位判据 ——
+   刻意用 ASCII,因为 `Get-Content` 不带 `-Encoding` 会把这文件的 UTF-8 注释读成 GBK 乱码
+   (实测踩到),拿中文当判据必然误报"补丁丢了"。
+3. **把护栏做成代码**:`scripts/check.ps1` 新增第 6 道闸门查这个标记。判据**双向验证过**
+   —— 对真正的上游 v1.0.22 文件跑判定为"拦下",对本地 fork 为"放行";一个永远不会失败的
+   检查等于没有检查。
+
 ## v0.34.3 exe 文件属性修复(2026-09-24)
 
 **现象**:打包出来的 `ManJuX.exe` 右键「属性 → 详细信息」整片空白 —— 产品名、版本、公司、

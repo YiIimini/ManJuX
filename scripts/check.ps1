@@ -1,7 +1,7 @@
 ﻿# ManJuX 提交前自检 —— 一条命令跑完全部检查。
 #
-# 为什么需要它:go build / go vet / gofmt / go test / 前端构建 是五道各自独立的
-# 闸门,平时靠人记得逐个跑;漏跑任何一道,问题都会等到界面上才暴露
+# 为什么需要它:go build / go vet / gofmt / go test / 前端构建 / 第三方补丁在位
+# 是六道各自独立的闸门,平时靠人记得逐个跑;漏跑任何一道,问题都会等到界面上才暴露
 # （典型:改了 frontend/src 但忘了 pnpm run build,webdist 是 go:embed 进去的,
 #  不重建就等于界面改动没生效）。
 #
@@ -116,6 +116,26 @@ if (-not $SkipFrontend) {
   }
 } else {
   Step "前端构建（按参数跳过）"
+}
+
+# ---------- 6. 第三方本地补丁在位 ----------
+# third_party/go-webview2 是**打了补丁的 fork**(go.mod 里有 replace 指向它)。它自己的
+# README 写着一条 `task update` 会重新同步上游、**覆盖掉补丁** —— 而补丁丢了的症状是
+# "应用莫名其妙整进程退出"(上游把原生文件对话框开闭期的瞬时焦点错误当致命错误
+# os.Exit(1)),既不报错也不留栈,极难查。这种事不该靠人记得跑自检,放进闸门里。
+Step "第三方补丁在位"
+$patchFile = Join-Path $root "third_party\go-webview2\pkg\edge\chromium.go"
+if (-not (Test-Path $patchFile)) {
+  Bad "找不到 third_party\go-webview2\pkg\edge\chromium.go:go.mod 的 replace 指向了一个空目录"
+} else {
+  # 读字节再转 ASCII:纯 ASCII 判据不受编码影响。直接用 Get-Content 会在这台中文
+  # Windows 上把该文件的 UTF-8 注释读成 GBK 乱码,拿中文当判据必然误报。
+  $ascii = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($patchFile))
+  if ($ascii -notmatch 'ManJuX-LOCAL-PATCH') {
+    Bad "go-webview2 的 Focus() 补丁已丢失 —— 原生文件对话框开闭时会让整个应用静默退出。修法见 third_party/README.md"
+  } else {
+    Ok "go-webview2 本地补丁在位"
+  }
 }
 
 # ---------- 汇总 ----------

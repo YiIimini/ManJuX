@@ -2,7 +2,9 @@
 
 > 首次建档:2026-09-11(实测采集)。**版本会漂移,渲染出问题时先从这里比对。**
 >
-> 最近更新:2026-09-12(第一节版本行复核为 v0.35.1;第八节状态改为「升级已完成并保持」;
+> 最近更新:2026-09-24(第四节补 LTX 视频 VAE;第一节新增「ManJuX 自身构建栈」表并记入
+> Wails `v2.16.0`;第五、七节补上第三方 fork 的约束;第八节新增 Wails 升级记录)。
+> 此前更新:2026-09-12(第一节版本行复核为 v0.35.1;第八节状态改为「升级已完成并保持」;
 > 第九节的两个放大模型已落地)。此前第七节的维护约定同样适用:**改了一处就回头改第一节**,
 > 别让两处版本号打架 —— 本文件这次过时正是因为第一节与第八节各说一套。
 >
@@ -23,6 +25,20 @@
 | PyTorch | **2.11.0+cu130**(CUDA 13.0) |
 | OS | Windows 10/11 |
 | 形态 | 自包含:`comfyui/` 内含 ComfyUI 本体 + Python 环境 + 模型 |
+
+### ManJuX 自身构建栈(2026-09-24 记入)
+
+渲染出问题看上面那张表,**编译打包出问题看这张**:
+
+| 组件 | 版本 | 说明 |
+|---|---|---|
+| Go | **1.27.1**(便携装,`D:\Ai\Tools\go`) | `go.mod` 声明 `go 1.25.0` |
+| Wails CLI | **v2.16.0**(`D:\Ai\Tools\gopath\bin\wails.exe`) | 必须与下面这行同版本,否则每次构建告警 |
+| Wails 运行时 | **v2.16.0**(`go.mod` 的 `github.com/wailsapp/wails/v2`) | 2026-09-24 由 v2.15.0 升上来 |
+| go-webview2 | 上游 `v1.0.22` + **本地补丁**(见 `third_party/README.md`) | `go.mod` 有 `replace` 指向本地 fork |
+| 前端 | Vue 3 + Vite 6 + Element Plus + Tailwind | 无需独立 node,用 DSH 自带 pnpm |
+| 打包 | `scripts/build.ps1`(产出 exe)/ `scripts/release.ps1`(构建+提交+tag+推送) | 自适配便携工具链,可用 `MANJUX_GOROOT`/`MANJUX_GOPATH`/`MANJUX_PNPM` 覆盖 |
+| 自检 | `scripts/check.ps1`(gofmt/vet/build/test/前端构建/第三方补丁在位 六道) | 提交前跑一遍 |
 
 ## 二、自定义节点包(实测 commit)
 
@@ -97,6 +113,17 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 
 **做任何真机验证都用第二条**(或直接用 `wails build`)。验证方式:启动后枚举窗口标题,
 应当只看到「ManJuX · 短视频创作工作台」这一个主窗口,不该出现 Wails 提示框。
+(更省事的自动化验收:`scripts/check.ps1` 只是编译期闸门,**不含 GUI 验收**;
+要验 GUI 就启动 exe 后看 `data/logs/manjux.log` 是否出现
+`[WebView2] Environment created successfully` 与 `[manjux] 桌面窗口就绪`。)
+
+### 依赖里有本地补丁(勿删勿覆盖)
+
+`go.mod` 末尾有一行 `replace github.com/wailsapp/go-webview2 => ./third_party/go-webview2`
+—— 那是**打了补丁的 fork,不是可以随手清掉的残留**。上游把原生文件对话框开闭期的瞬时
+焦点错误当致命错误(`os.Exit(1)` 整进程退出),本地补丁把它降级为日志。
+删掉 `replace`、或按 fork 自己的 README 重新同步上游,都会让"应用莫名整进程退出"复发。
+补丁内容、自检命令、升级后的必做项见 **`third_party/README.md`**。
 
 ## 六、渲染前体检(代码侧护栏)
 
@@ -111,10 +138,37 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 ## 七、维护约定
 
 - 升级任一插件后,请更新上表 commit(`git -C <目录> rev-parse --short HEAD`)。
+- **升级 Wails 后**三件事一起做:①确认 `go.mod` 与 CLI 同版本(否则每次构建告警);
+  ②按 `third_party/README.md` 的自检命令确认 go-webview2 补丁仍在;③在本文件第八节记一条升级记录。
 - `data/rollback_points.txt` 已废弃,保留仅为历史参照。
 - 发现新的冲突时,请按第三节的格式补充**机制说明**(为什么冲突、影响哪些模式、怎么绕过),而不只写症状。
 
 ## 八、升级记录
+
+### 2026-09-24:Wails v2.15.0 → v2.16.0(**升级已完成并保持**)
+
+**动机**:消除构建期一直存在的版本错位告警 ——
+`Warning: go.mod is using Wails '2.15.0' but the CLI is 'v2.16.0'`。CLI 是 2026-09-23 装工具链时
+用 `go install ...@latest` 拿到的 v2.16.0,而 `go.mod` 还停在 v2.15.0。官方口径是两者同步,
+不同步时 CLI 生成绑定/资源的行为与运行时未必对得上,属于"平时没事、出事很难查"的那类隐患。
+
+**执行**:`go get github.com/wailsapp/wails/v2@v2.16.0` + `go mod tidy`。
+只动了 `go.mod`/`go.sum` 两个文件 —— `go mod tidy` 未改 `github.com/wailsapp/go-webview2 v1.0.22`
+那一行,也就是说 `replace` 指向的本地 fork 基线版本正好就是 v2.16.0 所要求的,**补丁位点没变**。
+
+**升级后验证(逐项实测)**:
+
+| 检查 | 结果 |
+|---|---|
+| `go vet` / `go build` / `go test` | 全过(gofmt 与前端构建亦过,`scripts/check.ps1` 六道全绿) |
+| 构建告警 | **已消失**(这正是本次升级的目标) |
+| 前端绑定 | `wails build` 重新生成后 `git status` 无变化 → 2.16 生成的绑定与 2.15 完全一致,前端无需跟着改 |
+| 窗口 | 0.7s 内出窗口,标题「ManJuX · 短视频创作工作台」 |
+| WebView2 | 25 个 `msedgewebview2` 子进程 + 日志 `[WebView2] Environment created successfully` → 新 Go WebView2Loader 工作正常 |
+| 界面渲染 | `PrintWindow(PW_RENDERFULLCONTENT)` 截图确认首屏正常:左侧导航、首页 hero、空态、底栏 COMFY/LLM/H3.API/FFMPEG 指示灯与版本号全部正确 |
+| go-webview2 补丁 | 仍在(自检命令见 `third_party/README.md`) |
+
+**回滚方式**:`go get github.com/wailsapp/wails/v2@v2.15.0` + `go mod tidy`,然后重跑 `scripts/check.ps1`。
 
 ### 2026-09-11:ComfyUI v0.34.6 → v0.35.1(**升级已完成并保持**)
 

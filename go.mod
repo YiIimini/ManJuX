@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/energye/systray v1.0.3
 	github.com/shirou/gopsutil/v4 v4.26.7
-	github.com/wailsapp/wails/v2 v2.15.0
+	github.com/wailsapp/wails/v2 v2.16.0
 	golang.org/x/sys v0.46.0
 	golang.org/x/text v0.39.0
 )
@@ -45,4 +45,10 @@ require (
 	golang.org/x/net v0.56.0 // indirect
 )
 
+// 本地维护的 go-webview2 fork(相对上游 v1.0.22 只改了一处:pkg/edge/chromium.go
+// 的 Focus())。上游把原生文件对话框开闭期的瞬时 MoveFocus 失败当致命错误走
+// os.Exit(1) 整进程退出;2026-09-09 两次实测崩溃栈都落在 onFocus→Focus→errorCallback,
+// 故改为记录日志并忽略。**升级 wails 后务必确认该补丁仍在**(go mod tidy 不会动它,
+// 但按 third_party/go-webview2/README.md 里的 `task update` 重新同步上游会覆盖掉)。
+// 细节与自检方法见 third_party/README.md。
 replace github.com/wailsapp/go-webview2 => ./third_party/go-webview2

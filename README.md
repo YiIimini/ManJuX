@@ -90,7 +90,7 @@ D:\Ai\ManJuX\
 ## 构建与发布
 
 ```powershell
-# 提交前自检:五道闸门一次跑完(gofmt / go vet / go build / go test / 前端构建)
+# 提交前自检:六道闸门一次跑完(gofmt / go vet / go build / go test / 前端构建 / 第三方补丁在位)
 # 改完代码先跑这条 —— 尤其改了 frontend/src 时,不重建 webdist 就等于界面改动没生效
 powershell -ExecutionPolicy Bypass -File scripts\check.ps1
 
