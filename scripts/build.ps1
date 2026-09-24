@@ -20,9 +20,12 @@ if (-not $ver) { $ver = "dev" }
 if ($ver -notmatch '^v') { $ver = "v$ver" }
 Write-Host "==> ManJuX 构建版本: $ver" -ForegroundColor Cyan
 
-# 版本号单一真源 = git tag。构建前把同一版本同步进 wails.json 与
-# frontend/package.json,否则 exe 文件属性与安装包名会永远停在旧值
-# (此前三处长期不一致:源码默认 1.0.0、wails.json 1.0.0、实际 tag 已是 v0.33.20)。
+# 版本号单一真源 = git tag。构建前把同一版本同步进 wails.json、
+# frontend/package.json 与 internal/version/version.go —— 三处同源
+# (version.go 的注释即如此约定)。否则 exe 文件属性与安装包名会永远停在旧值。
+# 此前只同步前两处,version.go 靠 -ldflags 注入时才正确,go run / 未注入场景
+# 会读到漂移的旧值(实测漂到 v0.33.20 而 tag 已 v0.34.1)——根因是"三处同源"
+# 只落地了两处,这里补齐第三处,不再依赖人工记得改。
 # 用 UTF8Encoding($false) 写入,规避 Windows PowerShell 5.1 的 BOM 问题
 # (package.json 带 BOM 会让 pnpm 解析失败)。
 $verNum = $ver.TrimStart('v')
@@ -33,6 +36,16 @@ foreach ($vf in @("$root/wails.json", "$root/frontend/package.json")) {
   if ($new -ne $raw) {
     [IO.File]::WriteAllText($vf, $new, (New-Object Text.UTF8Encoding($false)))
     Write-Host "    -> 版本已同步: $vf = $verNum" -ForegroundColor DarkGray
+  }
+}
+# version.go 用带 v 前缀的写法(与 tag 一致),故单独一条规则
+$vgFile = "$root/internal/version/version.go"
+if (Test-Path $vgFile) {
+  $raw = [IO.File]::ReadAllText($vgFile, [Text.Encoding]::UTF8)
+  $new = $raw -replace '(?m)^(var Version = ")[^"]*(")', ('${1}' + $ver + '${2}')
+  if ($new -ne $raw) {
+    [IO.File]::WriteAllText($vgFile, $new, (New-Object Text.UTF8Encoding($false)))
+    Write-Host "    -> 版本已同步: $vgFile = $ver" -ForegroundColor DarkGray
   }
 }
 
