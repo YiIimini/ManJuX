@@ -36,7 +36,8 @@ export const THEMES = [
       '--mx-cyan': '#5d6dff', '--mx-green': '#3ddc84', '--mx-red': '#ff5f5f',
       '--mx-yellow': '#ffd166', '--mx-purple': '#9aa5b5',
       '--mx-text': '#f5f6fa', '--mx-text2': '#a2a9b8', '--mx-text3': '#5c6270',
-      '--mx-glow1': 'rgba(160, 170, 190, .06)', '--mx-glow2': 'rgba(93, 109, 255, .05)',
+      '--mx-glow1': 'rgba(160, 170, 190, 0.46)', '--mx-glow2': 'rgba(93, 109, 255, 0.34)',
+      '--mx-glow3': 'rgba(154, 165, 181, 0.26)',
       // 补上:此前缺这一项,主题卡选中框的辉光永远用 :root 的琥珀橙 —— 与黑白主题冲突
       '--mx-glow-amber': '0 0 24px rgba(200, 208, 224, .18)',
     },
@@ -64,8 +65,9 @@ export const THEMES = [
       '--mx-text': '#F5F4F2',
       '--mx-text2': '#A0ACBA',
       '--mx-text3': '#5E728D',
-      '--mx-glow1': 'rgba(246, 194, 90, 0.07)',
-      '--mx-glow2': 'rgba(94, 201, 200, 0.06)',
+      '--mx-glow1': 'rgba(246, 194, 90, 0.46)',
+      '--mx-glow2': 'rgba(94, 201, 200, 0.34)',
+      '--mx-glow3': 'rgba(239, 149, 187, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(246, 194, 90, 0.18)',
     },
     onAccent: '#090D13',
@@ -92,8 +94,9 @@ export const THEMES = [
       '--mx-text': '#F5F2F3',
       '--mx-text2': '#A0ABBA',
       '--mx-text3': '#5E718D',
-      '--mx-glow1': 'rgba(246, 90, 162, 0.07)',
-      '--mx-glow2': 'rgba(69, 186, 227, 0.06)',
+      '--mx-glow1': 'rgba(246, 90, 162, 0.46)',
+      '--mx-glow2': 'rgba(69, 186, 227, 0.34)',
+      '--mx-glow3': 'rgba(149, 212, 239, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(246, 90, 162, 0.18)',
     },
     onAccent: '#090D13',
@@ -120,8 +123,9 @@ export const THEMES = [
       '--mx-text': '#F2F3F5',
       '--mx-text2': '#A2A0BA',
       '--mx-text3': '#615E8D',
-      '--mx-glow1': 'rgba(90, 139, 246, 0.07)',
-      '--mx-glow2': 'rgba(244, 113, 173, 0.06)',
+      '--mx-glow1': 'rgba(90, 139, 246, 0.46)',
+      '--mx-glow2': 'rgba(244, 113, 173, 0.34)',
+      '--mx-glow3': 'rgba(206, 110, 188, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(90, 139, 246, 0.18)',
     },
     onAccent: '#0A0913',
@@ -148,8 +152,9 @@ export const THEMES = [
       '--mx-text': '#F2F5F5',
       '--mx-text2': '#A0BAB1',
       '--mx-text3': '#5E8D7C',
-      '--mx-glow1': 'rgba(47, 218, 209, 0.07)',
-      '--mx-glow2': 'rgba(244, 113, 146, 0.06)',
+      '--mx-glow1': 'rgba(47, 218, 209, 0.46)',
+      '--mx-glow2': 'rgba(244, 113, 146, 0.34)',
+      '--mx-glow3': 'rgba(238, 184, 98, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(47, 218, 209, 0.18)',
     },
     onAccent: '#09130F',
@@ -176,8 +181,9 @@ export const THEMES = [
       '--mx-text': '#F5F3F2',
       '--mx-text2': '#A0AEBA',
       '--mx-text3': '#5E768D',
-      '--mx-glow1': 'rgba(246, 109, 90, 0.07)',
-      '--mx-glow2': 'rgba(114, 234, 243, 0.06)',
+      '--mx-glow1': 'rgba(246, 109, 90, 0.46)',
+      '--mx-glow2': 'rgba(114, 234, 243, 0.34)',
+      '--mx-glow3': 'rgba(230, 86, 149, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(246, 109, 90, 0.18)',
     },
     onAccent: '#090E13',
@@ -204,8 +210,9 @@ export const THEMES = [
       '--mx-text': '#F2F4F5',
       '--mx-text2': '#BAA0AD',
       '--mx-text3': '#8D5E74',
-      '--mx-glow1': 'rgba(90, 187, 246, 0.07)',
-      '--mx-glow2': 'rgba(244, 179, 113, 0.06)',
+      '--mx-glow1': 'rgba(90, 187, 246, 0.46)',
+      '--mx-glow2': 'rgba(244, 179, 113, 0.34)',
+      '--mx-glow3': 'rgba(230, 103, 86, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(90, 187, 246, 0.18)',
     },
     onAccent: '#13090E',
@@ -232,8 +239,9 @@ export const THEMES = [
       '--mx-text': '#F4F2F5',
       '--mx-text2': '#B3A0BA',
       '--mx-text3': '#805E8D',
-      '--mx-glow1': 'rgba(165, 110, 207, 0.07)',
-      '--mx-glow2': 'rgba(244, 113, 115, 0.06)',
+      '--mx-glow1': 'rgba(165, 110, 207, 0.46)',
+      '--mx-glow2': 'rgba(244, 113, 115, 0.34)',
+      '--mx-glow3': 'rgba(123, 125, 219, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(165, 110, 207, 0.18)',
     },
     onAccent: '#100913',
@@ -260,8 +268,9 @@ export const THEMES = [
       '--mx-text': '#F5F3F2',
       '--mx-text2': '#A0AFBA',
       '--mx-text3': '#5E798D',
-      '--mx-glow1': 'rgba(246, 155, 90, 0.07)',
-      '--mx-glow2': 'rgba(94, 153, 201, 0.06)',
+      '--mx-glow1': 'rgba(246, 155, 90, 0.46)',
+      '--mx-glow2': 'rgba(94, 153, 201, 0.34)',
+      '--mx-glow3': 'rgba(114, 202, 187, 0.26)',
       '--mx-glow-amber': '0 0 24px rgba(246, 155, 90, 0.18)',
     },
     onAccent: '#0A0F12',
@@ -290,7 +299,7 @@ export function savePrefs(p) {
 }
 
 // applyTheme 应用主题与玻璃设置并落盘。
-// themeId: 主题 id;glass: 玻璃开关;glassAlpha: 面板不透明度 0.30-1(滑块)。
+// themeId: 主题 id;glass: 玻璃开关;glassAlpha: 面板不透明度 0.22-0.9(滑块)。
 export function applyTheme({ themeId, glass, glassAlpha } = {}) {
   const prefs = { ...loadPrefs() }
   if (themeId !== undefined) prefs.theme = themeId
@@ -305,15 +314,26 @@ export function applyTheme({ themeId, glass, glassAlpha } = {}) {
   for (const [k, v] of Object.entries(t.vars)) root.style.setProperty(k, v)
   // 强调色上的文字反转色(主按钮/激活 chip 等,随主题适配)
   root.style.setProperty('--mx-on-accent', t.onAccent)
+  // --mx-accent:Element Plus 那一整套派生色(theme.css)都挂在这个名字上,
+  // 主题里只维护 --mx-amber,这里转发一次,免得两个名字各写一份还可能不一致
+  root.style.setProperty('--mx-accent', t.vars['--mx-amber'])
   root.setAttribute('data-theme', t.id)
 
   const on = !!prefs.glass
-  const a = Math.min(1, Math.max(0.3, Number(prefs.glassAlpha) || 0.72))
+  // 玻璃开关也反映到 DOM 上:边缘高光/投影这类"玻璃配件"只在开启时叠加
+  // (只靠 CSS 变量做不到——面板底色是变量,材质不是)
+  root.setAttribute('data-glass', on ? 'on' : 'off')
+  const a = Math.min(0.88, Math.max(0.18, Number(prefs.glassAlpha) || 0.45))
+  // 白纱(顶亮底暗):玻璃的"材质本体"直接焊进面板变量里,而不是靠一堆
+  // `[data-glass=on] .xxx` 选择器逐个点名 —— 变量在哪儿用,玻璃就在哪儿生效,
+  // 新增面板/卡片不必回头改 CSS(旧写法漏了书卡/日志条这些,质感就不统一)。
+  const veil = 'linear-gradient(180deg, rgba(255,255,255,.13), rgba(255,255,255,.045) 52%, rgba(255,255,255,.02))'
   if (on) {
-    root.style.setProperty('--mx-panel-bg', `rgba(${t.panelRGB}, ${a})`)
-    root.style.setProperty('--mx-panel-bg2', `rgba(${t.panelRGB}, ${Math.min(1, a + 0.12)})`)
-    root.style.setProperty('--mx-bd-filter', 'blur(18px) saturate(1.5)')
-    root.style.setProperty('--mx-bd-border', 'rgba(255, 255, 255, .08)')
+    root.style.setProperty('--mx-panel-bg', `${veil}, rgba(${t.panelRGB}, ${a})`)
+    root.style.setProperty('--mx-panel-bg2', `${veil}, rgba(${t.panelRGB}, ${Math.min(1, a + 0.14)})`)
+    // 模糊要够重才"像玻璃";brightness 把背后的氛围色提亮一点,玻璃才"透"
+    root.style.setProperty('--mx-bd-filter', 'blur(20px) saturate(1.5) brightness(1.15)')
+    root.style.setProperty('--mx-bd-border', 'rgba(255, 255, 255, .13)')
   } else {
     root.style.setProperty('--mx-panel-bg', `rgb(${t.panelRGB})`)
     root.style.setProperty('--mx-panel-bg2', `rgb(${t.panelRGB})`)

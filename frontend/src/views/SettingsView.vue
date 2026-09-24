@@ -62,7 +62,7 @@ async function loadSettings(force = false) {
 watch(() => G.tick.settings, () => loadSettings())
 
 // 个性化:主题与玻璃拟态(纯前端偏好,即时生效即时保存)
-const appear = reactive({ theme: DEFAULT_THEME_ID, glass: false, glassAlpha: 0.72 })
+const appear = reactive({ theme: DEFAULT_THEME_ID, glass: false, glassAlpha: 0.45 })
 const curTheme = computed(() => themeById(appear.theme))
 function pickTheme(id) {
   appear.theme = id
@@ -81,7 +81,7 @@ onMounted(async () => {
   // 解析不到的 id 一律回落到默认,否则卡片列表里一个都点不亮
   appear.theme = themeById(p.theme).id
   appear.glass = !!p.glass
-  appear.glassAlpha = p.glassAlpha || 0.72
+  appear.glassAlpha = p.glassAlpha || 0.45
   await loadSettings(true) // 首次进入强制拉一次(此前有 2 个 onMounted 各拉一次,重复请求)
 })
 
@@ -150,7 +150,7 @@ async function testConn(target) {
             </el-form-item>
             <el-form-item label="玻璃不透明度(越低越通透,拖动实时预览)">
               <div class="flex items-center gap-4 w-full">
-                <el-slider v-model="appear.glassAlpha" :min="0.3" :max="0.98" :step="0.02"
+                <el-slider v-model="appear.glassAlpha" :min="0.18" :max="0.88" :step="0.02"
                   :disabled="!appear.glass" :format-tooltip="v => (v * 100).toFixed(0) + '%'"
                   style="flex:1" @input="onAlpha" />
                 <span class="font-mono text-xs" style="color:var(--mx-text2); width:40px">{{ (appear.glassAlpha * 100).toFixed(0) }}%</span>
