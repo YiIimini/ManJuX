@@ -186,22 +186,16 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if isChibi {
 		ek = KindChibi
 	}
-	// 同剧对比+风格具象化注入:重生成与产线生成同规则;已含的块不重复追加
-	// (只对角色做 —— 场景不该被塞角色身份/画风块;此前这里判的是资产类别,别混淆)
-	if kind == "characters" && !isChibi {
-		if !strings.Contains(prompt, "RENDER STYLE") {
-			prompt = normalizeUniformWording(prompt) // 名词短语层面的去警用化
-			// 取景按类型重写:器物若沿用 LLM 写的"半身正面",重新生成又会长成一个人
-			prof := EntityProfileOf(ek)
-			if prof.RewriteSheetFraming {
-				prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
-			}
-			prompt += styleExpand(plan.Style, proj.Config.Params.Script.FacesOn(), ek)
-			prompt += uniformCivilianClarify(desc)
-		}
-		if !strings.Contains(prompt, "CAST DISTINCTNESS") {
-			prompt += castContrastBlock(plan, name, ek)
-		}
+	// 同剧对比+风格具象化注入:走**唯一装配点**(PortraitPrompt),与产线生成、
+	// 渲染前补齐、资产库三条路完全同一套约束。此前这里自己写了一段,幂等判据还是
+	// 另外两个字符串("RENDER STYLE"/"CAST DISTINCTNESS")—— 于是"重新生成的那张
+	// 定妆照"与产线那张可能不是同一套约束,而它们是同一个角色的脸(审计 P1-2)。
+	if kind == "characters" {
+		// Q 版资产强制按 Q 版那一套渲染;其余按实体类型(器物不能套人像取景)
+		prompt = PortraitPrompt(PortraitSubject{
+			Kind: ek, Name: name, Description: desc, ImagePrompt: prompt,
+			FacesOn: proj.Config.Params.Script.FacesOn(),
+		}, plan)
 	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {

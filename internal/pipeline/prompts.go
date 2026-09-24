@@ -195,16 +195,11 @@ func EnsureChineseDialogue(prompt string) string {
 // (定妆照写实、视频动画 = 又回到"两张脸")。要真人脸的角色走**上传**那条路
 // (上传路径不做任何改写);要全片真人剧则关项目开关并把定妆照换成上传图。
 func LibraryPortraitPrompt(name, description, prompt string) string {
-	kind := InferEntityKind(name, description, prompt)
-	prof := EntityProfileOf(kind)
-	out := prompt
-	if prof.RewriteSheetFraming {
-		out = rewriteSheetFraming(out, prof.SheetFraming)
-	}
-	if strings.Contains(out, prof.SheetMarker) {
-		return out // 已经是该类型的装配结果:不重复叠加
-	}
-	return out + prof.SheetIdentity + prof.SheetLook
+	// FacesOn 恒为 true(库是跨项目全局资产,全应用默认动漫化);没有项目上下文,
+	// 因此不注入同剧对比块 —— 那是"同一部剧内不撞脸"的约束,库侧无从判断。
+	return PortraitPrompt(PortraitSubject{
+		Name: name, Description: description, ImagePrompt: prompt, FacesOn: true,
+	}, nil)
 }
 
 // ShotRenderPrompt **渲染期**提示词的唯一装配点:身份锚定(以定妆照为准)+ 角色画风
@@ -223,31 +218,70 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 	return EnsureChineseDialogue(anchorPrompt(plan, shot, facesOn))
 }
 
-// characterImagePrompt 角色定妆照提示词的**唯一装配点**(资产阶段、渲染前补齐、
-// 单资产重生成三处共用),并按**实体类型**分发取景与忠实度条款。
+// PortraitSubject 一张定妆照的装配输入(唯一装配点 PortraitPrompt 的参数)。
+type PortraitSubject struct {
+	Kind        EntityKind // 空 = 按 name/description/imagePrompt 推断
+	Name        string
+	Description string
+	ImagePrompt string
+	// FacesOn 是否按动画介质渲染(项目的 script.stylized_faces)。
+	// 资产库那条路恒为 true:库是跨项目的全局资产,而全应用默认就是动漫化角色
+	// —— 库里生成真人脸,复用到任一项目都会与渲染侧打架(见 LibraryPortraitPrompt)。
+	FacesOn bool
+}
+
+// PortraitPrompt **定妆照提示词的唯一装配点**(审计 P1-2)。
 //
-// 为什么必须收口:这四段(normalizeUniformWording / styleExpand / castContrastBlock /
-// uniformCivilianClarify)此前在 3 处逐字重复,改一处漏一处就会让"重新生成的那张定妆照"
-// 与产线那张不是同一套约束 —— 而两者是同一个角色的脸,不一致就是换脸。
+// 为什么必须收口:这一段(normalizeUniformWording / 取景重写 / styleExpand /
+// castContrastBlock / uniformCivilianClarify)此前在**四处**各写一遍,而且**幂等判据
+// 各不相同**("RENDER STYLE" / "CAST DISTINCTNESS" / 类型标记串)——
+// 于是"重新生成的那张定妆照"与产线那张不是同一套约束,而两者是同一个角色的脸,
+// 不一致就是换脸;Q 版那条更糟:它把 Q 版取景**追加**在 LLM 的人像取景之后,
+// 同一段提示词里同时要求"大头身"和"upper-body framing, front-facing"。
 //
-// 为什么必须按类型分发(2026-09-24 用户报「阿凿是一只铜雀却渲染成人物」):
-// LLM 给每张 image_prompt 的尾巴统一写着 `plain background, upper-body framing,
-// front-facing`(人像取景)。器物照这条渲染,只会得到"半身、正面"的一个人形 ——
-// 实测该项目的铜雀定妆照就是一个女孩的半身肖像。所以非人类型要**重写取景尾巴**,
-// 并换成该类自己的忠实度与画风条款(见 entity_prompts.go)。
-func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.Character) string {
+// 幂等只用**一个**判据:该实体类型的 SheetMarker。带过就直接返回 ——
+// 重复调用、跨路径复用都不会叠加。
+func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
+	kind := NormalizeEntityKind(string(s.Kind))
+	if kind == "" {
+		kind = InferEntityKind(s.Name, s.Description, s.ImagePrompt)
+	}
+	prof := EntityProfileOf(kind)
+	prompt := normalizeUniformWording(s.ImagePrompt)
+	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
+		return prompt // 已经是本类型的装配结果:不重复叠加
+	}
+	if prof.RewriteSheetFraming {
+		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
+	}
+	style := ""
+	if plan != nil {
+		style = plan.Style
+	}
+	prompt += styleExpand(style, s.FacesOn, kind)
+	prompt += castContrastBlock(plan, s.Name, kind)
+	prompt += uniformCivilianClarify(s.Description)
+	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
+	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
+	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
+	return prompt
+}
+
+// PortraitPromptForProject 项目内角色卡的便捷包装(取项目开关与方案风格)。
+func PortraitPromptForProject(proj *project.Project, plan *project.Plan, ch project.Character) string {
 	facesOn := true
 	if proj != nil {
 		facesOn = proj.Config.Params.Script.FacesOn()
 	}
-	kind := ResolveEntityKind(ch)
-	p := EntityProfileOf(kind)
-	prompt := normalizeUniformWording(ch.ImagePrompt)
-	if p.RewriteSheetFraming {
-		prompt = rewriteSheetFraming(prompt, p.SheetFraming)
-	}
-	return prompt + styleExpand(plan.Style, facesOn, kind) +
-		castContrastBlock(plan, ch.Name, kind) + uniformCivilianClarify(ch.Description)
+	return PortraitPrompt(PortraitSubject{
+		Kind: ResolveEntityKind(ch), Name: ch.Name,
+		Description: ch.Description, ImagePrompt: ch.ImagePrompt, FacesOn: facesOn,
+	}, plan)
+}
+
+// characterImagePrompt 旧名保留为**一行委托**:调用方与测试很多,但实现只能有一个。
+func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.Character) string {
+	return PortraitPromptForProject(proj, plan, ch)
 }
 
 // sheetFramingWords LLM 写在 image_prompt 尾部的人像取景短语。

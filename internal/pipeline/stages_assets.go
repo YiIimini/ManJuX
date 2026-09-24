@@ -188,11 +188,14 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
 			// Q 版走**Q 版那一套渲染方法**(取景/忠实度/画风都不同:大头小身、保留身份
 			// 记号、不得拉回真人头身比)。此前这里手写了一句 chibi 前缀再套人类条款 ——
-			// 非人角色(器物/灵宠/妖兽/灵体)的 Q 版因此仍然长着人脸。
-			chibiPrompt := EntityProfileOf(KindChibi).SheetFraming + ", " +
-				normalizeUniformWording(ch.ImagePrompt) + " " +
-				styleExpand(plan.Style, proj.Config.Params.Script.FacesOn(), KindChibi) +
-				castContrastBlock(plan, ch.Name, KindChibi) + uniformCivilianClarify(ch.Description)
+			// 非人角色(器物/灵宠/妖兽/灵体)的 Q 版因此仍然长着人脸;更糟的是那段
+			// 前缀是**追加**在 LLM 的人像取景之后,同一段提示词里同时要求"大头身"和
+			// "upper-body framing, front-facing"。现在统一走唯一装配点:取景由该类型
+			// 自己的 SheetFraming **替换**掉人像尾巴(审计 P1-2)。
+			chibiPrompt := PortraitPrompt(PortraitSubject{
+				Kind: KindChibi, Name: ch.Name, Description: ch.Description,
+				ImagePrompt: ch.ImagePrompt, FacesOn: proj.Config.Params.Script.FacesOn(),
+			}, plan)
 			seed := int64(len(ch.ID)*1000 + len(ch.Name)*7 + 13)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
