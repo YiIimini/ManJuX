@@ -24,24 +24,31 @@ func TestDurationChangeInvalidatesRenderedShot(t *testing.T) {
 		m          project.ClipManifest
 		inputFP    string
 		wantFrames int
+		model      string
 		valid      bool
 		why        string
 	}{
-		{"指纹与帧数都一致 → 复用", done(96), fp, 96, true, "什么都没改,不该重渲"},
-		{"时长 4s→6s → 必须重渲", done(96), fp, 144, false,
+		{"指纹与帧数都一致 → 复用", done(96), fp, 96, "m1", true, "什么都没改,不该重渲"},
+		{"时长 4s→6s → 必须重渲", done(96), fp, 144, "m1", false,
 			"旧片只有 4 秒,装不下新台词(用户报的正是这条)"},
-		{"时长 6s→4s → 同样重渲", done(144), fp, 96, false, "变短也要重生成,不能留长片"},
-		{"老清单没记帧数 → 不推翻指纹", done(0), fp, 144, true,
+		{"时长 6s→4s → 同样重渲", done(144), fp, 96, "m1", false, "变短也要重生成,不能留长片"},
+		{"老清单没记帧数 → 不推翻指纹", done(0), fp, 144, "m1", true,
 			"Length=0 是本字段引入前的清单:否则升级一版就让存量项目全部重渲"},
-		{"提示词/资产变了 → 重渲", done(96), fp + "-changed", 96, false, "指纹是主判据"},
-		{"未完成的镜头 → 不算有效", project.ClipManifest{Status: project.ShotRendering, File: "x.mp4", InputFP: fp, Length: 96}, fp, 96, false,
+		{"提示词/资产变了 → 重渲", done(96), fp + "-changed", 96, "m1", false, "指纹是主判据"},
+		{"未完成的镜头 → 不算有效", project.ClipManifest{Status: project.ShotRendering, File: "x.mp4", InputFP: fp, Length: 96}, fp, 96, "m1", false,
 			"上次渲染中断的产物不能当成品"},
-		{"没有产物文件 → 不算有效", project.ClipManifest{Status: project.ShotDone, InputFP: fp, Length: 96}, fp, 96, false,
+		{"没有产物文件 → 不算有效", project.ClipManifest{Status: project.ShotDone, InputFP: fp, Length: 96}, fp, 96, "m1", false,
 			"清单有记录但文件缺失(被清理过)时必须重渲"},
+		{"换了底模 → 必须重渲(否则一集里混两种画风)",
+			project.ClipManifest{ShotID: 3, Status: project.ShotDone, File: "clips/shot_003.mp4", InputFP: fp, Length: 96, Model: "old-unet+old-lora"},
+			fp, 96, "new-unet+new-lora", false, "2026-09-24 换 Singularity 时发现的缺口:模型名不在指纹里"},
+		{"老清单没记模型 → 不推翻指纹(由调用方提示)",
+			project.ClipManifest{ShotID: 3, Status: project.ShotDone, File: "clips/shot_003.mp4", InputFP: fp, Length: 96},
+			fp, 96, "new-unet", true, "Model 为空是本字段引入前的清单,静默重渲存量项目代价太大"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shotArtifactValid(tc.m, tc.inputFP, tc.wantFrames); got != tc.valid {
+			if got := shotArtifactValid(tc.m, tc.inputFP, tc.wantFrames, tc.model); got != tc.valid {
 				t.Fatalf("shotArtifactValid = %v,期望 %v(%s)", got, tc.valid, tc.why)
 			}
 		})

@@ -125,7 +125,16 @@ type ClipManifest struct {
 	// 界面还报成功。所以单独一个字段,跳过条件追加 `m.Length == shot.Duration*24`;
 	// 老 manifest 里没有这个键 → Length=0 → 与任何非零时长都不等 → 正确地重渲一次
 	// (改过时长的镜头本来就该重渲),此后就稳定了。
-	Length    int       `json:"length,omitempty"`
+	Length int `json:"length,omitempty"`
+	// Model 本镜产物的**渲染模型身份**(底模 + 加速 LoRA / 云端模型名)。
+	//
+	// 为什么要单独记(2026-09-25 用户问「Minimax-h3_Singularity 用起来没有?」时发现的缺口):
+	// 渲染指纹里**不含模型名** —— 换底模(如 2026-09-24 换到 Singularity)之后,
+	// 已渲镜头不会被判失效,于是同一集里会混着"旧模型的老镜头"和"新模型的新镜头",
+	// 画风/质感不一致而没人发现。与 P0-8 同一类缺陷,处理方式也一致:
+	// **不往指纹里加字段**(那会让存量项目全部重渲),而是单独记一列并纳入跳过判据;
+	// 老清单没有这个键(Model=="")时不推翻指纹结论,只提示用户"这些镜头是换模型之前渲的"。
+	Model     string    `json:"model,omitempty"`
 	TaskID    string    `json:"task_id"` // 云端任务 id(如有)
 	Error     string    `json:"error"`
 	UpdatedAt time.Time `json:"updated_at"`

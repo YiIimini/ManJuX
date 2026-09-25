@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -169,6 +170,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 	}
 	done, skipped, failed := 0, 0, 0
+	// legacyModel 本次被跳过的镜头里,有多少是**没记录渲染模型**的老产物
+	// (本字段引入之前的清单)。刚换过底模时这些镜头仍是旧模型的画面:
+	// 如实提示,让用户自己决定要不要全量重渲 —— 不静默替他烧 GPU。
+	legacyModel := 0
 	var failures []string
 	for i, shot := range shots {
 		if ctx.Err() != nil {
@@ -211,10 +216,14 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 
 		// 断点续跑:同输入指纹 + 帧数对得上 + 文件存在 → 跳过
 		wantFrames := shotFrames(shot)
-		if m, ok := manifest[strconv.Itoa(shot.ID)]; ok && shotArtifactValid(m, inputFP, wantFrames) {
+		wantModel := renderModelTag(c.cfg.Get(), mode, engName)
+		if m, ok := manifest[strconv.Itoa(shot.ID)]; ok && shotArtifactValid(m, inputFP, wantFrames, wantModel) {
 			full := filepath.Join(c.store.Dir(proj.ID), m.File)
 			if st, err := os.Stat(full); err == nil && st.Size() > 0 {
 				skipped++
+				if m.Model == "" {
+					legacyModel++
+				}
 				c.emit(proj.ID, PhaseRender, shot.ID, "info", base+100/len(shots), "镜头 %d 产物有效,跳过(断点续跑)", shot.ID)
 				continue
 			}
@@ -273,7 +282,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
-		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", wantFrames)
+		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", wantFrames, wantModel)
 		if res.TaskID != "" {
 			manifest[strconv.Itoa(shot.ID)] = mergeTask(manifest[strconv.Itoa(shot.ID)], res.TaskID)
 		}
@@ -293,6 +302,12 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return nil
 	}
 	c.emit(proj.ID, PhaseRender, 0, "success", 100, "✔ 渲染完成:新出 %d 镜,跳过 %d 镜", done, skipped)
+	if legacyModel > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 100,
+			"⚠ 跳过的 %d 镜没有渲染模型记录(产出于该字段引入之前):若你刚换过底模,这些镜头仍是旧模型的画面,"+
+				"与本次新渲的镜头画风可能不一致 —— 需要统一全片画风时请勾选这些镜头重渲(引擎=%s,当前底模=%s)",
+			legacyModel, engName, renderModelTag(c.cfg.Get(), "ref2va", engName))
+	}
 	return nil
 }
 
@@ -343,14 +358,33 @@ func shotFrames(shot project.Shot) int { return shot.Duration * 24 }
 // Length 的兼容语义:`Length == 0` 表示这份清单是**本字段引入之前**写的,判据不推翻
 // 指纹结论 —— 否则升级一版就会让所有存量项目的已渲镜头集体重渲(几十集的代价),
 // 而它并不比"照旧"更正确。渲染过一次之后 Length 就有值了,从此改动必被抓住。
-func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int) bool {
+func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int, wantModel string) bool {
 	if m.Status != project.ShotDone || m.File == "" || m.InputFP != inputFP {
 		return false
 	}
 	if m.Length > 0 && m.Length != wantFrames {
 		return false
 	}
+	// 换了底模/加速 LoRA → 旧片作废(否则同一集里混着两种模型的画风)。
+	// Model=="" 是本字段引入前的清单:不推翻指纹结论,由调用方提示用户。
+	if m.Model != "" && wantModel != "" && m.Model != wantModel {
+		return false
+	}
 	return true
+}
+
+// renderModelTag 本次渲染的**模型身份**:底模 + 加速 LoRA(本地)或云端模型名。
+//
+// 为什么必须有它:用户换了底模(2026-09-24 换 Minimax-h3_Singularity)之后,
+// 断点续跑会拿旧模型的产物当"已完成"跳过 —— 一集里两种画风混着,而指纹看不出来。
+func renderModelTag(g config.Settings, mode, engName string) string {
+	if engName == "api" {
+		return "api:" + g.MiniMax.Model
+	}
+	if mode == "ref2va" {
+		return g.Comfy.UNetRef2VA + "+" + g.Comfy.TurboLoRARef2VA
+	}
+	return g.Comfy.UNetFL2VA + "+" + g.Comfy.TurboLoRAFL2VA
 }
 
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {
@@ -361,7 +395,7 @@ func (c *Coordinator) setShotStatus(projectID string, manifest map[string]projec
 //
 // 帧数单独记的原因是"改了时长却没重渲"(审计 P0-8):指纹串里不能加字段(会让存量
 // 项目全部重渲),而时长又不该被忽略 —— 于是跳过判据额外比一次帧数,见 renderStage。
-func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string, length int) {
+func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string, length int, model ...string) {
 	key := strconv.Itoa(shotID)
 	m := manifest[key]
 	m.ShotID = shotID
@@ -372,6 +406,9 @@ func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]pro
 	m.Error = errMsg
 	if length > 0 {
 		m.Length = length
+	}
+	if len(model) > 0 && model[0] != "" {
+		m.Model = model[0]
 	}
 	m.UpdatedAt = time.Now()
 	manifest[key] = m
