@@ -41,16 +41,42 @@ type RefRole struct {
 	ID      string // char_x / scene_x
 }
 
+// wantsAnglesStrip 该景别要不要附**多视角拼合图**。
+//
+// 【为什么近景/特写不附(2026-09-25 实测)】
+// 拼合图是 4 格横向拼图,模型按入口分辨率缩放后每格只剩约 1/4 像素(refs.go 顶部记过
+// 同一条:只喂拼合图时"服装对、脸变了")。对**特写/近景**来说画面里几乎只有一张脸,
+// 其它角度用不上,而这 4 个低分辨率的脸却在参与"取脸"——纯是身份信号的稀释源。
+// 中景以上才真的需要其它角度(侧身、背面、器物转台),所以保留。
+//
+// 未知景别按**保留**处理:宁可多一张,不要把"其实需要角度"的镜头悄悄降级。
+func wantsAnglesStrip(shotSize string) bool {
+	s := strings.TrimSpace(shotSize)
+	switch {
+	case strings.Contains(s, "特写"):
+		return false
+	// 中近景夹在中景与近景之间,身体仍有一部分可见,其它角度还有用 —— 先按保留处理。
+	case strings.Contains(s, "中近景"):
+		return true
+	case strings.Contains(s, "近景"):
+		return false
+	case strings.Contains(s, "中景"), strings.Contains(s, "全景"), strings.Contains(s, "远景"):
+		return true
+	}
+	return true
+}
+
 // RefPlan 是 AssembleShotRefs 的完整形态:除参考图本身,还给出每张图的身份归属
 // (roles),供 RefManifest 写出**渲染期权威清单**。
 //
 // 顺序即契约,与 AssembleShotRefs 完全一致:先 shot.Characters 每个已定妆的角色
-// (严格按数组顺序),最后追加场景图。
+// (严格按数组顺序),最后追加场景图。拼合图按景别决定要不要附(见 wantsAnglesStrip)。
 func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, roles []RefRole, missing []string) {
 	add := func(engineKind, roleKind, id, name, path string) {
 		refs = append(refs, engine.RefImage{Kind: engineKind, Path: path})
 		roles = append(roles, RefRole{Picture: len(refs), Kind: roleKind, Name: name, ID: id})
 	}
+	withAngles := wantsAnglesStrip(shot.ShotSize)
 	for _, cid := range shot.Characters {
 		a, ok := assets["char:"+cid]
 		if !ok || a.File == "" {
@@ -59,6 +85,9 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		}
 		master := filepath.Join(dir, a.File)
 		turn := turnaroundPath(dir, a.File)
+		if turn != "" && !withAngles {
+			turn = "" // 近景/特写:拼合图只用得上 1/4 像素的脸,不附
+		}
 		switch {
 		case turn != "" && compact:
 			// 转台图含正面 → 只喂这一张(左起第一格即定妆照)

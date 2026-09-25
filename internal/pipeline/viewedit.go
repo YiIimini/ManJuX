@@ -33,10 +33,15 @@ type viewAngle struct {
 }
 
 // viewAngles 三个角度。与 H3 路径的抽帧时间点(1.3/2.6/3.9s = 四分之三/侧面/背面)对应。
+//
+// 【En 里不许出现 "full"】(2026-09-25 实测):原先侧视写的是 "a **full** side profile",
+// 真机跑出来那一格自己放大成了全身(脚都出来了),而正面那格是半身 —— 拼出来的转台图
+// 一格一个尺度,而转台图是角色的第二张参考图。改成"角度在前、身体范围不提"，
+// 身体范围统一由 viewEditPrompt 的第一句钉住(见那里的 crop 变量)。
 var viewAngles = []viewAngle{
-	{"threequarter", "四分之三侧", "a three-quarter view, turned about 45 degrees to the subject's left so the face is still clearly visible"},
-	{"side", "正侧面", "a full side profile, turned about 90 degrees so the subject faces the left edge of the frame"},
-	{"back", "背面", "a rear view, turned about 180 degrees so we see the back of the subject"},
+	{"threequarter", "四分之三侧", "a three-quarter angle, turned about 45 degrees to the subject's left so the face is still clearly visible"},
+	{"side", "正侧面", "a side profile, turned about 90 degrees so the subject faces the left edge of the frame"},
+	{"back", "背面", "a rear view, turned about 180 degrees so we see the back of the head and shoulders"},
 }
 
 // ViewEditMediumBlock 编辑路径的**介质锁**。
@@ -66,19 +71,25 @@ func ViewEditMediumBlock(kind EntityKind, realistic bool) string {
 func viewEditPrompt(kind EntityKind, a viewAngle, name, imagePrompt string, realistic bool) string {
 	subject := "the character"
 	same := "same face, facial features, hairstyle, hair colour, skin tone, costume, accessories, colours and body proportions"
+	// crop = 这个类型该有的身体范围。必须**跟角度写在同一句里**:实测把取景要求单独放一段
+	// ("keep the same framing")时模型照旧放大成全身,写进主语才压得住。
+	crop := "upper-body crop (head down to the waist, the legs are NOT in frame)"
 	switch NormalizeEntityKind(string(kind)) {
 	case KindObject:
 		subject = "the object"
 		same = "same silhouette, structure, every part, material, colour, patina and ornament — no part may be added, removed or redesigned"
+		crop = "whole-object crop (exactly the same amount of the object as image 1 shows, no more and no less)"
 	case KindSpiritPet, KindBeast:
 		subject = "the creature"
 		same = "same species, body plan, fur/feather/scale colour and pattern, eye colour, ear/horn/tail shape and overall mass"
+		crop = "whole-creature crop (the same body range as image 1, head to tail)"
 	case KindIncorporeal:
 		subject = "the same bodiless entity"
 		same = "same silhouette, glow colour and intensity, degree of transparency and edge treatment"
+		crop = "whole-form crop (the same amount of the form as image 1 shows)"
 	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("Show %s in image 1 from %s.\n", subject, a.En))
+	sb.WriteString(fmt.Sprintf("Show the SAME %s of %s in image 1, now seen from %s.\n", crop, subject, a.En))
 	sb.WriteString(fmt.Sprintf("Keep it the EXACT SAME subject: %s. ", same))
 	sb.WriteString("This is the SAME subject seen from another angle, NOT a redesign, not a new character, " +
 		"not a beautified / stylised / aged / de-aged / chibi-fied version.\n")
@@ -91,7 +102,15 @@ func viewEditPrompt(kind EntityKind, a viewAngle, name, imagePrompt string, real
 	}
 	sb.WriteString("\n")
 	sb.WriteString("Keep the SAME plain background, the SAME lighting and the SAME framing/scale as image 1, " +
-		"so the result can be placed side by side with it. The subject stays centred and fully inside the frame.")
+		"so the result can be placed side by side with it. The subject stays centred and fully inside the frame.\n")
+	// 取景必须**逐项说到**再点名禁止(2026-09-25 实测:只写 "same framing/scale" 时,
+	// 侧视那一格自己放大成了全身,拼出来的转台图一格一个尺度)。CFG=1 的档位下负面词
+	// 不参与引导,所以要表达"不要什么"只能写进正向提示词 —— 与 H3 路径同一条口径。
+	sb.WriteString("COPY THE CROP FROM image 1 EXACTLY: the same camera distance, the same head size relative to " +
+		"the frame, and the same cut-off point. If image 1 is cropped at the waist, the result is cropped at " +
+		"the waist; if image 1 is a head-and-shoulders portrait, the result is a head-and-shoulders portrait. " +
+		"Only the viewing ANGLE changes — the framing, the zoom and the subject's size in frame stay identical; " +
+		"do not zoom in, do not zoom out, do not reframe to a full-body or a tighter portrait.")
 	if d := compactIdentity(imagePrompt); strings.TrimSpace(d) != "" && len([]rune(d)) < 300 {
 		// 身份描述只作"是哪一类东西"的补充;参考图仍是唯一权威(与 H3 路径同一条原则)
 		sb.WriteString("\n(The subject is: " + d + ")")

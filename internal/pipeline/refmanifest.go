@@ -74,13 +74,32 @@ func RefManifest(shot project.Shot, roles []RefRole) string {
 				r.Picture, r.Name))
 		}
 	}
+	// 结束语按**本镜实际有没有拼合图**定制:没有拼合图时还提它,只会让模型去找一张不存在的图。
+	hasStrip := false
+	for _, r := range roles {
+		if r.Kind == "character_angles" || r.Kind == "character_front_in_strip" {
+			hasStrip = true
+			break
+		}
+	}
 	sb.WriteString("Use these numbers exactly as written. Never renumber them, never merge two pictures into " +
 		"one subject, and never read a picture as something this manifest does not call it. If a sentence " +
-		"above claims a different total, or calls the scene some other <Picture>, or calls a multi-view " +
-		"strip a second character or a scene — that sentence is WRONG and this manifest is right.\n")
+		"above claims a different total")
+	if hasStrip {
+		sb.WriteString(", or calls a multi-view strip a second character or a scene")
+	} else {
+		sb.WriteString(", or treats the scene picture as a character")
+	}
+	sb.WriteString(" — that sentence is WRONG and this manifest is right.\n")
 	sb.WriteString("(中文对照:下面是**渲染器按实际附上的图片**写出的编号清单,它**覆盖**上文任何关于张数/" +
-		"编号的说法。多视角拼合图是**同一个角色**的另一组角度,不是场景、不是第二个角色,也不得当作" +
-		"“取脸来源”(脸一律以定妆照为准)。)\n")
+		"编号的说法。")
+	if hasStrip {
+		sb.WriteString("多视角拼合图是**同一个角色**的另一组角度,不是场景、不是第二个角色,也不得当作" +
+			"“取脸来源”(脸一律以定妆照为准)。")
+	} else {
+		sb.WriteString("本镜只附了定妆照与场景图:脸一律以定妆照为准,场景图只供背景与光线,不含角色。")
+	}
+	sb.WriteString(")\n")
 	if shot.ID > 0 {
 		sb.WriteString(fmt.Sprintf("(shot %d)\n", shot.ID))
 	}

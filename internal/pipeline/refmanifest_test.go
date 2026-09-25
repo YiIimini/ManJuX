@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -149,6 +150,62 @@ func TestRefPlanAndManifestArePairedAtEveryCallSite(t *testing.T) {
 		if plans != mans {
 			t.Errorf("%s:RefPlan 用了 %d 次、EnsureRefManifest 用了 %d 次 —— "+
 				"装配了参考图却不写权威清单的路径,会把拼合图当场景图(见 refmanifest.go)", f, plans, mans)
+		}
+	}
+}
+
+// TestRefPlanDropsAnglesForCloseShots 近景/特写不附多视角拼合图(2026-09-25)。
+//
+// 拼合图每格只剩约 1/4 像素(refs.go 顶部记过:只喂它时"服装对、脸变了"),而特写里
+// 画面几乎只有一张脸 —— 其它角度用不上,那 4 个低分辨率的脸却仍在参与取脸。
+// 中景以上才需要其它角度,所以按景别分流。
+func TestRefPlanDropsAnglesForCloseShots(t *testing.T) {
+	dir, shot, assets := refmanAssets(t)
+	cases := []struct {
+		size      string
+		wantRefs  int
+		wantKinds []string
+	}{
+		{"特写", 2, []string{"character_front", "scene"}},
+		{"近景", 2, []string{"character_front", "scene"}},
+		{"中景", 3, []string{"character_front", "character_angles", "scene"}},
+		{"全景", 3, []string{"character_front", "character_angles", "scene"}},
+		{"", 3, []string{"character_front", "character_angles", "scene"}}, // 未知景别按保留
+	}
+	for _, tc := range cases {
+		s := shot
+		s.ShotSize = tc.size
+		refs, roles, _ := RefPlan(dir, s, assets, false)
+		if len(refs) != tc.wantRefs {
+			t.Errorf("景别 %q:期望 %d 张,实际 %d", tc.size, tc.wantRefs, len(refs))
+			continue
+		}
+		for i, want := range tc.wantKinds {
+			if roles[i].Kind != want {
+				t.Errorf("景别 %q 的第 %d 张身份应为 %s,实际 %s", tc.size, i+1, want, roles[i].Kind)
+			}
+		}
+		// 权威清单必须跟着实际张数走(否则又是一次"提示词说 3 张、实际 2 张")
+		m := RefManifest(s, roles)
+		if !strings.Contains(m, fmt.Sprintf("Exactly %d picture(s)", tc.wantRefs)) {
+			t.Errorf("景别 %q 的清单张数不对:\n%s", tc.size, m)
+		}
+		if tc.wantRefs == 2 && strings.Contains(m, "multi-view strip") {
+			t.Errorf("景别 %q 既然没附拼合图,清单里就不该再提它:\n%s", tc.size, m)
+		}
+	}
+}
+
+// TestWantsAnglesStrip 判据本体:按中文景别词分流,未知一律保留。
+func TestWantsAnglesStrip(t *testing.T) {
+	for _, s := range []string{"特写", "大特写", "近景"} {
+		if wantsAnglesStrip(s) {
+			t.Errorf("%q 不该附拼合图", s)
+		}
+	}
+	for _, s := range []string{"中景", "全景", "远景", "中近景", "full shot", ""} {
+		if !wantsAnglesStrip(s) {
+			t.Errorf("%q 应保留拼合图(宁可多一张,不要把需要的镜头降级)", s)
 		}
 	}
 }

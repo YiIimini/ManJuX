@@ -155,3 +155,32 @@ func TestViewEditPromptIdentityHintIsStripped(t *testing.T) {
 func isWordRune(r rune) bool {
 	return r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }
+
+// TestViewEditPromptPinsTheCrop 取景必须逐项说到(2026-09-25 实测)。
+//
+// 原句只写 "keep the SAME framing/scale as image 1",而真机跑出来的四格里,
+// 侧视那一格自己放大成了全身、三分之四那格比正面那格更近 —— 拼出来的转台图一格一个尺度,
+// 而转台图是角色的第二张参考图,尺度不统一会被下游当成"两个人"的信号。
+// CFG=1 的档位下负面词不参与引导,所以"不要变焦"这类话必须写进正向提示词。
+func TestViewEditPromptPinsTheCrop(t *testing.T) {
+	p := viewEditPrompt(KindHuman, viewAngles[0], "顾青禾", "a courier woman", false)
+	for _, want := range []string{
+		"COPY THE CROP FROM image 1 EXACTLY",
+		"same camera distance",
+		"same head size relative to",
+		"same cut-off point",
+		"Only the viewing ANGLE changes",
+		"do not zoom in",
+		"do not reframe",
+	} {
+		if !strings.Contains(p, want) {
+			t.Errorf("编辑指令缺少取景条款(%q):\n%s", want, p)
+		}
+	}
+	// 介质锁与身份锁不能被挤掉(它们各自都有过真实事故)
+	for _, want := range []string{"EXACT SAME subject", "EXACT SAME rendering medium", "SAME plain background"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("编辑指令丢了原有的锁(%q)", want)
+		}
+	}
+}
