@@ -39,7 +39,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			return err
 		}
 		if err := eng.Available(ctx); err != nil {
-			return fmt.Errorf("Krea-2 定妆照需要本地 ComfyUI: %w", err)
+			return fmt.Errorf("自动定妆需要本地 ComfyUI: %w", err)
 		}
 		comfyGen = eng
 	}
@@ -137,7 +137,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				assets[id] = project.Asset{
 					ID: id, Kind: kind, Name: name,
 					File: filepath.ToSlash(rel), ImagePrompt: imagePrompt,
-					Source: "krea2", Fingerprint: project.FingerprintFile(path),
+					Source: c.imageSourceKey(), Fingerprint: project.FingerprintFile(path),
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」(%s)", kindLabel(kind), name, EntityKindLabel(ek))
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
@@ -148,7 +148,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					})
 				}
 				if c.lib != nil {
-					if _, err := c.lib.Put(kind, name, description, imagePrompt, path, proj.ID, "krea2"); err == nil {
+					if _, err := c.lib.Put(kind, name, description, imagePrompt, path, proj.ID, c.imageSourceKey()); err == nil {
 						c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(后续项目自动复用)", kindLabel(kind), name)
 					}
 				}
@@ -211,13 +211,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			// `len(ch.ID)*1000 + len(ch.Name)*7 + 13` —— **长度哈希**,
 			// 两个名字长度相同的角色会撞到同一个种子(正是主定妆照早就改掉的坑)。
 			seed := nameSeed("chibi", ch.ID)
-			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
+			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "生成:「%s」Q 版形象…", ch.Name)
 			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, imageNegative, seed, 1024, 1024, out); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
 				assets[chibiID] = project.Asset{
 					ID: chibiID, Kind: "characters", Name: ch.Name + " · Q版",
 					File: filepath.ToSlash(rel), ImagePrompt: chibiPrompt,
-					Source: "krea2-chibi", Fingerprint: project.FingerprintFile(path),
+					Source: c.chibiSourceKey(), Fingerprint: project.FingerprintFile(path),
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ Q 版就绪:「%s」(内心活动素材)", ch.Name)
 			} else {
@@ -239,7 +239,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			viewsDone++
 			// 多视角写回资产库:同一个角色全局只付一次转身成本,后续项目复用直接带走
 			if c.lib != nil {
-				if _, err := c.lib.Put("characters", v.name, v.description, v.prompt, v.master, proj.ID, "krea2"); err != nil {
+				if _, err := c.lib.Put("characters", v.name, v.description, v.prompt, v.master, proj.ID, c.imageSourceKey()); err != nil {
 					c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角写回资产库失败:角色「%s」:%v", v.name, err)
 				}
 			}
@@ -576,11 +576,11 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		assets[m.id] = project.Asset{
 			ID: m.id, Kind: m.kind, Name: m.name,
 			File: filepath.ToSlash(rel), ImagePrompt: m.prompt,
-			Source: "krea2", Fingerprint: project.FingerprintFile(path),
+			Source: c.imageSourceKey(), Fingerprint: project.FingerprintFile(path),
 		}
 		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 已补齐:%s「%s」(%s)", kindLabel(m.kind), m.name, EntityKindLabel(m.ek))
 		if c.lib != nil {
-			_, _ = c.lib.Put(m.kind, m.name, m.desc, m.prompt, path, proj.ID, "krea2")
+			_, _ = c.lib.Put(m.kind, m.name, m.desc, m.prompt, path, proj.ID, c.imageSourceKey())
 		}
 	}
 	_ = c.store.SaveAssets(proj.ID, assets)

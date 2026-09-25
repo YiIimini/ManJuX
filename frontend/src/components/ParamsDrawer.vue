@@ -136,7 +136,7 @@ async function save() {
       <el-form label-position="top">
         <el-form-item label="参考图来源">
           <el-select v-model="form.assets.source">
-            <el-option value="krea2" label="Krea-2 自动生成(推荐,需本地 ComfyUI)" />
+            <el-option value="krea2" label="本地模型自动生成(推荐,需本地 ComfyUI)" />
             <el-option value="upload" label="手动上传(锁脸最稳)" />
             <el-option value="skip" label="跳过(全部镜头纯文生 t2va)" />
           </el-select>
@@ -160,7 +160,7 @@ async function save() {
         </el-form-item>
       </el-form>
       <el-alert type="info" :closable="false"
-        title="Krea-2 生成:角色半身竖幅 832×1248 / 场景按项目画幅;已有资产自动复用,可上传替换。" />
+        title="本地模型自动生成:角色半身竖幅 832×1248 / 场景按项目画幅;已有资产自动复用,可上传替换。用的是设置里配置的图像模型(默认 Qwen-Image-2.1)。" />
       <el-alert type="warning" :closable="false"
         title="多视角:角色只有单张正面照时,渲染前会自动补一次(编辑路径每张数秒;退回 H3 转身则每个角色数分钟,仅首次;补完写回资产库,后续项目直接复用)。不想要这个耗时可以关掉。" />
     </div>

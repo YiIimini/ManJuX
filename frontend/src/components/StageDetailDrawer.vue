@@ -65,7 +65,7 @@ async function setKind(c, key) {
     ElMessage.success(`「${c.name}」类型已改为 ${r?.name || key}`)
     await refreshProject()
     ElMessageBox.confirm(
-      '类型已保存,但**已生成**的定妆照/多视角图仍是按旧类型渲染的(比如器物那张还是人像)。要重出定妆照请点这张卡右侧的 ✨(Krea-2 重新生成),多视角会随后按新类型重建。',
+      '类型已保存,但**已生成**的定妆照/多视角图仍是按旧类型渲染的(比如器物那张还是人像)。要重出定妆照请点这张卡右侧的 ✨(重新生成),多视角会随后按新类型重建。',
       '下一步:重新生成定妆照', { confirmButtonText: '知道了', showCancelButton: false, type: 'warning' },
     ).catch(() => {})
   } catch (e) { ElMessage.error(e.message) }
@@ -183,7 +183,7 @@ function castOf(sh) {
           </div>
           <div class="text-xs truncate mt-1" style="color:var(--mx-text3)">{{ c.description }}</div>
         </div>
-        <el-button size="small" text :loading="busy.regen==='char:'+c.id" @click="regen('char:'+c.id)" title="Krea-2 重新生成"><el-icon><MagicStick /></el-icon></el-button>
+        <el-button size="small" text :loading="busy.regen==='char:'+c.id" @click="regen('char:'+c.id)" title="重新生成定妆照"><el-icon><MagicStick /></el-icon></el-button>
         <el-button v-if="c.asset" size="small" text @click="delAsset('char:'+c.id)"><el-icon><Delete /></el-icon></el-button>
       </div>
       <div v-for="sc in sceneList" :key="sc.id" class="panel p-3 flex items-center gap-3">

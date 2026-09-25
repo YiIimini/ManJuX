@@ -22,6 +22,15 @@ var assetSourceNames = []struct {
 	Key  string
 	Name string
 }{
+	// 图像模型家族(写入端见 pipeline.imagesource,取值见 comfyengine/imagefamily.go)。
+	// 名称刻意保留实现名:用户就是在设置页按这些名字配模型的,换个抽象说法反而对不上。
+	{"qwen-image-2.1", "Qwen-Image-2.1"}, // 2026-09-25 起的新默认
+	{"qwen-image-2.1-chibi", "Qwen-Image-2.1 · Q版"},
+	{"z-image", "Z-Image Turbo"}, // 本地兜底家族
+	{"z-image-chibi", "Z-Image Turbo · Q版"},
+	{"qwen-image", "Qwen-Image"},
+	{"qwen-image-chibi", "Qwen-Image · Q版"},
+	// 存量资产:2026-09-25 之前由 Krea-2 生成的文件仍然是 Krea-2 出的,标签保留。
 	{"krea2", "Krea-2"},
 	{"krea2-chibi", "Krea-2 · Q版"},
 	{"library", "库复用"},

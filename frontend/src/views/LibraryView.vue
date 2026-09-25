@@ -330,7 +330,7 @@ async function remove(e) {
       <h1 class="text-lg font-bold m-0 mb-1">资产库 <span class="timecode">ASSET LIBRARY</span></h1>
       <p class="text-sm m-0" style="color:var(--mx-text2)">
         角色/场景一次定妆,<b style="color:var(--mx-amber)">全项目复用</b>——新项目遇到同名资产自动引用(免生成、天然形象一致)。
-        Krea-2 生成与手动上传的资产都会自动入库;复用计数排序。
+        本地模型生成与手动上传的资产都会自动入库;复用计数排序。
       </p>
     </div>
 <!-- 角色运营:抽卡 / 自定义新建 -->
@@ -339,17 +339,17 @@ async function remove(e) {
         <div class="stage-ico active" style="width:38px;height:38px"><el-icon :size="18"><MagicStick /></el-icon></div>
         <div>
           <div class="text-sm"><b>角色抽卡</b> <span class="timecode">GACHA</span></div>
-          <div class="text-xs" style="color:var(--mx-text3)">随机题材 × 随机气质,LLM 原创角色 + Krea-2 定妆直接入库</div>
+          <div class="text-xs" style="color:var(--mx-text3)">随机题材 × 随机气质,LLM 原创角色 + 本地模型定妆直接入库</div>
         </div>
         <div class="flex-1"></div>
-        <el-tooltip content="随机题材×随机气质,AI 原创角色并 Krea-2 定妆直接入库(约 1 分钟)" placement="top">
+        <el-tooltip content="随机题材×随机气质,AI 原创角色并本地模型定妆直接入库(约 1 分钟)" placement="top">
           <el-button type="primary" :loading="gachaBusy" @click="gacha">
             <el-icon class="mr-1"><Trophy /></el-icon>{{ gachaBusy ? '抽卡中(约 1 分钟)…' : '抽一张' }}
           </el-button>
         </el-tooltip>
       </div>
       <el-divider direction="vertical" style="height:34px" />
-      <el-tooltip content="手动建角色:上传现成图片或填提示词 Krea-2 生成后入库" placement="top">
+      <el-tooltip content="手动建角色:上传现成图片或填提示词本地模型生成后入库" placement="top">
         <el-button plain @click="createOpen = true">
           <el-icon class="mr-1"><Plus /></el-icon>自定义新建(上传图 / 提示词生成)
         </el-button>
@@ -392,7 +392,7 @@ async function remove(e) {
     <div v-if="!list.length" class="panel empty-zone">
       <div class="ez-ico"><el-icon :size="26"><Collection /></el-icon></div>
       <div class="ez-title">资产库还是空的</div>
-      <p class="ez-desc">在任意项目跑一次「资产定妆」(Krea-2 生成或手动上传),角色与场景会自动入库;之后新项目遇到同名资产即可一键复用。</p>
+      <p class="ez-desc">在任意项目跑一次「资产定妆」(本地模型生成或手动上传),角色与场景会自动入库;之后新项目遇到同名资产即可一键复用。</p>
     </div>
 
     <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
@@ -441,7 +441,7 @@ async function remove(e) {
         </el-form-item>
         <el-form-item label="定妆照来源">
           <el-radio-group v-model="createForm.mode">
-            <el-radio-button value="generate">提示词生成(Krea-2)</el-radio-button>
+            <el-radio-button value="generate">提示词生成</el-radio-button>
             <el-radio-button value="upload">上传参考图片</el-radio-button>
           </el-radio-group>
         </el-form-item>

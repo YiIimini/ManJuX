@@ -148,7 +148,10 @@ func DefaultStageParams() StageParams {
 		// script.stylized_faces。
 		Script: ScriptParams{MaxShots: 0, TotalSeconds: 0, StyleHint: "",
 			Styles: []string{"guoman_2d"}, StylizedFaces: Bool(true)},
-		Assets: AssetsParams{Source: "krea2", Views: Bool(true)}, // 默认自动定妆:缺失参考图由 Krea-2 生成,不再要求手动上传
+		// "krea2" 是**资产获取方式**的历史取值(含义:本地模型自动定妆),
+		// 与实际用哪个图像模型无关 —— 模型由 settings.comfy.image_family 决定
+		// (见 comfyengine/imagefamily.go)。资产文件上记录的 Source 才是"谁生成的"。
+		Assets: AssetsParams{Source: "krea2", Views: Bool(true)},
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
 			// Seam 默认开:镜间连续(MotionContext)让相邻镜头运镜/画面延续,

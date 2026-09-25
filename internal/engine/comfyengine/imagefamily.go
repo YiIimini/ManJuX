@@ -42,6 +42,12 @@ type ImageFamily struct {
 	ID    string // 配置里的 image_family 取值
 	Label string // 日志/界面用的中文名
 
+	// Source 该家族生成的资产写进 project.Asset.Source / 资产库时的**来源 key**。
+	// 资产库与前端按它显示这张图是谁生成的,所以它必须随家族走、不能写死 ——
+	// 2026-09-25 换模型时,写入端那四处字面量 "krea2" 一夜之间变成假话,就是漏了这一层。
+	// 取值同时登记在 project/source_label.go 的词汇表里(有闸门 TestFamilySourcesHaveLabels)。
+	Source string
+
 	// CLIPType 是 CLIPLoader 的 type 参数。**错一个就报特征维度不符**
 	// (Krea-2 误用 qwen_image 会报 "Krea2 expects conditioning with 12x2560=30720 features")。
 	CLIPType string
@@ -71,7 +77,7 @@ var (
 	// Qwen-Image-2.1:UNETLoader + CLIPLoader(type=qwen_image) + VAELoader +
 	// TextEncodeQwenImage21 + KSampler(25 步 / cfg 1 / euler / simple)。
 	famQwenImage21 = ImageFamily{
-		ID: FamilyQwenImage21, Label: "Qwen-Image-2.1",
+		ID: FamilyQwenImage21, Label: "Qwen-Image-2.1", Source: "qwen-image-2.1",
 		CLIPType: "qwen_image",
 		Steps:    25, CFG: 1.0, Sampler: "euler", Scheduler: "simple",
 		Encode21: true,
@@ -79,7 +85,7 @@ var (
 	// Z-Image Turbo:CLIPLoader(type=lumina2) + ModelSamplingAuraFlow(shift=3) +
 	// KSampler(8 步 / cfg 1 / res_multistep / simple)。本地权重已就位,做兜底。
 	famZImage = ImageFamily{
-		ID: FamilyZImage, Label: "Z-Image Turbo",
+		ID: FamilyZImage, Label: "Z-Image Turbo", Source: "z-image",
 		CLIPType: "lumina2",
 		Steps:    8, CFG: 1.0, Sampler: "res_multistep", Scheduler: "simple",
 		AuraShift: 3,
@@ -87,7 +93,7 @@ var (
 	// Krea-2 Turbo:CLIPLoader(type=krea2) + KSampler(8 步 / cfg 1)。
 	// 采样器按社区记录的"官方倾向"用 er_sde/simple(此前是 euler/normal,属自选)。
 	famKrea2 = ImageFamily{
-		ID: FamilyKrea2, Label: "Krea-2 Turbo(已退役,仅为兼容存量设置保留)",
+		ID: FamilyKrea2, Label: "Krea-2 Turbo(已退役,仅为兼容存量设置保留)", Source: "krea2",
 		CLIPType: "krea2",
 		Steps:    8, CFG: 1.0, Sampler: "er_sde", Scheduler: "simple",
 	}
@@ -118,7 +124,7 @@ func ResolveImageFamily(family, unet, clip string) ImageFamily {
 		// 旧版 Qwen-Image / Qwen-Image-Edit 权重:文本编码器类型同为 qwen_image,
 		// 采样档按 2.x 之外的通用档(20 步)走 —— 宁可慢一点也不猜采样器。
 		return ImageFamily{
-			ID: "qwen_image", Label: "Qwen-Image(旧权重)",
+			ID: "qwen_image", Label: "Qwen-Image(旧权重)", Source: "qwen-image",
 			CLIPType: "qwen_image",
 			Steps:    20, CFG: 2.5, Sampler: "euler", Scheduler: "simple",
 		}

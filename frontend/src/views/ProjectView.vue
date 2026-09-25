@@ -133,7 +133,7 @@ async function openAssetDir(file) {
 }
 
 // 资产大图预览
-// ---- 视频截帧定妆:H3 成片形象优于 Krea-2 定妆,直接截帧替换(与成片零偏差) ----
+// ---- 视频截帧定妆:H3 成片形象优于生成式定妆照,直接截帧替换(与成片零偏差) ----
 const frameDlg = reactive({ open: false, kind: '', assetId: '', name: '', shots: [], shot: 0, frames: [], pick: -1, busy: false })
 function openFrameDlg(kind, assetId, name) {
   const plan = pj.value?.plan

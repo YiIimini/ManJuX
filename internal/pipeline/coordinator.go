@@ -229,7 +229,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	assets[assetID] = project.Asset{
 		ID: assetID, Kind: kind, Name: name,
 		File: rel, ImagePrompt: prompt,
-		Source: "krea2", Fingerprint: project.FingerprintFile(path),
+		Source: c.imageSourceKey(), Fingerprint: project.FingerprintFile(path),
 	}
 	if err := c.store.SaveAssets(projectID, assets); err != nil {
 		return err
@@ -244,7 +244,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		ClearDerivedViews(path)
 		if c.lib != nil {
 			c.lib.ClearRelated(kind, name)
-			if _, err := c.lib.Put(kind, name, desc, prompt, path, projectID, "krea2"); err != nil {
+			if _, err := c.lib.Put(kind, name, desc, prompt, path, projectID, c.imageSourceKey()); err != nil {
 				c.emit(projectID, PhaseAssets, 0, "warn", 0, "⚠ 写回资产库失败(不影响本项目):%v", err)
 			}
 		}

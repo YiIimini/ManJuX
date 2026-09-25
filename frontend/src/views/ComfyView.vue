@@ -128,8 +128,8 @@ const modelFields = [
   { key: 'clip', label: '文本编码器(CLIP · qwen3vl)' },
   { key: 'video_vae', label: '视频 VAE' },
   { key: 'audio_vae', label: '音频 VAE(缺失=黑屏)' },
-  { key: 'image_unet', label: '定妆照模型(Krea-2 UNet)' },
-  { key: 'image_clip', label: '定妆照编码器(CLIPLoader type=krea2)' },
+  { key: 'image_unet', label: '定妆照模型(UNETLoader)' },
+  { key: 'image_clip', label: '定妆照编码器(CLIPLoader,type 随家族自动选)' },
   { key: 'image_vae', label: '定妆照 VAE' },
   // 多视角图像编辑(Qwen-Image-Edit-2511):这套决定「角色多视角」走哪条路 ——
   // 齐了就自动用编辑路径(拿定妆照本体转角度,身份/画风按像素保住),缺了退回
@@ -172,7 +172,7 @@ const dirInfo = computed(() => [
   { label: '模型根目录', icon: 'Box', path: comfyRoot.value + '/ComfyUI/models',
     desc: '所有 AI 模型文件(UNET/VAE/CLIP/LoRA 等)。设置页「ComfyUI」面板配置的模型名必须与这里的文件名一致。', color: 'var(--mx-amber)' },
   { label: '模型 → UNet(扩散主干)', icon: 'Cpu', path: comfyRoot.value + '/ComfyUI/models/diffusion_models',
-    desc: 'H3 视频生成模型(Ref2VA/FL2VA int8 量化版)与 Krea-2 图像模型。体积最大(~20GB/个)。', color: 'var(--mx-purple)' },
+    desc: 'H3 视频生成模型(Ref2VA/FL2VA int8 量化版)与图像模型(默认 Qwen-Image-2.1)。体积最大(~20GB/个)。', color: 'var(--mx-purple)' },
   { label: '模型 → VAE(编解码器)', icon: 'Film', path: comfyRoot.value + '/ComfyUI/models/vae',
     desc: '视频/音频 VAE,负责 latent ↔ 像素转换。缺失会导致黑屏或无音轨。', color: 'var(--mx-cyan)' },
   { label: '模型 → CLIP(文本编码)', icon: 'EditPen', path: comfyRoot.value + '/ComfyUI/models/clip',

@@ -66,9 +66,18 @@ export function phases() {
 //
 // 兜底表只在 meta 未就绪时用;认不出的 key **原样返回**,让人看出"这是另一种来源",
 // 而不是统一说成"上传"。
+//
+// 这张表是**后端的副本**,所以两件事必须一起改:换图像模型后新增的来源 key
+// (krea2 → qwen-image-2.1)在这里补一份,顺序/取值与 project/source_label.go 对齐。
+// 有闸门盯着(server 的 TestFrontendSourceFallbackMatchesBackend):前端表里出现
+// 后端词汇表没有的 key 就变红。
 const FALLBACK_SOURCE_NAMES = {
+  'qwen-image-2.1': 'Qwen-Image-2.1', 'qwen-image-2.1-chibi': 'Qwen-Image-2.1 · Q版',
+  'z-image': 'Z-Image Turbo', 'z-image-chibi': 'Z-Image Turbo · Q版',
+  'qwen-image': 'Qwen-Image', 'qwen-image-chibi': 'Qwen-Image · Q版',
   krea2: 'Krea-2', 'krea2-chibi': 'Krea-2 · Q版',
-  library: '库复用', upload: '上传', 'video-frame': '视频截帧', gacha: '抽卡',
+  library: '库复用', upload: '上传', 'upload-whitebg': '上传 · 白底化',
+  'video-frame': '视频截帧', gacha: '抽卡',
 }
 export function sourceLabel(src) {
   if (!src) return '未知'
@@ -78,11 +87,14 @@ export function sourceLabel(src) {
 }
 
 // sourceTone 标签配色的语义分类(纯展示):库复用=绿、本地生成=橙、其余=灰。
-// 与 sourceLabel 同一处维护 —— 免得"名字对了、颜色还是按老的三种值分"。
+//
+// **按"是不是生成出来的"分类,不列具体模型 key** —— 2026-09-25 图像模型从 Krea-2
+// 换到 Qwen-Image-2.1 时,这里原来写死的 krea2/krea2-chibi 立刻失效,新资产全变成灰的。
+// 家族 key 会一直增加,分类规则不会。
 export function sourceTone(src) {
   if (src === 'library') return 'success'
-  if (src === 'krea2' || src === 'krea2-chibi' || src === 'gacha') return 'warning'
-  return 'info'
+  if (src === 'video-frame' || src === 'upload' || src === 'upload-whitebg') return 'info'
+  return 'warning'
 }
 
 // phase 显示名:all/upgrade2k 等非阶段值映射为人话,具体阶段用中文名(后端清单优先)
