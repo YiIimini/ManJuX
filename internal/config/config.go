@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -37,10 +38,16 @@ type ComfySettings struct {
 	AudioVAE        string `json:"audio_vae"`  // 缺失=黑屏,必填
 	CLIP            string `json:"clip"`       // Qwen3-VL 文本编码器(CLIPLoader type=minimax)
 	CondCache       bool   `json:"cond_cache"` // 两阶段渲染(条件缓存 .pt)
-	// 定妆照/场景图自动生成(Krea-2 Turbo,8 步蒸馏)
-	ImageUNet string `json:"image_unet"` // 默认 krea2_turbo_fp8_scaled.safetensors
-	ImageCLIP string `json:"image_clip"` // 默认 qwen3vl_4b_fp8_scaled.safetensors(type=krea2)
-	ImageVAE  string `json:"image_vae"`  // 默认 qwen_image_vae.safetensors
+	// 定妆照/场景图/抽卡图自动生成。**家族由 ImageFamily 决定连线**(见
+	// comfyengine/imagefamily.go):每个家族的文本编码器类型、采样档、位移节点都不同,
+	// 空值按键名推断(Krea-2 → krea2 / z_image → Z-Image / qwen_image_2.1 → Qwen-Image-2.1)。
+	//
+	// 2026-09-25 用户定调「Krea-2 出图这么多问题,那就不用它生图」,默认家族改为
+	// **Qwen-Image-2.1**(7B,生成与编辑同一个权重,中文文字与指令遵循最强)。
+	ImageFamily string `json:"image_family"` // 默认 qwen_image_2_1
+	ImageUNet   string `json:"image_unet"`   // 默认 qwen_image_2.1_int8_convrot.safetensors
+	ImageCLIP   string `json:"image_clip"`   // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
+	ImageVAE    string `json:"image_vae"`    // 默认 qwen_image_2.1_vae_bf16.safetensors
 	// 多视角图像编辑(Qwen-Image-Edit-2511)—— 角色多视角的**首选**路径。
 	//
 	// 为什么换掉"H3 转身视频抽帧":视频模型会顺手重新设计角色(实测赛璐璐角色被
@@ -161,15 +168,19 @@ func Default() *Settings {
 			AudioVAE:        "minimax_h3_audio_vae_fp32.safetensors",
 			CLIP:            "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
 			CondCache:       true,
-			ImageUNet:       "krea2_turbo_fp8_scaled.safetensors",
-			ImageCLIP:       "qwen3vl_4b_fp8_scaled.safetensors",
-			ImageVAE:        "qwen_image_vae.safetensors",
-			EditUNet:        "qwen_image_edit_2511_fp8mixed.safetensors",
-			EditCLIP:        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-			EditVAE:         "qwen_image_vae.safetensors",
-			EditTurboLoRA:   "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
-			EditAnglesLoRA:  "qwen-image-edit-2511-multiple-angles-lora.safetensors",
-			ReserveVRAMGB:   1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
+			// 图像模型家族。**这里刻意写字符串字面量**:comfyengine 反向 import 了本包
+			// (取 ComfySettings),本包再 import 它就成了循环依赖。两处取值由
+			// comfyengine 的 TestDefaultImageFamilyMatchesConfig 钉住,改一处漏一处会红。
+			ImageFamily:    "qwen_image_2_1",
+			ImageUNet:      "qwen_image_2.1_int8_convrot.safetensors",
+			ImageCLIP:      "qwen3vl_8b_int8_convrot.safetensors",
+			ImageVAE:       "qwen_image_2.1_vae_bf16.safetensors",
+			EditUNet:       "qwen_image_edit_2511_fp8mixed.safetensors",
+			EditCLIP:       "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+			EditVAE:        "qwen_image_vae.safetensors",
+			EditTurboLoRA:  "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+			EditAnglesLoRA: "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+			ReserveVRAMGB:  1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
 		},
 		MiniMax: MiniMaxSettings{
 			BaseURL:    "https://api.minimax.cn",
@@ -254,6 +265,16 @@ func NewManager(path, exeDir string) (*Manager, error) {
 		if s.Split.ChunkSize == 40000 {
 			s.Split.ChunkSize = 12000
 		}
+		// 旧默认值迁移(2026-09-25):图像模型从 Krea-2 换成 Qwen-Image-2.1
+		// (用户定调「Krea-2 出图这么多问题,那就不用它生图」)。只有**三件套仍是
+		// Krea-2 那套旧默认**、且没写过 image_family 时才迁移 —— 用户自己换过模型
+		// 就原样保留,绝不覆盖手工选择。
+		if imageTripleIsLegacyKrea2(s) {
+			s.Comfy.ImageFamily = "qwen_image_2_1"
+			s.Comfy.ImageUNet = def.Comfy.ImageUNet
+			s.Comfy.ImageCLIP = def.Comfy.ImageCLIP
+			s.Comfy.ImageVAE = def.Comfy.ImageVAE
+		}
 		m.settings = s
 		return m, nil
 	}
@@ -278,6 +299,24 @@ func (m *Manager) Update(s Settings) error {
 	defer m.mu.Unlock()
 	m.settings = &s
 	return m.saveLocked()
+}
+
+// legacyKrea2ImageTriple 是 2026-09-25 之前落盘的图像模型默认三件套。
+// 只有三件套**逐字等于**它、且 image_family 为空时,才认为用户从未改过图像模型,
+// 可以安全迁移到新默认(Qwen-Image-2.1)。用户手工换过任何一个,都不动。
+var legacyKrea2ImageTriple = [3]string{
+	"krea2_turbo_fp8_scaled.safetensors",
+	"qwen3vl_4b_fp8_scaled.safetensors",
+	"qwen_image_vae.safetensors",
+}
+
+func imageTripleIsLegacyKrea2(s *Settings) bool {
+	if strings.TrimSpace(s.Comfy.ImageFamily) != "" {
+		return false
+	}
+	return s.Comfy.ImageUNet == legacyKrea2ImageTriple[0] &&
+		s.Comfy.ImageCLIP == legacyKrea2ImageTriple[1] &&
+		s.Comfy.ImageVAE == legacyKrea2ImageTriple[2]
 }
 
 // saveLocked 原子写:临时文件+rename。调用方须持有锁。

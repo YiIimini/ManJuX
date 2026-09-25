@@ -534,3 +534,55 @@ LLM 只能猜 —— 多视角一开,每个镜头都必然多一张,猜错就把
    不是场景、不参与取脸(脸只认定妆照)。
 3. 导演提示词同时被要求**不得断言总张数、不得断言场景是第几张** —— 它看不见的东西不写。
 4. 四条 ref2va 出像素路径(主渲染 / 单镜 2K / 局部重绘 / 音频驱动)全部成对装配清单。
+
+### 2026-09-25:图像生成弃用 Krea-2,换 Qwen-Image-2.1(全网核对后的选型)
+
+用户定调:「Krea-2 出图这么多问题,那就不用它生图,另外全网找最优的解决方案」。
+
+**先说我为什么认为 Krea-2 该退役**(都有实测或官方依据,不是感觉):
+1. 定妆照**漏画卡片要求的身份记号** —— 顾青禾卡片写了「右眉尾一道浅疤」「皮筋外套一枚拇指盖大的
+   黄铜扣,扣面刻极小的'禾'字」,出图上两样都没有;脸型也偏软偏圆,与卡片写的
+   「窄长鹅蛋脸尖下巴、麦色晒黑皮肤」不符。
+2. 社区已知的**编码器改写提示词**问题:Krea-2 用的是 Qwen3-VL **对齐版**文本编码器,
+   社区记录它会"改写/忽略提示词的一部分",对应的解法是换 abliterated 编码器(安装级替换)。
+   出处:<https://github.com/charliecpeterson/comfyui_mcp/blob/main/skills/prompt-krea2/references/model-variants.md>
+3. 我们此前的采样档还是**自选**的 `euler/normal`;同一份记录里官方倾向是 `er_sde/simple`。
+
+**选型对比(依据见下)**:
+
+| 候选 | 文本遵循 / 中文 | 生成+编辑 | 体积 | 结论 |
+|---|---|---|---|---|
+| Krea-2 Turbo | 编码器会改写指令 | 否 | 12B fp8 | 退役(保留可选,兼容存量项目) |
+| Z-Image Turbo | 文字可读,偏"审美平滑"、简化背景 | 否 | 6B | **兜底**:权重已在本机(零下载) |
+| **Qwen-Image-2.1** | 生成与编辑同一权重,中文文字精度最高 | **是** | 7B int8 | **新默认** |
+
+依据:
+- ComfyUI 官方博客《Qwen-Image-2.1 in ComfyUI:Open-Weight Image Generation and Editing, Now with
+  Transparency》(7B / MMDiT / **原生 2K** / **RGBA** / 最多 **10 张参考图** / **生成与编辑同一个权重**)
+  <https://blog.comfy.org/p/qwen-image-21-in-comfyui-open-weight>
+- 《Qwen-Image-2512 vs. Z-Image Turbo:5-Prompt Benchmark》:指令遵循上 Qwen 更"字面",
+  Z-Image 会给一层"审美平滑";文字渲染上两者都能出字,但 Qwen 能**精确拼出指定字符串与标点**
+  <https://qwen-image-2512.com/blog/qwen-image-2512-vs-turbo-benchmark>
+- **本机 ComfyUI 自带的官方工作流模板**是连线的权威来源(离线可查,不依赖网络):
+  `comfyui_workflow_templates_json/templates/image_qwen_image_2_1_t2i.json`
+  → UNETLoader(`qwen_image_2.1_int8_convrot.safetensors`)+ CLIPLoader(**type=`qwen_image`**,
+  `qwen3vl_8b_int8_convrot.safetensors`)+ VAELoader(`qwen_image_2.1_vae_bf16.safetensors`)+
+  **TextEncodeQwenImage21**(单节点出 positive/negative)+ EmptyLatentImage + KSampler
+  (**25 步 / cfg 1 / euler / simple**)+ VAEDecode;
+  `image_z_image_turbo.json` → CLIPLoader type=`lumina2`(`qwen_3_4b`)+ `ae.safetensors` +
+  **ModelSamplingAuraFlow shift=3** + 8 步 `res_multistep/simple`。
+
+**取证与落地**:
+- 权重走 **ModelScope**(HF 本机不可达),仓库 `Comfy-Org/Qwen-Image-2.1`,int8_convrot 组合
+  共约 16.2 GB(unet 6.76 GB + 编码器 8.71 GB + VAE 0.63 GB)。下载脚本
+  `scripts/dev/fetch-qwen-image-2-1.ps1`:先读 ModelScope API 拿**精确字节数**,再 `curl -C -`
+  断点续传,收尾逐文件比对大小(截断会被判失败),日志 `%TEMP%\vis\qwen21.log`。
+- 装配收口:新增 `internal/engine/comfyengine/imagefamily.go` —— **一族一行**(编码器类型 /
+  采样档 / 是否要位移节点 / 是否用 2.1 的单条件节点),`imagegen.go` 只读表拼图。
+  换模型从此是改表,不是改代码。
+- `config.image_family` 新字段 + 默认值改为 Qwen-Image-2.1;存量 settings.json 里
+  三件套仍是**旧 Krea-2 默认**且没写过 family 时自动迁移,用户手工换过就一个字不动。
+- 闸门 `imagefamily_test.go`:config 默认与常数一致(两处字面量必须同步)、
+  键名推断、四族连线逐条断言(qwen 2.1 的 25 步/euler/simple/单条件节点/竖幅空 latent、
+  Z-Image 的 lumina2 + AuraShift 3 + res_multistep、Krea-2 的 type=krea2 + er_sde/simple)、
+  img2img 仍走 LoadImage→VAEEncode。

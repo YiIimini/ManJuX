@@ -91,7 +91,7 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 		{"视频 VAE", "video_vae", "VAELoader", "vae_name"},
 		{"音频 VAE", "audio_vae", "VAELoader", "vae_name"},
 		{"CLIP · Qwen3VL", "clip", "CLIPLoader", "clip_name"},
-		{"定妆照 UNet · Krea2", "image_unet", "UNETLoader", "unet_name"},
+		{"定妆照 UNet", "image_unet", "UNETLoader", "unet_name"},
 		{"定妆照 CLIP", "image_clip", "CLIPLoader", "clip_name"},
 		{"定妆照 VAE", "image_vae", "VAELoader", "vae_name"},
 		// 多视角图像编辑(Qwen-Image-Edit-2511):这套缺件不会让渲染失败,只会让

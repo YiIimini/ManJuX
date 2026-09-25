@@ -212,7 +212,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			// 两个名字长度相同的角色会撞到同一个种子(正是主定妆照早就改掉的坑)。
 			seed := nameSeed("chibi", ch.ID)
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:「%s」Q 版形象…", ch.Name)
-			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, krea2Negative, seed, 1024, 1024, out); err == nil {
+			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, imageNegative, seed, 1024, 1024, out); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
 				assets[chibiID] = project.Asset{
 					ID: chibiID, Kind: "characters", Name: ch.Name + " · Q版",
@@ -304,7 +304,7 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
 	seed := nameSeed(kind, name)
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:%s「%s」(%d×%d)…", kindLabel(kind), name, w, h)
-	return ce.GenerateImage(ctx, imagePrompt, krea2Negative, seed, w, h, out)
+	return ce.GenerateImage(ctx, imagePrompt, imageNegative, seed, w, h, out)
 }
 
 // genCharacterViews 资产阶段的多视角产出:定妆照 → H3 Ref2V 转身视频 → 抽帧 →

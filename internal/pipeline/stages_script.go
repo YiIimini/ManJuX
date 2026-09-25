@@ -114,5 +114,6 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 
 // ---------- 阶段二:assets ----------
 
-// krea2Negative Krea-2 蒸馏(CFG 1.0)下负面词无引导作用,留空。
-const krea2Negative = ""
+// imageNegative 图像生成的负面词。当前所有家族都是 CFG 1.0(蒸馏档),
+// 负面词不参与引导,因此留空 —— 要表达"不要什么"必须写进正向提示词。
+const imageNegative = ""
