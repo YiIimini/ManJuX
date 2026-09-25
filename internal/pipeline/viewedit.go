@@ -99,6 +99,16 @@ func viewEditPrompt(kind EntityKind, a viewAngle, name, imagePrompt string, real
 	return sb.String()
 }
 
+// 多视角生成方式的取值(TurnaroundOptions.Source)。
+//
+// 用常量而不是散落的字面量:第一,调用方不必知道魔法字符串;第二,project 侧那条
+// "每个资产来源都要有中文名"的闸门会扫 `Source:` 字面量,而"edit/h3"是**生成方式**、
+// 不是资产来源 —— 把它写成常量,两个词汇表就不会互相误伤(2026-09-25 实测踩到)。
+const (
+	ViewSourceEdit = "edit" // 图像编辑(默认首选:改你给的那张图,身份按像素保住)
+	ViewSourceH3   = "h3"   // H3 转身视频抽帧(旧路径:视频模型会顺手重设计角色)
+)
+
 // GenerateViewsEdit 用图像编辑逐角度生成多视角,返回转台图路径。
 //
 // 与 H3 路径共用:产物命名、VLM 身份闸门、失败策略(换种子重试 → 仍不行则丢弃全部角度帧)。

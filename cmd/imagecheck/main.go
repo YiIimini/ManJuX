@@ -10,6 +10,7 @@
 //
 //	go run ./cmd/imagecheck -prompt-file %TEMP%\p.txt -out %TEMP%\x.png -w 832 -h 1248
 //	go run ./cmd/imagecheck            # 不带参数时用内置短提示词,832x1248
+//	go run ./cmd/imagecheck views -master <定妆照> -prompt-file %TEMP%\p.txt   # 多视角自检
 package main
 
 import (
@@ -31,6 +32,10 @@ const defaultPrompt = "Young-adult woman in her mid-twenties, narrow oval face w
 	"plain background, upper-body framing, front-facing"
 
 func main() {
+	// 子命令:views = 多视角自检(走生产同一条 GenerateViewsEdit)
+	if len(os.Args) > 1 && os.Args[1] == "views" {
+		os.Exit(runViews(os.Args[2:]))
+	}
 	settings := flag.String("settings", filepath.Join("data", "settings.json"), "settings.json 路径")
 	exeDir := flag.String("exedir", ".", "exe 目录(用于推导默认 DataDir/ComfyUI 根目录)")
 	prompt := flag.String("prompt", "", "提示词(不给则用 -prompt-file 或内置短提示词)")

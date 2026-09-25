@@ -219,3 +219,88 @@ func TestEditGraphSingleRefKeepsCondShape(t *testing.T) {
 		}
 	}
 }
+
+// ---------- Qwen-Image-2.1 编辑链路(2026-09-25 用户定调「都使用 2.1」)----------
+
+func edit21Settings() config.ComfySettings {
+	return config.ComfySettings{
+		EditUNet: "qwen_image_2.1_int8_convrot.safetensors",
+		EditCLIP: "qwen3vl_8b_int8_convrot.safetensors",
+		EditVAE:  "qwen_image_2.1_vae_bf16.safetensors",
+	}
+}
+
+// TestEditFamilySelection 编辑图形态按**编辑底模文件名**自动选:2.1 一个权重管生成与编辑,
+// 2511 走旧链路(存量设置仍可选中)。
+func TestEditFamilySelection(t *testing.T) {
+	got21 := buildEditGraph(edit21Settings(), ImageEditOptions{Prompt: "p"}, []string{"a.png"})
+	if _, ok := got21["20"].(map[string]any); !ok {
+		t.Fatal("2.1 档应有条件节点 20")
+	}
+	if ct, _ := got21["20"].(map[string]any)["class_type"].(string); ct != "TextEncodeQwenImage21" {
+		t.Errorf("2.1 档的条件节点应为 TextEncodeQwenImage21,实际 %s", ct)
+	}
+	gotOld := buildEditGraph(editTestSettings(), ImageEditOptions{Prompt: "p", UseTurbo: true}, []string{"a.png"})
+	if ct, _ := gotOld["20"].(map[string]any)["class_type"].(string); ct != "TextEncodeQwenImageEditPlus" {
+		t.Errorf("2511 档的条件节点应仍为 TextEncodeQwenImageEditPlus,实际 %s", ct)
+	}
+}
+
+// TestEditGraphQwen21Wiring 官方模板 image_qwen_image_2_1_image_edit.json 的接线:
+// 参考图进 TextEncodeQwenImage21 的 images.image_N,latent 取该节点第 3 个输出,
+// 25 步 / cfg 1 / euler / simple,且**没有** AuraFlow 位移与任何 LoRA。
+func TestEditGraphQwen21Wiring(t *testing.T) {
+	c := edit21Settings()
+	g := buildEditGraph(c, ImageEditOptions{
+		Prompt: "show the same character from a three-quarter view", Negative: "another character",
+		RefImages: []string{"master.png"}, Seed: 7,
+	}, []string{"up_master.png"})
+	assertGraphContract(t, g)
+
+	enc := nodeOf(t, g, "TextEncodeQwenImage21")
+	if enc["prompt"] == "" || enc["negative_prompt"] == "" {
+		t.Errorf("正负提示词必须走同一个节点:%v", enc)
+	}
+	if !sameLink(enc["images.image_1"], "11", 0) {
+		t.Errorf("第一张参考图应接进 images.image_1,实际 %v", enc["images.image_1"])
+	}
+	if enc["resolution"] != 1024 {
+		t.Errorf("参考图缩放分辨率应为 1024,实际 %v", enc["resolution"])
+	}
+	ks := nodeOf(t, g, "KSampler")
+	if !sameLink(ks["positive"], "20", 0) || !sameLink(ks["negative"], "20", 1) {
+		t.Errorf("条件应取节点 20 的 0/1 号输出,实际 %v / %v", ks["positive"], ks["negative"])
+	}
+	if !sameLink(ks["latent_image"], "20", 2) {
+		t.Errorf("latent 应取节点 20 的第 3 个输出(按参考图画幅),实际 %v", ks["latent_image"])
+	}
+	if steps, _ := ks["steps"].(int); steps != 25 {
+		t.Errorf("2.1 编辑应为 25 步,实际 %v", steps)
+	}
+	if ks["sampler_name"] != "euler" || ks["scheduler"] != "simple" {
+		t.Errorf("2.1 编辑应为 euler/simple,实际 %v/%v", ks["sampler_name"], ks["scheduler"])
+	}
+	// 2.1 链路里不该有旧链路的专用节点:出现任一都说明选了错图形态
+	banned := map[string]bool{
+		"ModelSamplingAuraFlow": true, "LoraLoaderModelOnly": true, "VAEEncode": true,
+		"FluxKontextImageScale": true, "TextEncodeQwenImageEditPlus": true,
+	}
+	for id, raw := range g {
+		n, _ := raw.(map[string]any)
+		ct, _ := n["class_type"].(string)
+		if banned[ct] {
+			t.Errorf("2.1 编辑链路不该出现 %s(节点 %s,旧链路专用)", ct, id)
+		}
+	}
+}
+
+// TestEditGraphQwen21MultipleRefs 两张参考图必须都进条件(image_1 / image_2)——
+// 少接一张等于"多视角的其它角度"没喂进去,而产物照样出得来(错得静默)。
+func TestEditGraphQwen21MultipleRefs(t *testing.T) {
+	g := buildEditGraph(edit21Settings(), ImageEditOptions{Prompt: "p"}, []string{"a.png", "b.png"})
+	enc := nodeOf(t, g, "TextEncodeQwenImage21")
+	if _, ok := enc["images.image_2"]; !ok {
+		t.Errorf("第二张参考图没接进 images.image_2:%v", enc)
+	}
+	assertGraphContract(t, g)
+}

@@ -11,38 +11,48 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 )
 
-// imageedit.go 多视角图像编辑(Qwen-Image-Edit-2511)。
+// imageedit.go 多视角图像编辑。
 //
 // 【为什么需要这条路】角色多视角原先靠 H3 转身视频抽帧,而视频模型会**顺手重新设计**
 // 角色:实测赛璐璐动漫少年被画成写实真人、插画铜雀被画成 3D 机械铜鸟 —— 逐帧身份校验
 // (qc.IdentityJudge)因此正确地拒绝,多视角永远拿不到(见 docs/AUDIT-2026-09-24.md)。
 // 编辑式模型是"改你给的那张图":身份/配色/画风按像素保住,只把视角转过去。
 //
-// 【图形态】与 ComfyUI 官方模板 image_qwen_image_edit_2511.json 同构:
+// 【两条图形态,按编辑底模的文件名自动选】(2026-09-25 用户定调「都使用 2.1」)
 //
-//	UNETLoader(qwen_image_edit_2511) → ModelSamplingAuraFlow(shift 3.1)
-//	  → [LoraLoaderModelOnly: Lightning 4 步] → [LoraLoaderModelOnly: Multiple-Angles]
-//	CLIPLoader(qwen_2.5_vl_7b, type=qwen_image) ┐
-//	VAELoader(qwen_image_vae)                    ├→ TextEncodeQwenImageEditPlus(pos/neg)
-//	LoadImage(参考图) → FluxKontextImageScale    ┘   （最多 3 张参考图:image1..image3）
-//	              └→ VAEEncode → KSampler → VAEDecode → SaveImage
+//	Qwen-Image-2.1(默认) —— 与官方模板 image_qwen_image_2_1_image_edit.json 同构:
+//	  UNETLoader(qwen_image_2.1) → CLIPLoader(qwen3vl_8b, type=qwen_image) → VAELoader
+//	  LoadImage(image_1..N) ┐
+//	  TextEncodeQwenImage21(clip, prompt, negative_prompt, vae, images.image_N)
+//	                       ├→ positive / negative → KSampler
+//	                       └→ latent(按第一张参考图的画幅)→ KSampler
+//	  KSampler(25 步 / cfg 1 / euler / simple)→ VAEDecode → SaveImage
+//	  参考图直接进文本编码器(节点内部按 resolution 缩放),**不需要** AuraFlow 位移,
+//	  也**不需要**任何 LoRA —— 一个权重同时管生成与编辑。
 //
-// 官方模板里那两个 FluxKontextMultiReferenceLatentMethod 节点**本机不需要**
+//	Qwen-Image-Edit-2511(存量设置仍可选中) —— 与官方模板 image_qwen_image_edit_2511.json 同构:
+//	  UNETLoader(qwen_image_edit_2511) → ModelSamplingAuraFlow(shift 3.1)
+//	    → [LoraLoaderModelOnly: Lightning 4 步] → [LoraLoaderModelOnly: Multiple-Angles]
+//	  LoadImage(参考图) → FluxKontextImageScale ┐
+//	  TextEncodeQwenImageEditPlus(pos/neg, image1..image3)┘
+//	                └→ VAEEncode → KSampler → VAEDecode → SaveImage
+//
+// 官方 2511 模板里那两个 FluxKontextMultiReferenceLatentMethod 节点**本机不需要**
 // (模板 Note 原文:"not needed if you use Comfy files" —— 我们用的正是 Comfy-Org 打包的
 // fp8mixed),所以不加;若日后换成第三方 repack 权重且出现结构崩坏,再补那一步。
 
 // ImageEditOptions 一次"按角度重绘"的参数。
 type ImageEditOptions struct {
 	// RefImages 参考图**本地路径**(1-3 张)。多角度一致性靠它:第一张必须是定妆照,
-	// 可再附上已生成的角度图(官方 2511 支持 image1..image3 三张参考)。
+	// 可再附上已生成的角度图(2.1 最多吃 16 张,2511 官方支持 image1..image3)。
 	RefImages []string
 	Prompt    string // 编辑指令(英文,见 pipeline.viewEditPrompt)
-	Negative  string // 负面提示(CFG=1 的 4 步模式会被忽略)
-	Steps     int    // 0 = 按是否启用 Lightning 自动(4 或 20)
+	Negative  string // 负面提示(CFG=1 的档位会被忽略)
+	Steps     int    // 0 = 按家族/加速档自动
 	CFG       float64
 	Seed      int64
-	UseTurbo  bool          // 用 Lightning 4 步 LoRA(快;官方 4 步档)
-	UseAngles bool          // 用 Multiple-Angles LoRA(转角度专用)
+	UseTurbo  bool          // 2511:Lightning 4 步 LoRA;2.1 无对应 LoRA,此标志被忽略
+	UseAngles bool          // 2511:Multiple-Angles LoRA;2.1 不需要(它自带参考图机制)
 	Timeout   time.Duration // 0 = 引擎默认
 }
 
@@ -53,7 +63,7 @@ func (e *Engine) EditImage(ctx context.Context, opt ImageEditOptions, outPath st
 	}
 	c := e.cfg()
 	if strings.TrimSpace(c.EditUNet) == "" || strings.TrimSpace(c.EditCLIP) == "" || strings.TrimSpace(c.EditVAE) == "" {
-		return "", fmt.Errorf("多视角编辑模型未配置:请在设置里填写 Qwen-Image-Edit 的 UNet / CLIP / VAE 文件名")
+		return "", fmt.Errorf("图像编辑模型未配置:请在设置里填写编辑用的 UNet / CLIP / VAE 文件名(默认与生成同一个 Qwen-Image-2.1)")
 	}
 	if len(opt.RefImages) == 0 {
 		return "", fmt.Errorf("多视角编辑至少需要 1 张参考图")
@@ -85,8 +95,64 @@ func (e *Engine) EditImage(ctx context.Context, opt ImageEditOptions, outPath st
 	return "", fmt.Errorf("多视角编辑完成但未找到图片产物")
 }
 
-// buildEditGraph 构造 Qwen-Image-Edit-2511 图(单图编辑 + 可选 LoRA)。
+// buildEditGraph 构造编辑图。家族按**编辑底模的文件名**判定(见 imagefamily.go):
+// Qwen-Image-2.1 走单条件节点 + 自带的 latent;其余(含 2511)走旧的 EditPlus 链路。
 func buildEditGraph(c config.ComfySettings, opt ImageEditOptions, refs []string) map[string]any {
+	fam := ResolveImageFamily("", c.EditUNet, c.EditCLIP)
+	if fam.Encode21 {
+		return buildEditGraphQwen21(c, opt, refs)
+	}
+	return buildEditGraphLegacy(c, opt, refs)
+}
+
+// buildEditGraphQwen21 Qwen-Image-2.1 的编辑图(官方模板 image_qwen_image_2_1_image_edit.json)。
+//
+// 与旧链路的三个实质差别:
+//  1. 参考图直接进 TextEncodeQwenImage21 的 images.image_N,由该节点统一按 resolution 缩放
+//     (文本塔看到的与 VAE 编码的是同一张缩放图)—— 不再需要 FluxKontextImageScale。
+//  2. latent 取该节点的**第 3 个输出**(按第一张参考图的画幅),而不是自己 VAEEncode:
+//     官方模板用 ComfySwitchNode 在"有参考图 → 节点 latent / 无参考图 → EmptyLatent"之间切,
+//     我们这条路必然有参考图,所以直接接节点 latent。
+//  3. 没有 AuraFlow 位移、没有 LoRA(2.1 的 Lightning/多角度 LoRA 目前不存在,也不该硬套 2511 的)。
+func buildEditGraphQwen21(c config.ComfySettings, opt ImageEditOptions, refs []string) map[string]any {
+	g := map[string]any{
+		"1": nd("CLIPLoader", map[string]any{"clip_name": c.EditCLIP, "type": "qwen_image", "device": "default"}),
+		"2": nd("VAELoader", map[string]any{"vae_name": c.EditVAE}),
+		"3": nd("UNETLoader", map[string]any{"unet_name": c.EditUNet, "weight_dtype": "default"}),
+	}
+
+	// 参考图:第 1 张固定 image_1(它是画幅与身份的主参考),其余依次 image_2..image_16。
+	enc := map[string]any{
+		"clip": link("1", 0), "prompt": opt.Prompt, "negative_prompt": opt.Negative,
+		"vae": link("2", 0), "resolution": 1024,
+	}
+	for i, n := range refs {
+		id := "1" + strconv.Itoa(i+1) // 110 / 111 / 112 …
+		g[id] = nd("LoadImage", map[string]any{"image": n})
+		enc["images.image_"+strconv.Itoa(i+1)] = link(id, 0)
+	}
+	g["20"] = nd("TextEncodeQwenImage21", enc)
+
+	steps, cfg := opt.Steps, opt.CFG
+	if steps <= 0 {
+		steps = 25 // 官方 2.1 模板档
+	}
+	if cfg <= 0 {
+		cfg = 1.0
+	}
+	g["31"] = nd("KSampler", map[string]any{
+		"model": link("3", 0), "positive": link("20", 0), "negative": link("20", 1),
+		"latent_image": link("20", 2),
+		"seed":         opt.Seed, "steps": steps, "cfg": cfg,
+		"sampler_name": "euler", "scheduler": "simple", "denoise": 1.0,
+	})
+	g["32"] = nd("VAEDecode", map[string]any{"samples": link("31", 0), "vae": link("2", 0)})
+	g["33"] = nd("SaveImage", map[string]any{"images": link("32", 0), "filename_prefix": "manjux/edit"})
+	return g
+}
+
+// buildEditGraphLegacy Qwen-Image-Edit-2511 的编辑图(单图编辑 + 可选 LoRA)。
+func buildEditGraphLegacy(c config.ComfySettings, opt ImageEditOptions, refs []string) map[string]any {
 	g := map[string]any{}
 
 	// ① 模型三件套
@@ -199,12 +265,14 @@ func (e *Engine) EditAssets(ctx context.Context) []string {
 		return nil
 	}
 	c := e.cfg()
+	// 家族按编辑底模判定:2.1 一个权重管生成与编辑,标签也跟着说清是哪一族。
+	editFam := ResolveImageFamily("", c.EditUNet, c.EditCLIP)
 	need := []struct {
 		class, field, file, label, where string
 	}{
-		{"UNETLoader", "unet_name", c.EditUNet, "多视角编辑底模(Qwen-Image-Edit-2511)", "diffusion_models"},
-		{"CLIPLoader", "clip_name", c.EditCLIP, "多视角编辑文本编码器(Qwen2.5-VL-7B)", "text_encoders"},
-		{"VAELoader", "vae_name", c.EditVAE, "多视角编辑 VAE", "vae"},
+		{"UNETLoader", "unet_name", c.EditUNet, "图像编辑底模(" + editFam.Label + ")", "diffusion_models"},
+		{"CLIPLoader", "clip_name", c.EditCLIP, "图像编辑文本编码器(type=" + editFam.CLIPType + ")", "text_encoders"},
+		{"VAELoader", "vae_name", c.EditVAE, "图像编辑 VAE", "vae"},
 	}
 	if strings.TrimSpace(c.EditTurboLoRA) != "" {
 		need = append(need, struct{ class, field, file, label, where string }{

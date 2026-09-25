@@ -47,17 +47,18 @@ type ComfySettings struct {
 	ImageUNet   string `json:"image_unet"`   // 默认 qwen_image_2.1_int8_convrot.safetensors
 	ImageCLIP   string `json:"image_clip"`   // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
 	ImageVAE    string `json:"image_vae"`    // 默认 qwen_image_2.1_vae_bf16.safetensors
-	// 多视角图像编辑(Qwen-Image-Edit-2511)—— 角色多视角的**首选**路径。
+	// 图像编辑(多视角重绘 / 上传图白底化 / 换姿势)—— 2026-09-25 起**与生成同一个
+	// Qwen-Image-2.1 权重**:一个模型既出定妆照也做编辑,资产链只对一个家族,
+	// 少一层"生成一套画风、编辑另一套画风"的漂移源。
 	//
-	// 为什么换掉"H3 转身视频抽帧":视频模型会顺手重新设计角色(实测赛璐璐角色被
-	// 画成写实真人、插画铜雀被画成 3D 机械鸟),逐帧身份校验必然拒绝,多视角永远拿不到。
-	// 编辑式模型是**改你给的那张图**:身份/配色/画风按像素保住,只把视角转过去。
-	// 详见 docs/AUDIT-2026-09-24.md 与 docs/多视角方案.md。
-	EditUNet       string `json:"edit_unet"`        // 默认 qwen_image_edit_2511_fp8mixed.safetensors
-	EditCLIP       string `json:"edit_clip"`        // 默认 qwen_2.5_vl_7b_fp8_scaled.safetensors(type=qwen_image)
-	EditVAE        string `json:"edit_vae"`         // 默认 qwen_image_vae.safetensors(与 Krea-2 同一个 VAE)
-	EditTurboLoRA  string `json:"edit_turbo_lora"`  // 默认 Lightning 4 步加速 LoRA(空=不用,走 20 步)
-	EditAnglesLoRA string `json:"edit_angles_lora"` // 默认 Multiple-Angles LoRA(转角度专用;空=不用)
+	// 旧的 Qwen-Image-Edit-2511 仍可选中(imageedit.go 按编辑底模文件名自动选图形态),
+	// 选中它时下面两个 LoRA 才有意义:Lightning 4 步加速、Multiple-Angles 转角度
+	// —— 它们都是为 2511 训的,套到 2.1 上不成立,所以 2.1 档下默认留空。
+	EditUNet       string `json:"edit_unet"`        // 默认 qwen_image_2.1_int8_convrot.safetensors
+	EditCLIP       string `json:"edit_clip"`        // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
+	EditVAE        string `json:"edit_vae"`         // 默认 qwen_image_2.1_vae_bf16.safetensors
+	EditTurboLoRA  string `json:"edit_turbo_lora"`  // 2511 专用加速 LoRA(2.1 档留空)
+	EditAnglesLoRA string `json:"edit_angles_lora"` // 2511 专用转角度 LoRA(2.1 档留空)
 
 	// ReserveVRAMGB 启动 ComfyUI 时预留的显存(GB),留给系统/浏览器。
 	// 实测渲染前别的进程已占 1-2GB,不预留就等于和桌面抢最后几 GB(CUDA OOM 或
@@ -174,11 +175,11 @@ func Default() *Settings {
 			ImageUNet:      "qwen_image_2.1_int8_convrot.safetensors",
 			ImageCLIP:      "qwen3vl_8b_int8_convrot.safetensors",
 			ImageVAE:       "qwen_image_2.1_vae_bf16.safetensors",
-			EditUNet:       "qwen_image_edit_2511_fp8mixed.safetensors",
-			EditCLIP:       "qwen_2.5_vl_7b_fp8_scaled.safetensors",
-			EditVAE:        "qwen_image_vae.safetensors",
-			EditTurboLoRA:  "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
-			EditAnglesLoRA: "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+			EditUNet:       "qwen_image_2.1_int8_convrot.safetensors",
+			EditCLIP:       "qwen3vl_8b_int8_convrot.safetensors",
+			EditVAE:        "qwen_image_2.1_vae_bf16.safetensors",
+			EditTurboLoRA:  "",
+			EditAnglesLoRA: "",
 			ReserveVRAMGB:  1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
 		},
 		MiniMax: MiniMaxSettings{
@@ -285,6 +286,15 @@ func NewManager(path, exeDir string) (*Manager, error) {
 			s.Comfy.ImageUNet = def.Comfy.ImageUNet
 			s.Comfy.ImageCLIP = def.Comfy.ImageCLIP
 			s.Comfy.ImageVAE = def.Comfy.ImageVAE
+			// 编辑侧一起迁(用户定调「都使用 2.1」):旧默认是 Qwen-Image-Edit-2511 + 两个
+			// 2511 专用 LoRA。留着它们会出现"生成用 2.1、编辑用 2511"的两套画风。
+			if editTripleIsLegacy2511(s) {
+				s.Comfy.EditUNet = def.Comfy.EditUNet
+				s.Comfy.EditCLIP = def.Comfy.EditCLIP
+				s.Comfy.EditVAE = def.Comfy.EditVAE
+				s.Comfy.EditTurboLoRA = def.Comfy.EditTurboLoRA
+				s.Comfy.EditAnglesLoRA = def.Comfy.EditAnglesLoRA
+			}
 		}
 		m.settings = s
 		return m, nil
@@ -326,6 +336,16 @@ func imageTripleIsLegacyKrea2(s *Settings) bool {
 	return s.Comfy.ImageUNet == legacyKrea2ImageTriple[0] &&
 		s.Comfy.ImageCLIP == legacyKrea2ImageTriple[1] &&
 		s.Comfy.ImageVAE == legacyKrea2ImageTriple[2]
+}
+
+// legacyEdit2511Triple 是 2026-09-25 之前落盘的**编辑**模型默认(Qwen-Image-Edit-2511
+// + 两个 2511 专用 LoRA)。与生成侧同一套判据:逐字等于旧默认才迁移。
+func editTripleIsLegacy2511(s *Settings) bool {
+	return s.Comfy.EditUNet == "qwen_image_edit_2511_fp8mixed.safetensors" &&
+		s.Comfy.EditCLIP == "qwen_2.5_vl_7b_fp8_scaled.safetensors" &&
+		s.Comfy.EditVAE == "qwen_image_vae.safetensors" &&
+		s.Comfy.EditTurboLoRA == "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors" &&
+		s.Comfy.EditAnglesLoRA == "qwen-image-edit-2511-multiple-angles-lora.safetensors"
 }
 
 // saveLocked 原子写:临时文件+rename。调用方须持有锁。

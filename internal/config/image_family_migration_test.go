@@ -95,3 +95,65 @@ func TestCustomImageModelsSurviveLegacyMigration(t *testing.T) {
 		t.Errorf("手工换过的模型不得被迁移冲掉,实际 %s / %s", c.ImageUNet, c.ImageVAE)
 	}
 }
+
+// TestLegacyEditSettingsMigrateToQwen21 编辑侧一起迁移(用户定调「都使用 2.1」)。
+//
+// 只迁生成侧会出现"生成用 Qwen-Image-2.1、编辑用 Qwen-Image-Edit-2511"的两套画风,
+// 而多视角图会作为角色的第二张参考图喂进渲染 —— 两套画风在那里直接打架。
+// 两个 2511 专用 LoRA 也必须一并清空:它们是给 2511 训的,套在 2.1 上不成立。
+func TestLegacyEditSettingsMigrateToQwen21(t *testing.T) {
+	dir := t.TempDir()
+	legacy := map[string]any{
+		"comfy": map[string]any{
+			"image_unet":       "krea2_turbo_fp8_scaled.safetensors",
+			"image_clip":       "qwen3vl_4b_fp8_scaled.safetensors",
+			"image_vae":        "qwen_image_vae.safetensors",
+			"edit_unet":        "qwen_image_edit_2511_fp8mixed.safetensors",
+			"edit_clip":        "qwen_2.5_vl_7b_fp8_scaled.safetensors",
+			"edit_vae":         "qwen_image_vae.safetensors",
+			"edit_turbo_lora":  "Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+			"edit_angles_lora": "qwen-image-edit-2511-multiple-angles-lora.safetensors",
+		},
+	}
+	raw, _ := json.Marshal(legacy)
+	m, err := NewManager(writeSettings(t, dir, string(raw)), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := m.Get().Comfy
+	def := Default().Comfy
+	if c.EditUNet != def.EditUNet || c.EditCLIP != def.EditCLIP || c.EditVAE != def.EditVAE {
+		t.Errorf("编辑三件套应迁到 2.1,实际 unet=%s clip=%s vae=%s", c.EditUNet, c.EditCLIP, c.EditVAE)
+	}
+	if c.EditTurboLoRA != "" || c.EditAnglesLoRA != "" {
+		t.Errorf("2511 专用 LoRA 必须清空(套在 2.1 上不成立),实际 %q / %q", c.EditTurboLoRA, c.EditAnglesLoRA)
+	}
+}
+
+// TestLegacyImageButCustomEditKeepsEdit 生成侧是旧默认、但**编辑侧被手工改过**时,
+// 只迁生成侧 —— 别把用户挑的编辑模型冲掉。
+func TestLegacyImageButCustomEditKeepsEdit(t *testing.T) {
+	dir := t.TempDir()
+	mixed := map[string]any{
+		"comfy": map[string]any{
+			"image_unet": "krea2_turbo_fp8_scaled.safetensors",
+			"image_clip": "qwen3vl_4b_fp8_scaled.safetensors",
+			"image_vae":  "qwen_image_vae.safetensors",
+			"edit_unet":  "my_own_edit_model.safetensors",
+			"edit_clip":  "my_clip.safetensors",
+			"edit_vae":   "my_vae.safetensors",
+		},
+	}
+	raw, _ := json.Marshal(mixed)
+	m, err := NewManager(writeSettings(t, dir, string(raw)), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := m.Get().Comfy
+	if c.EditUNet != "my_own_edit_model.safetensors" || c.EditCLIP != "my_clip.safetensors" {
+		t.Errorf("手工挑的编辑模型不得被迁移冲掉,实际 %s / %s", c.EditUNet, c.EditCLIP)
+	}
+	if c.ImageUNet == "krea2_turbo_fp8_scaled.safetensors" {
+		t.Error("生成侧仍应迁移到新默认")
+	}
+}
