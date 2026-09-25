@@ -73,7 +73,7 @@ async function setKind(c, key) {
 
 function viewAsset(a, kind, name) {
   if (!a?.file) return
-  G.viewer = { index: 0, items: [{ type: 'image', src: api.fileURL(pj.value.project.id, a.file), title: name, meta: sourceLabel(a.source), kindLabel: 'ASSET' }] }
+  G.viewer = { index: 0, items: [{ type: 'image', src: api.fileURL(pj.value.project.id, a.file), title: name, meta: sourceLabel(a?.source), kindLabel: 'ASSET' }] }
 }
 async function regen(assetId) {
   busy.regen = assetId

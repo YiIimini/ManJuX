@@ -1,5 +1,5 @@
 <script setup>
-import { G, api, refreshProject, phaseLabel , sourceLabel} from '../store'
+import { G, api, refreshProject, phaseLabel, sourceLabel, sourceTone } from '../store'
 import { computed, ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
@@ -306,7 +306,7 @@ const doneShots = computed(() =>
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ c.name }}</b>
                     <el-tag v-if="c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
-                    <el-tag v-else size="small" type="warning" effect="plain">{{ sourceLabel(c.asset.source) }}</el-tag>
+                    <el-tag v-else size="small" :type="sourceTone(c.asset?.source)" effect="plain">{{ sourceLabel(c.asset?.source) }}</el-tag>
                     <i class="dot" :class="c.asset ? 'ok' : 'warn'"></i>
                   </div>
                   <div style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
@@ -345,7 +345,7 @@ const doneShots = computed(() =>
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ s.name }}</b>
                     <el-tag v-if="s.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
-                    <el-tag v-else size="small" type="warning" effect="plain">{{ sourceLabel(s.asset.source) }}</el-tag>
+                    <el-tag v-else size="small" :type="sourceTone(s.asset?.source)" effect="plain">{{ sourceLabel(s.asset?.source) }}</el-tag>
                     <i class="dot" :class="s.asset ? 'ok' : 'warn'"></i>
                   </div>
                   <div style="aspect-ratio:16/9;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"

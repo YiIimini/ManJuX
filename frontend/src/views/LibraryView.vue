@@ -543,7 +543,7 @@ async function remove(e) {
         </div>
 
         <div class="text-xs" style="color:var(--mx-text3)">
-          来源:{{ sourceLabel(detail.source) }} ·
+          来源:{{ sourceLabel(detail?.source) }} ·
           首次入库:{{ detail.source_project || '-' }} ·
           已被 {{ detail.used_count }} 个项目复用
           <span v-if="detail.aliases?.length">
