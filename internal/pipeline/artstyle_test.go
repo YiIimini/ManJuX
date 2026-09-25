@@ -140,21 +140,30 @@ func TestCharacterImagePromptIsSingleAssemblyPoint(t *testing.T) {
 	}
 }
 
-// TestPhotorealOverrideNotice 风格与开关冲突时必须能生成一句给用户看的话。
-func TestPhotorealOverrideNotice(t *testing.T) {
+// TestStyleFallbackNotice 兜底画风的告知(语义 2026-09-24 变更)。
+//
+// 旧函数在"风格要真人 + 开关开着"时喊「已按动漫化渲染」——那条路径**已经不存在**了
+// (平台不再抢风格),继续喊就是**说假话**(用户 2026-09-25 正是看到这条过时告警来问的)。
+// 现在只有"方案里没有任何风格设定"才需要告知。
+func TestStyleFallbackNotice(t *testing.T) {
 	proj := &project.Project{}
 	proj.Config.Params = project.DefaultStageParams()
-	plan := &project.Plan{Style: "photorealistic cinematic"}
-	if n := photorealOverrideNotice(proj, plan); !strings.Contains(n, "已按动漫化渲染") {
-		t.Errorf("真人风格 + 开关开启应给出覆盖说明,实际:%q", n)
+	// 上游指定了风格(哪怕是写实)→ 平台照它渲染,不该有任何"我覆盖了你"的告警
+	if n := styleFallbackNotice(proj, &project.Plan{Style: "photorealistic cinematic"}); n != "" {
+		t.Errorf("上游已指定风格时不该告警(平台不再抢画风),实际:%q", n)
 	}
+	if n := styleFallbackNotice(proj, &project.Plan{Style: "国漫二维动画"}); n != "" {
+		t.Errorf("动画风格同样不该告警,实际:%q", n)
+	}
+	// 没有任何风格设定 → 说明这是兜底,并指出风格该由谁定
+	proj.Config.Params.Script.StyleHint = ""
+	if n := styleFallbackNotice(proj, &project.Plan{}); !strings.Contains(n, "兜底画风") {
+		t.Errorf("没有风格设定时应说明这是兜底,实际:%q", n)
+	}
+	// 显式关掉平台兜底 → 不再有任何画风可兜,也就没什么可说
 	proj.Config.Params.Script.StylizedFaces = project.Bool(false)
-	if n := photorealOverrideNotice(proj, plan); n != "" {
-		t.Errorf("关闭开关后不应再告警(真人剧是合法路线),实际:%q", n)
-	}
-	proj.Config.Params.Script.StylizedFaces = project.Bool(true)
-	if n := photorealOverrideNotice(proj, &project.Plan{Style: "国漫二维动画"}); n != "" {
-		t.Errorf("动画风格不应触发覆盖告警,实际:%q", n)
+	if n := styleFallbackNotice(proj, &project.Plan{}); n != "" {
+		t.Errorf("关掉兜底画风后不该再提示,实际:%q", n)
 	}
 }
 

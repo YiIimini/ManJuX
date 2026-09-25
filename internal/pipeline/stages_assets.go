@@ -27,7 +27,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	}
 	p := proj.Config.Params.Assets
 	// 风格要真人、但角色动漫化开关开着:必须当场说清"为什么没按你选的风格走"
-	if notice := photorealOverrideNotice(proj, plan); notice != "" {
+	if notice := styleFallbackNotice(proj, plan); notice != "" {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", notice)
 	}
 
@@ -509,7 +509,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	if proj.Config.Params.Assets.Source == "skip" {
 		return true
 	}
-	if notice := photorealOverrideNotice(proj, plan); notice != "" {
+	if notice := styleFallbackNotice(proj, plan); notice != "" {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", notice)
 	}
 	type miss struct {

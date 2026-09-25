@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -35,5 +36,41 @@ func TestStyleComesFromUpstream(t *testing.T) {
 	}
 	if !strings.Contains(fb, "兜底画风") {
 		t.Error("兜底时要说明这是兜底、风格应由上游指定")
+	}
+}
+
+// TestNoStaleOverrideWarning 过时告警不得复活(2026-09-25 用户拿着那句告警来问)。
+//
+// 「风格里含真人/写实请求…已按动漫化渲染」这套说法在平台不再抢风格之后**不成立**了:
+// 上游指定写实就照写实渲染,根本没有"被动漫化覆盖"这回事。留着它就是在界面上说假话。
+// 判据:整仓(非测试)源码里不得再出现那句文案的关键片段。
+func TestNoStaleOverrideWarning(t *testing.T) {
+	files, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scanned := 0
+	for _, f := range files {
+		name := f.Name()
+		if f.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		raw, rerr := os.ReadFile(name)
+		if rerr != nil {
+			t.Fatal(rerr)
+		}
+		scanned++
+		for i, ln := range strings.Split(string(raw), "\n") {
+			trimmed := strings.TrimSpace(ln)
+			if strings.HasPrefix(trimmed, "//") {
+				continue // 注释里记录历史原因可以
+			}
+			if strings.Contains(ln, "已按动漫化渲染") {
+				t.Errorf("%s:%d 出现过时告警文案(平台已不抢风格,这句话是假的)", name, i+1)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("没扫到源码 —— 闸门失效")
 	}
 }

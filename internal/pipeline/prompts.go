@@ -389,19 +389,28 @@ func replaceAllFold(s, old, new string) string {
 	}
 }
 
-// photorealOverrideNotice 风格要真人、但角色动漫化开关开着时的告警文案(空 = 无冲突)。
+// styleFallbackNotice 兜底画风的告知(空 = 不需要说)。
 //
-// 必须让用户看见:否则他会以为"我选了真人实拍风格却没生效",而实际是角色非真人脸
-// 这条硬约束把它覆盖了 —— 想拍真人剧就把 script.stylized_faces 关掉。
-func photorealOverrideNotice(proj *project.Project, plan *project.Plan) string {
-	if proj == nil || plan == nil || !proj.Config.Params.Script.FacesOn() {
+// 语义在 2026-09-24 用户定调后**变了**:平台不再抢风格(上游/技能端指定什么就渲染什么),
+// 所以"风格要真人但被平台压成动漫"这件事**已经不会发生** —— 旧函数
+// photorealOverrideNotice 仍然在喊"已按动漫化渲染",是**说假话**(用户 2026-09-25 正是
+// 看到这条过时告警来问的)。
+//
+// 现在只剩一种情况值得告知:**方案里没有任何风格设定** —— 此时平台按兜底画风渲染,
+// 用户应当知道"这次的画风是平台兜的,不是上游指定的"(否则他下次又会问"风格怎么是这样")。
+func styleFallbackNotice(proj *project.Project, plan *project.Plan) string {
+	if proj == nil || !proj.Config.Params.Script.FacesOn() {
 		return ""
 	}
-	if !photorealRequested(plan.Style) && !photorealRequested(proj.Config.Params.Script.StyleHint) {
-		return ""
+	style := ""
+	if plan != nil {
+		style = strings.TrimSpace(plan.Style)
 	}
-	return "风格里含真人/写实请求,但「角色动漫化(非真人脸)」开关是开的 —— 已按动漫化渲染;" +
-		"确实要真人剧请在剧本阶段关掉该开关(参数抽屉)"
+	if style != "" || strings.TrimSpace(proj.Config.Params.Script.StyleHint) != "" {
+		return "" // 上游给了风格 → 平台照它渲染,没什么要提醒的
+	}
+	return "本次方案里没有任何风格设定,已按平台兜底画风(二维/2.5 维动画 + 哑光)渲染;" +
+		"风格应由上游剧本/技能端在方案里指定(指定后本段不再生效)"
 }
 
 // genAssetImage Krea-2 生成单张资产图(角色竖幅半身/场景按画幅方向)。
