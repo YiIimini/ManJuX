@@ -36,13 +36,17 @@ import (
 func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	type named struct {
 		name, desc string
+		voice      string
 		kind       EntityKind
 	}
 	var chars, scenes []named
 	for _, cid := range shot.Characters {
 		for _, ch := range plan.Characters {
 			if ch.ID == cid && strings.TrimSpace(ch.Description) != "" {
-				chars = append(chars, named{ch.Name, strings.TrimSpace(ch.Description), ResolveEntityKind(ch)})
+				chars = append(chars, named{
+					name: ch.Name, desc: strings.TrimSpace(ch.Description),
+					voice: strings.TrimSpace(ch.Voice), kind: ResolveEntityKind(ch),
+				})
 			}
 		}
 	}
@@ -83,6 +87,28 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			if extra := uniformCivilianClarify(c.desc); extra != "" {
 				sb.WriteString("   " + strings.TrimSpace(extra) + "\n")
 			}
+		}
+	}
+	// 声线锚定(2026-09-25 用户报「人物配音错误异常」):角色卡上的 voice 此前**从未注入**
+	// 镜头提示词,逐镜声线全靠 LLM 现写 —— 实测同一角色在不同镜头被写成
+	// "young female, low and even…" / "young female voice, low and even…" /
+	// "…speaks from the chest" / "…speaking from the chest" 这类细微措辞漂移,
+	// 而 H3 是把这段文字当音频条件用的:措辞一变,音色就跟着变。
+	hasVoice := false
+	for _, c := range chars {
+		if c.voice != "" {
+			hasVoice = true
+			break
+		}
+	}
+	if hasVoice {
+		sb.WriteString("【声线(逐字照抄,不得改写)】本镜每句台词的 [voice description] 必须与下面这一条**逐字一致**;" +
+			"同一角色在任何镜头都用同一句,两个角色的声线不得相同:\n")
+		for _, c := range chars {
+			if c.voice == "" {
+				continue
+			}
+			fmt.Fprintf(&sb, "- %s: %s\n", c.name, c.voice)
 		}
 	}
 	if len(scenes) > 0 {

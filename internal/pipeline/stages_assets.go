@@ -176,7 +176,17 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 
 	// Q 版形象(chibi):主定妆照就绪的角色同步生成 Q 版,内心活动镜头的表达素材。
 	// 独立资产 ID(char:<id>_chibi),渲染 ref 不携带,仅作画面内容/花絮素材。
-	if proj.Config.Params.Script.Chibi && comfyGen != nil {
+	//
+	// **方案里已经有 Q 版角色卡时不再自动生成**(2026-09-25 用户报「Q版形象相同的角色
+	// 创建多个」):技能端会把"内心Q版化身"写成一张独立角色卡(本机实例:char_chibi
+	// 「迷你青禾(内心Q版)」),而平台又会给每个真人角色再造一份 <id>_chibi ——
+	// 同一个 Q 版形象于是有两套资产、两个库条目(实测库里同时存在「迷你青禾」与
+	// 「迷你青禾内心Q版」)。技能端既然已经明确指定了 Q 版形象,平台就不该再猜一份。
+	planHasChibi := planHasChibiCard(plan)
+	if planHasChibi {
+		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "方案里已有 Q 版角色卡,跳过平台自动 Q 版(避免同一形象出现两份)")
+	}
+	if proj.Config.Params.Script.Chibi && comfyGen != nil && !planHasChibi {
 		for _, ch := range plan.Characters {
 			chibiID := "char:" + ch.ID + "_chibi"
 			if a, ok := assets[chibiID]; ok && a.File != "" {
@@ -579,3 +589,19 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 
 // StylePresets 渲染风格预设(可多选组合):key → (显示名, 英文风格提示)。
 // 提示词进 LLM 全局风格段,决定全片视觉基调。
+
+// planHasChibiCard 方案里是否已经有一张 Q 版角色卡(技能端写的"内心Q版化身")。
+//
+// 判据用 ResolveEntityKind —— 它同时认显式 kind=chibi 与名字/描述里的 Q 版特征
+// (「迷你青禾(内心Q版)」这类命名正是靠它认出来的)。
+func planHasChibiCard(plan *project.Plan) bool {
+	if plan == nil {
+		return false
+	}
+	for _, ch := range plan.Characters {
+		if ResolveEntityKind(ch) == KindChibi {
+			return true
+		}
+	}
+	return false
+}
