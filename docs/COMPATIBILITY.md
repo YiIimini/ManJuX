@@ -453,3 +453,35 @@ base_path 是 `D:/Ai/ManJuX/comfyui/shared/`(部署形态下的路径),`shared_c
 
 > 该文件只影响 `express` 极速预览档(`engine.go:516`,有 fp16 回退);turbo / quality 档走的是
 > `minimax_h3_video_vae_fp16`,未受影响。
+
+### 2026-09-25:H3 提示词口径以**官方指南**为准(用户要求"参考全网找解决方案,别想当然")
+
+**官方来源**(写代码改提示词前先查这三处):
+
+| 用途 | 链接 |
+|---|---|
+| 基础模式(T2VA/I2VA/FL2VA/L2VA) | https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md |
+| 全参考模式(R2V,含音频标记表) | https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md |
+| ComfyUI 官方提示词指南(含社区实测) | https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide |
+| 官方 skills(提示词技能包) | https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills |
+
+**据此纠正/补齐的四件事**(前两件是我此前"想当然"改错的):
+
+1. **画面文字不是"一律禁止",而是引号枚举制**(官方基础指南 §4.5):画面里可见的
+   招牌/横幅/标签/字幕/霓虹文字都要放进**英文双引号**、逐字保留原字与标点、不翻译;
+   ComfyUI 官方页记载的社区实测:"把每段文字都用引号枚举出来能保持文字清晰可读,
+   **未定义的文字才容易变成乱码符号**"。→ 原先那句"画面内一律不得出现文字"已改为
+   "该出现的必须引号逐字给出;引号之外不得有文字"。
+2. **音频驱动必须带三个官方标记**(全参考指南 §2.4/§3/§4.2):`<Audio N>` 定义 +
+   summary 前缀 `[audio reuse]` + retention 标记 `fully_copy`。ComfyUI 官方页的社区实测:
+   **标记不正确时,H3 只把音频当音色参考,口型会与歌词脱节** —— 我们的音频驱动此前
+   一个标记都没写,这正是「人物配音错误异常」的官方解。
+3. **配乐与音景回到官方语义**:`non_diegetic_music` = 没有非叙事配乐时写 `N/A`,
+   有则写乐器+速度+节奏+动态,**不用抽象情绪词**;`overall_soundscape` 官方是 **1-4 句**,
+   只有"全片明确要求静音"才写 N/A。(把"每镜都配乐"压下去仍是用户诉求,做法是
+   "不要每镜都配",而不是自造"大多数镜头没有配乐"这种统计。)
+4. **说话人规范**(官方基础指南 §4.4):说话人用稳定 ID `(S1)`/`(S2)`,**跨镜头保持同一 ID**、
+   从不发声者不给 ID、齐声用复合 ID `(S1,S2)`;声线身份短语放在 `<d>` **之前**、
+   首次出现时给出一次(类型/年龄/性别/画内画外/音高/音色/语速/口音);台词跨剪切用
+   `<scenetrans>`(两段都标 + 明说音频连续)、被片尾截断用 `<cutoff>`。
+   —— `<scenetrans>`/`<cutoff>` 此前完全没用上,而它们直接决定"台词跨切听感"。

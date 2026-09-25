@@ -151,6 +151,10 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 		// 恰恰是在脸上动刀,少了这条最容易看出"补丁"。
 		prompt = pipeline.ShotRenderPrompt(ctx.proj, ctx.plan, ctx.shot)
 	}
+	// 音频驱动必须带**官方全参考模式的音频标记**(<Audio N> 定义 + [audio reuse] 任务前缀
+	// + fully_copy 保留标记):不写标记,H3 只把音频当音色参考,口型会与配音脱节
+	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
+	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
 	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
@@ -321,6 +325,10 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 		// 否则重渲出来的片段又会出现"没有哑光约束"的油腻脸与听不懂的鸟语(2026-09-12/09-24)
 		prompt = pipeline.ShotRenderPrompt(ctx.proj, ctx.plan, ctx.shot)
 	}
+	// 音频驱动必须带**官方全参考模式的音频标记**(<Audio N> 定义 + [audio reuse] 任务前缀
+	// + fully_copy 保留标记):不写标记,H3 只把音频当音色参考,口型会与配音脱节
+	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
+	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
 	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())

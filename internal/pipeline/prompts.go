@@ -242,42 +242,39 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 画面重新生成出油光,局部重绘会在脸上补一块写实皮肤。约束只写一处必然如此,
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
-	return EnsureNoOnScreenText(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj))))
+	return EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj))))
 }
 
-// noOnScreenTextMarker 幂等判据(改了文案必须保留这个串,否则会重复叠加)。
-const noOnScreenTextMarker = "NO ON-SCREEN TEXT"
+// onScreenTextMarker 幂等判据(改了文案必须保留这个串,否则会重复叠加)。
+const onScreenTextMarker = "ON-SCREEN TEXT (QUOTED, VERBATIM)"
 
-// EnsureNoOnScreenText 给镜头提示词补上"画面里不许出现文字"的硬约束(幂等)。
+// EnsureOnScreenTextRule 画面文字规则(幂等)。
 //
-// 用户 2026-09-24 报「视频渲染中的文字有时候出现错误的字」——根因是**画面文字从来没被
-// 真正禁止**:分镜提示词里那句 exclusions 只是 `e.g.`("例如:不要字幕、不要水印"),
-// LLM 写不写、怎么写全凭自觉;而招牌/牌匾/书页/胸牌这类东西一旦进了画面描述,
-// 视频模型就会"自己发明"几个字 —— 汉字它认不出,于是画出形近的错字或糊成一团的假字。
+// **方向依据官方指南修正**(2026-09-25 用户要求"参考全网找解决方案,不要自己想当然"):
+// 我先前写的是"画面内一律不得出现可辨认文字",而官方给的是**正向解法** ——
+// MiniMax 官方基础指南 §4.5:画面里实际可见的招牌/横幅/标签/字幕/霓虹文字都要放进
+// **英文双引号**、逐字保留原字与标点、不翻译;ComfyUI 官方提示词指南的社区实测进一步
+// 说明:**把每段文字用引号逐条枚举出来能保持清晰可读,未定义的文字才容易变成乱码符号**。
 //
-// 所以这条在**代码层**兜底(与 EnsureChineseDialogue 同一思路:提示词管不住的事,
-// 收口到装配点):无论 LLM 写没写,每条出像素的提示词都带上这段。
+//	https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md
+//	https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide
 //
-// 注意它不是"一律禁止文字"这么简单,而是分三种情况说清楚,否则模型会走另一个极端
-// (该有字的地方也留白,或者反过来把字写错):
-//  1. 默认:画面里不要任何文字;
-//  2. 剧情确实需要(牌匾/书名/告示):**照抄提示词里给出的原字**,不许自己发明;
-//  3. 不需要辨认的远景文字:用无法辨认的抽象笔画带过,绝不拼凑假字。
-func EnsureNoOnScreenText(prompt string) string {
-	if strings.Contains(prompt, noOnScreenTextMarker) {
+// 所以规则改成:该出现的文字**必须引号逐字给出**;引号之外不得出现任何文字(那才是
+// 乱码的来源)。这样既不丢剧情需要的文字(牌匾/招牌/书名),也不会让模型自己造字。
+func EnsureOnScreenTextRule(prompt string) string {
+	if strings.Contains(prompt, onScreenTextMarker) {
 		return prompt
 	}
-	return prompt + "\n\n" + noOnScreenTextMarker + " (mandatory): do not render any readable text in the frame — " +
-		"no signage, no banners or plaques, no book or newspaper pages with writing, no letters, no UI, " +
-		"no subtitles, no watermarks, no logos, no name tags. " +
-		"If a sign or prop inherently carries writing, show it as out-of-focus, cropped away, turned away from " +
-		"camera, or as character-free abstract marks: never invent, guess or approximate characters, because " +
-		"invented Chinese characters always render as wrong or garbled glyphs. " +
-		"If the brief explicitly quotes specific characters, render EXACTLY those characters and nothing else; " +
-		"do not add extra words, and if the quoted text is long or uncertain, prefer framing it out of shot.\n" +
-		"(中文对照:画面内不得出现任何可辨认的文字 —— 招牌/牌匾/书报/胸牌/字幕/水印/logo 一律不画;" +
-		"道具上本来带字的,用失焦、裁掉、转向镜头外或纯抽象笔画表达,**绝不自己发明汉字**" +
-		"(模型自造的汉字必然出错);提示词里明确给出的原字必须逐字照抄,不加不减。"
+	return prompt + "\n\n" + onScreenTextMarker + " (mandatory): any text that is actually visible in frame — " +
+		"signage, banners, plaques, labels, subtitles, neon — MUST be written out inside English double quotation " +
+		"marks, verbatim, one quoted string per piece of text, with the original characters and punctuation preserved " +
+		"and never translated; the model renders exactly the quoted characters. " +
+		"No other text may appear anywhere in the frame: do not invent, guess or approximate characters for any " +
+		"surface you did not quote, and do not add watermarks, logos or captions. " +
+		"Omit text entirely when the shot does not call for it.\n" +
+		"(中文对照:画面里要出现的文字(招牌/匾额/标签/字幕/霓虹)**必须用英文双引号逐条写出、逐字保留**," +
+		"模型照引号里的字渲染;引号之外**不得出现任何文字** —— 未定义的文字才会被模型编成乱码;" +
+		"不需要文字的镜头就一个都不写。)"
 }
 
 // facesOnOf 项目开关(未表态 = 开);proj 为 nil 时按开处理。
