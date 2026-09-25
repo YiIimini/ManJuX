@@ -24,6 +24,62 @@ func turnaroundPath(dir, rel string) string {
 	return ""
 }
 
+// RefRole 描述一张参考图**在提示词里的身份**。Kind 取值:
+//
+//	character_front        角色的定妆照(正面表,身份的唯一权威)
+//	character_angles       同一角色的多视角拼合图(**另附**,定妆照同时在场)
+//	character_front_in_strip 去冗余模式:只喂拼合图,它的最左格就是定妆照
+//	scene                  场景图(永远最后一张)
+//
+// 为什么要单独记:engine.RefImage.Kind 只有 character/scene 两种(引擎按它决定上传
+// 与首帧语义),而**提示词**需要区分"这张脸是权威"还是"这张只是补角度" —— 两者混在
+// 一起正是身份漂移的入口(见 refmanifest.go)。
+type RefRole struct {
+	Picture int    // 1-based <Picture N> 编号
+	Kind    string // 见上
+	Name    string // 角色名 / 场景名
+	ID      string // char_x / scene_x
+}
+
+// RefPlan 是 AssembleShotRefs 的完整形态:除参考图本身,还给出每张图的身份归属
+// (roles),供 RefManifest 写出**渲染期权威清单**。
+//
+// 顺序即契约,与 AssembleShotRefs 完全一致:先 shot.Characters 每个已定妆的角色
+// (严格按数组顺序),最后追加场景图。
+func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, roles []RefRole, missing []string) {
+	add := func(engineKind, roleKind, id, name, path string) {
+		refs = append(refs, engine.RefImage{Kind: engineKind, Path: path})
+		roles = append(roles, RefRole{Picture: len(refs), Kind: roleKind, Name: name, ID: id})
+	}
+	for _, cid := range shot.Characters {
+		a, ok := assets["char:"+cid]
+		if !ok || a.File == "" {
+			missing = append(missing, cid)
+			continue
+		}
+		master := filepath.Join(dir, a.File)
+		turn := turnaroundPath(dir, a.File)
+		switch {
+		case turn != "" && compact:
+			// 转台图含正面 → 只喂这一张(左起第一格即定妆照)
+			add("character", "character_front_in_strip", cid, a.Name, turn)
+		case turn != "":
+			add("character", "character_front", cid, a.Name, master)
+			add("character", "character_angles", cid, a.Name, turn)
+		default:
+			add("character", "character_front", cid, a.Name, master)
+		}
+	}
+	if shot.Scene != "" {
+		if a, ok := assets["scene:"+shot.Scene]; ok && a.File != "" {
+			add("scene", "scene", shot.Scene, a.Name, filepath.Join(dir, a.File))
+		} else {
+			missing = append(missing, shot.Scene)
+		}
+	}
+	return refs, roles, missing
+}
+
 // AssembleShotRefs 按 H3 参考图契约组装单镜的参考图。
 //
 // 顺序本身就是契约的一部分:先 shot.Characters 中每个已定妆的角色(严格按数组
@@ -43,32 +99,10 @@ func turnaroundPath(dir, rel string) string {
 // 整体前移,而 LLM 的 subject_definitions 是按 characters 顺序写的,画面内容
 // 与描述仍会对不上(例如首角色缺图时,LLM 以为第一张是角色甲,实际却是角色乙)。
 // 调用方必须告警,而不是静默降级。
+//
+// 调用方请改用 RefPlan:它同样给出这张表的身份归属,而**提示词必须带 RefManifest**
+// —— 否则 LLM 猜错张数时,拼合图会被当成场景图(2026-09-25 实测事故,见 refmanifest.go)。
 func AssembleShotRefs(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, missing []string) {
-	for _, cid := range shot.Characters {
-		a, ok := assets["char:"+cid]
-		if !ok || a.File == "" {
-			missing = append(missing, cid)
-			continue
-		}
-		master := filepath.Join(dir, a.File)
-		turn := turnaroundPath(dir, a.File)
-		switch {
-		case turn != "" && compact:
-			// 转台图含正面 → 只喂这一张(左起第一格即定妆照)
-			refs = append(refs, engine.RefImage{Kind: "character", Path: turn})
-		case turn != "":
-			refs = append(refs, engine.RefImage{Kind: "character", Path: master})
-			refs = append(refs, engine.RefImage{Kind: "character", Path: turn})
-		default:
-			refs = append(refs, engine.RefImage{Kind: "character", Path: master})
-		}
-	}
-	if shot.Scene != "" {
-		if a, ok := assets["scene:"+shot.Scene]; ok && a.File != "" {
-			refs = append(refs, engine.RefImage{Kind: "scene", Path: filepath.Join(dir, a.File)})
-		} else {
-			missing = append(missing, shot.Scene)
-		}
-	}
+	refs, _, missing = RefPlan(dir, shot, assets, compact)
 	return refs, missing
 }

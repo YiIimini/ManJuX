@@ -90,13 +90,17 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		}
 		prompt = ShotRenderPrompt(projPtr, plan, shot)
 		label = fmt.Sprintf("镜头 %d", shotID)
-		// 参考图沿用渲染期资产(与 render 阶段共用 AssembleShotRefs,防止两处漂移)
+		// 参考图沿用渲染期资产(与 render 阶段共用 RefPlan,防止两处漂移)
 		assets, _ := c.store.LoadAssets(projectID)
 		compact := true
 		if proj, ok := c.store.Get(projectID); ok {
 			compact = proj.Config.Params.Assets.CompactRefsOn() // 与主渲染保持同一套参考图
 		}
-		refs, _ = AssembleShotRefs(c.store.Dir(projectID), *shot, assets, compact)
+		var roles []RefRole
+		refs, roles, _ = RefPlan(c.store.Dir(projectID), *shot, assets, compact)
+		// 与主渲染同一份参考图**权威清单**:单镜 2K 若少了它,升上去的那一版会按
+		// 上文猜错的编号理解拼合图(见 refmanifest.go)。
+		prompt = EnsureRefManifest(prompt, RefManifest(*shot, roles))
 	} else {
 		base = filepath.Join(c.store.Dir(projectID), "output", "final.mp4")
 		out = filepath.Join(c.store.Dir(projectID), "output", "final_2k.mp4")

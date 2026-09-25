@@ -502,3 +502,35 @@ base_path 是 `D:/Ai/ManJuX/comfyui/shared/`(部署形态下的路径),`shared_c
 不再指向具体文件。`internal/pipeline/official_guide_test.go` 的 `TestCitedGuideURLsAreVerified`
 把这个约束钉住了:提示词权威相关的 URL 必须落在已验证清单内,冒出新的未验证链接会让
 `check.ps1` 直接挂掉。
+
+### 2026-09-25:角色渲染漂移的根因 —— 提示词在描述它看不见的参考图张数
+
+**现象**(用户报「角色渲染咋出现漂移啊,看看镜头6主角形象」):第01集镜头6,主角顾青禾的成品脸
+比定妆照更窄更长、眉毛更重、更年长;而定妆照上**没有画**的细节(右眉尾浅疤、皮筋外那枚黄铜"禾"扣)
+反而被画了出来 —— 模型转去照着**文字**重画,而不是照着那张脸复制。
+
+**取证**:`data/logs/manjux.log` 实测记录 ——
+
+```
+镜头 6/33 渲染开始(ref2va,7s,seed=4223164940,参考图 3 张:角色 2 + 其中拼合转身图 1 + 场景 1)
+```
+
+而 plan 里的 subject_definitions 写的是「Two pictures are attached in total, one character front
+sheet and the scene」,并把 `<Picture 2>` 说成"场景图"。**实际第 2 张是顾青禾自己的拼合转身图**,
+第 3 张才是场景。于是那一行 `<Picture 2>: weak_reference - scene layout and mood referenced,
+camera free` 正好落在**她自己的脸上**:模型据此拿到"这张脸可以自由重画"的许可,真正的场景图
+成了无标签野图,定妆照"唯一身份权威"的地位被稀释。
+
+**根因**:张数取决于该角色有没有拼合转身图,而这一步只有渲染器知道(见 `RefPlan`),
+LLM 只能猜 —— 多视角一开,每个镜头都必然多一张,猜错就把编号整体错位。
+`refs.go` 早就写明"少一张图会让编号整体前移……",但只在**缺**图时告警,**多**一张反而没人管。
+
+**修法**(与既有"同一职责收口"同一条思路:**谁装配参考图,谁写编号**):
+1. `RefPlan` 取代 `AssembleShotRefs` 作为调用面,额外给出每张图的身份归属
+   (`character_front` / `character_angles` / `character_front_in_strip` / `scene`);
+   `engine.RefImage.Kind` 保持 `character`/`scene` 不变(引擎语义不动)。
+2. `refmanifest.go` 的 `RefManifest` 按实际装配结果写出**权威清单**附在提示词尾部,
+   明确声明它**覆盖**上文任何张数/编号的说法,并写死:拼合图是同一个角色的另一组角度、
+   不是场景、不参与取脸(脸只认定妆照)。
+3. 导演提示词同时被要求**不得断言总张数、不得断言场景是第几张** —— 它看不见的东西不写。
+4. 四条 ref2va 出像素路径(主渲染 / 单镜 2K / 局部重绘 / 音频驱动)全部成对装配清单。

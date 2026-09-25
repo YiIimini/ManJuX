@@ -181,12 +181,13 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 		base := (i * 100) / len(shots)
 
-		// 参考图组装(ref2va):角色定妆照 + 场景图(契约与顺序见 AssembleShotRefs)
+		// 参考图组装(ref2va):角色定妆照 + 场景图(契约与顺序见 RefPlan)
 		var refs []engine.RefImage
+		var roles []RefRole
 		mode := shot.Mode
 		if proj.Config.Params.Assets.Source != "skip" && mode == "ref2va" {
 			var missing []string
-			refs, missing = AssembleShotRefs(c.store.Dir(proj.ID), shot, assets,
+			refs, roles, missing = RefPlan(c.store.Dir(proj.ID), shot, assets,
 				proj.Config.Params.Assets.CompactRefsOn())
 			if len(refs) == 0 {
 				mode = "t2va" // 资产缺失降级纯文生
@@ -208,6 +209,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
 		// 渲染提示词:身份锚定 + 画风硬约束(动漫化/哑光)+ 台词语言标记,四路渲染共用
 		prompt := ShotRenderPrompt(proj, plan, &shot)
+		// 参考图**权威清单**:张数与编号由渲染器按实际装配结果写出(LLM 看不见张数,
+		// 猜错就会把多视角拼合图当成场景图 —— 2026-09-25 镜头6 角色漂移的根因,见
+		// refmanifest.go)。无参考图时 RefManifest 返回空串,提示词原样放行。
+		prompt = EnsureRefManifest(prompt, RefManifest(shot, roles))
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。

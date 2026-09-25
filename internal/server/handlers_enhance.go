@@ -156,8 +156,11 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
 	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
-	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
+	refs, roles, _ := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
+	// 参考图权威清单(与主渲染同一份):编号错位会让拼合图被当成场景图
+	// —— 2026-09-25 角色漂移根因,见 pipeline/refmanifest.go。
+	prompt = pipeline.EnsureRefManifest(prompt, pipeline.RefManifest(*ctx.shot, roles))
 
 	s.opLog("✨ 局部重绘:%s 镜 %d 开始(目标:%s)", ctx.proj.ID, ctx.shot.ID, strings.TrimSpace(in.Target))
 	if _, err := ctx.engineCE.MaskFix(r.Context(), ctx.src, comfyengine.MaskOptions{
@@ -330,8 +333,10 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
 	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
-	refs, _ := pipeline.AssembleShotRefs(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
+	refs, roles, _ := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
+	// 参考图权威清单(与主渲染同一份),理由见上一个调用点。
+	prompt = pipeline.EnsureRefManifest(prompt, pipeline.RefManifest(*ctx.shot, roles))
 
 	s.opLog("🎙 音频驱动:%s 镜 %d 开始", ctx.proj.ID, ctx.shot.ID)
 	// 音频走 Job.Audios → H3 Ref2V 的 ref_audios 条件(见 comfyengine 的音频参考实现)
