@@ -460,8 +460,8 @@ base_path 是 `D:/Ai/ManJuX/comfyui/shared/`(部署形态下的路径),`shared_c
 
 | 用途 | 链接 |
 |---|---|
-| 基础模式(T2VA/I2VA/FL2VA/L2VA) | https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md |
-| 全参考模式(R2V,含音频标记表) | https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md |
+| 基础模式(T2VA/I2VA/FL2VA/L2VA) | https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt |
+| 全参考模式(R2V,含音频标记表) | https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt |
 | ComfyUI 官方提示词指南(含社区实测) | https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide |
 | 官方 skills(提示词技能包) | https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills |
 
@@ -485,3 +485,20 @@ base_path 是 `D:/Ai/ManJuX/comfyui/shared/`(部署形态下的路径),`shared_c
    首次出现时给出一次(类型/年龄/性别/画内画外/音高/音色/语速/口音);台词跨剪切用
    `<scenetrans>`(两段都标 + 明说音频连续)、被片尾截断用 `<cutoff>`。
    —— `<scenetrans>`/`<cutoff>` 此前完全没用上,而它们直接决定"台词跨切听感"。
+5. **台词的字词与标点分开管**(官方基础指南 §4.4 + 全参考指南 §5.4):**字词**逐字保留、
+   不翻译不改写;**标点**是唯一例外 —— 统一成 `,` `.` `?` `!` 这类基本书写符号,去掉重复的
+   波浪号 / emoji / 项目符号 / 装饰性标点,陈述句、疑问句、感叹句在 `</d>` 前分别以
+   `.` `?` `!` 结尾;听不清的片段写 `[unclear]`,**不许猜也不许改写**。此前我写的是
+   "保留原标点",与官方相反;而标点与不可辨片段正是"配音听着不对"的一个来源。
+6. **音景句数回到官方区间,"别吵"改成取低端**(官方基础指南 §4.6 / §4.7):
+   `overall_soundscape` = **1-4 句**、一段连续文字,只写环境声与物理/非语言人声,
+   **不得重复台词、演唱与叙事内音乐**,只有"全片明确静音"才写 `N/A`;
+   `non_diegetic_music` = **1-3 句**。用户"成片不能吵"的诉求写成
+   **取区间低端(1-2 句、低电平底噪)**,而不是把官方区间私自改成 1-2 句
+   —— 那是我上一轮的自造口径,已纠正。
+
+**取证方式**:本机网络当前访问不到 huggingface.co(请求全部 TypeError),因此官方指南一律
+改引**本机实测取到正文**的 GitHub 原始路径(两次拉取均 HTTP 200);HF 侧只保留模型仓库页,
+不再指向具体文件。`internal/pipeline/official_guide_test.go` 的 `TestCitedGuideURLsAreVerified`
+把这个约束钉住了:提示词权威相关的 URL 必须落在已验证清单内,冒出新的未验证链接会让
+`check.ps1` 直接挂掉。

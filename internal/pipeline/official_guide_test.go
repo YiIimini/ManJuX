@@ -1,6 +1,8 @@
 package pipeline
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -11,8 +13,8 @@ import (
 //
 // 2026-09-25 用户要求"参考全网找解决方案,不要自己想当然",据此核对了官方两份指南:
 //
-//	基础模式 https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md
-//	全参考   https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md
+//	基础模式 https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt
+//	全参考   https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt
 //	ComfyUI  https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide
 //
 // 结论修正了我先前两处"想当然":① 画面文字不是"一律禁止",官方是**引号枚举制**;
@@ -72,5 +74,51 @@ func TestAudioDriveCarriesOfficialMarkers(t *testing.T) {
 	}
 	if !strings.Contains(got, "我不签") {
 		t.Error("原有提示词内容不得丢失")
+	}
+}
+
+// verifiedGuideURLs 是**本机实测取到正文**的官方依据清单(拉取返回 HTTP 200)。
+//
+// 为什么要有这份清单:2026-09-25 用户要求"参考全网找解决方案,不要你自己想当然的去改调整"。
+// 我核对自己上一轮写的依据时发现,注释里引的
+// `huggingface.co/.../docs/VIDEO_PROMPT_WRITING_GUIDE_*.md` **本机取不到**(请求 TypeError),
+// 而官方正文实际在 GitHub 仓库的 skills/h3-prompt-writing/references/ 下(两次 raw 拉取均 200)。
+// 引用一个自己没打开过的链接,和"想当然"是同一件事 —— 所以把它钉成闸门:
+// 提示词权威相关文件里出现清单外的链接,check.ps1 直接挂。
+var verifiedGuideURLs = map[string]bool{
+	"https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt": true,
+	"https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt":  true,
+	"https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide":                          true,
+}
+
+func TestCitedGuideURLsAreVerified(t *testing.T) {
+	// 提示词的"权威依据"只可能出现在这两处:装配一处的 pipeline 包,与导演提示词。
+	files := []string{
+		"audio_ref.go", "prompts.go",
+		"../director/director.go",
+	}
+	re := regexp.MustCompile("https?://[^\\s)\"'\x60]+")
+	seen := map[string]bool{}
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("读不到 %s: %v", f, err)
+		}
+		for _, u := range re.FindAllString(string(b), -1) {
+			seen[u] = true
+			if !verifiedGuideURLs[u] {
+				t.Errorf("%s 引用了未经验证的链接 %q —— 官方依据必须落在 verifiedGuideURLs 里"+
+					"(要么本机实测打开过,要么别引)", f, u)
+			}
+		}
+	}
+	// 反向:两份官方指南都必须还在被引用,不能被悄悄删掉
+	for _, must := range []string{
+		"https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt",
+		"https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt",
+	} {
+		if !seen[must] {
+			t.Errorf("官方指南 %s 不再被引用(改提示词前必须先查它)", must)
+		}
 	}
 }

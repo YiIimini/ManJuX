@@ -69,3 +69,45 @@ func TestOnScreenTextExclusionIsMandatory(t *testing.T) {
 		t.Error("exclusions 不该再停留在「例如」的语气(等于不要求)")
 	}
 }
+
+// TestDialoguePunctuationAndUnclear ④ 台词的字词与标点分开管(官方 §4.4 + §5.4)。
+//
+// 我上一轮写的是"保留原标点",与官方**相反**:官方要求字词逐字保留,而标点统一成基本
+// 书写符号(去波浪号/emoji/装饰标点、句末以 . ? ! 收尾),听不清的片段写 [unclear] 不许猜。
+// 标点杂乱与硬猜出来的字,都是"配音听着不对"的来源。
+func TestDialoguePunctuationAndUnclear(t *testing.T) {
+	for _, want := range []string{
+		"official §5.4",
+		"[unclear]",
+		"normalise it to the basic written marks",
+		"before </d>",
+	} {
+		if !strings.Contains(SystemPrompt, want) {
+			t.Errorf("分镜提示词缺少台词标点条款(%q)", want)
+		}
+	}
+	if strings.Contains(SystemPrompt, "VERBATIM inside <d> tags with original punctuation") {
+		t.Error("「保留原标点」与官方 §5.4 相反,不得再出现")
+	}
+}
+
+// TestSoundscapeSentencesFollowOfficialRange ⑤ 音景句数必须是官方区间 1-4 / 1-3,
+// "成片不能吵"只能写成**取区间低端**,不能私自把官方区间改小 —— 那是我上一轮的自造口径。
+func TestSoundscapeSentencesFollowOfficialRange(t *testing.T) {
+	if !strings.Contains(SystemPrompt, "1-4 English sentences in ONE continuous paragraph") {
+		t.Error("overall_soundscape 必须写官方 §4.6 的 1-4 句")
+	}
+	if !strings.Contains(SystemPrompt, "1-3 English sentences") {
+		t.Error("non_diegetic_music 必须写官方 §4.7 的 1-3 句")
+	}
+	if !strings.Contains(SystemPrompt, "LOW end of the official 1-4 sentence range") {
+		t.Error("「别吵」必须表述为取官方区间低端,而不是另一个区间")
+	}
+	if strings.Contains(SystemPrompt, "keep overall_soundscape to 1-2") {
+		t.Error("自造的 1-2 句区间不得再出现(与官方 1-4 冲突)")
+	}
+	// 官方 §4.6:台词/演唱/叙事内音乐已经在描述段里,音景不得重复
+	if !strings.Contains(SystemPrompt, "never repeat them here") {
+		t.Error("音景必须写明不得重复台词/演唱/叙事内音乐(官方 §4.6)")
+	}
+}

@@ -256,7 +256,7 @@ const onScreenTextMarker = "ON-SCREEN TEXT (QUOTED, VERBATIM)"
 // **英文双引号**、逐字保留原字与标点、不翻译;ComfyUI 官方提示词指南的社区实测进一步
 // 说明:**把每段文字用引号逐条枚举出来能保持清晰可读,未定义的文字才容易变成乱码符号**。
 //
-//	https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md
+//	https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/base-en.txt
 //	https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide
 //
 // 所以规则改成:该出现的文字**必须引号逐字给出**;引号之外不得出现任何文字(那才是

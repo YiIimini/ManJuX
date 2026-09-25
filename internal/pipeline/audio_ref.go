@@ -9,7 +9,7 @@ import (
 //
 // 依据(MiniMax 官方全参考模式指南 §2.4 / §3 / §4.2 + ComfyUI 官方提示词指南的社区实测):
 //
-//	https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/main/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md
+//	https://github.com/MiniMax-AI/MiniMax-H3/blob/main/skills/h3-prompt-writing/references/ref-en.txt
 //	https://docs.comfy.org/zh/tutorials/video/minimax/minimax-h3-prompt-guide
 //
 // 三件事必须写进提示词,否则 H3 只会把喂进去的音频当**音色参考**而不是"要同步的音轨":
@@ -37,11 +37,12 @@ func AudioDriveMarkers(label string) string {
 	sb.WriteString("【音频参考标记(官方全参考模式要求,不可省略)】\n")
 	sb.WriteString("summary 任务类型前缀:[audio reuse]\n")
 	sb.WriteString(fmt.Sprintf(
-		"subject_definitions:%s is the finalized dubbing track of this shot and serves as the voice-timbre and "+
-			"lip-sync reference for the speaking character.\n", label))
+		"subject_definitions:%s is the finalized Mandarin dubbing track of this shot; it is the voice source "+
+			"for the speaker that carries an (Sx) id in the description above (keep whichever id that speaker "+
+			"was given), and it is reused as the target video's own audio.\n", label))
 	sb.WriteString(fmt.Sprintf(
 		"retention_analysis:%s: fully_copy - %s is reused 1:1 as the target video's complete final audio track; "+
-			"the characters' mouth shapes must follow it exactly, syllable by syllable.\n", label, label))
+			"every on-screen speaker's mouth shapes (lip-sync) must follow it exactly, syllable by syllable.\n", label, label))
 	sb.WriteString("(中文对照:音频按 fully_copy 1:1 复用为最终音轨,口型必须逐音节跟随它;" +
 		"若写成 reference,模型只会拿它当音色参考,口型会与配音脱节。)\n")
 	return sb.String()
