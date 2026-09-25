@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 )
 
@@ -266,10 +265,22 @@ func NewManager(path, exeDir string) (*Manager, error) {
 			s.Split.ChunkSize = 12000
 		}
 		// 旧默认值迁移(2026-09-25):图像模型从 Krea-2 换成 Qwen-Image-2.1
-		// (用户定调「Krea-2 出图这么多问题,那就不用它生图」)。只有**三件套仍是
-		// Krea-2 那套旧默认**、且没写过 image_family 时才迁移 —— 用户自己换过模型
-		// 就原样保留,绝不覆盖手工选择。
-		if imageTripleIsLegacyKrea2(s) {
+		// (用户定调「Krea-2 出图这么多问题,那就不用它生图」)。只有**落盘文件里没有
+		// image_family 键**、且三件套仍是 Krea-2 那套旧默认时才迁移 —— 用户自己换过
+		// 模型就原样保留,绝不覆盖手工选择。
+		//
+		// 判据必须是"键在不在",不能是"字段空不空":上面的 s := Default() 已经把
+		// image_family 填成新默认值,老文件反序列化后该字段**永远非空**,迁移条件
+		// 就永远不成立。实测踩过:家族名变了、模型文件名没变,于是按 2.1 的连线去加载
+		// Krea-2 的编码器,ComfyUI 直接报
+		// "Krea2 expects conditioning with 12x2560=30720 features ... but got 2560"。
+		// 键在**comfy 段里**,不是顶层 —— 探针也要按同一层解,否则显式选择会被冲掉。
+		var written struct {
+			Comfy map[string]json.RawMessage `json:"comfy"`
+		}
+		_ = json.Unmarshal(raw, &written)
+		_, familyWritten := written.Comfy["image_family"]
+		if !familyWritten && imageTripleIsLegacyKrea2(s) {
 			s.Comfy.ImageFamily = "qwen_image_2_1"
 			s.Comfy.ImageUNet = def.Comfy.ImageUNet
 			s.Comfy.ImageCLIP = def.Comfy.ImageCLIP
@@ -302,8 +313,9 @@ func (m *Manager) Update(s Settings) error {
 }
 
 // legacyKrea2ImageTriple 是 2026-09-25 之前落盘的图像模型默认三件套。
-// 只有三件套**逐字等于**它、且 image_family 为空时,才认为用户从未改过图像模型,
-// 可以安全迁移到新默认(Qwen-Image-2.1)。用户手工换过任何一个,都不动。
+// 三件套**逐字等于**它时,才认为用户从未改过图像模型,可以安全迁移到新默认
+// (Qwen-Image-2.1)。用户手工换过任何一个,都不动。
+// (调用方还要额外确认落盘文件里没有 image_family 键,见 New 里的说明。)
 var legacyKrea2ImageTriple = [3]string{
 	"krea2_turbo_fp8_scaled.safetensors",
 	"qwen3vl_4b_fp8_scaled.safetensors",
@@ -311,9 +323,6 @@ var legacyKrea2ImageTriple = [3]string{
 }
 
 func imageTripleIsLegacyKrea2(s *Settings) bool {
-	if strings.TrimSpace(s.Comfy.ImageFamily) != "" {
-		return false
-	}
 	return s.Comfy.ImageUNet == legacyKrea2ImageTriple[0] &&
 		s.Comfy.ImageCLIP == legacyKrea2ImageTriple[1] &&
 		s.Comfy.ImageVAE == legacyKrea2ImageTriple[2]
