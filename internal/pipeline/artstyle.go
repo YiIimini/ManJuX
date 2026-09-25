@@ -210,3 +210,40 @@ func photorealRequested(style string) bool {
 	}
 	return false
 }
+
+// StripMicroTextForImage 把提示词里的**微雕文字/极小铭文**改成"模糊磨旧的痕迹"。
+//
+// 依据(2026-09-25 实测本机定妆照):上游提示词写着
+//
+//	a thumb-nail-sized brass clip … engraved with a tiny worn '禾' character whose
+//	second stroke is almost rubbed away
+//
+// —— 拇指盖大的铜扣上刻一个几乎磨没的汉字,在 832×1248 的半身幅里根本没有足够像素。
+// 模型不会"省略",而是**糊成一团灰渍**(实测那张定妆照胸口与腕部正是一片片发灰的污渍)。
+// 这与视频侧"绝不自己发明汉字"是同一条道理的图像版:认不出的字只会变成噪点。
+func StripMicroTextForImage(prompt string) string {
+	out := reInscribedGlyph.ReplaceAllString(prompt, "$1 with a faint worn mark")
+	out = reQuotedGlyph.ReplaceAllString(out, "a faint worn mark")
+	return out
+}
+
+var (
+	// engraved/carved/… with …… 引号里 1-6 个字符(含汉字)
+	reInscribedGlyph = regexp.MustCompile(`(?i)\b(engraved|carved|printed|written|stamped|painted|etched|marked|inscribed)[^,.;]{0,60}?["'“”‘’][^"'“”‘’]{1,6}["'“”‘’]`)
+	// '禾' character / "字" letter 这类写法
+	reQuotedGlyph = regexp.MustCompile(`["'“”‘’][^"'“”‘’]{1,6}["'“”‘’]\s*(?i:character|characters|word|letter|text|glyph)s?`)
+)
+
+// PortraitPoseClause 人像幅面的**姿态纪律**。
+//
+// 依据:同一张定妆照里,模型在"upper-body framing, front-facing"且提示词没写姿态时
+// 自作主张画了**双臂抱胸** —— 半身幅里手只占很少像素,于是画成一只连指手套(实测)。
+func PortraitPoseClause(kind EntityKind) string {
+	switch NormalizeEntityKind(string(kind)) {
+	case KindHuman, KindChibi:
+		return " Pose: calm and simple, arms relaxed; keep the hands out of frame or uncomplicated" +
+			" (this is a reference sheet, not a pose study — complex hand poses render as blobs at this framing)."
+	default:
+		return ""
+	}
+}

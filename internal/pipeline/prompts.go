@@ -291,7 +291,10 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 		kind = InferEntityKind(s.Name, s.Description, s.ImagePrompt)
 	}
 	prof := EntityProfileOf(kind)
-	prompt := normalizeUniformWording(s.ImagePrompt)
+	// 图像侧的两道预处理(见 artstyle.go 的说明):
+	//   ① 剥掉微雕文字/极小铭文 —— 在半身幅里它们只会糊成灰渍(实测定妆照胸口与腕部的污渍);
+	//   ② 姿态纪律 —— 半身幅里复杂手势会变成连指手套(实测模型自作主张画了抱胸)。
+	prompt := StripMicroTextForImage(normalizeUniformWording(s.ImagePrompt))
 	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
 		return prompt // 已经是本类型的装配结果:不重复叠加
 	}
@@ -305,6 +308,7 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	prompt += styleExpand(style, s.FacesOn, kind)
 	prompt += castContrastBlock(plan, s.Name, kind)
 	prompt += uniformCivilianClarify(s.Description)
+	prompt += PortraitPoseClause(kind)
 	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
 	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
 	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
