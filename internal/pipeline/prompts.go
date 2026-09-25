@@ -350,11 +350,38 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	prompt += styleExpand(style, s.FacesOn, kind)
 	prompt += castContrastBlock(plan, s.Name, kind)
 	prompt += uniformCivilianClarify(s.Description)
+	prompt += PortraitHairClause(kind)
 	prompt += PortraitPoseClause(kind)
 	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
 	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
 	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
 	return prompt
+}
+
+// PortraitHairClause 定妆照的**发型纪律**(人类 / Q 版)。
+//
+// 事故(2026-09-25,用户报「19 镜后面主角的头发飘逸了」):角色卡写的是"短低马尾",
+// 而定妆照**自己给额前加了几缕碎发**。按我们自己的规矩"参考图是唯一权威",H3 于是忠实
+// 复现那几缕碎发,一进入动作段就被放大成"头发变长变散、额前垂一大绺"。
+// 也就是说:**渲染侧的漂移,根子在定妆照**;而在定妆照上继续追,根子在"简报没说额前状态"。
+//
+// 所以这一条同时约束三件事 —— 束法、长度、**额前状态** —— 并明确"简报没说就别自造"。
+// 只对有人物头发的类型注入(器物/灵体没有发型可谈)。
+func PortraitHairClause(kind EntityKind) string {
+	switch NormalizeEntityKind(string(kind)) {
+	case KindHuman, KindChibi:
+	default:
+		return ""
+	}
+	return "\nHAIR EXACTLY AS BRIEFED (mandatory): draw the hairstyle exactly as the brief states — the same TIE " +
+		"(low ponytail / high ponytail / bun / loose), the same LENGTH, and the same FOREHEAD STATE. If the brief " +
+		"says the hair is tied back, then the forehead and the cheeks show AT MOST the wisps the brief actually " +
+		"mentions: do not invent extra strands, do not let hair fall across the eyes or the face, and never " +
+		"lengthen the hair or turn a tied style into loose flowing hair.\n" +
+		"(中文对照:发型照简报画 —— 束法、发长、**额前状态**三者与简报一致。简报写的是束起的," +
+		"额前与脸颊就最多只有简报里写明的那几缕:不许自造碎发、不许让发丝遮住眉眼、" +
+		"不许把头发加长,更不许把束发画成垂在额前的散发。这条是给“参考图”定的规矩," +
+		"因为参考图就是全片身份的权威 —— 图上多一缕,成片里就会多一大绺。)\n"
 }
 
 // PortraitPromptForProject 项目内角色卡的便捷包装(取项目开关与方案风格)。
