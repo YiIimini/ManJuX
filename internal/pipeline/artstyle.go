@@ -1,6 +1,9 @@
 package pipeline
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // artstyle.go 角色画风的**硬约束**:动漫化(非真人脸)+ 哑光(去"油腻")+ 不影射真人。
 //
@@ -145,10 +148,63 @@ func RealisticForPrompt(imagePrompt string) bool {
 // (实测本机真实项目的风格是 "gritty rural Chinese period realism",一个关键词都不命中,
 // 而它显然是要写实),所以提示词侧改用**无条件介质覆盖**(见 anchorPrompt 的
 // MEDIUM OVERRIDE):不管风格怎么写,"人物画法以介质段为准"。
+// StripNegations 剥掉风格串里的**否定式**条款(", NO GLOSS" / "no wet highlights" /
+// "without X" / "avoid X"),保留其余正面描述。
+//
+// 为什么必须剥(2026-09-25 用户报「动漫化角色还很丑」):上游(技能端)写来的风格串
+// 常常自带一串否定 —— 本机那部《全城榜一》方案里就写着
+// "…MATTE POWDERY SKIN WITH A DULL EVEN FINISH, **NO GLOSS, NO WET HIGHLIGHTS,
+// NO PHOTOREAL DETAIL**"。而 Krea-2 是蒸馏模型(CFG 1.0):**负面词不但不生效,还会把
+// 名词当指令画出来**(本文件顶部记录过实测:"no epaulettes" 画出了肩章)。
+// 于是"不要油光"被读成"油光"、"不要写实细节"被读成"写实细节" —— 定妆照上那一片片
+// 发灰的污渍感、脏兮兮的平涂阴影,正是这么来的。
+//
+// 只用于**图像侧**(Krea-2);视频侧(H3)允许散文式排除句,不要在这里替它决定。
+func StripNegations(style string) string {
+	var keep []string
+	for _, seg := range strings.Split(style, ",") {
+		s := strings.TrimSpace(seg)
+		if s == "" {
+			continue
+		}
+		low := strings.ToLower(s)
+		neg := false
+		for _, pre := range []string{"no ", "not ", "without ", "avoid ", "never ", "do not ", "don't ", "free of ", "zero "} {
+			if strings.HasPrefix(low, pre) {
+				neg = true
+				break
+			}
+		}
+		// 段内的否定短语(如 "skin with a dull finish NO GLOSS")也去掉该短语
+		if !neg {
+			if i := reNegPhrase.FindStringIndex(s); i != nil {
+				s = strings.TrimSpace(s[:i[0]])
+				if s == "" {
+					continue
+				}
+			}
+		}
+		if neg {
+			continue
+		}
+		keep = append(keep, s)
+	}
+	return strings.Join(keep, ", ")
+}
+
+// reNegPhrase 段内否定短语(整词边界,避免削到 "notebook" 这类词)。
+var reNegPhrase = regexp.MustCompile(`(?i)\b(no|not|without|avoid|never)\b`)
+
+// photorealRequested 风格文本里是否明确要真人/写实画风。
+//
+// 判据前先剥否定式:**"NO PHOTOREAL DETAIL" 里的 photoreal 不算要写实**
+// (2026-09-25 用户拿着一条"风格里含真人/写实请求"的告警来问 —— 他的风格串里唯一的
+// 写实字样就是那个 NO 后面的,属于纯误报;更糟的是它还让 styleExpand 走了"覆盖"分支,
+// 把技能端指定的画风术语丢掉换成平台罐头词)。
 func photorealRequested(style string) bool {
-	s := strings.ToLower(style)
+	s := strings.ToLower(StripNegations(style))
 	for _, k := range []string{"真人", "写实", "实拍", "realis", "photoreal", "live-action", "live action", "liveaction", "photo-real"} {
-		if strings.Contains(s, k) || strings.Contains(style, k) {
+		if strings.Contains(s, k) || strings.Contains(StripNegations(style), k) {
 			return true
 		}
 	}

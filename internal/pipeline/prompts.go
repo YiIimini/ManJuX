@@ -499,7 +499,10 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	return sb.String(), len(chars)
 }
 
-func styleExpand(style string, facesOn bool, kind EntityKind) string {
+func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
+	// 图像侧(Krea-2,蒸馏/CFG 1.0)不认否定词,还会把否定词里的名词当指令画出来 ——
+	// 统一剥掉再进提示词(见 artstyle.go 的 StripNegations)。
+	style := StripNegations(rawStyle)
 	if strings.TrimSpace(style) == "" && !facesOn {
 		return ""
 	}
@@ -514,7 +517,7 @@ func styleExpand(style string, facesOn bool, kind EntityKind) string {
 	var terms []string
 	stylized := true
 	switch {
-	case facesOn && photorealRequested(style):
+	case facesOn && photorealRequested(rawStyle):
 		// 动漫化开关打开时,真人/写实风格请求被明确覆盖(2026-09-24 用户定调
 		// 「角色不要真人脸,动漫化,避免侵权」)。写实风格词与哑光平涂的动画约束
 		// 直接打架,同时交给模型只会得到"既写实又扁平"的糊图 —— 覆盖掉,并由
