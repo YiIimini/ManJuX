@@ -111,6 +111,37 @@ func TestCoverMenuPositioningLivesOnTheWrapper(t *testing.T) {
 	}
 }
 
+// TestCoverMenuSharesBaseStyleWithDeleteButton 菜单钮与删除钮必须**共用同一段基础样式**。
+//
+// 2026-09-26 用户截图投诉「按钮呢」:作品菜单钮单独写了一套(纯黑 55% + 白环 26% + 模糊),
+// 在亮封面上糊成一块灰黑团、在空封面的暗卡上几乎看不见,而这颗钮和删除钮本该是同一种控件。
+// 判据:基础样式要么写成 `.cover-del, .cover-menu { … }` 的并列选择器,要么不许给
+// .cover-menu 单独开块 —— 一旦又分家,两边的观感迟早再次漂开。
+func TestCoverMenuSharesBaseStyleWithDeleteButton(t *testing.T) {
+	cssPath := filepath.Join("..", "..", "frontend", "src", "style.css")
+	raw, err := os.ReadFile(cssPath)
+	if err != nil {
+		t.Fatalf("读不到 %s: %v", cssPath, err)
+	}
+	css := string(raw)
+	if !strings.Contains(css, ".cover-del, .cover-menu {") {
+		t.Error("菜单钮必须与删除钮并列共用基础样式(.cover-del, .cover-menu { … })")
+	}
+	if strings.Contains(css, "\n.cover-menu {") {
+		t.Error("出现了 .cover-menu 的独立样式块 —— 这正是上次两钮观感分家的方式;基础样式请写进并列选择器")
+	}
+	base := cssBlockOf(t, css, ".cover-del, .cover-menu {")
+	for _, want := range []string{"width: 27px", "height: 27px", "background:", "box-shadow:", "color:"} {
+		if !strings.Contains(base, want) {
+			t.Errorf("共享基础样式缺少 %q(尺寸/底色/描边/图标色必须一起定义,否则两边又会分家):\n%s", want, base)
+		}
+	}
+	// 纯黑+模糊那一套是上次糊成灰黑团的原因,不许回到共享基础里
+	if strings.Contains(base, "backdrop-filter") {
+		t.Errorf("共享基础里不该用 backdrop-filter —— 亮封面上会糊成一坨:\n%s", base)
+	}
+}
+
 // cssBlockOf 取某个选择器后面的第一对花括号内容(够用于本文件的两条断言)。
 func cssBlockOf(t *testing.T, css, selector string) string {
 	t.Helper()

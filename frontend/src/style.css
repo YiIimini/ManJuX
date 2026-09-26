@@ -1269,32 +1269,38 @@ body::after {
 .vc-red { color: var(--mx-red) !important; font-weight: 600; }
 .vc-dim { color: var(--mx-text2) !important; }
 
-/* 数据卡封面右上删除钮(项目卡/剧集系列卡/资产库卡/作品卡/分镜卡统一)。
-   常显半透明(用户可感知删除能力),卡悬停转清晰,悬停按钮变红。 */
-.cover-del {
-  position: absolute;
-  top: 8px; right: 8px;
+/* 数据卡封面右上操作钮(项目卡/剧集系列卡/资产库卡/作品卡/分镜卡统一)。
+   常显(用户可感知有操作),卡悬停转清晰;删除钮悬停变红。
+
+   ⚠ 底色/描边/图标这四行是**共享基础**,删除钮与作品菜单钮一起用(见下面的并列选择器)。
+   不要只改其中一个 —— 2026-09-26 实测:作品菜单钮单独写了一套"纯黑 55% + 白环 26% + 模糊",
+   在亮封面上糊成一块灰黑团、在空封面的暗卡上又几乎看不见(用户截图投诉「按钮呢」),
+   而它和删除钮本该是同一种控件。 */
+.cover-del, .cover-menu {
   width: 27px; height: 27px;
   display: grid;
   place-items: center;
   border: none;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--mx-bg0) 55%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 26%, transparent);
-  backdrop-filter: blur(4px);
-  color: var(--mx-text2);
+  /* 深色玻璃 + 一圈可辨的白描边:亮封面压得住、暗卡上也看得见。
+     刻意不用纯黑+backdrop-blur —— 那在亮图上会糊成一坨,和"精准小控件"的气质相反。 */
+  background: color-mix(in srgb, var(--mx-bg2) 82%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, #ffffff 24%, transparent),
+    0 1px 5px color-mix(in srgb, #000000 50%, transparent);
+  color: var(--mx-text);
   cursor: pointer;
-  opacity: .55;
+  opacity: .8;
   transition: all .15s;
 }
-.proj-card:hover .cover-del, .shot-card:hover .cover-del, .cover-del:hover { opacity: 1; }
+.proj-card:hover .cover-del, .shot-card:hover .cover-del, .cover-del:hover,
+.shot-card:hover .cover-menu, .cover-menu:hover { opacity: 1; }
 .cover-del:hover:not(:disabled) { background: color-mix(in srgb, var(--mx-red) 88%, transparent); color: #fff; }
 .cover-del:disabled { opacity: .28 !important; cursor: not-allowed; }
 
-/* 卡片封面右上「作品菜单」触发钮(2026-09-25:小说库把"删除"收进菜单,
-   因为隐藏比删除更常用,而删除是不可逆的 —— 不该继续占着最容易误点的一格)。
-   与 .cover-del 同尺寸同位置,但**悬停不转红**:红色是"要删东西"的暗示,菜单不是删除。
-   刻意不复用 .cover-del:那个类是各卡片共享的删除钮语义,改它会连累项目卡/资产卡。
+/* 封面右上「作品菜单」触发钮(2026-09-25:小说库把"删除"收进菜单 —— 隐藏比删除常用,
+   而删除不可逆,不该独占最容易误点的那一格)。观感与删除钮同源,只有 hover 不同:
+   **悬停转银白/琥珀而不是红**,红色是"要删东西"的暗示,菜单不是删除。
 
    ⚠ 定位必须放在**外层 wrapper** 上,不能放在按钮上(2026-09-26 实测踩坑):
    Element Plus 的 .el-dropdown 自带 `position: relative`,按钮上的 absolute 会改为
@@ -1305,22 +1311,10 @@ body::after {
   top: 8px; right: 8px;
   line-height: 0; /* 去掉 inline-block 基线留白,按钮才能铺满 27×27 */
 }
-.cover-menu {
-  width: 27px; height: 27px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--mx-bg0) 55%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 26%, transparent);
-  backdrop-filter: blur(4px);
-  color: var(--mx-text2);
-  cursor: pointer;
-  opacity: .55;
-  transition: all .15s;
+.cover-menu:hover {
+  background: color-mix(in srgb, var(--mx-amber) 24%, color-mix(in srgb, var(--mx-bg2) 88%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 70%, transparent);
 }
-.shot-card:hover .cover-menu, .cover-menu:hover { opacity: 1; }
-.cover-menu:hover { background: color-mix(in srgb, var(--mx-amber) 80%, transparent); color: var(--mx-bg0); }
 
 /* 已隐藏的作品:整卡压暗,一眼可辨"这是收起来的,不是消失了" */
 .shot-card.is-hidden { opacity: .5; }
