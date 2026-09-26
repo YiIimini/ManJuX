@@ -2,8 +2,8 @@
 
 > 首次建档:2026-09-11(实测采集)。**版本会漂移,渲染出问题时先从这里比对。**
 >
-> 最近更新:2026-09-24 二次更新(ComfyUI v0.35.1 → **v0.37.2**,第二节 commit 表整表刷新,
-> 第八节新增一条 ComfyUI 升级记录,第九节改为「只 `shared_current` 一段生效」)。
+> 最近更新:2026-09-26(ComfyUI v0.37.2 → **v0.37.4**,第一节版本行与第二节 commit 表同步,第八节新增升级记录;并首次写明**渲染根节点是本体内置**这条机制 —— 见第二节末)。
+> 上次更新:2026-09-24 二次更新(ComfyUI v0.35.1 → **v0.37.2**,第二节 commit 表整表刷新,第八节新增一条 ComfyUI 升级记录,第九节改为「只 `shared_current` 一段生效」)。
 > 上次更新:2026-09-24(第四节补 LTX 视频 VAE;第一节新增「ManJuX 自身构建栈」表并记入
 > Wails `v2.16.0`;第五、七节补上第三方 fork 的约束;第八节新增 Wails 升级记录)。
 > 此前更新:2026-09-12(第一节版本行复核为 v0.35.1;第八节状态改为「升级已完成并保持」;
@@ -22,7 +22,7 @@
 
 | 组件 | 版本 |
 |---|---|
-| ComfyUI | **v0.37.2**(`git describe` = `v0.37.2`,HEAD `830232b8`,`comfyui_version.py` = 0.37.2;2026-09-24 升级,回退基线 `backup_before_v0.37.2` = `856a922b`) |
+| ComfyUI | **v0.37.4**(`git describe` = `v0.37.4`,HEAD `8ff6dc38`,`comfyui_version.py` = 0.37.4;2026-09-26 升级,回退基线 `backup_before_v0.37.4` = `830232b8`;再往前 `backup_before_v0.37.2` = `856a922b`) |
 | Python | **3.13.12**(`comfyui/standalone-env`) |
 | PyTorch | **2.11.0+cu130**(CUDA 13.0) |
 | OS | Windows 10/11 |
@@ -50,18 +50,26 @@ ManJuX 的渲染图**直接依赖**下列节点类,任何升级改名都会让�
 |---|---|---|
 | ComfyUI-H3-Motion-Context | `5335715`(未变) | 镜间接缝(`MiniMaxH3MotionContext*` 四个节点) |
 | ComfyUI-H3-ConditioningCache | `4eead31`(原 `239d21e`,2026-09-24 整改;回退点 `239d21e`) | 两阶段条件缓存(`MiniMaxH3CondSave/Load`) |
-| ComfyUI-MiniMax-H3-PDD-Acc | `311a65d`(未变) | quality 加速档(Acc-8Step LoRA / `MiniMaxH3SigmaShift`) |
+| ComfyUI-MiniMax-H3-PDD-Acc | `311a65d`(未变) | quality 加速档(Acc-8Step LoRA;它注册的是 `MiniMaxH3PDDAcc*` 四个 —— `MiniMaxH3SigmaShift` 实为本体内置,此行原记法已更正) |
 | ComfyUI-MiniMaxH3-Easy | `61ceb3c`(旧表记 `d100200`,实测早已不符,本次按实测改回) | H3 相关辅助节点 |
 | ComfyUI-KJNodes | `d3cfe21`(旧 `5710537`) | 通用图像节点 |
 | ComfyUI_IPAdapter_plus | `a0f451a`(未变) | 参考图相关 |
-| rgthree-comfy | `2c5342a`(未变) | 图工具 |
-| was-node-suite-comfyui | `eb772ed`(旧 `c0598f6`) | 通用图像节点 |
+| rgthree-comfy | `449c58fc`(原 `2c5342a`,2026-09-26 升级 6 个提交) | 图工具 |
+| was-node-suite-comfyui | `8f80db30`(原 `eb772ed`,2026-09-26 升级 1 个提交:新增 Execution Gate Controlboard / Fast Generate Text;视频加载器改为默认读全部帧) | 通用图像节点 |
 | MaskVidExperiments | `c32ed8c`(旧 `e5c4450`) | **局部重绘**(遮罩裁切/回贴) |
-| comfyui-vrgamedevgirl | `75d4370`(旧 `050ead7`) | 音频处理节点 |
+| comfyui-vrgamedevgirl | `81a33b20`(原 `75d4370`,2026-09-26 升级 29 个提交) | 音频处理节点;该包只注册 `VRGDG_*`(231 个),ManJuX 图**零引用** |
 
 > 上表 commit 只作**回退参照**:平时无需钉版,出问题时可 `git -C <插件目录> checkout <commit>` 回退。
 > 完整 17 个节点(含上表之外的 FaceRefine / Turbo / Director / audio-T8 / Spectrum / latent-Upscaler)
-> 的基线快照见 `D:\Ai\ComfyUI\_maintenance\20260924-upgrade\baseline-repos.json`。
+> 的基线快照见 `D:\Ai\ComfyUI\_maintenance\20260926-upgrade\baseline-repos.json`(最新)、
+> `D:\Ai\ComfyUI\_maintenance\20260924-upgrade\baseline-repos.json`(上一版)。
+>
+> ⚠️ **渲染根节点是本体内置,不在插件里(2026-09-26 实测确认)**:`MiniMaxH3ReferenceToVideo` /
+> `MiniMaxH3ImageToVideo` / `MiniMaxH3SigmaShift` / `EmptyMiniMaxH3LatentAV` 全部来自
+> `comfy_extras/nodes_minimax_h3.py` —— 在 `/object_info` 里查它们的 `python_module` 即可验证;插件只提供各自前缀的类
+> (PDD-Acc → `MiniMaxH3PDDAcc*`、Motion-Context → `MiniMaxH3MotionContext*`、Turbo → `MiniMaxH3Turbo*`)。
+> **含义:升级 ComfyUI 本体就会改到渲染行为,而升级插件通常不会**(除非动了类名)。
+> 因此本节的钉版表只覆盖「插件那一半」;本体那一半靠 `git describe` + 该文件的 sha256 比对来控制。
 
 > **was-node-suite 的破坏性改名(2026-09-24 升级带入)**:该包把 25 个 id 加了 `WAS`/`WASNS` 前缀,
 > 并删除 `DownloadImage` / `Image Send HTTP` / `Text Random Prompt` / `True Random.org Number Generator`
@@ -159,6 +167,40 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 - 发现新的冲突时,请按第三节的格式补充**机制说明**(为什么冲突、影响哪些模式、怎么绕过),而不只写症状。
 
 ## 八、升级记录
+
+### 2026-09-26:ComfyUI 本体 v0.37.2 → v0.37.4 + 三个插件整表刷新(**已生效**)
+
+**为什么升**:上游已发 v0.37.3 / v0.37.4,本地停在 v0.37.2。注意 `github/master` 与发行线**已经分叉**
+——master 领先 39 个提交,但发行线把 master 上两个高风险改动**回滚**了(`ming-image` 支持、
+workflow-templates 0.11.70),所以目标取**发行 tag `v0.37.4` 而不是 master**。
+
+**实测改动范围**:`v0.37.2..v0.37.4` 共 11 个提交、只动 5 个文件,全部在**云 API 节点**
+(`comfy_api_nodes/nodes_bytedance.py`、`nodes_openai.py`、`apis/bytedance.py`)+ 版本号;
+**未触碰任何渲染路径**(无 minimax / sampl / attention / quant / model_management / vae / clip / ldm),
+`requirements.txt` 亦无变化 —— **故本轮不装任何 pip 包**。master 线上的 frontend 1.53.6 / templates 0.11.70
+是被发行线回滚掉的,不追。
+
+**兼容性硬证据**:`comfy_extras/nodes_minimax_h3.py` 升级前后均为 **31,155 字节、sha256 逐位相同**
+→ H3 生成链行为不变。
+
+**同时升级的三个插件**(均为 fast-forward;升级前各在本目录建 `backup_before_20260926` 分支):
+
+| 包 | commit | 提交数 | 备注 |
+|---|---|---|---|
+| comfyui-vrgamedevgirl | `75d4370a` → `81a33b20` | 29 | 该包只注册 `VRGDG_*`;**ManJuX 图零引用** —— 包内出现的 `MiniMaxH3*` 全在它自己的 tests/scripts 里,是引用不是注册 |
+| rgthree-comfy | `2c5342a8` → `449c58fc` | 6 | Image Comparer 输出修复、fast group toggle 限制保持等 |
+| was-node-suite-comfyui | `eb772eda` → `8f80db30` | 1 | 新增 Execution Gate Controlboard / Fast Generate Text;**视频加载器改为默认读全部帧** |
+
+**验证**(启动 8199 实测:启动日志 + `/object_info`):本体报告 **0.37.4**、共注册 **2423** 个节点;
+ManJuX 阻断级 10 个节点**缺失 0**;三个升级包分别加载 231 / 24 / 463 个节点(was-node 由 461 → 463,
+正是该提交新增的两个);**无任何 traceback**。vrgamedevgirl 仍报 `librosa` / `ComfyUI-LTXVideo` 三个子模块缺失
+—— **升级前就如此,非本轮引入**。
+
+**回退方法**:本体 `git checkout 830232b8`(分支 `backup_before_v0.37.4`);插件在各目录 `git checkout backup_before_20260926`。
+新基线快照:`D:\Ai\ComfyUI\_maintenance\20260926-upgrade\baseline-repos.json`。
+
+**顺带确认(未改)**:模型侧无新版可升 —— Singularity 仍是最新 v1.3(两份:在用 + 备用)、`lightx2v` Turbo LoRA
+最新仍是 v1.2、Qwen-Image-Edit-2511 四件套刚按上游 sha256 装齐。
 
 ### 2026-09-24:H3 底模换成 Minimax-h3_Singularity v1.3(ref2va 槽,**已生效**)
 
