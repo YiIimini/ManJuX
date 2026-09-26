@@ -1651,3 +1651,54 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   display: block;
   cursor: zoom-in; /* 点图放大(el-image-viewer),缩略图看不清构图 */
 }
+
+/* ============ 放大预览的蒙层与工具条 ============
+   用户 2026-09-26:「预览放大有个蒙层对比色吧!!」。
+
+   问题在 Element Plus 的默认值:`.el-image-viewer__mask{opacity:.5;background:#000}` ——
+   一层**半透明纯黑薄纱**。底层的小说库卡片与书名会透在图上("《求你们骂我》"压在封面
+   中间),而我们的封面多是暗调(黄昏逆光/雾气/灯影),暗调的图压在黑纱上完全没有边界,
+   整屏糊成一坨。对比线上渲染实测(Chrome 无头,真实封面):改前图的右边缘与背景分不开。
+
+   做法三条,都是"让图与底有对比"而不是换一种黑:
+     ① 蒙层换成**主题深底**(bg1→bg0 渐变,再混一丝主题 accent)——不再是死黑,颜色跟着
+        皮肤走;实测不透明度提到 .88/.95 并加模糊:底层界面化成柔和的色块,而不是透字;
+     ② 图本体给一条 **accent 细边 + 大投影**,把封面从蒙层上"剥"出来(这是对比感的主要来源);
+     ③ 缩放条/前后钮/进度/关闭钮原本是 EP 硬编码的灰白(#fff + --el-text-color-regular),
+        和主题不搭,一并换成主题面板色 —— 蒙层、控件、图三者才是同一套东西。
+
+   ⚠ 必须 !important:main.js 里 element-plus 的 CSS 在 style.css **之后**引入,同权重时
+   后写的胜(封面菜单钮栽过同一个坑,见 .cover-menu-wrap 那段)。 */
+.el-image-viewer__mask {
+  opacity: 1 !important;
+  background:
+    linear-gradient(180deg,
+      color-mix(in srgb, var(--mx-bg1) 88%, transparent) 0%,
+      color-mix(in srgb, var(--mx-bg0) 95%, transparent) 100%),
+    color-mix(in srgb, var(--mx-amber) 5%, transparent) !important;
+  backdrop-filter: blur(12px) saturate(.85);
+}
+.el-image-viewer__img {
+  border-radius: 8px;
+  background: var(--mx-bg1); /* 透明 PNG / 图还在加载时不至于透出蒙层 */
+  /* 投影用主题最深色派生(不是裸 rgba(0,0,0,…)):各主题的 bg0 都够深,效果等同纯黑,
+     但会顺手带上一点该皮肤自己的色相 —— 而裸色还得往 theme 闸门的白名单里塞一行。
+     中间那层 accent 光晕是"对比色"最直观的一笔:暗调封面(黄昏/雾气/灯影)与深底之间
+     就靠它分界。⚠ 光晕只在外圈,不许染到图本身 —— 用户正在这里挑封面的颜色。 */
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--mx-amber) 32%, transparent),
+    0 0 90px color-mix(in srgb, var(--mx-amber) 14%, transparent),
+    0 22px 60px color-mix(in srgb, var(--mx-bg0) 78%, transparent);
+}
+.el-image-viewer__actions,
+.el-image-viewer__prev,
+.el-image-viewer__next {
+  background-color: color-mix(in srgb, var(--mx-bg3) 94%, transparent) !important;
+  border: 1px solid var(--mx-line-hi) !important;
+  color: var(--mx-text2) !important;
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--mx-bg0) 62%, transparent);
+}
+.el-image-viewer__actions__inner { color: var(--mx-text2); }
+.el-image-viewer__progress { color: var(--mx-text2) !important; }
+.el-image-viewer__close { color: var(--mx-text2); }
+.el-image-viewer__btn:hover { color: var(--mx-text); }

@@ -67,4 +67,32 @@ func TestNovelCoverZoomPreview(t *testing.T) {
 	if !strings.Contains(css[idx:end], "cursor: zoom-in") {
 		t.Error("候选图要 cursor: zoom-in —— 可点却没提示等于没人知道能点")
 	}
+
+	// ⑤ 蒙层要有"对比色"(用户 2026-09-26:「预览放大有个蒙层对比色吧!!」)。
+	// Element Plus 默认 `.el-image-viewer__mask{opacity:.5;background:#000}` 是半透明纯黑薄纱:
+	// 底层的小说库书名会透在图上,暗调封面压在黑纱上也没有边界。
+	mask := cssBlockOf(t, css, ".el-image-viewer__mask {")
+	if !strings.Contains(mask, "opacity: 1 !important") {
+		t.Errorf("蒙层必须盖掉 EP 的 opacity:.5(半透明会让底层书名透在图上):\n%s", mask)
+	}
+	if !strings.Contains(mask, "var(--mx-bg0)") || !strings.Contains(mask, "var(--mx-amber)") {
+		t.Errorf("蒙层颜色必须取自主题变量(bg0 深底 + 一丝 accent)——写死颜色换个肤就又糊了:\n%s", mask)
+	}
+	if !strings.Contains(mask, "backdrop-filter") {
+		t.Errorf("蒙层要模糊底层,把它化成色块而不是透字:\n%s", mask)
+	}
+	// 覆盖 EP 默认样式必须带 !important:main.js 里 element-plus 的 CSS 在 style.css 之后引入
+	if !strings.Contains(mask, "!important") {
+		t.Error("覆盖在注释里(见 .cover-menu-wrap 那段)——不带 !important 会被 EP 后引入的同权重规则顶掉")
+	}
+	// 图本体要有 accent 细边/投影:暗调封面与深色蒙层之间就靠它分界
+	img := cssBlockOf(t, css, ".el-image-viewer__img {")
+	if !strings.Contains(img, "box-shadow") || !strings.Contains(img, "var(--mx-amber)") {
+		t.Errorf("预览图要有 accent 细边 + 投影,否则暗调封面与蒙层分不开:\n%s", img)
+	}
+	// 工具条也得跟主题(EP 硬编码灰白 #fff / --el-text-color-regular)
+	acts := cssBlockOf(t, css, ".el-image-viewer__actions,")
+	if !strings.Contains(acts, "var(--mx-bg3)") {
+		t.Errorf("缩放条/前后钮要随主题,别留着 EP 的灰白:\n%s", acts)
+	}
 }
