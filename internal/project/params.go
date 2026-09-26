@@ -1,6 +1,9 @@
 package project
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // StageParams 管线各阶段参数(项目级完整快照,创建项目时从全局默认拷贝,
 // 之后与全局默认互不影响 —— 实现「单项目独立调优」)。
@@ -123,7 +126,21 @@ type QCParams struct {
 	MinDuration   float64 `json:"min_duration"`    // 单镜最短时长(秒)
 	MaxDuration   float64 `json:"max_duration"`    // 单镜最长时长(秒)
 	EnableVLM     bool    `json:"enable_vlm"`      // VLM 智能审片(抽帧判分+重渲建议,需视觉模型)
+	// EnableTextDetect 画面文字检测(技能侧清单 §3.1a):抽帧问视觉模型"画面里有没有被
+	// 烧进去的可读文字",命中即告警 —— 用来长期盯「台词被模型画成字幕」这件事。
+	//
+	// 为什么是三态(与 Views/CondCache/Denoise 同一套语义):它的默认是**开**,而
+	// bool 的 false 同时表示"用户关了"和"这个字段还没有" —— 用 bool 的话,存量项目
+	// (json 里没有这个键)会被静默读成"显式关闭",于是这条监控在**最需要它的老项目**上
+	// 一次都不跑。取指针后:缺键 = 未表态 = 开,用户显式关掉才是关。
+	EnableTextDetect *bool `json:"enable_text_detect"`
 }
+
+// TextDetectOn 画面文字检测是否生效:未表态(nil)按开处理。
+//
+// 关掉它不影响其它质检项 —— 报告里连条目都不写(见 pipeline.planTextDetect),
+// 于是"关掉"看起来就是"没这项",而不是"每镜都验过且干净"。
+func (q QCParams) TextDetectOn() bool { return q.EnableTextDetect == nil || *q.EnableTextDetect }
 
 // AssembleParams 合成阶段(assemble)参数。
 type AssembleParams struct {
@@ -145,12 +162,110 @@ type AssembleParams struct {
 	// 带来的嘶声与爆音。前者压不掉(那是提示词写的音景),后者这一链能压。
 	// 默认开;追求"原声一点不动"的项目可显式关。
 	Denoise *bool `json:"denoise"`
-	// Grade 调色档(甲1):off 不调色 / soft 轻调 / film 电影感(默认) / heavy 重调。
+	// Grade 调色档(甲1 / 技能侧《平台侧整改清单》§2.1):
+	// auto 按风格自动 / off 不调色 / soft 轻调 / film 电影感 / heavy 重调。
 	//
-	// 空串 = 未表态 → **默认 film**(调色默认开):老项目 json 里没有这个键,
-	// 解成空串,归一化后按 film 处理 —— 与 compose.GradeFilter 同一口径
-	// (那边是装载之后的最后一道;两处是刻意保留的同口径双写,改一处必须改另一处)。
+	// 空串 = 未表态 → 与 GradeAuto 同义(老项目 json 里没有这个键,解成空串)。
+	// **未表态不再等价于 film**:技能侧《翻篇》的风格串是动画电影
+	// (ANIMATED-FEATURE CINEMATIC LOOK…),film 的压饱和 + 暗角 + 颗粒叠在动画赛璐璐上
+	// 偏重;双方约定"观感偏重时优先调档位、不动风格串",所以未表态时由 EffectiveGrade
+	// 按 plan.Style 选档(动画电影 → soft,其余 → film)。
+	//
+	// 最终档位只在 EffectiveGrade 一处决定(合成入口调用它一次)。compose.NormalizeGrade
+	// 仍是装载之后的最后一道滤镜口径,它把空值/认不出的值按 film 兜底 —— 也就是说
+	// "auto" 万一漏到 compose(老版本读新快照),退化成旧的 film 行为,不会把调色关掉。
 	Grade string `json:"grade"`
+}
+
+// GradeAuto 调色档"自动":不写死档位,按项目风格串选默认档(动画电影 → soft,其余 → film)。
+//
+// 为什么要有这一档(技能侧《平台侧整改清单》§2.1):平台默认档一直是写死的 film,
+// 而技能侧《翻篇》的风格串就是动画电影类,film 叠上去偏重 —— 技能侧只能在项目
+// `立项.json` 里人工记一句"建议 soft",而"指望人不漏不现实"正是那次事故的成因。
+// 所以默认档必须能跟着风格走,但**只在项目没显式表态时**接管(选了档位就照用户的)。
+//
+// 存盘用 "auto" 而不是空串:空串在快照里看着像"这个键没写",而它其实是一个明确语义;
+// 且老版本读到 "auto" 会走 compose.NormalizeGrade 的兜底(= film,与旧行为一致)。
+const GradeAuto = "auto"
+
+// EffectiveGrade 解析**最终**调色档,并回答"这一档是不是按风格自动降下来的"。
+//
+// 全项目只有这一处决定最终档位:合成入口(Coordinator.runAssemble)调它一次,compose 只认
+// 结果。本项目吃过"同一语义两处实现"的亏(project.Sanitize 与 compose.NormalizeGrade 的
+// 同口径双写就是被逼出来的),所以判据不再散到别处,也不在 compose 里再判一次。
+//
+// 优先级:**显式表态 > 按风格自动**。off/soft/film/heavy 一律照用户/技能侧的;
+// 只有未表态(空串 / auto)才看风格,且认不出的脏值与 Sanitize 同口径落回 film。
+//
+// style 传 plan.Style(方案里的视觉风格串,英文;技能侧直出);空串/认不出按"非动画"处理。
+func (a AssembleParams) EffectiveGrade(style string) (grade string, autoDowngraded bool) {
+	switch g := strings.ToLower(strings.TrimSpace(a.Grade)); g {
+	case "off", "soft", "film", "heavy":
+		return g, false
+	case "", GradeAuto:
+		if animatedFeatureStyle(style) {
+			return "soft", true
+		}
+		return "film", false
+	default:
+		return "film", false
+	}
+}
+
+// animatedStyleKeywords "动画电影"类风格串的关键词(小写;命中即算)。
+//
+// 口径来自技能侧清单 §2.1:ANIMATED-FEATURE / donghua / anime。
+// 刻意**不用**"卡通/2D/animation"这类更宽的词:风格串带否定式条款是常态(《翻篇》结尾
+// 就写着 "no flat 2D cartoon look, no ink outlines, no cel shading"),宽词会把
+// "我不要卡通"读成"我要卡通" —— pipeline.artstyle 的 photorealRequested 栽过同一个跟头
+// ("NO PHOTOREAL DETAIL" 被当成"要写实",见那里的记录)。
+var animatedStyleKeywords = []string{
+	"animated-feature", "animated feature", "animated film", "feature animation",
+	"donghua", "anime", "动画电影",
+}
+
+// reStyleNegation 否定词(整词边界,免得削到 "noir"/"notebook" 这类词)。
+var reStyleNegation = regexp.MustCompile(`\b(no|not|without|avoid|never|nor|zero)\b`)
+
+// animatedFeatureStyle 风格串是不是"动画电影"类。
+//
+// 判据只认**正面描述**:先把否定式剥掉,再在剩下的部分里找关键词。不剥的话
+// "no anime look" / "no animated-feature stylisation" 这类否定恰好会把判据反过来,
+// 于是"明确不要动画"的写实项目反而被降档 —— 与 artstyle.photorealRequested 同一取向。
+//
+// 与 pipeline.StripNegations 的关系:那边服务于提示词清洗(还要处理大小写、逗号拼接、
+// 段内否定短语的保留策略),这边只服务于"是不是动画电影"这一个布尔判断,所以是一份
+// **窄化的兄弟实现** —— project 不能反向依赖 pipeline(见 Sanitize 里同口径双写的说明)。
+// 两侧的否定词表保持同口径,改一处要看另一处。
+func animatedFeatureStyle(style string) bool {
+	if strings.TrimSpace(style) == "" {
+		return false
+	}
+	var kept []string
+	for _, seg := range strings.Split(strings.ToLower(style), ",") {
+		s := strings.TrimSpace(seg)
+		if s == "" {
+			continue
+		}
+		// 段内出现否定词(含段首)时只保留它**前面**的正面描述:
+		// "soft matte fur, no oily highlights" → "soft matte fur"。
+		if i := reStyleNegation.FindStringIndex(s); i != nil {
+			s = strings.TrimSpace(s[:i[0]])
+		}
+		if s != "" {
+			kept = append(kept, s)
+		}
+	}
+	if len(kept) == 0 {
+		return false
+	}
+	positive := strings.Join(kept, ", ")
+	for _, k := range animatedStyleKeywords {
+		if strings.Contains(positive, k) {
+			return true
+		}
+	}
+	return false
 }
 
 // DenoiseOn 是否启用音频净化(未表态 = 开,与 ViewsOn/FacesOn 同一套语义)。
@@ -186,6 +301,10 @@ func DefaultStageParams() StageParams {
 		QC: QCParams{
 			Enabled: true, DarkRatioFail: 0.60, DarkRatioWarn: 0.45,
 			MinDuration: 3.0, MaxDuration: 18.0,
+			// 画面文字检测默认开:它要跑的是一次视觉调用/镜,但换来的是"字幕有没有被
+			// 模型烧进画面"这条长期监控(技能侧清单 §3.1a)——不默认开就等于又要靠人记得查。
+			// 未配置视觉模型时如实降级(报告里写"未配置视觉模型"),不会假装通过。
+			EnableTextDetect: Bool(true),
 		},
 		Assemble: AssembleParams{
 			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)
@@ -194,8 +313,12 @@ func DefaultStageParams() StageParams {
 			Loudness: -16, Peak: 0.92, SubtitleSize: 4,
 			Upgrade2K: false, Denoise: Bool(true),
 			// 电影调色默认开(H3 直出的平淡数码味是用户反复提的观感问题;
-			// 要"一点不动"的项目显式选 off)
-			Grade: "film",
+			// 要"一点不动"的项目显式选 off),但**档位不写死**:
+			// 默认是"自动" —— 未表态时按 plan.Style 选档(动画电影 → soft,
+			// 其余 → film,见 EffectiveGrade)。技能侧清单 §2.1:动画电影类风格串
+			// (《翻篇》的 ANIMATED-FEATURE CINEMATIC LOOK…)配 film 偏重,而
+			// "指望人记得去项目参数里改成 soft"就是那次漏掉的原因。
+			Grade: GradeAuto,
 		},
 	}
 }
@@ -260,15 +383,24 @@ func (p *StageParams) Sanitize() {
 	if p.Assemble.SubtitleSize <= 0 {
 		p.Assemble.SubtitleSize = 4
 	}
-	// 调色档归一:空串(老项目缺键)与任何不认识的值一律按 film(默认开)。
+	// 调色档归一:未表态(空串 / auto)归成 GradeAuto;四个规范档位原样保留
+	// (大小写/空白不敏感);其余认不出的脏值落回 film。
+	//
 	// 大小写/空白不敏感 —— 与 compose.NormalizeGrade 的宽容度对齐,否则
 	// "OFF" 在这里被改成 film(调色照开)、在 compose 里却被认成 off,同一份配置两处口径。
-	// 取值集合(四个规范值)必须与 compose.NormalizeGrade 一致;那边额外容忍
+	// 取值集合(四个规范档位 + auto)必须与 compose.NormalizeGrade 一致;那边额外容忍
 	// none/light/strong 这类别名(手改 JSON 时的兜底),这里只管界面会写出来的规范值。
 	// project 不能反向依赖 compose,所以是刻意保留的同口径双写,改一处必须改另一处。
-	switch strings.ToLower(strings.TrimSpace(p.Assemble.Grade)) {
+	//
+	// 为什么"未表态"必须保留成 GradeAuto、不能就地定成 film(原实现就是在这里落回 film):
+	// 这个函数是**保存项目参数**那一处调用的 —— 一旦在这里定死成 film,凡是开过一次
+	// 参数抽屉并保存的项目就再也不是"未表态",§2.1 的自动降档会静默失效(而用户
+	// 明明什么都没改)。"认不出的脏值落回 film"保持不变:它不该放行自动降档。
+	switch g := strings.ToLower(strings.TrimSpace(p.Assemble.Grade)); g {
 	case "off", "soft", "film", "heavy":
-		p.Assemble.Grade = strings.ToLower(strings.TrimSpace(p.Assemble.Grade))
+		p.Assemble.Grade = g
+	case "", GradeAuto:
+		p.Assemble.Grade = GradeAuto
 	default:
 		p.Assemble.Grade = "film"
 	}

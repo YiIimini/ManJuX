@@ -193,6 +193,23 @@ func ValidatePlan(p *Plan) []Issue {
 		sceneIDs[s.ID] = true
 	}
 
+	// 汉字卫生门的**扣减集合**：主体名（角色 + 场景 + 道具）。
+	//
+	// 官方要求「用文字点名主体」（渲染期 PICTURE MANIFEST 靠它对编号），9 个角色同镜时
+	// 名字本身就近百字，而且一个名字在提示词里会被反复提到 —— 那是**不可避免**的汉字。
+	// 不扣会天天误报，真出问题时反而被淹掉（误拦的规则比没有规则更糟）。
+	// 判据与阈值见 prompt_cjk.go（与技能侧 manju_plan.py 同源）。
+	subjectNames := make([]string, 0, len(p.Characters)+len(p.Scenes)+len(p.Props))
+	for _, c := range p.Characters {
+		subjectNames = append(subjectNames, c.Name)
+	}
+	for _, s := range p.Scenes {
+		subjectNames = append(subjectNames, s.Name)
+	}
+	for _, pr := range p.Props {
+		subjectNames = append(subjectNames, pr.Name)
+	}
+
 	seen := map[int]bool{}
 	for i, sh := range p.Shots {
 		where := fmt.Sprintf("shots[%d](id=%d)", i, sh.ID)
@@ -302,6 +319,35 @@ func ValidatePlan(p *Plan) []Issue {
 			add("warn", where,
 				"本镜有画外音但 h3_prompt 没写「%s」—— 平台后处理会补齐,产出侧写对更稳",
 				VoiceoverClauseMarker)
+		}
+		// ── 汉字卫生（2026-09-26 用户报障「成片出现无名字幕」）──────────────────
+		//
+		// 官方 ON-SCREEN TEXT 规则的判据是：**没被英文引号括起来的文字，就是模型会画成
+		// 字形的来源**；而汉字合法的位置只有 `<d>[Chinese]…</d>`（官方「说」的通道，
+		// 同时供 H3 出原生中文配音）与**主体名**（官方要求点名主体）。所以 `<d>` 外的
+		// 可避免汉字 = 往画面上写字。实测《翻篇》第 01 集 `<d>` 外 7083 字：根因不是台词，
+		// 是场景卡的中文美术卡整段被拼进了 subject_definitions。
+		//
+		// 阈值与扣减集合**与技能侧 manju_plan.py 同源**（>200 fail / >60 warn，扣主体名），
+		// 见 prompt_cjk.go。技能侧在产出前跑同一条，平台侧在这里守门 —— 这样**别的书**与
+		// 平台 LLM 直出路径也能被拦住，而不是只有技能侧新出的包干净。
+		//
+		// 为什么不顺手升 PlanContractVersion：技能侧 v2.3 是在**同一契约版本**下加的这条门，
+		// 单侧升版本会把现网所有 v2 包判成「版本不符」而整批拒收 —— 那与本条的意图无关。
+		if n := CJKOutsideDialogue(sh.H3Prompt, subjectNames); n > PlanCJKFailOutsideDialogue {
+			add("fail", where,
+				"h3_prompt 里 <d> 外有 %d 个**可避免的**汉字（主体名已扣除）—— 这就是成片画面上"+
+					"冒出无名字幕/乱码字形的直接来源：英文结构散文里不许有汉字，中文美术卡别塞进提示词",
+				n)
+		} else if n > PlanCJKWarnOutsideDialogue {
+			add("warn", where, "h3_prompt 里 <d> 外有 %d 个可避免的汉字（主体名已扣除）", n)
+		}
+		// keyframe_prompt 是**首帧 T2I 静帧**提示词：它没有 `<d>` 这条合法通道，而图生图
+		// 模型画中文几乎必然成乱码 —— 这一镜的第一帧就带字。所以「出现任何汉字」都提示。
+		if n := CountCJK(sh.KeyframePrompt); n > 0 {
+			add("warn", where,
+				"keyframe_prompt 里有 %d 个汉字 —— 首帧是 T2I 出的，汉字会被画成乱码字形"+
+					"（这一镜的第一帧就带字）", n)
 		}
 		// 台词装不下:平台侧会抬时长(最多到上限),但抬到顶仍不够时成片会**截断**,
 		// 这是"配音不完整"的老病根,所以在入口就如实报出来。

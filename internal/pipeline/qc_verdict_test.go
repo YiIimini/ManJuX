@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/qc"
 )
 
 // 质检结论的穷举测试(审计:镜头缺失时仍报「全部合格」)。
@@ -19,6 +21,7 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 		failed     int
 		notChecked []int
 		vlmFlagged int
+		textAlert  *qc.TextAlert
 		wantLevel  string
 		wantErr    bool
 		wantInMsg  []string
@@ -52,10 +55,27 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 			name: "全合格但 VLM 有标记 → warn 且不算失败", total: 3, checked: 3, vlmFlagged: 2,
 			wantLevel: "warn", wantInMsg: []string{"VLM", "未自动重渲"},
 		},
+		{
+			// 清单 §3.1a:命中率超阈值时**不许**再说「全部合格」—— 这正是本次要防的
+			// "以为已经解决了"。但仍然不是 error:重渲与否由人看着命中镜号定。
+			name: "画面文字命中率超阈值 → 不许报「全部合格」,转显式告警", total: 20, checked: 20,
+			textAlert: qc.TextHitAlert(20, []int{2, 5, 11, 17}),
+			wantLevel: "warn", wantErr: false,
+			wantInMsg: []string{"画面文字检测", "4/20", "命中镜", "2、5、11、17", "未自动重渲"},
+		},
+		{
+			name: "VLM 标记与画面文字告警同时出现 → 两条都要说", total: 10, checked: 10, vlmFlagged: 1,
+			textAlert: qc.TextHitAlert(10, []int{3, 4}),
+			wantLevel: "warn", wantInMsg: []string{"VLM", "画面文字检测"},
+		},
+		{
+			name: "画面文字未超阈值(alert 为 nil)→ 照旧 success", total: 10, checked: 10,
+			textAlert: nil, wantLevel: "success", wantInMsg: []string{"10/10"},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := qcVerdictOf(tc.total, tc.checked, tc.failed, tc.notChecked, tc.vlmFlagged)
+			v := qcVerdictOf(tc.total, tc.checked, tc.failed, tc.notChecked, tc.vlmFlagged, tc.textAlert)
 			if v.Level != tc.wantLevel {
 				t.Errorf("结论级别 = %s,期望 %s(文案:%s)", v.Level, tc.wantLevel, v.Msg)
 			}
@@ -70,6 +90,11 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 				if !strings.Contains(v.Msg, "未质检") && v.Err == nil {
 					t.Errorf("缺镜结论必须写明「未质检」,实际 %q", v.Msg)
 				}
+			}
+			// 核心不变量之二:画面文字命中率超阈值 = 疑似「字幕回归」,那种情况下
+			// 绝不允许再给出"全部合格"的结论(清单 §3.1a 要防的就是"以为已经解决了")。
+			if tc.textAlert != nil && v.Level == "success" {
+				t.Fatal("画面文字检测已报警却报「全部合格」—— 这正是「以为已经解决了」")
 			}
 			for _, want := range tc.wantInMsg {
 				hay := v.Msg

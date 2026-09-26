@@ -34,6 +34,10 @@ type Report struct {
 	DarkRatio  float64    `json:"dark_ratio"`
 	DarkRatios []float64  `json:"dark_ratios,omitempty"`
 	VLM        *VLMReport `json:"vlm,omitempty"` // 智能审片(可选)
+	// TextDetect 画面文字检测(可选,见 textdetect.go):判这一镜画面里有没有被模型
+	// 烧进去的可读文字(字幕/招牌/UI/浮字)。命中只告警不判负,集级命中率超阈值时由
+	// 调用方升级为显式告警(清单 §3.1a)。
+	TextDetect *TextDetectReport `json:"text_detect,omitempty"`
 	// SpeechSec 实测人声时长(秒);ExpectedSpeechSec 本镜台词应有的口播时长。
 	// 两者差距过大就是「配音不完整」——这是用户 2026-09-24 报障里唯二可以
 	// **机械判定**的一条(另一条是杂音,靠频谱,不在本包范围内)。

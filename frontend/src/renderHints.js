@@ -20,26 +20,38 @@ export const CLOUD_ENGINES = ['api', 'h3api']
 //
 // key 是**后端词汇表**(管线按它选滤镜链),前端不得自行增删;显示名与说明属展示信息,
 // 放在这里是为了让"下拉里到底有哪几档"只有一份答案(项目参数抽屉直接消费它)。
-// 默认档 film:用户抽帧反馈的"3D 截图感"里有相当一部分是**没有调子**造成的。
+// 默认档 auto(按风格自动):调色默认开着(用户抽帧反馈的"3D 截图感"里相当一部分是
+// **没有调子**造成的),但档位跟着项目风格串走 —— 动画电影类风格(film 的压饱和 + 暗角
+// + 颗粒叠在动画赛璐璐上偏重)默认降一档用 soft,其余用 film;口径见后端
+// project.EffectiveGrade。选了具体档位就照选的,不再自动。
 export const GRADE_OPTIONS = [
+  { key: 'auto',  name: '自动(按风格)', desc: '按项目风格串自动选档:动画电影类风格(ANIMATED-FEATURE / donghua / anime)用 soft,其余用 film。合成时会在日志里说明用了哪一档,随时可改成具体档位。' },
   { key: 'off',   name: '关闭(原片直出)', desc: '不做任何调色,终混只做字幕与响度归一。想自己后期调色的项目选它。' },
   { key: 'soft',  name: '轻调(soft)',      desc: '轻微对比曲线 + 很淡的暗角,不动色相;适合已经调好的素材,只补一点"镜头感"。' },
-  { key: 'film',  name: '电影(film,默认)', desc: '冷暖分离(暗部偏青、亮部偏暖)+ 对比曲线 + 肤色归正 + 胶片颗粒 + 暗角。' },
+  { key: 'film',  name: '电影(film)',     desc: '冷暖分离(暗部偏青、亮部偏暖)+ 对比曲线 + 肤色归正 + 胶片颗粒 + 暗角。' },
   { key: 'heavy', name: '浓重(heavy)',     desc: '在 film 的基础上加强冷暖分离、颗粒与暗角 —— 观感更"电影",也更吃画面细节。' },
 ]
 
 // GRADE_KEYS 合法档位(供归一化与闸门使用)。
 export const GRADE_KEYS = GRADE_OPTIONS.map(g => g.key)
 
-// DEFAULT_GRADE 默认调色档(与后端默认一致)。
+// AUTO_GRADE 未表态档(与后端 project.GradeAuto 同一语义):缺键/空串 = 按风格自动。
+//
+// 为什么"未表态"必须能表达出来:参数抽屉保存时是**整份快照回写**,而缺键若兜成显式
+// film,那么开一次抽屉(哪怕只是改字幕字号)再保存,项目就再也不是"未表态" ——
+// 档位被悄悄钉死成 film,按风格自动降档(动画电影 → soft)静默失效,而用户什么都没改。
+export const AUTO_GRADE = 'auto'
+
+// DEFAULT_GRADE 认不出的脏值的兜底档(与后端 Sanitize 的"认不出落回 film"一致)。
 export const DEFAULT_GRADE = 'film'
 
-// gradeOf 归一化调色档:认不出的值(缺键 / 旧参数快照 / 手改 JSON)一律回默认档。
+// gradeOf 归一化调色档:缺键/空串 = auto(未表态);认不出的值(手改 JSON)回默认档。
 //
 // 为什么不能"原样传":项目参数抽屉保存时是**整份快照回写**,留一个空字符串在下拉里
 // 既显示成空白,又会在保存时把空值写进项目参数 —— 界面看起来像坏了,后端还得再兜一次。
 export function gradeOf(params) {
   const v = String(params?.assemble?.grade || '').trim().toLowerCase()
+  if (v === '') return AUTO_GRADE
   return GRADE_KEYS.includes(v) ? v : DEFAULT_GRADE
 }
 

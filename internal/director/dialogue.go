@@ -21,15 +21,35 @@ import (
 // 宁可镜头长一点也不要截断台词。
 const CharsPerSecond = 4.5
 
-// MinShotSeconds / MaxShotSeconds 单镜时长的合法区间。
+// MinShotSeconds / MaxShotSeconds 单镜时长的**渲染窗口**(与计划契约同源的合法区间)。
 //
 // 下限 4 秒是 H3 帧网格与叙事节拍的实际需要;上限 10 秒不是"不许更长",而是
 // **自动抬时长的天花板**:再长就该拆镜了(本地单镜渲染成本随帧数超线性增长,
 // 见 sysShotRules),所以到顶后只报告不继续加。
+//
+// ⚠ 它不是生成侧的下限 —— 那一个是 GenMinShotSeconds(5)。两个数各管一件事:
+// 4 是"能渲",5 是"该生成",关系由 plan_contract_ext_test.go 钉住(那里写清了为什么
+// 窗口不能跟着抬)。
 const (
 	MinShotSeconds = 4
 	MaxShotSeconds = 10
 )
+
+// GenMinShotSeconds LLM 直出路径的单镜**生成下限**(唯一一处;提示词由它渲染)。
+//
+// 为什么生成下限是 5、而渲染窗口仍从 4 起(2026-09-26 平台侧整改清单 §1.3):
+//   - 云端引擎会把 <5 秒**静默**抬到 5(下限见 h3api.MinDurationSeconds,
+//     行为由 h3api_test.go 的 clampDuration 表钉住)。LLM 直出路径此前按 4 秒出镜,
+//     于是成片比计划长 —— 计划与成片时长不一致;
+//   - 本地引擎也不是真的"吃 4 秒":comfyengine 按 17k+5 网格**向上**对齐,
+//     4 秒(96 帧)提交成 107 帧 = 4.46 秒。所以没有"只让云端避开"的必要,生成侧统一取 5;
+//   - 渲染窗口(MinShotSeconds=4)不能跟着抬:技能端旧包还在窗口内(仓库里那份真产物夹具
+//     internal/project/testdata/skill-produced-plan-ep01.json 有 35 个 4 秒镜),
+//     抬上去等于**整本拒收**技能端产物 —— 那是契约版本级的改动,要两侧同改同提交。
+//     技能端 v2.2 起 `最短镜秒` 默认已是 5,新包不受影响。
+//
+// 与云端 ≥5 秒对齐,避免计划与成片时长不一致。
+const GenMinShotSeconds = 5
 
 // SpeechSeconds 估算一段中文台词的纯口播时长(秒)。
 //

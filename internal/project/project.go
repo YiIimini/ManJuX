@@ -71,6 +71,16 @@ type Shot struct {
 	Duration   int      `json:"duration"`   // 秒(4-10)
 	Mode       string   `json:"mode"`       // ref2va(有参考图) / t2va(纯文生)
 	H3Prompt   string   `json:"h3_prompt"`  // 完整六段式/三段式提示词(LLM 直出)
+
+	// KeyframePrompt 本镜**首帧 T2I 静帧**提示词(技能侧 manju_plan.py 的
+	// build_keyframe_prompt 产出)。
+	//
+	// 为什么平台要收下来(2026-09-26):① 之前 Plan 里没有这个字段,技能侧写进 plan.json 的
+	// 首帧提示词被平台**静默丢弃** —— 导入后平台再重写一次 plan.json,它就永久没了
+	// (与 props 同一类缺陷);② 它是图生图模型的输入,而图生图模型画中文几乎必然成乱码
+	// 字形(实测该字段汉字 1362 → 0 是技能侧 v2.3 的清洗成果),所以契约里对它单独设门:
+	// 出现任何汉字都 warn(见 plan_contract.go)—— 这是"这一镜的第一帧就带字"的可判形态。
+	KeyframePrompt string `json:"keyframe_prompt,omitempty"`
 }
 
 // Character 角色卡。

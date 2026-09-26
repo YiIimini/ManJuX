@@ -1,10 +1,14 @@
 package project_test
 
 import (
+	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/YiIimini/ManJuX/internal/director"
+	"github.com/YiIimini/ManJuX/internal/engine/h3api"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -23,7 +27,7 @@ func TestContractConstantsMatchDirector(t *testing.T) {
 			project.PlanCharsPerSecond, director.CharsPerSecond)
 	}
 	if project.PlanMinShotSeconds != director.MinShotSeconds {
-		t.Fatalf("单镜下限走散:contract=%d director=%d",
+		t.Fatalf("单镜渲染窗口下限走散:contract=%d director=%d",
 			project.PlanMinShotSeconds, director.MinShotSeconds)
 	}
 	if project.PlanMaxShotSeconds != director.MaxShotSeconds {
@@ -31,6 +35,87 @@ func TestContractConstantsMatchDirector(t *testing.T) {
 			project.PlanMaxShotSeconds, director.MaxShotSeconds)
 	}
 }
+
+// TestSystemPromptShotDurationRangeMatchesDirector 提示词里的时长数字必须由常量渲染。
+//
+// 为什么要单钉这一条(2026-09-26 平台侧整改清单 §1.3):SystemPrompt 里曾**写死**
+// "Each shot 4-8 seconds" 与 "min 4, max 8",而计划契约是 4-10、云端引擎的下限是
+// 5 秒(h3api.MinDurationSeconds)—— 三处口径各自漂,后果是:
+//
+//	① LLM 直出路径稳定产出 4 秒镜 → 云端 clampDuration 静默抬成 5 秒(成片比计划长);
+//	② 4-8 比契约的 4-10 更窄 → 长台词镜被迫拆得比需要的更碎。
+//
+// 常量改对了没用:文案里写死的数字照样会漂,而它才是模型真正读到的东西 ——
+// 所以这里**直接扫文案**,并把它钉回常量。
+func TestSystemPromptShotDurationRangeMatchesDirector(t *testing.T) {
+	// ① 生成下限不得低于云端硬下限:低于它 = 生成出来的镜必然被云端改写。
+	if director.GenMinShotSeconds < h3api.MinDurationSeconds {
+		t.Fatalf("生成下限 %d 秒低于云端下限 %d 秒(h3api.MinDurationSeconds):"+
+			"LLM 直出会产出被云端静默抬长的镜头,计划与成片时长不一致",
+			director.GenMinShotSeconds, h3api.MinDurationSeconds)
+	}
+	// ② 生成区间必须落在契约的渲染窗口内,否则生成出来的方案会被契约拒收。
+	if director.GenMinShotSeconds < project.PlanMinShotSeconds ||
+		director.GenMinShotSeconds > project.PlanMaxShotSeconds {
+		t.Fatalf("生成下限 %d 秒不在契约渲染窗口 %d–%d 秒内",
+			director.GenMinShotSeconds, project.PlanMinShotSeconds, project.PlanMaxShotSeconds)
+	}
+	if director.MaxShotSeconds != project.PlanMaxShotSeconds {
+		t.Fatalf("生成上限 %d 秒与契约上限 %d 秒不一致:提示词会与契约打架",
+			director.MaxShotSeconds, project.PlanMaxShotSeconds)
+	}
+
+	// ③ 文案里必须出现由常量渲染出来的那两句(缺一句就说明它又写死了别的数)。
+	wantRange := fmt.Sprintf("Each shot %d-%d seconds", director.GenMinShotSeconds, director.MaxShotSeconds)
+	wantClamp := fmt.Sprintf("min %d, max %d", director.GenMinShotSeconds, director.MaxShotSeconds)
+	wantRate := fmt.Sprintf("runs about %s characters per second",
+		strconv.FormatFloat(float64(director.CharsPerSecond), 'g', -1, 64))
+	for _, want := range []string{wantRange, wantClamp, wantRate} {
+		if !strings.Contains(director.SystemPrompt, want) {
+			t.Fatalf("SystemPrompt 里没有由常量渲染的 %q —— 时长文案又漂了\n生成区间应为 %d-%d 秒",
+				want, director.GenMinShotSeconds, director.MaxShotSeconds)
+		}
+	}
+
+	// ④ 反向闸门:文案里**任何** "N-M seconds" / "min N, max M" 都必须等于常量。
+	// 只查③不够 —— 有人补一句 "(6-9 seconds for close-ups)" 也一样是第二个口径。
+	for _, m := range reSecondRange.FindAllStringSubmatch(director.SystemPrompt, -1) {
+		lo, _ := strconv.Atoi(m[1])
+		hi, _ := strconv.Atoi(m[2])
+		if lo != director.GenMinShotSeconds || hi != director.MaxShotSeconds {
+			t.Fatalf("SystemPrompt 里的时长区间 %q 与常量 %d-%d 不符(第二个口径)",
+				m[0], director.GenMinShotSeconds, director.MaxShotSeconds)
+		}
+	}
+	for _, m := range reMinMaxClamp.FindAllStringSubmatch(director.SystemPrompt, -1) {
+		lo, _ := strconv.Atoi(m[1])
+		hi, _ := strconv.Atoi(m[2])
+		if lo != director.GenMinShotSeconds || hi != director.MaxShotSeconds {
+			t.Fatalf("SystemPrompt 里的台词时长钳制 %q 与常量 %d-%d 不符(第二个口径)",
+				m[0], director.GenMinShotSeconds, director.MaxShotSeconds)
+		}
+	}
+
+	// ⑤ 旧的写死值必须彻底消失:留着"4-8"就等于这一条整改没做。
+	for _, stale := range []string{"4-8 seconds", "min 4, max 8", "in a 4-second shot"} {
+		if strings.Contains(director.SystemPrompt, stale) {
+			t.Fatalf("SystemPrompt 里还留着写死的旧口径 %q(下限已是 %d 秒)",
+				stale, director.GenMinShotSeconds)
+		}
+	}
+
+	// ⑥ 占位符必须被渲染干净:漏掉一个 {{…}} 会把模板记号直接喂给模型。
+	if i := strings.Index(director.SystemPrompt, "{{"); i >= 0 {
+		t.Fatalf("SystemPrompt 里残留未渲染的占位符:%q",
+			director.SystemPrompt[i:min(i+20, len(director.SystemPrompt))])
+	}
+}
+
+// 扫文案用的两条判据。刻意放宽到"任何 N-M seconds",而不是只找已知的那一句。
+var (
+	reSecondRange = regexp.MustCompile(`(\d+)-(\d+) seconds`)
+	reMinMaxClamp = regexp.MustCompile(`min (\d+), max (\d+)`)
+)
 
 // TestNeededSecondsMatchesDirector 两个算式必须逐例给出同一个数。
 //

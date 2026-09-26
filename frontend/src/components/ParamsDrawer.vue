@@ -35,6 +35,10 @@ watch(stageId, () => {
   // 若不在这里兜底成 true,抽屉一开就会把用户亲手关掉(false)的开关也显示成开。
   form.script.stylized_faces = form.script.stylized_faces !== false
   form.assemble.denoise = form.assemble.denoise !== false
+  // 画面文字检测(清单 §3.1a):同样是「未表态即开」——后端 QCParams.TextDetectOn() 把缺键
+  // 读成开,这里必须同步兜底成 true,否则存量项目打开抽屉会看到"关着",而实际在跑(或反之:
+  // 看着是关、一保存就真的把它关掉了)。
+  form.qc.enable_text_detect = form.qc.enable_text_detect !== false
   // 电影调色档(assemble.grade)与接缝重置间隔(render.seam_reset_every):
   // 这两个键是后加的,存量项目快照里没有 —— 不在这里兜底,下拉会显示空白、
   // 数字框会显示成空,而保存是**整份快照回写**,于是空值被写进项目参数,
@@ -243,6 +247,14 @@ async function save() {
         </el-form-item>
         <el-form-item label="VLM 智能审片(抽帧判分+重渲建议,需视觉模型)">
           <el-switch v-model="form.qc.enable_vlm" />
+        </el-form-item>
+        <el-form-item label="画面文字检测(抽帧查画面里有没有被烧进去的字;命中即告警)">
+          <el-switch v-model="form.qc.enable_text_detect" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            默认开。在镜头原始产物上做(合成前),查有没有被模型画成字形的字幕/招牌/UI;命中逐镜告警,
+            整集命中率超 10% 时升级为显式告警。每镜一次视觉调用(与 VLM 审片共用设置页的视觉模型),
+            未配置视觉模型时如实标注「未配置视觉模型」,不当作通过。关掉它不影响其它质检项。
+          </div>
         </el-form-item>
         <el-form-item label="暗像素失败阈值(0-1)">
           <el-slider v-model="form.qc.dark_ratio_fail" :min="0.3" :max="0.95" :step="0.05" show-input />

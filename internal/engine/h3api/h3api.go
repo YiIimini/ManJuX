@@ -442,9 +442,20 @@ func fileToDataURI(path string) (string, error) {
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw), nil
 }
 
+// MinDurationSeconds 云端 duration 的硬下限(秒)。
+//
+// 官方文档把 duration 写成一小组取值(5/10/15 量级),社区实测"任意整数都被接受";
+// 两处口径不一致时取保守值,低于它一律抬到它(见 clampDuration,行为由 h3api_test.go
+// 的 clampDuration 表钉住)。
+//
+// 导出它,是为了让"计划侧该生成多长的镜"有处可比:LLM 直出的单镜下限
+// (director.GenMinShotSeconds)必须不低于它,否则生成出来的时长会被云端静默改写,
+// 计划与成片时长不一致。断言在 internal/project/plan_contract_ext_test.go。
+const MinDurationSeconds = 5
+
 func clampDuration(sec int) int {
-	if sec < 5 {
-		return 5
+	if sec < MinDurationSeconds {
+		return MinDurationSeconds
 	}
 	if sec > 15 {
 		return 15

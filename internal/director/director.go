@@ -43,15 +43,44 @@ Return STRICT JSON only (no markdown fences, no commentary):
   ]
 }`
 
-const sysShotRules = `## SHOT PLAN RULES
-- Shot count is driven by the CONTENT, with NO upper limit: cover this episode's story completely and clearly. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot 4-8 seconds (integer): local H3 rendering costs grow faster than linear with frame count (a 10s shot is ~2.8x the load of a 6s one on the same card), so split a long beat into two shots instead of stretching one. Hook in shot 1, payoff at the end.
+// sysShotRulesTpl 分镜规则段**模板**:时长数字全部用 {{MIN}}/{{MAX}}/{{CPS}} 占位,
+// 由 renderShotRules() 从常量渲染 —— 这段文案里**不许**再出现写死的时长数字。
+//
+// 为什么改成模板(2026-09-26 平台侧整改清单 §1.3):此前这里写死 "Each shot 4-8 seconds"
+// 与 "min 4, max 8",而计划契约是 4-10、云端引擎的下限是 5 秒 —— 三处口径各自漂:
+// LLM 直出路径稳定产出 4 秒镜(云端再静默抬成 5 秒,成片比计划长),而 4-8 又比契约的
+// 4-10 更窄,长台词镜被迫拆得比需要的更碎。现在文案里的时长与语速都由常量渲染,
+// 并有断言盯着(internal/project/plan_contract_ext_test.go 与本包 prompt_duration_test.go)。
+//
+// 区间取 GenMinShotSeconds-MaxShotSeconds(=5-10)而不是更窄的 5-8:上限就是契约上限,
+// 不再用一个比契约更窄的硬区间逼 LLM 多拆镜;"宁可拆短"这个**负载偏好**由下面那句
+// "costs grow faster than linear … split a long beat" 表达(它是实测结论,见 CHANGELOG
+// 「单镜负载引导」),不靠一个跟契约打架的数字。
+const sysShotRulesTpl = `## SHOT PLAN RULES
+- Shot count is driven by the CONTENT, with NO upper limit: cover this episode's story completely and clearly. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot {{MIN}}-{{MAX}} seconds (integer): local H3 rendering costs grow faster than linear with frame count (a 10s shot is ~2.8x the load of a 6s one on the same card), so split a long beat into two shots instead of stretching one. Hook in shot 1, payoff at the end.
 - CONTINUITY (critical, 2026-09-10): consecutive shots must read as ONE continuous flow. Each shot's action must BEGIN where the previous shot ENDED — same location (unless a deliberate scene change), carried-over posture/emotion/props, coherent time-of-day and lighting. NEVER skip a narrative beat the audience needs; if a beat needs two camera moments, split it into two shots with one clear action each. On scene changes, bridge with narration or a matching visual anchor, never jump-cut blind.
 - shot_size 景别用中文:远景/全景/中景/近景/特写。Emotional beats and dialogue MUST use 近景/特写 (H3 face tokens are scarce; closer framing beats wider framing).
 - One camera move per shot, chosen from official motion vocabulary ONLY: Push In / Pull Out / Pan / Truck / Tilt / Pedestal / Arc / Tracking / Static / POV / Roll / Shake, plus amplitude (small/large amplitude) and speed (slow/fast) in natural English. NEVER use jargon like dolly, crane, whip pan.
 - mode: "ref2va" when character/scene reference images will be provided (any shot with on-screen characters); "t2va" for pure text-to-video shots without references.
 - dialogue speaker must match a character name, or use speaker "旁白" for narration. Keep spoken lines short (≤20 chars), punchy, ending with 。?! naturally. At most 2 speakers per shot.
-- DIALOGUE MUST FIT THE SHOT (critical): Mandarin delivery runs about 4.5 characters per second, and H3 needs roughly one extra second of headroom to start and settle. The shot's duration MUST be at least ceil(total_dialogue_chars / 4.5) + 1 (rounded up to a whole second, min 4, max 8). A 20-character line therefore needs 6 seconds — never park a 20-character line in a 4-second shot: the speech gets cut off and the finished video loses the end of the line. If a line cannot fit 8 seconds, split the beat into two shots, each carrying part of the line.
+- DIALOGUE MUST FIT THE SHOT (critical): Mandarin delivery runs about {{CPS}} characters per second, and H3 needs roughly one extra second of headroom to start and settle. The shot's duration MUST be at least ceil(total_dialogue_chars / {{CPS}}) + 1 (rounded up to a whole second, min {{MIN}}, max {{MAX}}). A 20-character line therefore needs 6 seconds — never park a 20-character line in a {{MIN}}-second shot: the speech gets cut off and the finished video loses the end of the line. If a line cannot fit {{MAX}} seconds, split the beat into two shots, each carrying part of the line.
 - narration (旁白) is an off-screen voiceover; characters' lips stay closed. Use sparingly.`
+
+// sysShotRules 渲染后的分镜规则段(单轮 SystemPrompt 与分批 batchSystemPrompt **共用同一段**,
+// 不各写一份 —— 写两份就又是一处会漂的口径)。
+var sysShotRules = renderShotRules()
+
+// renderShotRules 把时长/语速常量渲染进规则文案(纯函数,便于直接断言)。
+//
+// 用占位符替换而不是 fmt.Sprintf 的位置参数:这一段有 7 处数字,位置参数一错位
+// 就会把"下限"印成"上限",而字符串本身看不出错 —— 名字替换不会错位。
+func renderShotRules() string {
+	return strings.NewReplacer(
+		"{{MIN}}", strconv.Itoa(GenMinShotSeconds),
+		"{{MAX}}", strconv.Itoa(MaxShotSeconds),
+		"{{CPS}}", strconv.FormatFloat(CharsPerSecond, 'g', -1, 64),
+	).Replace(sysShotRulesTpl)
+}
 
 const sysH3Format = `## H3 PROMPT FORMAT (critical - follow EXACTLY)
 mode=ref2va => SIX sections in this exact order, separated by one blank line:
@@ -158,7 +187,10 @@ const animeFaceLock = `CHARACTER STYLE LOCK (MANDATORY, highest priority):
 - Every face is an ORIGINAL animation design: never describe a character as looking like a real person, actor, singer, celebrity or public figure, and never use such a name as a character name.`
 
 // SystemPrompt 单轮直出(完整 schema + 全部规则)。
-const SystemPrompt = sysHeader + `
+//
+// 是 var 不是 const:分镜规则段由一个值 = renderShotRules()(见 sysShotRules),
+// 时长数字全部从常量渲染 —— 常量对了、文案写死照样会漂,所以文案本身也得是算出来的。
+var SystemPrompt = sysHeader + `
 
 ` + sysOutputFull + `
 
@@ -519,11 +551,14 @@ func validate(p *project.Plan, shotLimit int) error {
 	var validShots []project.Shot
 	for i := range p.Shots {
 		sh := p.Shots[i]
-		if sh.Duration < 4 {
-			sh.Duration = 4
+		// 时长钳到**生成区间**(不是渲染窗口):下限是 GenMinShotSeconds(5),
+		// 与云端 ≥5 秒对齐,避免计划与成片时长不一致(清单 §1.3)。
+		// 4 秒镜从这里开始不再被产出 —— 那是本次整改的预期结果。
+		if sh.Duration < GenMinShotSeconds {
+			sh.Duration = GenMinShotSeconds
 		}
-		if sh.Duration > 10 {
-			sh.Duration = 10
+		if sh.Duration > MaxShotSeconds {
+			sh.Duration = MaxShotSeconds
 		}
 		if sh.Mode == "" {
 			sh.Mode = "t2va"
@@ -636,7 +671,8 @@ Return STRICT JSON only (no markdown fences, no commentary):
 - characters/scenes 覆盖全片所有出场者;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules
 
 // batchSystemPrompt 分镜轮:按已定头部与本段 brief,只产出指定区间的 shots。
-const batchSystemPrompt = sysHeader + `
+// var 的理由同 SystemPrompt:内嵌的 sysShotRules 由常量渲染。
+var batchSystemPrompt = sysHeader + `
 
 ## OUTPUT (THIS BATCH)
 Return STRICT JSON only (no markdown fences, no commentary):

@@ -128,6 +128,18 @@ func TestFrontendParamsDrawerWiresGradeAndSeamReset(t *testing.T) {
 		t.Error("seamResetOf 必须把负数/脏值回退到 0(0 = 只在换场/换人时断开,最保守的选择)")
 	}
 
+	// ③b 「自动」档必须可选,且缺键时要落在它上面(技能侧清单 §2.1)。
+	//
+	// 为什么是闸门而不是"顺手加的选项":自动降档(动画电影 → soft)要在**未表态**时生效,
+	// 而"未表态"必须能被这个下拉表达出来 —— 缺键若兜成显式 film,那么开一次参数抽屉
+	// (哪怕只是改字幕字号)再保存就把它钉死成 film,自动降档静默失效,用户什么都没改。
+	if !regexp.MustCompile(`key:\s*'auto'`).MatchString(hints) {
+		t.Error("调色档缺少 auto(自动)档 —— 缺键只能兜成 film,按风格自动降档会被一次保存悄悄废掉")
+	}
+	if !strings.Contains(hints, "if (v === '') return AUTO_GRADE") {
+		t.Error("gradeOf 必须把缺键/空串归成 auto(未表态),而不是兜成 film")
+	}
+
 	// ④ 说明文案:接缝重置必须说清「换场/换人会自动断开」与「0/1 = 每场重置」
 	if !strings.Contains(hints, "换场 / 换人时自动断开接缝") && !strings.Contains(drawer, "换场 / 换人会自动断开接缝") {
 		t.Error("接缝重置间隔必须写明「换场/换人会自动断开接缝」—— 否则用户会以为 0 就是完全不重置")

@@ -39,6 +39,37 @@ import (
 // refManifestKey 幂等判据(改文案时必须保留这个串)。
 const refManifestKey = "PICTURE MANIFEST (authoritative"
 
+// refManifestClosingKey 收尾条款的判据串(改文案必须保留这个串,否则闸门与幂等断言都失效)。
+const refManifestClosingKey = "PRODUCTION NOTES, NOT PICTURE CONTENT"
+
+// refManifestTailWindow 判据窗口:最终提示词**尾部这么多字符**内不得出现无防护汉字串。
+// 与任务书(技能侧《平台侧整改清单》§1.1)的判据同值,闸门见 refmanifest_closing_test.go。
+const refManifestTailWindow = 300
+
+// refManifestClosing **整条提示词的最后一段**。
+//
+// ## 为什么必须有它(2026-09-26 技能侧《平台侧整改清单》§1.1)
+//
+// 装配顺序是 `ShotRenderPrompt` → `EnsureRefManifest`(见 stages_render.go:245/:261),
+// 也就是说清单是**最后一块**;而它每条清单行都写中文名(`<Picture 1> = 翻篇`),它自己
+// 还带一段中文对照。官方 ON-SCREEN TEXT 规则的判据是「**没被英文引号括起来的文字,就是
+// 模型画成字形的来源**」—— 于是技能侧刚把 `<d>` 外的汉字清到 0(实测 7083 → 0),
+// 平台在最后一步又追加一段中文名,后面再无收尾,前半段清洗被最后一段抵消。
+//
+// 修法必须在**清单之后**(幂等由 refManifestKey 统一守),并且这个收尾本身要能压过
+// 尾部窗口:它的长度必须 ≥ refManifestTailWindow,否则清单末尾那一段中文对照仍会落在
+// 300 字符窗口内,判据永远红。所以它不是"一句口号",而是把这个窗口填满的一段规则复述
+// (顺带也是有用的:画面文字规则写在提示词开头,到这里已经隔了几千字)。
+const refManifestClosing = refManifestClosingKey + " (mandatory - this is the last word on the " +
+	"subject of visible text): the names and numbers in this manifest are production notes, not visible " +
+	"text: never draw, caption or subtitle any of them. Not as a sign, plaque, banner, letter, book cover, " +
+	"garment print, prop label or wall writing, and never spoken aloud either. They exist for one reason " +
+	"only - so that you can tell which attached picture is which. The frame itself stays free of written " +
+	"characters unless the shot explicitly calls for a piece of text and quotes it verbatim in English " +
+	"double quotation marks, on the object that carries it. The same goes for every other note, heading, " +
+	"list item and bracketed annotation in this prompt: they are addressed to YOU, they are not picture " +
+	"content, and anything you letter into the frame from them ruins the shot."
+
 // RefManifest 按实际装配的参考图写出权威清单。roles 为空(无参考图的 t2va)返回空串,
 // 调用方原样放行。
 func RefManifest(shot project.Shot, roles []RefRole) string {
@@ -105,6 +136,8 @@ func RefManifest(shot project.Shot, roles []RefRole) string {
 	if shot.ID > 0 {
 		sb.WriteString(fmt.Sprintf("(shot %d)\n", shot.ID))
 	}
+	// 最后一段:清单的中文名与中文对照都在这之前,收尾必须在它们**之后**(见 refManifestClosing)。
+	sb.WriteString("\n" + refManifestClosing + "\n")
 	return sb.String()
 }
 

@@ -45,14 +45,27 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	var notChecked []int
 	vlmFlagged := 0 // VLM 审片未通过的镜头数(只标记,不自动重渲)
 
-	// VLM 智能审片(可选):抽帧判分 + 重渲建议
+	// 本集画面文字检测的账(技能侧清单 §3.1a):textExamined = **真的做过检测**的镜数
+	// (分母),textHitShots = 命中的镜号。分母只算真看过的镜,见 qc.TextHitAlert 的判据说明。
+	textExamined := 0
+	var textHitShots []int
+	// 三态开关:未表态 = 开(老项目 json 里没有这个键,不能被读成"显式关闭")
+	textDetectOn := p.TextDetectOn()
+
+	// VLM 智能审片 + 画面文字检测:共用同一台视觉模型(设置页 VLM)。
 	var vlmClient *llm.Client
-	if p.EnableVLM {
+	if p.EnableVLM || textDetectOn {
 		g := c.cfg.Get()
 		if g.VLM.BaseURL != "" && g.VLM.APIKey != "" && g.VLM.Model != "" {
 			vlmClient = llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 120)
 		} else {
-			c.emit(proj.ID, PhaseQC, 0, "warn", 0, "VLM 审片已开启但视觉模型未配置(设置页填写),跳过智能判分")
+			if p.EnableVLM {
+				c.emit(proj.ID, PhaseQC, 0, "warn", 0, "VLM 审片已开启但视觉模型未配置(设置页填写),跳过智能判分")
+			}
+			if textDetectOn {
+				c.emit(proj.ID, PhaseQC, 0, "warn", 0,
+					"画面文字检测已开启但视觉模型未配置(设置页填写):本集未做该检测,报告里每镜如实标注「未配置视觉模型」")
+			}
 		}
 	}
 
@@ -99,6 +112,32 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0, "镜头 %d VLM 审片失败:%v(不影响机械质检)", shot.ID, verr)
 			}
 		}
+		// 画面文字检测(清单 §3.1a):必须在**镜级原始产物**上做 —— 合成会按 BurnSubtitles
+		// 把台词字幕烧进成片,那时"画面有字"是设计的一部分,检测就失去意义了。
+		// 处置由纯函数决定(开关 / 视觉模型 / 机械质检),便于穷举测试。
+		if pl := planTextDetect(textDetectOn, vlmClient != nil, r.OK); !pl.Run {
+			// 开关关闭时 pl.Skipped 为空 → **连条目都不写**(关掉的功能不该在报告里留痕,
+			// 否则"关掉"看起来就像"每镜都验过且干净");未配置模型 / 机械质检未通过则
+			// 必须留痕 —— 那是"没验过",不是"验过且干净"。
+			if pl.Skipped != "" {
+				r.TextDetect = qc.TextDetectSkipped(pl.Skipped)
+			}
+		} else {
+			tr, terr := qc.DetectOnScreenText(ctx, vlmClient, c.ff, full, r.Duration, qc.TextDetectOptions{})
+			if terr != nil {
+				// 失败如实记,不当作通过(抽不出帧/模型没回答都只是"没验过")。
+				r.TextDetect = qc.TextDetectFailed(terr)
+				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+					"镜头 %d 画面文字检测失败(未判定,不当作通过):%v", shot.ID, terr)
+			} else {
+				r.TextDetect = tr
+				textExamined++
+				if tr.HasText {
+					textHitShots = append(textHitShots, shot.ID)
+					r.Warnings = append(r.Warnings, qc.TextWarnText(tr))
+				}
+			}
+		}
 		reports[key] = *r
 		pct := checked * 100 / max(1, len(plan.Shots))
 		if r.OK {
@@ -130,7 +169,13 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			"⚠ 有 %d 个镜头没有可质检的产物,未纳入本次质检:%s",
 			len(notChecked), shotIDList(notChecked))
 	}
-	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged)
+	// 集级判据:命中镜数占**实际检测过**镜数的比例(判据与理由见 qc.TextHitAlert)。
+	// 超阈值时这里先显式告警一次,再并入阶段结论 —— 结论不许再说"全部合格"。
+	textAlert := qc.TextHitAlert(textExamined, textHitShots)
+	if textAlert != nil {
+		c.emit(proj.ID, PhaseQC, 0, "warn", 100, "⚠ %s", textAlert.Msg)
+	}
+	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, textAlert)
 	if v.Msg != "" {
 		c.emit(proj.ID, PhaseQC, 0, v.Level, 100, "%s", v.Msg)
 	}
@@ -144,14 +189,21 @@ type qcVerdict struct {
 	Err   error // 非 nil = 阶段失败(Level=error)
 }
 
-// qcVerdictOf 由四个计数折出结论:total 方案总镜数、checked 实际检查过、failed 不合格、
-// notChecked 根本没产物因而没被看、vlmFlagged VLM 未通过。
+// qcVerdictOf 由几个计数折出结论:total 方案总镜数、checked 实际检查过、failed 不合格、
+// notChecked 根本没产物因而没被看、vlmFlagged VLM 未通过、textAlert 画面文字检测的集级告警
+// (nil = 未超阈值;判据见 qc.TextHitAlert)。
 //
 // 为什么值得抽成纯函数:旧实现的判据只有 checked==0 与 failed>0 —— **缺镜既不影响结论
 // 也不进文案**,于是一集 20 镜里挂了 5 镜也能得到「✔ 质检通过:15 镜全部合格」和一份
 // 干净的 qc_report.json;"全部合格"这句话本身就是在骗人(剩下 5 镜根本没被看过)。
 // 现在缺镜一律判不合格(文案带上镜号),只有"确实检查过的镜全部合格且没有缺镜"才是 success。
-func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged int) qcVerdict {
+//
+// textAlert 同样是为了堵这一类的洞:画面文字检测命中率超阈值 = 疑似「字幕回归」,
+// 那种情况下**不许**再打「✔ 质检通过:N/N 镜全部合格」(清单 §3.1a 要防的就是
+// "以为已经解决了"),而要转成点名命中镜号的 warn。它**不升级为 error**:
+// 这一步是监控,单镜误报本来就允许(场景招牌),且 error 会让批产线整集停住、
+// 逼人逐镜复核 —— 重渲与否应当由人看着命中镜号来定(与 VLM 审片同一处置原则)。
+func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged int, textAlert *qc.TextAlert) qcVerdict {
 	missing := len(notChecked)
 	switch {
 	case checked == 0:
@@ -167,14 +219,57 @@ func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged int) q
 		msg := fmt.Sprintf("质检只覆盖 %d/%d 镜:%d 镜尚无可用产物(未质检:%s)请先「渲染出片」补齐后再质检/合成",
 			checked, total, missing, shotIDList(notChecked))
 		return qcVerdict{Level: "error", Msg: msg, Err: fmt.Errorf("%s", msg)}
-	case vlmFlagged > 0:
+	case vlmFlagged > 0 || textAlert != nil:
 		// 只标记、不自动重渲:同一 prompt 同一 seed 重跑大概率复现同样结果,
 		// 真正的返工要改提示词或换 seed,由用户看过标记后自行决定(2026-09-11 定调)。
+		var parts []string
+		if vlmFlagged > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜 VLM 审片未通过", vlmFlagged))
+		}
+		if textAlert != nil {
+			parts = append(parts, textAlert.Msg)
+		}
 		return qcVerdict{Level: "warn", Msg: fmt.Sprintf(
-			"⚠ 质检完成:%d 镜机械指标合格,其中 %d 镜 VLM 审片未通过(详情见 output/qc_report.json 或阶段详情),未自动重渲",
-			checked, vlmFlagged)}
+			"⚠ 质检完成:%d 镜机械指标合格,但%s(详情见 output/qc_report.json 或阶段详情),未自动重渲",
+			checked, strings.Join(parts, ";"))}
 	default:
 		return qcVerdict{Level: "success", Msg: fmt.Sprintf("✔ 质检通过:%d/%d 镜全部合格", checked, total)}
+	}
+}
+
+// textDetectPlan 本镜的画面文字检测该怎么走(纯函数,便于穷举)。
+type textDetectPlan struct {
+	Run     bool   // 真的去抽帧 + 调视觉模型
+	Skipped string // 不跑的原因(写进报告;空串 = 连条目都不写)
+}
+
+// 不跑画面文字检测时的三种原因。
+const (
+	// textSkipDisabled 开关关闭:连报告条目都不写 —— 关掉的功能不该在报告里留痕,
+	// 否则"关掉它"看起来就像"每一镜都验过且干净"。
+	textSkipDisabled = ""
+	// textSkipNoClient 视觉模型未配置:如实降级(报告里写"未做画面文字检测:未配置视觉模型"),
+	// 不假装通过。
+	textSkipNoClient = "未做画面文字检测:未配置视觉模型"
+	// textSkipMechanical 机械质检已判不合格(黑屏/残片)的镜头不送检出:那画面本来就要
+	// 重渲,再花一次视觉调用没有新信息。它也不进集级命中率的分母(见 qc.TextHitAlert)。
+	textSkipMechanical = "未做画面文字检测:机械质检未通过(该镜本就要重渲)"
+)
+
+// planTextDetect 由(开关、视觉模型可用性、机械质检结论)决定本镜怎么处置。
+//
+// 抽成纯函数是为了让"开关真的能关""没配模型不假装验过"这两条可被穷举验证 ——
+// 这类缺陷(功能开着却静默跳过、或报告里看不出到底看没看)不会报错,只有针对性断言能钉住。
+func planTextDetect(enabled, haveClient, mechOK bool) textDetectPlan {
+	switch {
+	case !enabled:
+		return textDetectPlan{Run: false, Skipped: textSkipDisabled}
+	case !haveClient:
+		return textDetectPlan{Run: false, Skipped: textSkipNoClient}
+	case !mechOK:
+		return textDetectPlan{Run: false, Skipped: textSkipMechanical}
+	default:
+		return textDetectPlan{Run: true}
 	}
 }
 
@@ -222,6 +317,19 @@ func resolveFadeSec(projectSec, globalSec float64) float64 {
 	return 0.5
 }
 
+// gradeAutoNote 自动降档时的**播报文案**(空串 = 不是自动降档,不播报)。
+//
+// 与接缝的 seamBlockNote 同一取向:判据与文案同源(都来自 project.EffectiveGrade 的
+// 第二个返回值),且降档必须**可见** —— 否则用户只会看到"这版调色怎么变淡了",既不知道
+// 是平台按风格自动降的,也不知道去哪儿改回来。显式选了档位的项目不许被这条播报打扰
+// (那会让人以为自己设的档被改掉了)。
+func gradeAutoNote(grade string, autoDowngraded bool) string {
+	if !autoDowngraded {
+		return ""
+	}
+	return fmt.Sprintf("本片风格为动画电影,调色档默认用 %s;可在项目参数里改", grade)
+}
+
 func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
@@ -251,6 +359,14 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	// 转场时长:项目参数优先 → 设置页 render.fade_sec → 兜底 0.5(见 resolveFadeSec)
 	fade := resolveFadeSec(p.FadeSec, c.cfg.Get().Render.FadeSec)
 	c.emit(proj.ID, PhaseAssemble, 0, "info", 2, "开始合成(%d 镜,转场=%s %.1fs,字幕=%v)", len(clips), p.Transition, fade, p.BurnSubtitles)
+	// 调色档(甲1 / 技能侧清单 §2.1):**最终档位只在这里解析一次**(project.EffectiveGrade),
+	// compose 只认结果 —— 判据只留一处,免得"参数默认"和"装载后兜底"两处各判一次而漂移。
+	// 未表态时按 plan.Style 选档:动画电影类风格串用 soft(film 的压饱和 + 暗角 + 颗粒
+	// 叠在动画赛璐璐上偏重),其余用 film;自动降档时如实播报一次并给出改回去的办法。
+	grade, gradeAuto := p.EffectiveGrade(plan.Style)
+	if note := gradeAutoNote(grade, gradeAuto); note != "" {
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 2, "%s", note)
+	}
 	res, err := compose.Compose(ctx, c.ff, clips, plan, outDir, compose.Params{
 		Width: proj.Config.Params.Render.Width, Height: proj.Config.Params.Render.Height,
 		Transition: p.Transition, BurnSubtitles: p.BurnSubtitles,
@@ -261,7 +377,8 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		Denoise: p.DenoiseOn(),
 		// 调色档(甲1):不接这一行的后果与 P1-1 那批假开关完全一样 ——
 		// assemble.grade 有界面、能保存、Sanitize 也在归一,而成片里毫无变化。
-		Grade: p.Grade,
+		// 这里传的是上面解析过的**最终**档位(不是未表态的 p.Grade)。
+		Grade: grade,
 	}, func(pct int, note string) {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", pct, "%s", note)
 	})
