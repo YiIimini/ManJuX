@@ -217,6 +217,14 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 			}
 		}
 	}
+	// 封面:先带小说自己的封面,再开跑(用户 2026-09-26:导入出来的项目封面成了"生成的角色")
+	ids := make([]string, 0, len(results))
+	for _, r := range results {
+		if r.ID != "" {
+			ids = append(ids, r.ID)
+		}
+	}
+	s.applyNovelCover(bookPrefix, ids, root)
 	s.autoStartBatch(bookPrefix)
 }
 
