@@ -1,0 +1,45 @@
+{
+  "contract": "manjux.plan",
+  "version": 1,
+  "book": "拜我别后悔",
+  "episode": "第01集",
+  "episode_title": "我在庙里，动不了",
+  "chapters": [
+    1
+  ],
+  "episode_seconds": 278,
+  "produced_by": "ManJuNovel skill (manju_plan.py)",
+  "produced_at": "2026-09-26T11:53:13",
+  "counts": {
+    "characters": 2,
+    "scenes": 4,
+    "shots": 56
+  },
+  "dropped_characters": [
+    "何三",
+    "崔爷",
+    "老周",
+    "赵师爷",
+    "侯先生",
+    "差役",
+    "王婶",
+    "栓子",
+    "周阿鸾",
+    "赖五",
+    "徐书办",
+    "清虚真人",
+    "上清观小道童",
+    "顾维岳",
+    "顾家账房先生",
+    "郭老栓",
+    "周书吏",
+    "张老蔫",
+    "秦氏",
+    "赵崇",
+    "挑担老汉"
+  ],
+  "generator": {
+    "shots": "mechanical-baseline",
+    "target_chars_per_shot": 52
+  }
+}

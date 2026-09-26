@@ -13,6 +13,28 @@ import (
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
+// rescanProjects 重扫项目目录(POST /api/projects/rescan)。
+//
+// 技能端(ManJuNovel)把成套项目包直接写进 projects/<书名>/<集名>/,而 Store 只在
+// 启动时扫一次盘 —— 这个端点让"技能端出脚本 → 平台端点一下就能看见",不必重启应用。
+// 只新增、不删除(语义边界见 project.Store.Rescan 注释)。
+func (s *Server) rescanProjects(w http.ResponseWriter, r *http.Request) {
+	added, total := s.store.Rescan()
+	if len(added) > 0 {
+		s.opLog("🔄 重扫项目目录:新增 %d 个(技能端产出或手工放入)—— %s",
+			len(added), strings.Join(added, "、"))
+		for _, id := range added {
+			if plan, err := s.store.LoadPlan(id); err == nil {
+				s.opLog("    %s:%d 镜 / %d 角色 / %d 场景(方案已就位,可跳过 script 直接渲染)",
+					id, len(plan.Shots), len(plan.Characters), len(plan.Scenes))
+			} else {
+				s.opLog("    %s:尚无 plan.json(需先导入方案或跑分镜阶段)", id)
+			}
+		}
+	}
+	writeJSON(w, 200, map[string]any{"ok": true, "added": added, "total": total})
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	type item struct {
 		*project.Project

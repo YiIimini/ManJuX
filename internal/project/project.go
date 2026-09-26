@@ -215,6 +215,54 @@ func NewStore(root string) (*Store, error) {
 // Root 返回项目根目录。
 func (s *Store) Root() string { return s.root }
 
+// Rescan 重扫项目根目录,把**外部新建**的项目装进内存索引,返回新增的 id 列表与总数。
+//
+// 为什么必须有这一个(2026-09-26 · 双侧共组):
+// 技能端(ManJuNovel)现在直接产出项目包并写进 `projects/<书名>/<集名>/` —— 契约见
+// `docs/渲染脚本契约.md`。而 Store 只在**进程启动时**扫一次盘,不重扫的后果是
+// "技能端出好脚本了,平台端得重启才看得见" —— 链路断在这一步,双边分工就白做。
+//
+// 语义边界:只**新增**与**刷新元信息**,不删任何东西(盘上目录被外部删掉时,列表里
+// 那条留到下次启动;这样比"运行中悄悄消失一个项目"更可预期)。已装载的项目保留
+// 内存里的运行态(参数调优不会被盘上旧值顶掉)。
+func (s *Store) Rescan() (added []string, total int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	added = []string{}
+	loadIn := func(dir string) {
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if !e.IsDir() || s.projects[e.Name()] != nil {
+				continue
+			}
+			p := &Project{ID: e.Name(), Name: e.Name()}
+			if err := s.loadMeta(p); err == nil {
+				s.projects[p.ID] = p
+				added = append(added, p.ID)
+			}
+		}
+	}
+	entries, _ := os.ReadDir(s.root)
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		full := filepath.Join(s.root, e.Name())
+		if _, err := os.Stat(filepath.Join(full, "project.json")); err == nil {
+			if s.projects[e.Name()] == nil {
+				p := &Project{ID: e.Name(), Name: e.Name()}
+				if err := s.loadMeta(p); err == nil {
+					s.projects[p.ID] = p
+					added = append(added, p.ID)
+				}
+			}
+			continue
+		}
+		loadIn(full) // 书名目录:装载其下分集
+	}
+	return added, len(s.projects)
+}
+
 // Dir 返回项目目录。
 // seriesRe 「书名·第N集·标题」系列分集命名。
 var seriesRe = regexp.MustCompile(`^(.+)·第\d+集`)

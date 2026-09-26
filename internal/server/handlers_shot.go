@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/browser"
+	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/winctl"
 )
@@ -120,6 +122,16 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 }
 
 // importPlan 导入既有分镜方案(JSON,新建项目时上传)。
+//
+// 2026-09-26 起这是**技能端 → 平台端的正式入口**(契约 manjux.plan v1):
+// 技能端产出 plan.json,平台端解析后直接进 assets/render,平台侧那一步
+// 「LLM 直出分镜」整段省掉(每集 2–6 分钟深度推理 + token)。
+//
+// 分工要成立,入口就必须**按同一张规则表守门**(见 project.ValidatePlan):
+// 技能端写出平台从来没生成过的东西(悬空引用/超区间时长/空提示词)时,
+// 渲染照跑、成片是垃圾,而没人知道该怪谁 —— 那种"静默通过"是双侧共组最大的风险。
+// 校验 + 与 script 阶段同等的后处理(台词时长预算 / 中文台词标记)一次做全,
+// 让「导进来的包」和「平台自己生成的包」在渲染眼里完全等价。
 func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
@@ -133,11 +145,69 @@ func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("无效的分镜方案(需含 shots 数组)"))
 		return
 	}
+	// ① 契约校验:fail 级一律拒收,并把「哪一条、在哪」说清楚
+	issues := project.ValidatePlan(in.Plan)
+	if fails := project.PlanFails(issues); len(fails) > 0 {
+		s.opLog("⛔ 分镜方案未过契约校验(项目「%s」):%d 条 fail", id, len(fails))
+		for _, it := range fails {
+			s.opLog("    %s", it)
+		}
+		writeJSON(w, 400, map[string]any{
+			"error": fmt.Sprintf("分镜方案未过契约校验(manjux.plan v%d):%d 条 fail", project.PlanContractVersion, len(fails)),
+			"fails": project.PlanIssuesText(fails),
+			"warns": warnsText(issues),
+			"shots": len(in.Plan.Shots),
+		})
+		return
+	}
+	// ② 与 script 阶段同等的后处理:台词时长预算 + 中文台词标记兜底
+	//    这两个函数与 stages_script.go 用的是同一份实现(director / pipeline),
+	//    所以「导进来的包」和「平台自己生成的包」在渲染眼里完全等价。
+	adjusted, details := director.FitDialogueDurations(in.Plan)
+	for i := range in.Plan.Shots {
+		in.Plan.Shots[i].H3Prompt = pipeline.EnsureChineseDialogue(in.Plan.Shots[i].H3Prompt)
+	}
+	var overflow []string
+	for _, sh := range in.Plan.Shots {
+		if msg := director.DialogueOverflow(sh); msg != "" {
+			overflow = append(overflow, msg)
+		}
+	}
 	if err := s.store.SavePlan(id, in.Plan); err != nil {
 		writeErr(w, 500, err)
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "shots": len(in.Plan.Shots)})
+	if adjusted > 0 {
+		s.opLog("⏱ 导入方案:台词时长预算调整 %d 镜(%s)", adjusted, strings.Join(details, ";"))
+	}
+	for _, m := range overflow {
+		s.opLog("⚠ %s", m)
+	}
+	if warns := warnsText(issues); len(warns) > 0 {
+		for _, wmsg := range warns {
+			s.opLog("· 契约提示:%s", wmsg)
+		}
+	}
+	s.opLog("📥 已导入分镜方案(项目「%s」):%d 镜 / %d 角色 / %d 场景 —— 可跳过分镜阶段直接开始渲染",
+		id, len(in.Plan.Shots), len(in.Plan.Characters), len(in.Plan.Scenes))
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "shots": len(in.Plan.Shots),
+		"characters": len(in.Plan.Characters), "scenes": len(in.Plan.Scenes),
+		"duration_adjusted": adjusted, "duration_details": details,
+		"dialogue_overflow": overflow, "warns": warnsText(issues),
+		"contract": fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
+	})
+}
+
+// warnsText 契约 warn 级文本(导入成功时也要如实回显,不静默)。
+func warnsText(issues []project.Issue) []string {
+	var out []string
+	for _, it := range issues {
+		if it.Level == "warn" {
+			out = append(out, it.String())
+		}
+	}
+	return out
 }
 
 // comfyVersions ComfyUI 版本管理器报告(online=1 联网对比,较慢)。
