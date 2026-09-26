@@ -56,31 +56,64 @@ func TestAnimatedFaceRenderBlockHitsGreaseAndRealFaces(t *testing.T) {
 	}
 }
 
-// TestStyleExpandOverridesPhotorealWhenFacesOn 角色动漫化开启时,真人/写实风格请求
-// 必须被**覆盖**而不是叠加 —— 两组互相打架的风格词同时给模型,只会得到"既写实又扁平"的糊图。
-func TestStyleExpandOverridesPhotorealWhenFacesOn(t *testing.T) {
-	on := styleExpand("真人实拍质感 + 港片胶片", true, KindHuman)
-	if strings.Contains(on, "photorealistic cinematic portrait") {
-		t.Errorf("开启角色动漫化后不得再要求写实人像:%s", on)
+// TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn 上游点名写实/3D 时,**画风归上游**,
+// 动漫化开关不再覆盖它(2026-09-26 用户定调:「资产和视频渲染需要根据技能侧输出的脚本
+// 里的风格来定,如未明确要求风格才走默认风格」)。
+//
+// 【为什么推翻旧行为】旧用例钉的是 2026-09-24 的"开关覆盖写实"。真机实测后发现它
+// 制造了一条更坏的链:视频侧早已改成"风格归上游"(STYLE AUTHORITY),而定妆照这一侧
+// 还在覆盖 —— 于是同一部剧里**定妆照是二维赛璐璐、成片是 3D 写实**,参考图与渲染
+// 不在同一个视觉世界,H3 只能靠猜脸。用户长期报的"脸/头发漂移"正是这条链的末端。
+//
+// 保留的底线:法务条款(不得像真人)在任何风格下都必须有;开关在**上游没给风格**时
+// 仍然决定兜底画风(见本文件另一条用例)。
+func TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn(t *testing.T) {
+	// 真机里那条风格串(求你们骂我·第01集 plan.style),原样拿来钉
+	real := styleExpand("PHOTOREAL 3D CINEMATIC WORLD, SEMI-STYLISED ANIME-ADJACENT FACES, matte finish", true, KindHuman)
+	if strings.Contains(real, "clean cel shading") {
+		t.Errorf("上游点名 3D 写实时不得再注入二维赛璐璐(参考图会与成片脱节):%s", real)
 	}
-	if !strings.Contains(on, "ANIMATED MATTE RENDER") {
-		t.Errorf("开启后必须带动画哑光画风块:%s", on)
+	if !strings.Contains(real, "3D CG character render") {
+		t.Errorf("上游的 3D 风格词应被翻译成 3D 渲染约束:%s", real)
 	}
-	// 用户自己的风格文本要保留(作为整体美术方向),只是不再驱动写实脸
-	if !strings.Contains(on, "真人实拍质感") {
-		t.Errorf("用户风格原文应保留:%s", on)
+	if strings.Contains(real, "ANIMATED MATTE RENDER") {
+		t.Errorf("上游点名写实/3D 时不许再塞平台动画介质块(两个介质打架,模型只会糊):%s", real)
 	}
-	// 身份忠实度与"不许美化"的老约束不能被新块挤掉
-	if !strings.Contains(on, "IDENTITY FIDELITY") {
-		t.Error("身份忠实度约束丢失")
+	for _, want := range []string{"PHOTOREAL 3D CINEMATIC WORLD", "IDENTITY FIDELITY", "never make a character resemble a real person"} {
+		if !strings.Contains(real, want) {
+			t.Errorf("风格原文 / 身份忠实度 / 法务底线三者都必须留(%q):%s", want, real)
+		}
 	}
 
-	off := styleExpand("真人实拍质感", false, KindHuman)
-	if !strings.Contains(off, "photorealistic cinematic portrait") {
-		t.Errorf("关闭开关后真人风格是合法路线,不该被覆盖:%s", off)
+	// 真人写实(非 3D)同样归上游
+	on := styleExpand("真人实拍质感 + 港片胶片", true, KindHuman)
+	if !strings.Contains(on, "photorealistic cinematic portrait") {
+		t.Errorf("上游要写实就该给写实约束(开关不该吞掉它):%s", on)
 	}
-	if strings.Contains(off, "ANIMATED MATTE RENDER") {
-		t.Errorf("关闭开关后不得注入动画画风块:%s", off)
+	if !strings.Contains(on, "真人实拍质感") {
+		t.Errorf("风格原文应保留:%s", on)
+	}
+	// 开关关掉时行为不变(真人剧是合法路线)
+	off := styleExpand("真人实拍质感", false, KindHuman)
+	if !strings.Contains(off, "photorealistic cinematic portrait") || strings.Contains(off, "ANIMATED MATTE RENDER") {
+		t.Errorf("关闭开关的写实风格不该被动画化:%s", off)
+	}
+}
+
+// TestStyleExpandAnimeFallbackStillApplies 上游**没给风格**时,角色动漫化开关仍然
+// 决定兜底画风 —— 改上一条时不许把用户 2026-09-24 的"不要真人脸"一起改掉。
+func TestStyleExpandAnimeFallbackStillApplies(t *testing.T) {
+	got := styleExpand("", true, KindHuman)
+	if !strings.Contains(got, "ANIMATED MATTE RENDER") {
+		t.Errorf("没有上游风格 + 动漫化开 → 必须给平台的动画兜底画风块:%s", got)
+	}
+	if strings.Contains(got, "photorealistic cinematic portrait") {
+		t.Errorf("没有上游风格时不该冒出写实人像要求:%s", got)
+	}
+	// 国漫二维风格(非写实关键词)照旧走动画分支
+	fam := styleExpand("国漫二维,赛璐璐", true, KindHuman)
+	if !strings.Contains(fam, "clean cel shading") {
+		t.Errorf("国漫二维风格应走动画分支:%s", fam)
 	}
 }
 

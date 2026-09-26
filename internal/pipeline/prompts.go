@@ -613,16 +613,32 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 	hasQ := strings.Contains(style, "q版") || strings.Contains(style, "呆萌")
 	var terms []string
 	stylized := true
+	// 上游指定了写实/3D/真人画风时:**风格归上游**,镜头动漫化开关不再覆盖画风
+	// (用户 2026-09-26 定调:「资产和视频渲染需要根据技能侧输出的脚本里的风格来定,
+	// 如未明确要求风格才走默认风格」)。保留的只有法务底线 —— 任何风格下都不得像真人。
+	//
+	// 【为什么必须改】真机实测(求你们骂我·第01集):技能端 plan.style =
+	// "PHOTOREAL 3D CINEMATIC WORLD, SEMI-STYLISED ANIME-ADJACENT FACES, matte finish",
+	// 视频侧按 STYLE AUTHORITY 照它渲染(成片是 3D 写实),而定妆照被这一支覆盖成
+	// 二维赛璐璐。参考图与成片**不在同一个视觉世界**里 —— H3 拿一张二维平涂脸去渲染
+	// 3D 写实人物,身份只能靠猜,用户长期报的"脸/头发漂移"正是这条链的末端。
+	// 视频侧的同一条决定见 styleAndMediumBlock(那里早就只保留法务条款)。
+	styleIsPhotoreal := photorealRequested(rawStyle)
 	switch {
-	case facesOn && photorealRequested(rawStyle):
-		// 动漫化开关打开时,真人/写实风格请求被明确覆盖(2026-09-24 用户定调
-		// 「角色不要真人脸,动漫化,避免侵权」)。写实风格词与哑光平涂的动画约束
-		// 直接打架,同时交给模型只会得到"既写实又扁平"的糊图 —— 覆盖掉,并由
-		// 调用方告警告知用户"要真人剧请关掉角色动漫化开关"。
-		terms = append(terms, "Chinese donghua (animation) character design, anime-influenced stylized features, clean cel shading")
-		if strings.TrimSpace(style) != "" {
-			terms = append(terms, "overall art direction: "+strings.TrimSpace(style))
+	case styleIsPhotoreal:
+		if has3D {
+			terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
+				"matte powdery skin shading with a dull even finish, collectible virtual figure look")
+		} else {
+			terms = append(terms, "photorealistic cinematic portrait, realistic skin texture")
 		}
+		if hasAnime {
+			// 风格自己写了"半写实/动漫相邻的脸",那就是它要的混合介质,照写
+			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
+		}
+		terms = append(terms, "every design stays ORIGINAL: never make a character resemble a real person, "+
+			"actor, singer, celebrity or public figure")
+		stylized = false
 	case has3D:
 		// 注意:**风格块绝不能改写面部特征**。此前这里写着 "large glossy stylized eyes",
 		// 与角色卡的面部描述(如"细长单眼皮")直接打架 —— 定妆照被风格"重新设计"成圆软脸
@@ -662,8 +678,10 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 	// 忠实度与画风块**按类型取**(人类抄脸 / 器物抄结构 / 灵体抄形体):同一句 human 条款
 	// 套在铜雀身上,就是在要求它长一张脸。
 	byKind := prof.SheetIdentity
-	if facesOn {
+	if facesOn && !styleIsPhotoreal {
 		// 动漫化 + 哑光硬约束:与渲染侧的介质块是同一件事的两头,改动要成对。
+		// 上游点名写实/3D 时**不加**这一块 —— 那句"赛璐璐平涂"会把刚定下的写实风格
+		// 又拽回二维(同一段提示词里两个介质打架,模型只会二选一地糊)。
 		byKind += prof.SheetLook
 	}
 	if len(terms) == 0 {

@@ -617,3 +617,51 @@ LLM 只能猜 —— 多视角一开,每个镜头都必然多一张,猜错就把
 **运维坑(实测)**:桌面端**退出时会杀掉全部 ComfyUI 进程**("退出:停止全部管线并结束
 ComfyUI 全部进程")。所以用 `renderone` 做无头重渲时,别同时开着/关掉那个 app ——
 20:19 那一枪就是这么废的:渲染进行到 2 分钟时 app 被退出,ComfyUI 被一起杀了。
+
+---
+
+## 2026-09-26 · 定妆照与成片"不在同一个视觉世界"(漂移的真根因:风格归属)
+
+### 现象(真机端到端实测,求你们骂我·第01集)
+
+跑通导入即开跑之后,连续看到两件"各自都对、合起来错"的事:
+
+| 环节 | 实际产出 |
+|---|---|
+| 技能端 plan.style | `PHOTOREAL 3D CINEMATIC WORLD, SEMI-STYLISED ANIME-ADJACENT FACES, matte finish` |
+| 定妆照(characters_char_char_01.png) | **二维赛璐璐动画脸**(平涂、干净线稿) |
+| 成片(clips/shot_001.mp4 抽帧) | **3D 半写实 CG**(真实皮肤材质、体积光) |
+
+视频侧按 `styleAndMediumBlock` 的 STYLE AUTHORITY 忠实执行了脚本风格;定妆照侧却被
+`styleExpand` 里一支老分支(`facesOn && photorealRequested`)覆盖成"Chinese donghua …
+clean cel shading"。于是**参考图与渲染不在同一个视觉世界**:H3 拿一张二维平涂脸去渲染
+3D 写实人物,身份只能靠猜 —— 用户长期报的"脸/头发漂移"正是这条链的末端。
+
+### 修法
+
+- 上游风格点名写实/3D/真人时,**画风归上游**,镜头动漫化开关不再覆盖
+  (`prompts.go::styleExpand` 首支改为 `styleIsPhotoreal`;同时**不再叠加** `SheetLook`
+  动画介质块 —— 同一段提示词里两个介质打架,模型只会二选一地糊);
+- 保留法务底线:任何风格下都写明"不得像真人/演员/公众人物";
+- 开关在**上游没给风格**时仍然决定兜底画风(2026-09-24 的"不要真人脸"没有被推翻);
+- 测试:`TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn`(用真机那条风格串原样钉住)
+  + `TestStyleExpandAnimeFallbackStillApplies`(兜底未被改坏)。
+
+### 真机验证
+
+清掉被污染的定妆照与资产库条目(备份在 `%TEMP%\manjux_stylefix_backup_*`)、重编译、
+再次导入后,同一角色重新出图:**semi-realistic 3D CG**——材质、皮肤、布料的写实度与成片
+一致,袖口卷折、粗布鞋、胳膊上的新口子等简报细节全部在位。参考图从此与成片同介质。
+
+### 顺带修掉的两处"日志造假"(用户就此报过两次)
+
+- `Qwen-Image-2.1` 跑的图,日志写"Krea-2 生成" → 改从当前家族取;新增结构性闸门
+  `TestNoHardcodedModelNameInUserFacingStrings`(变异探针已验证会变红)。
+- `✔ 已生成:场景「临水城」(人)` → 场景没有实体类型,零值 fallback 成了"人";
+  改为只对角色挂类型(`entityKindSuffix`)。
+
+### 操作提醒
+
+**换风格/换模型后,旧定妆照必须清理**:资产库按"名字+类型"复用,不看提示词 —
+不清理的话,新的风格约束出来了也会被旧的二维定妆照直接复用掉(本次即如此:
+库、项目 assets 两处都要清)。
