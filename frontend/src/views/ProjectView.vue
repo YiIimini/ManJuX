@@ -42,6 +42,44 @@ const charsWithAsset = computed(() =>
 const scenesWithAsset = computed(() =>
   (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
 
+// ---------- 造型档归人(技能侧清单 §4.2) ----------
+//
+// 技能侧把"造型随剧情变"落成**一角色多张卡**:主卡 +「翻篇·收容所」「翻篇·归零」…
+// (id 形如 char_01v1 / char_01v4)。按卡平铺显示,用户看到的就是"怎么多出来一堆新角色";
+// 而这些卡**本来就是同一个人**,只是换了一身衣服/一个状态。
+//
+// 判据由后端下发(pj.char_families,与 pj.char_kinds 同一手法)——前端**不自己抄一份**
+// "名字前缀 / id 的 vK 后缀"的规则:抄一份必然与后端漂移,而漂移的表现是"界面显示成两个人、
+// 渲染按一个人派生",最难查。后端没下发时(老版本/无方案)按"各自成组"退化成原样显示。
+const charGroups = computed(() => {
+  const fams = pj.value?.char_families || {}
+  const groups = new Map()
+  for (const c of charsWithAsset.value) {
+    const info = fams[c.id] || {}
+    const key = info.family || ('solo:' + c.id)
+    let g = groups.get(key)
+    if (!g) { g = { key, base: info.base || c.name, items: [] }; groups.set(key, g) }
+    g.items.push({ ...c, variant: info.variant || '', master: !!info.master })
+  }
+  for (const g of groups.values()) {
+    // 组内主卡在前(与资产阶段的生成顺序一致:主卡先出图,变体从它派生)
+    g.items.sort((a, b) => (b.master ? 1 : 0) - (a.master ? 1 : 0))
+  }
+  return [...groups.values()]
+})
+
+// charPeople 这一集有几位**角色**(造型档算同一个人);charCards 是给模板的扁平列表:
+// 多档的人前面插一行分组头,单人(绝大多数)不插 —— 观感与原先完全一致。
+const charPeople = computed(() => charGroups.value.length)
+const charCards = computed(() => {
+  const out = []
+  for (const g of charGroups.value) {
+    if (g.items.length > 1) out.push({ head: true, key: 'head:' + g.key, base: g.base, count: g.items.length })
+    for (const it of g.items) out.push({ head: false, key: it.id, c: it })
+  }
+  return out
+})
+
 // 进度环状态色:运行=琥珀呼吸 / 全完成=绿 / 有失败=红
 const ringColor = computed(() => {
   const failed = Object.values(pj.value?.manifest || {}).some(m => m.status === 'failed')
@@ -327,40 +365,53 @@ const doneShots = computed(() =>
             <section>
               <h3 class="text-sm font-bold mb-3 flex items-center gap-2">
                 <el-icon><User /></el-icon>角色定妆照
-                <span class="text-xs font-normal" style="color:var(--mx-text2)">半身正脸构图 · 锁脸参考(Ref2VA &lt;Picture 1&gt;)</span>
+                <span class="text-xs font-normal" style="color:var(--mx-text2)">
+                  {{ charPeople }} 位角色<template v-if="charsWithAsset.length !== charPeople"> · {{ charsWithAsset.length }} 张造型卡(同一角色的多档算一个人)</template>
+                  · 半身正脸构图 · 锁脸参考(Ref2VA &lt;Picture 1&gt;)
+                </span>
               </h3>
               <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(180px,1fr))">
-                <div v-for="c in charsWithAsset" :key="c.id" class="shot-card p-3 flex flex-col gap-2">
-                  <div class="flex items-center gap-2">
-                    <b class="text-sm truncate">{{ c.name }}</b>
-                    <el-tag v-if="c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
-                    <el-tag v-else size="small" :type="sourceTone(c.asset?.source)" effect="plain">{{ sourceLabel(c.asset?.source) }}</el-tag>
-                    <i class="dot" :class="c.asset ? 'ok' : 'warn'"></i>
+                <template v-for="row in charCards" :key="row.key">
+                  <!-- 同一个人的第 2..N 个造型档:插一行分组头,并说清"这是一个人、按场切换" -->
+                  <div v-if="row.head"
+                       style="grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mx-text2);padding:2px 0 0">
+                    <el-icon><User /></el-icon>
+                    <b>「{{ row.base }}」</b>
+                    <span>{{ row.count }} 个造型档 —— 同一个人按场切换的服装/状态,不是 {{ row.count }} 个新角色</span>
                   </div>
-                  <div style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
-                       :title="'点击上传「' + c.name + '」定妆照(png/jpg/webp);同名资产自动复用库'" @click="upload('characters', 'char:'+c.id, c.name)">
-                    <img v-if="c.asset" :src="api.fileURL(pj.project.id, c.asset.file)"
-                         style="width:100%;height:100%;object-fit:cover" />
-                    <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
-                      <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传定妆照</div>
+                  <div v-else class="shot-card p-3 flex flex-col gap-2">
+                    <div class="flex items-center gap-2">
+                      <b class="text-sm truncate">{{ row.c.name }}</b>
+                      <el-tag v-if="row.c.variant" size="small" effect="plain" type="info">{{ row.c.variant }}</el-tag>
+                      <el-tag v-if="row.c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
+                      <el-tag v-else size="small" :type="sourceTone(row.c.asset?.source)" effect="plain">{{ sourceLabel(row.c.asset?.source) }}</el-tag>
+                      <i class="dot" :class="row.c.asset ? 'ok' : 'warn'"></i>
                     </div>
-                    <div v-if="c.asset" class="cover-acts">
-                      <button class="cover-act" title="从视频截帧定妆(与成片形象一致)" @click.stop="openFrameDlg('characters', 'char:'+c.id, c.name)">
-                        <el-icon :size="13"><Camera /></el-icon>
-                      </button>
-                      <button class="cover-act" title="预览大图" @click.stop="previewAsset(c.name, c.asset.file)">
-                        <el-icon :size="13"><ZoomIn /></el-icon>
-                      </button>
-                      <button class="cover-act" title="打开所在目录" @click.stop="openAssetDir(c.asset.file)">
-                        <el-icon :size="13"><FolderOpened /></el-icon>
-                      </button>
-                      <button class="cover-act danger" title="删除定妆照" @click.stop="removeAsset('char:'+c.id)">
-                        <el-icon :size="13"><Delete /></el-icon>
-                      </button>
+                    <div style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
+                         :title="'点击上传「' + row.c.name + '」定妆照(png/jpg/webp);同名资产自动复用库'" @click="upload('characters', 'char:'+row.c.id, row.c.name)">
+                      <img v-if="row.c.asset" :src="api.fileURL(pj.project.id, row.c.asset.file)"
+                           style="width:100%;height:100%;object-fit:cover" />
+                      <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
+                        <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传定妆照</div>
+                      </div>
+                      <div v-if="row.c.asset" class="cover-acts">
+                        <button class="cover-act" title="从视频截帧定妆(与成片形象一致)" @click.stop="openFrameDlg('characters', 'char:'+row.c.id, row.c.name)">
+                          <el-icon :size="13"><Camera /></el-icon>
+                        </button>
+                        <button class="cover-act" title="预览大图" @click.stop="previewAsset(row.c.name, row.c.asset.file)">
+                          <el-icon :size="13"><ZoomIn /></el-icon>
+                        </button>
+                        <button class="cover-act" title="打开所在目录" @click.stop="openAssetDir(row.c.asset.file)">
+                          <el-icon :size="13"><FolderOpened /></el-icon>
+                        </button>
+                        <button class="cover-act danger" title="删除定妆照" @click.stop="removeAsset('char:'+row.c.id)">
+                          <el-icon :size="13"><Delete /></el-icon>
+                        </button>
+                      </div>
                     </div>
+                    <div class="text-xs" style="color:var(--mx-text2)">{{ row.c.description }}</div>
                   </div>
-                  <div class="text-xs" style="color:var(--mx-text2)">{{ c.description }}</div>
-                </div>
+                </template>
               </div>
             </section>
             <section>

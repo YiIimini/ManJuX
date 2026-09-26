@@ -29,6 +29,7 @@ import (
 var assemblyCalls = []string{
 	"normalizeUniformWording(",
 	"styleExpand(",
+	"styleExpandFor(",
 	"castContrastBlock(",
 	"uniformCivilianClarify(",
 	"rewriteSheetFraming(",
@@ -37,6 +38,7 @@ var assemblyCalls = []string{
 // portraitOnlyCalls 只在装配点里允许出现(装配专有)。
 var portraitOnlyCalls = []string{
 	"styleExpand(",
+	"styleExpandFor(",
 	"castContrastBlock(",
 	"rewriteSheetFraming(",
 }
@@ -52,7 +54,11 @@ var portraitOnlyCalls = []string{
 // 判据从"全文件计数 ≤1"改成"逐函数计数":每个调用只能出现在它的合法归属函数里、
 // 且恰好一次 —— 这样既不挡住第二个装配点,也不会让"随手在别处再拼一遍"混进来。
 var assemblyOwners = map[string][]string{
-	"PortraitPrompt":   {"styleExpand(", "castContrastBlock(", "rewriteSheetFraming("},
+	// styleExpand 是画风块的**无上下文入口**(等价于"提示词里还没有技能侧比例句"),
+	// 本体只有一行委托。装配点必须走 styleExpandFor —— 它把已装配的提示词带进去,
+	// 好让平台自己的比例措辞在技能侧比例锚点句同现时让位(技能侧清单 §5.1)。
+	"styleExpand":      {"styleExpandFor("},
+	"PortraitPrompt":   {"styleExpandFor(", "castContrastBlock(", "rewriteSheetFraming("},
 	"SceneImagePrompt": {"styleExpand(", "rewriteSheetFraming("},
 }
 

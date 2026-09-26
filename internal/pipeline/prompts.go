@@ -427,7 +427,10 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	if plan != nil {
 		style = plan.Style
 	}
-	prompt += styleExpand(style, s.FacesOn, kind)
+	// 画风块由 styleExpandFor 注入,并把**已装配的提示词**带进去:卡里若已带技能侧的人体
+	// 比例锚点句,平台自己的比例措辞("cute chibi proportions" / Q 版二到三头身)让位
+	// —— 同一段里两套比例,模型只会取中值(技能侧清单 §5.1,见 proportion_clause.go)。
+	prompt += styleExpandFor(prompt, style, s.FacesOn, kind)
 	prompt += castContrastBlock(plan, s.Name, kind)
 	prompt += uniformCivilianClarify(s.Description)
 	prompt += PortraitHairClause(kind)
@@ -688,11 +691,29 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	return sb.String(), len(chars)
 }
 
+// styleExpand 画风块的**无上下文入口**:等价于"这段提示词里还没有技能侧比例句"
+// (见 styleExpandFor 的让位判据)。装配点请用 styleExpandFor —— 它能把已装配的提示词
+// 带进来,好让平台自己的比例措辞在技能侧比例句同现时让位。
 func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
+	return styleExpandFor("", rawStyle, facesOn, kind)
+}
+
+// styleExpandFor 画风块(介质 + 类型忠实度),并按**已有的提示词**决定平台侧比例措辞要不要让位。
+//
+// existingPrompt 的用途只有一个(技能侧清单 §5.1 "别覆盖它"):卡里已经带技能侧的人体
+// 比例锚点句时,平台侧**自己**的比例措辞("cute chibi proportions" / Q 版的二到三头身)
+// 不再追加 —— 同一段提示词里两套比例,模型只会取中值,这正是"丑"的来源之一。
+// 判据与依据见 proportion_clause.go;平台不删、不改技能侧那一段。
+//
+// 只让位**比例**,不让位介质与取景:介质(线稿/平涂/哑光)是平台的职责,取景另有
+// SheetFraming 那条路 —— 删掉它们会引入新问题(见 artstyle.go 的文件头说明)。
+func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKind) string {
 	// 图像侧(Krea-2,蒸馏/CFG 1.0)不认否定词,还会把否定词里的名词当指令画出来 ——
 	// 统一剥掉再进提示词(见 artstyle.go 的 StripNegations)。
 	style := StripNegations(rawStyle)
 	prof := EntityProfileOf(kind)
+	// 技能侧比例锚点是否已经在场(在场 = 平台自己那套比例措辞让位)。
+	skillAnchor := HumanProportionClausePresent(existingPrompt)
 	if strings.TrimSpace(style) == "" && !facesOn {
 		// 只丢"介质画风块"(SheetLook),**不丢身份忠实度**(SheetIdentity):
 		// 后者(按文字画、不得美化/放大眼睛/柔化下颌/变年轻)与画风无关,是防生成模型
@@ -791,7 +812,8 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 		// 旧实现这里直接 return "",连忠实度块一起丢了。
 		stylized = false
 	}
-	if hasQ {
+	if hasQ && !skillAnchor {
+		// 平台侧的比例措辞之一:卡里已有技能侧人体比例句时不再追加(两套比例 = 取中值)。
 		terms = append(terms, "cute chibi proportions")
 	}
 	// 忠实度与画风块**按类型取**(人类抄脸 / 器物抄结构 / 灵体抄形体):同一句 human 条款
@@ -802,6 +824,10 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 		// 上游点名写实/3D 时**不加**这一块 —— 那句"赛璐璐平涂"会把刚定下的写实风格
 		// 又拽回二维(同一段提示词里两个介质打架,模型只会二选一地糊)。
 		byKind += prof.SheetLook
+	}
+	if !skillAnchor {
+		// 平台侧的**比例**措辞(目前只有 Q 版):技能侧比例句在场则让位,介质块不受影响。
+		byKind += prof.SheetProportions
 	}
 	if len(terms) == 0 {
 		return byKind

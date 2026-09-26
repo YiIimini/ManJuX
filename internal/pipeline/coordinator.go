@@ -9,12 +9,12 @@ import (
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/config"
-	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/project"
+	"github.com/YiIimini/ManJuX/internal/qc"
 	"github.com/YiIimini/ManJuX/internal/sysmon"
 )
 
@@ -225,19 +225,25 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if isChibi {
 		w, h = 1024, 1024 // Q 版是方幅(与产线 Q 版同一口径)
 	}
-	out := filepath.Join(c.store.Dir(projectID), "assets", kind, director.SanitizeForCache(kind+"_"+strings.TrimPrefix(assetID, kind+":"))+".png")
-	seed := RandomSeed() // 重新生成 = 就是要换一张(随机种子只允许出现在这类显式动作里)
-	path, err := eng.GenerateImage(ctx, prompt, "", seed, w, h, out)
+	// 出图交给**唯一出口**(genSheetImage):造型变体卡在这里也必须"从主卡派生"——
+	// 用户点「重新生成」的意图是"这一档重出一张",不是"把这个人的脸换一个";而各自
+	// 文生图正是同一角色几张脸会漂的来源(见 sheetderive.go)。chibi 资产不是造型档,
+	// 由 sheetVariantTrigger 挡在外面,走的仍是原本那一次文生图。
+	assets, err := c.store.LoadAssets(projectID)
+	if err != nil {
+		return err
+	}
+	path, err := c.genSheetImage(ctx, eng, sheetJob{
+		proj: proj, assets: assets, kind: kind, id: strings.TrimPrefix(assetID, kind+":"),
+		name: name, prompt: prompt, ek: ek, w: w, h: h,
+		seed: RandomSeed(), // 重新生成 = 就是要换一张(随机种子只允许出现在这类显式动作里)
+	})
 	if err != nil {
 		return err
 	}
 	var rel string
 	if r2, e2 := filepath.Rel(c.store.Dir(projectID), path); e2 == nil {
 		rel = filepath.ToSlash(r2)
-	}
-	assets, err := c.store.LoadAssets(projectID)
-	if err != nil {
-		return err
 	}
 	assets[assetID] = project.Asset{
 		ID: assetID, Kind: kind, Name: name,
@@ -263,6 +269,14 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		}
 	}
 	c.emit(projectID, PhaseAssets, 0, "success", 0, "✔ 已重新生成:%s「%s」(旧角度图已作废,渲染前会自动补多视角)", kindLabel(kind), name)
+	// 重出后**按同一套判据再量一次**(技能侧清单 §5.1):偏离告警里那句"建议重出该卡"
+	// 只有配上"重出后再量一遍"才闭环 —— 否则用户按建议重出了,却没有任何反馈说好没好。
+	// 这里每次都提醒(未配置视觉模型时),因为这是一次用户动作,不是一次批量循环。
+	if kind == "characters" {
+		if c.checkPortraitProportion(ctx, proj, ek, prompt, name, path) == proportionNoCapability {
+			c.emit(projectID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.ProportionSkipNoCapability)
+		}
+	}
 	return nil
 }
 

@@ -24,6 +24,36 @@ const titles = { script: '剧本分镜 · 详情', assets: '资产定妆 · 详�
 const charList = computed(() => (plan.value?.characters || []).map(c => ({ ...c, asset: assets.value['char:' + c.id] })))
 const sceneList = computed(() => (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
 
+// 造型档归人(技能侧清单 §4.2):技能侧把"造型随剧情变"落成一角色多张卡
+// (「翻篇·收容所」「翻篇·归零」…,id 形如 char_01v1 / char_01v4)。按卡平铺,
+// 用户会以为多出来一堆新角色;而它们本来就是同一个人换了服装/状态。
+// 家族判据由后端下发(与 char_kinds 同一手法),前端不自己抄一份规则(抄了必然漂移)。
+const charGroups = computed(() => {
+  const fams = pj.value?.char_families || {}
+  const groups = new Map()
+  for (const c of charList.value) {
+    const info = fams[c.id] || {}
+    const key = info.family || ('solo:' + c.id)
+    let g = groups.get(key)
+    if (!g) { g = { key, base: info.base || c.name, items: [] }; groups.set(key, g) }
+    g.items.push({ ...c, variant: info.variant || '', master: !!info.master })
+  }
+  const out = [...groups.values()]
+  for (const g of out) g.items.sort((a, b) => (b.master ? 1 : 0) - (a.master ? 1 : 0))
+  return out
+})
+// 给模板的扁平列表:多档的人前面插一行分组头;单人(绝大多数)不插,观感与原先一致。
+const charRows = computed(() => {
+  const out = []
+  for (const g of charGroups.value) {
+    if (g.items.length > 1) out.push({ _head: true, _key: 'head:' + g.key, _base: g.base, _count: g.items.length })
+    for (const c of g.items) out.push({ ...c, _head: false, _key: c.id })
+  }
+  return out
+})
+// 这一集有几位角色(造型档算同一个人)
+const charPeople = computed(() => charGroups.value.length)
+
 // 实体类型清单(后端 /api/meta 的单一真源):决定这张角色卡走哪套渲染方法。
 // 兜底用本地简表,保证后端未就绪时选择器仍可用。
 const FALLBACK_KINDS = [
@@ -149,7 +179,7 @@ function castOf(sh) {
           <div class="timecode mt-2" style="word-break:break-all">{{ plan.style }}</div>
         </div>
         <div class="flex items-center justify-between">
-          <span class="text-sm">{{ plan.characters.length }} 角色 · {{ plan.scenes.length }} 场景 · {{ plan.shots.length }} 镜头</span>
+          <span class="text-sm">{{ charPeople }} 角色<template v-if="plan.characters.length !== charPeople">({{ plan.characters.length }} 张造型卡)</template> · {{ plan.scenes.length }} 场景 · {{ plan.shots.length }} 镜头</span>
           <el-button size="small" type="primary" :disabled="pj.project.running" @click="runPhase('script')">
             <el-icon class="mr-1"><RefreshRight /></el-icon>重新生成方案
           </el-button>
@@ -162,34 +192,43 @@ function castOf(sh) {
     <!-- ▎资产定妆 -->
     <div v-else-if="phase === 'assets'" class="flex flex-col gap-3">
       <div class="flex items-center justify-between">
-        <span class="text-sm">{{ charList.length + sceneList.length }} 项资产</span>
+        <span class="text-sm">{{ charList.length + sceneList.length }} 项资产<template v-if="charList.length !== charPeople">(角色 {{ charPeople }} 位 · 造型卡 {{ charList.length }} 张)</template></span>
         <el-button size="small" :disabled="pj.project.running" @click="runPhase('assets')"><el-icon class="mr-1"><Refresh /></el-icon>盘点/补齐</el-button>
       </div>
-      <div v-for="c in charList" :key="c.id" class="panel p-3 flex items-center gap-3">
-        <div class="w-12 h-16 rounded-lg overflow-hidden flex-none cursor-zoom-in" style="background:var(--mx-bg2)" @click="viewAsset(c.asset,'characters',c.name)">
-          <img v-if="c.asset" :src="api.fileURL(pj.project.id, c.asset.file)" class="w-full h-full object-cover" />
+      <template v-for="row in charRows" :key="row._key">
+        <div v-if="row._head"
+             style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mx-text2);padding:2px 2px 0">
+          <el-icon><User /></el-icon>
+          <b>「{{ row._base }}」</b>
+          <span>{{ row._count }} 个造型档 —— 同一个人按场切换的服装/状态,不是 {{ row._count }} 个新角色</span>
         </div>
-        <div class="flex-1 min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
-            <b class="text-sm">{{ c.name }}</b>
-            <el-select :model-value="kindOf(c)" size="small" style="width:92px" @change="(v)=>setKind(c,v)">
-              <el-option v-for="o in kindOptions" :key="o.key" :value="o.key" :label="o.name">
-                <span>{{ o.name }}</span>
-                <span class="text-xs" style="color:var(--mx-text3);margin-left:8px">{{ o.hint }}</span>
-              </el-option>
-            </el-select>
-            <el-tag size="small" effect="plain" :type="sourceTone(c.asset?.source)">
-              {{ c.asset ? sourceLabel(c.asset.source) : '缺失' }}
-            </el-tag>
-            <el-tooltip v-if="sheetStale(c)" content="这张定妆照是按旧类型(或旧版本)渲染的 —— 请点右侧 ✨ 重新生成后再渲染,否则错的图会被当作第一参考喂回去" placement="top">
-              <el-tag size="small" effect="dark" type="danger">定妆照待重出</el-tag>
-            </el-tooltip>
+        <div v-else class="panel p-3 flex items-center gap-3">
+          <div class="w-12 h-16 rounded-lg overflow-hidden flex-none cursor-zoom-in" style="background:var(--mx-bg2)" @click="viewAsset(row.asset,'characters',row.name)">
+            <img v-if="row.asset" :src="api.fileURL(pj.project.id, row.asset.file)" class="w-full h-full object-cover" />
           </div>
-          <div class="text-xs truncate mt-1" style="color:var(--mx-text3)">{{ c.description }}</div>
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <b class="text-sm">{{ row.name }}</b>
+              <el-tag v-if="row.variant" size="small" effect="plain" type="info">{{ row.variant }}</el-tag>
+              <el-select :model-value="kindOf(row)" size="small" style="width:92px" @change="(v)=>setKind(row,v)">
+                <el-option v-for="o in kindOptions" :key="o.key" :value="o.key" :label="o.name">
+                  <span>{{ o.name }}</span>
+                  <span class="text-xs" style="color:var(--mx-text3);margin-left:8px">{{ o.hint }}</span>
+                </el-option>
+              </el-select>
+              <el-tag size="small" effect="plain" :type="sourceTone(row.asset?.source)">
+                {{ row.asset ? sourceLabel(row.asset.source) : '缺失' }}
+              </el-tag>
+              <el-tooltip v-if="sheetStale(row)" content="这张定妆照是按旧类型(或旧版本)渲染的 —— 请点右侧 ✨ 重新生成后再渲染,否则错的图会被当作第一参考喂回去" placement="top">
+                <el-tag size="small" effect="dark" type="danger">定妆照待重出</el-tag>
+              </el-tooltip>
+            </div>
+            <div class="text-xs truncate mt-1" style="color:var(--mx-text3)">{{ row.description }}</div>
+          </div>
+          <el-button size="small" text :loading="busy.regen==='char:'+row.id" @click="regen('char:'+row.id)" title="重新生成定妆照"><el-icon><MagicStick /></el-icon></el-button>
+          <el-button v-if="row.asset" size="small" text @click="delAsset('char:'+row.id)"><el-icon><Delete /></el-icon></el-button>
         </div>
-        <el-button size="small" text :loading="busy.regen==='char:'+c.id" @click="regen('char:'+c.id)" title="重新生成定妆照"><el-icon><MagicStick /></el-icon></el-button>
-        <el-button v-if="c.asset" size="small" text @click="delAsset('char:'+c.id)"><el-icon><Delete /></el-icon></el-button>
-      </div>
+      </template>
       <div v-for="sc in sceneList" :key="sc.id" class="panel p-3 flex items-center gap-3">
         <div class="w-16 h-10 rounded-lg overflow-hidden flex-none cursor-zoom-in" style="background:var(--mx-bg2)" @click="viewAsset(sc.asset,'scenes',sc.name)">
           <img v-if="sc.asset" :src="api.fileURL(pj.project.id, sc.asset.file)" class="w-full h-full object-cover" />

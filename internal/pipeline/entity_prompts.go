@@ -18,6 +18,13 @@ type entityProfile struct {
 	SheetFraming  string // 取景/构图尾巴(会**替换** LLM 写的人物取景)
 	SheetIdentity string // 身份忠实度(要抄什么)
 	SheetLook     string // 画风/质感正向块
+	// SheetProportions 平台侧**自带的比例措辞**(目前只有 Q 版的"二到三头身")。
+	//
+	// 为什么单独一个字段而不是混在 SheetLook 里(技能侧清单 §5.1):卡里已经带技能侧的
+	// 人体比例句时(七个半头),平台侧这句必须**让位** —— 同一段提示词里两套比例,
+	// 模型只会取中值,画出来既不是 Q 版也不是真人比例。混在介质块里就没法单独让位,
+	// 而整块丢掉会连介质(线稿/平涂/哑光)一起丢。判据见 proportion_clause.go。
+	SheetProportions string
 	// SheetMarker 该类型忠实度块的唯一标记串(用于"已经带过就不再叠")。
 	SheetMarker string
 	// RewriteSheetFraming 是否重写取景尾巴。
@@ -339,8 +346,11 @@ var entityProfiles = map[EntityKind]entityProfile{
 			"design, hairstyle and hair colour, the same costume and colour scheme, the same signature marks (a mole, a scar, a hair ornament, " +
 			"a tool). Only the PROPORTIONS become chibi. Do not redraw the identity into a generic cute mascot.",
 		SheetMarker: "CHIBI FIDELITY",
-		SheetLook: animatedMediumImageBlock() + "\n- Two-to-three-head-tall proportions, oversized rounded head, simplified rounded features, " +
+		SheetLook: animatedMediumImageBlock() + "\n- Oversized rounded head, simplified rounded features, " +
 			"thick clean outlines and flat cel colour with a dull even finish.",
+		// Q 版的比例就是它这个类型本身(见 SheetProportions 的字段说明):卡里带技能侧的
+		// 人体比例句时这句让位,介质块照旧保留。
+		SheetProportions:    "\n- Two-to-three-head-tall proportions.",
 		RewriteSheetFraming: true,
 		TurnSubject:         "the EXACT SAME chibi figure as <Picture 1> in <Picture 1>",
 		TurnSummary: "A chibi figure turnaround reference: the figure stands in the centre of frame and slowly rotates in place, showing the front " +

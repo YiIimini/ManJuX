@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/fsutil"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // Entry 一条库资产。
@@ -44,6 +45,23 @@ type Entry struct {
 	EntityKind string    `json:"entity_kind,omitempty"`
 	CreatedAt  time.Time `json:"created_at"`
 	UsedCount  int       `json:"used_count"` // 复用计数
+
+	// Family 同一个角色的**造型家族基名**(「翻篇·归零」→「翻篇」;无档名时就是本名)。
+	//
+	// 技能侧把"造型随剧情变"落成**一角色多张卡**(主卡 + `翻篇·归零` / `糖球·雨夜` …,
+	// 见 project/char_family.go)。库这边于是会同时躺着同一个人的好几档定妆照,
+	// 而库里凡按"角色"聚合的地方(管理页列表、复用统计)都得能看出它们是一家人。
+	//
+	// **不落盘**:字段只在读路径(Match/Find/List)由条目名现算填充,写盘时恒为空串
+	// (omitempty)—— 名字改了基名就跟着变,存下来只会与名字不同步。
+	Family string `json:"family,omitempty"`
+}
+
+// fillFamily 按条目名现算造型家族基名(只影响返回值,不写盘)。
+func (e *Entry) fillFamily() {
+	if e != nil {
+		e.Family = project.CharFamilyBaseName(e.Name)
+	}
 }
 
 // normName 名字归一化:去掉空格/常见标点/「的」,并把「一三七四一号」这类序号尾
@@ -66,6 +84,17 @@ func normName(s string) string {
 	}
 	out := strings.TrimSuffix(sb.String(), "号")
 	return out
+}
+
+// sameVariantCard 两条条目的名字是不是**同一张卡**(同一个人、同一个造型档)。
+//
+// Find 里那几条"同一角色的另一种叫法"的模糊判据(名字互相包含 + 描述相似度)对
+// **不同造型档**必须失效:变体卡共享同一份形象卡描述,按描述相似度命中会直接把
+// 另一档的像素复制过来当这一档的定妆照 —— 造型档就永远不会出现在画面里。
+// 判据用造型档名(「翻篇·归零」的「归零」):两边都叫不出档名 = 都不是变体卡,
+// 按老规矩照常合并(同一角色换个称呼那种情形一点没变)。
+func sameVariantCard(a, b string) bool {
+	return project.CharVariantLabel(a) == project.CharVariantLabel(b)
 }
 
 // bigrams 中文文本切双字组,用于描述相似度(对"多一字少一字"的改写不敏感)。
@@ -294,6 +323,7 @@ func (l *Library) Match(kind, name string) (*Entry, string, bool) {
 		log.Printf("[library] 资产条目缺少图片文件(%s/%s → %s)", kind, name, img)
 		return nil, "", false
 	}
+	e.fillFamily()
 	return &e, img, true
 }
 
@@ -518,6 +548,12 @@ func (l *Library) SetEntityKind(kind, name, ek string) (*Entry, error) {
 // 无中生有又多出一张定妆照"(2026-09-12 报障,名称一致与不一致都有)。
 // 置信度不够(描述太短/相似度不足)时一律不合并:宁可多生成一张,也不能把两个
 // 不同角色并成一个(那会让两个人共用一张脸)。
+//
+// ⚠ **同一角色的不同造型档之间没有这几条模糊判据**(§4.2):变体卡共享同一份形象卡
+// 描述(`翻篇·收容所` 与 `翻篇·归零` 只差尾部一行「造型档」,实测 Jaccard ≈ 0.9),
+// 照旧按描述相似度命中就会把**别的造型档的像素**当成这一档的定妆照 —— 变体的服装
+// 永远不会出现在画面里。要拿同族主卡当**派生起点**请走 FindInFamily(图生图),
+// 那条路不复制像素。
 func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 	if e, img, ok := l.Match(kind, name); ok {
 		return e, img, true
@@ -565,7 +601,7 @@ func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 				}
 			}
 		}
-		if !hit {
+		if !hit && sameVariantCard(name, e.Name) {
 			ne := normName(e.Name)
 			contain := len([]rune(nn)) >= 3 && ne != "" &&
 				(strings.HasSuffix(ne, nn) || strings.HasSuffix(nn, ne) ||
@@ -585,6 +621,7 @@ func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 	if best == nil {
 		return nil, "", false
 	}
+	best.entry.fillFamily()
 	// 记下这次的新叫法(下次按名即可命中),并写回条目
 	if nn != normName(best.entry.Name) && strings.TrimSpace(name) != "" {
 		best.entry.Aliases = append(best.entry.Aliases, strings.TrimSpace(name))
@@ -593,6 +630,80 @@ func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 		log.Printf("[library] 角色「%s」判定为已有条目「%s」的同一人(相似度 %.2f),已登记别名", name, best.entry.Name, best.score)
 	}
 	return best.entry, best.img, true
+}
+
+// FindInFamily 在同一角色的条目里找"可以当**派生起点**的那一张"(§4.1/§4.2)。
+//
+// 返回同族里**最靠前**的条目:主卡(名字不带档名的那条)优先,其余按名字序稳定挑选;
+// 找不到同族条目时 ok=false。
+//
+// 为什么只能到"主卡优先"这一步:库条目**只有名字**(`char_01v4` 那种带档位号的 id
+// 只活在方案里),所以「归零」与「进城」之间排不出先后 —— 名字序至少是确定性的,
+// 而且它们本来就是同一个人、同一张脸,差别只在服装,拿哪一张当起点都不至于换脸。
+// 项目侧那条路(见 pipeline.resolveSheetRef)有 id,能精确挑"档位号最小"的那张,优先走它。
+//
+// 与 Find 的分工(两条判据不能混,混了就出错):
+//
+//	Find         找"可以**直接复用像素**的同一张卡":只认同一档(见 sameVariantCard);
+//	FindInFamily 找"可以当**图生图起点**的同族卡":同族即可,主卡优先。
+//
+// 它的像素**绝不允许**直接当变体卡的定妆照 —— 那是同一个人**另一套服装/状态**。
+// 用途只有一处:变体卡的定妆照必须以主卡为 --init-image 派生,而不是各自文生图
+// (每张卡各自文生图 → 同一角色几张脸会漂,见 pipeline/sheetderive.go)。
+func (l *Library) FindInFamily(kind, name string) (*Entry, string, bool) {
+	fam := project.CharFamilyBaseName(name)
+	if strings.TrimSpace(fam) == "" || !validKind(kind) {
+		return nil, "", false
+	}
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	dirs, err := os.ReadDir(filepath.Join(l.root, kind))
+	if err != nil {
+		return nil, "", false
+	}
+	var best *Entry
+	var bestImg string
+	for _, de := range dirs {
+		if !de.IsDir() {
+			continue
+		}
+		raw, rerr := os.ReadFile(filepath.Join(l.root, kind, de.Name(), "asset.json"))
+		if rerr != nil {
+			continue
+		}
+		var e Entry
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		if project.CharFamilyBaseName(e.Name) != fam {
+			continue
+		}
+		img := filepath.Join(l.root, filepath.FromSlash(e.Image))
+		if _, serr := os.Stat(img); serr != nil {
+			continue
+		}
+		if best == nil || familyRank(e.Name) < familyRank(best.Name) ||
+			(familyRank(e.Name) == familyRank(best.Name) && e.Name < best.Name) {
+			cp := e
+			best, bestImg = &cp, img
+		}
+	}
+	if best == nil {
+		return nil, "", false
+	}
+	best.fillFamily()
+	return best, bestImg, true
+}
+
+// familyRank 造型档的排序权重:**主卡最前**(0),其次档号(1,2,…)。
+//
+// 之所以用"名字能不能叫出档名"而不是别的:库条目只有名字(没有 char_NNvK 那种 id),
+// 所以"主卡"在这里的定义就是"名字不带档名的那一条"。
+func familyRank(name string) int {
+	if project.CharVariantLabel(name) == "" {
+		return 0
+	}
+	return 1
 }
 
 // BumpUsed 复用计数 +1。
@@ -641,6 +752,7 @@ func (l *Library) List() map[string][]Entry {
 			if json.Unmarshal(raw, &e) == nil {
 				img := filepath.Join(l.root, filepath.FromSlash(e.Image))
 				if _, err := os.Stat(img); err == nil {
+					e.fillFamily()
 					out[kind] = append(out[kind], e)
 				}
 			}

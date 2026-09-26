@@ -621,13 +621,24 @@ func sceneNameOf(plan *project.Plan, id string) string {
 
 // charactersIntersect 两个角色 id 集合是否有交集(空集合不算交集:
 // 两个空镜之间没有共同主体可锚,宁可断开重锚,也不要拿上一镜的景钉住下一镜)。
+//
+// 按**造型家族**判(§4.2):技能侧把造型档做成独立卡之后,同一个人的两张卡 id 不同
+// (`char_01v1` / `char_01v2`),按裸 id 比就会把"同一角色换了一身衣服"读成"换了人" ——
+// 而那恰恰是要接缝的场合(同一个人的连续镜头)。
+//
+// ⚠ 当前 seamBlockers **刻意没有**"角色集合必须有交集"这条判据(理由见那里:接缝要的是
+// 空间连续,不是人相同)。本函数保留为口径的唯一实现点:将来若要重新引入这条判据,
+// 必须走它,而不是各写一份裸 id 比较。
 func charactersIntersect(a, b []string) bool {
 	for _, x := range a {
 		if strings.TrimSpace(x) == "" {
 			continue
 		}
 		for _, y := range b {
-			if x == y {
+			if strings.TrimSpace(y) == "" {
+				continue
+			}
+			if project.CharFamilyKey(x, "") == project.CharFamilyKey(y, "") {
 				return true
 			}
 		}

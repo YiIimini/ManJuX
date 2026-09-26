@@ -25,8 +25,8 @@ func (s *Server) rescanProjects(w http.ResponseWriter, r *http.Request) {
 			len(added), strings.Join(added, "、"))
 		for _, id := range added {
 			if plan, err := s.store.LoadPlan(id); err == nil {
-				s.opLog("    %s:%d 镜 / %d 角色 / %d 场景(方案已就位,可跳过 script 直接渲染)",
-					id, len(plan.Shots), len(plan.Characters), len(plan.Scenes))
+				s.opLog("    %s:%d 镜 / %d 角色(%d 张造型卡) / %d 场景(方案已就位,可跳过 script 直接渲染)",
+					id, len(plan.Shots), project.CharFamilyCount(plan.Characters), len(plan.Characters), len(plan.Scenes))
 			} else {
 				s.opLog("    %s:尚无 plan.json(需先导入方案或跑分镜阶段)", id)
 			}
@@ -191,8 +191,8 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 		if nMode > 0 {
 			tail = fmt.Sprintf("(其中 %d 镜 mode 为空,已按 ref2va 推断)", nMode)
 		}
-		s.opLog("📥 已导入项目包(项目「%s」):%d 镜 / %d 角色 / %d 场景%s",
-			id, len(st.plan.Shots), len(st.plan.Characters), len(st.plan.Scenes), tail)
+		s.opLog("📥 已导入项目包(项目「%s」):%d 镜 / %d 角色(%d 张造型卡) / %d 场景%s",
+			id, len(st.plan.Shots), project.CharFamilyCount(st.plan.Characters), len(st.plan.Characters), len(st.plan.Scenes), tail)
 	}
 	added, total := s.store.Rescan() // 让新目录进索引(与 rescan 端点同一实现)
 	if len(added) > 0 {
@@ -422,7 +422,7 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		Done    int    `json:"shots_done"`
 		Total   int    `json:"shots_total"`
 		Cover   string `json:"cover"`      // 项目封面(角色定妆照/场景图)
-		Chars   int    `json:"characters"` // 方案内角色数(首页统计用)
+		Chars   int    `json:"characters"` // 方案内**角色人数**(造型档算同一个人;首页统计用)
 		Scenes  int    `json:"scenes"`     // 方案内场景数
 	}
 	out := []item{}
@@ -431,7 +431,9 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		if plan, err := s.store.LoadPlan(p.ID); err == nil {
 			it.HasPlan = true
 			it.Total = len(plan.Shots)
-			it.Chars = len(plan.Characters)
+			// 按**人**算(§4.2):技能侧把每个造型档做成独立卡,按卡计数会把
+			// 《翻篇》的 12 个角色报成 21 个,首页统计就成了"多出来一堆新角色"。
+			it.Chars = project.CharFamilyCount(plan.Characters)
 			it.Scenes = len(plan.Scenes)
 			if m, err := s.store.LoadManifest(p.ID); err == nil {
 				for _, c := range m {
@@ -492,6 +494,10 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 	// 或者相反,用户看到的就是"改了类型没生效"。类型决定整套渲染方法
 	// (定妆照取景/多视角方式/镜头身份锁),不允许有两个真源。
 	out["char_kinds"] = planCharKinds(id, s)
+	// 角色卡的**人的归属**同样由后端下发(§4.2):技能侧把造型档做成独立卡
+	// (`char_01v1` / `char_01v2` + 名字 `翻篇·收容所` / `翻篇·进城`),前端要按
+	// "一个人 + 他的 N 个造型档"分组显示,而不是 N 个新角色。判据只许有一份实现。
+	out["char_families"] = planCharFamilies(id, s)
 	if assets, err := s.store.LoadAssets(id); err == nil {
 		out["assets"] = assets
 	}
@@ -536,6 +542,48 @@ func planCharKinds(projectID string, s *Server) map[string]string {
 	out := make(map[string]string, len(plan.Characters))
 	for _, ch := range plan.Characters {
 		out[ch.ID] = string(pipeline.ResolveEntityKind(ch))
+	}
+	return out
+}
+
+// charFamilyInfo 一张角色卡的「人的归属」(技能侧清单 §4.2),随项目下发供前端分组。
+type charFamilyInfo struct {
+	Family  string `json:"family"`  // 家族键(前端分组用;同一个人多张卡共用一个键)
+	Base    string `json:"base"`    // 人名的基名(「翻篇·归零」→「翻篇」)
+	Variant string `json:"variant"` // 造型档名(「归零」;空 = 这张卡没写档名)
+	Master  bool   `json:"master"`  // 是不是这一族的**主卡**(变体卡的派生起点)
+}
+
+// planCharFamilies 角色 id → 人的归属。前端据此把同一角色的多张造型档显示成
+// 「一个人 + 他的 N 个造型档」,而不是 N 个新角色;不这样显示,用户看到《翻篇》
+// 21 张卡就会以为多出来 9 个新角色。
+//
+// 判据只在 project.CharFamily* 一处实现(id 带 vK / 名字带「·档名」),不在这里另写一份:
+// 前端再抄一份必然与后端漂移(与上面 char_kinds 的同一条理由)。
+func planCharFamilies(projectID string, s *Server) map[string]charFamilyInfo {
+	plan, err := s.store.LoadPlan(projectID)
+	if err != nil {
+		return nil
+	}
+	// 主卡 = 同族里**档位号最小**的那张(0 = 名字不带档名的家族本名,最优先);
+	// 档位相同(理论上不会)时取计划里先出现的那张,保证结果稳定。
+	bestRank, masterID := map[string]int{}, map[string]string{}
+	for _, ch := range plan.Characters {
+		k := project.CharFamilyKey(ch.ID, ch.Name)
+		r := project.CharVariantNumberOf(ch.ID)
+		if cur, ok := bestRank[k]; !ok || r < cur {
+			bestRank[k], masterID[k] = r, ch.ID
+		}
+	}
+	out := make(map[string]charFamilyInfo, len(plan.Characters))
+	for _, ch := range plan.Characters {
+		k := project.CharFamilyKey(ch.ID, ch.Name)
+		out[ch.ID] = charFamilyInfo{
+			Family:  k,
+			Base:    project.CharFamilyBaseName(ch.Name),
+			Variant: project.CharVariantLabel(ch.Name),
+			Master:  masterID[k] == ch.ID,
+		}
 	}
 	return out
 }

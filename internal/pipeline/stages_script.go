@@ -108,7 +108,15 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	if err := c.store.SavePlan(proj.ID, plan); err != nil {
 		return err
 	}
-	c.emit(proj.ID, PhaseScript, 0, "success", 100, "✔ 方案就绪:《%s》%d 角色 / %d 场景 / %d 镜", plan.Title, len(plan.Characters), len(plan.Scenes), len(plan.Shots))
+	// 角色数按**人**报(造型档算同一个人,§4.2):技能侧把每个造型档做成独立卡之后,
+	// 计划里的 characters 长度会把《翻篇》的 12 个角色算成 21 个。
+	people := project.CharFamilyCount(plan.Characters)
+	tail := ""
+	if people != len(plan.Characters) {
+		tail = fmt.Sprintf("(造型卡 %d 张)", len(plan.Characters))
+	}
+	c.emit(proj.ID, PhaseScript, 0, "success", 100, "✔ 方案就绪:《%s》%d 角色%s / %d 场景 / %d 镜",
+		plan.Title, people, tail, len(plan.Scenes), len(plan.Shots))
 	return nil
 }
 

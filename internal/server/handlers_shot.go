@@ -261,8 +261,8 @@ func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 			s.opLog("· 契约提示:%s", wmsg)
 		}
 	}
-	s.opLog("📥 已导入分镜方案(项目「%s」):%d 镜 / %d 角色 / %d 场景 —— 可跳过分镜阶段直接开始渲染",
-		id, len(in.Plan.Shots), len(in.Plan.Characters), len(in.Plan.Scenes))
+	s.opLog("📥 已导入分镜方案(项目「%s」):%d 镜 / %d 角色(%d 张造型卡) / %d 场景 —— 可跳过分镜阶段直接开始渲染",
+		id, len(in.Plan.Shots), project.CharFamilyCount(in.Plan.Characters), len(in.Plan.Characters), len(in.Plan.Scenes))
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "shots": len(in.Plan.Shots),
 		"characters": len(in.Plan.Characters), "scenes": len(in.Plan.Scenes),

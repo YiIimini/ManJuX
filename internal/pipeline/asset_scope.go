@@ -1,6 +1,10 @@
 package pipeline
 
-import "github.com/YiIimini/ManJuX/internal/project"
+import (
+	"strings"
+
+	"github.com/YiIimini/ManJuX/internal/project"
+)
 
 // 资产补齐的**范围**判定(审计 P0-9)。
 //
@@ -58,4 +62,29 @@ func (n *assetNeed) wantsScene(id string) bool {
 // isEmpty 本次范围内没有任何资产需求(例如单镜重渲一个 t2va 镜头)。
 func (n *assetNeed) isEmpty() bool {
 	return n != nil && len(n.chars) == 0 && len(n.scenes) == 0
+}
+
+// ---------- 造型家族与"人数"统计(技能侧清单 §4.2) ----------
+
+// charFamilyCount 这批角色 id 里有几个「人」:同一角色的多张造型档算一个人。
+//
+// 技能侧把"造型随剧情变"落成一角色多张卡(主卡 + `翻篇·归零` / `糖球·雨夜` …),
+// 于是**按卡计数的一切"角色数"都会虚高**:《翻篇》12 个角色会报成 21 个(4 档翻篇
+// + 3 档糖球 + 2 档老墙),用户看到的就是"怎么多出来一堆新角色"。给人看的数字统一走这里。
+//
+// ⚠ **本文件的"范围"判据本身不归族,这是刻意的**:变体卡各自需要自己的定妆照
+// (§4.1:只换服装/状态,主卡那张不能顶替),所以 needForShots 仍旧按卡收范围 ——
+// 归族只用在"这是几个人"这类统计口径上。变体卡之间的**一致性**由派生链兜
+// (见 sheetderive.go:以主卡为参考图出图 + 身份校验)。
+func charFamilyCount(ids []string) int {
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			continue
+		}
+		if k := project.CharFamilyKey(id, ""); k != "" {
+			seen[k] = true
+		}
+	}
+	return len(seen)
 }

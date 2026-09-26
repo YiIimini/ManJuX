@@ -17,6 +17,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/fsutil"
 	"github.com/YiIimini/ManJuX/internal/project"
+	"github.com/YiIimini/ManJuX/internal/qc"
 )
 
 func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, onlyAssets []string) error {
@@ -48,8 +49,29 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		comfyGen = eng
 	}
 
-	genAsset := func(kind, id, name, imagePrompt string) (string, error) {
-		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt)
+	genAsset := func(kind, id, name, imagePrompt string, ek EntityKind) (string, error) {
+		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt, assets, ek)
+	}
+
+	// ---------- 定妆照比例自检(技能侧清单 §5.1)----------
+	//
+	// 定妆照**出图后**按技能侧的比例锚点核对三庭/眼距/头身比,明显偏离就告警并建议重出该卡
+	// (实现与判据见 internal/qc/proportion.go —— 阈值口径全部来自技能侧比例句,平台只做
+	// "测与报")。三态开关默认开;关掉连事件都不发(不留痕)。
+	//
+	// 三条处置必须能分辨,否则这一步会变成"看起来验过了"(与画面文字检测同一要求):
+	//   - 关了(质检总开关 / 比例自检开关)或类型不适用(器物没有人体比例) → **连事件都不发**;
+	//   - 开着但没有视觉模型 → **如实降级**,且每次运行只提醒一次(每张卡刷一条等于噪音);
+	//   - 跑了但失败(读图/调用/解析) → 同样如实告警,不当作通过。
+	//
+	// 记账放在调用方(而不是共享实现里):"一次运行只提醒一次"是**本次运行**的性质,
+	// 而共享实现也被「单资产重新生成」那条路用(那次是一次用户动作,每次都该提醒)。
+	propNoCapWarned := false
+	checkProportion := func(ek EntityKind, imagePrompt, name, path string) {
+		if c.checkPortraitProportion(ctx, proj, ek, imagePrompt, name, path) == proportionNoCapability && !propNoCapWarned {
+			propNoCapWarned = true
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.ProportionSkipNoCapability)
+		}
 	}
 
 	missing := 0
@@ -140,7 +162,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 		// ② Krea-2 生成缺失参考图;成功后自动入库供后续项目复用
 		if comfyGen != nil && strings.TrimSpace(imagePrompt) != "" {
-			if path, err := genAsset(kind, id, name, imagePrompt); err == nil {
+			if path, err := genAsset(kind, id, name, imagePrompt, ek); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
 				assets[id] = project.Asset{
 					ID: id, Kind: kind, Name: name,
@@ -149,6 +171,11 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」%s",
 					kindLabel(kind), name, entityKindSuffix(kind, ek))
+				// 定妆照出图后立刻做一次比例自检(见 checkProportion 的说明):
+				// 早发现早重出,别等到成片里才看出"脸被拉长/眼距失衡"。
+				if kind == "characters" {
+					checkProportion(ek, imagePrompt, name, path)
+				}
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
 				if kind == "characters" && p.ViewsOn() {
 					pendingViews = append(pendingViews, pendingView{
@@ -176,7 +203,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "缺少参考图:%s「%s」(可上传,缺失镜头将降级纯文生)", kindLabel(kind), name)
 		}
 	}
-	for _, ch := range plan.Characters {
+	// 造型变体卡必须排在**同族主卡之后**生成(§4.1):变体卡的定妆照是从主卡派生出来的,
+	// 主卡还没出图时本集就只剩"退回文生图"这一条路(而各自文生图正是同一角色几张脸会漂的原因)。
+	// 分组只调整**生成顺序**,不改任何判据(计划里的其它语义都不依赖角色顺序)。
+	for _, ch := range orderCharsMasterFirst(plan.Characters) {
 		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
@@ -232,6 +262,9 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					Source: c.chibiSourceKey(), Fingerprint: project.FingerprintFile(path),
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ Q 版就绪:「%s」(内心活动素材)", ch.Name)
+				// Q 版默认不做人体比例自检(它故意就是二到三头身),只有这张卡自带
+				// 技能侧人体比例句时才测 —— 判据在 PortraitProportionCheckable 里。
+				checkProportion(KindChibi, chibiPrompt, ch.Name+" · Q版", path)
 			} else {
 				c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "Q 版生成失败(不影响主流程):%v", err)
 			}
@@ -282,11 +315,89 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			total-missing-stopped, total, stopped)
 		return nil
 	}
-	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产就绪:%d/%d(库复用 %d)", total-missing, total, reused)
+	// 「造型卡 N 张 / 角色 M 位」两个数都给:技能侧把造型档做成独立卡之后,按卡计数会
+	// 把《翻篇》的 12 个角色报成 21 个,用户看到的就是"怎么多出来一堆新角色"(§4.2)。
+	c.emit(proj.ID, PhaseAssets, 0, "success", pct, "✔ 资产就绪:%d/%d(角色 %d 位 / 造型卡 %d 张 / 场景 %d;库复用 %d)",
+		total-missing, total, project.CharFamilyCount(plan.Characters), len(plan.Characters), len(plan.Scenes), reused)
 	if missing > 0 {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", pct, "提示:缺 %d 张参考图,对应镜头将以 t2va 纯文生渲染", missing)
 	}
 	return nil
+}
+
+// proportionCheckPlan 一张定妆照的比例自检该怎么走(纯函数,便于穷举)。
+type proportionCheckPlan struct {
+	Run     bool   // 真的去读图 + 调视觉模型
+	Skipped string // 不跑的原因(写进事件流;空串 = 连事件都不发)
+}
+
+// planProportionCheck 由(开关、视觉模型可用性、类型是否适用)决定本次怎么处置。
+//
+// 抽成纯函数是为了让"开关真的能关""类型不适用不算没验过""没配模型不假装验过"这三条
+// 可被穷举验证 —— 这类缺陷(功能开着却静默跳过、或事件流里看不出到底量没量)不会报错,
+// 只有针对性断言能钉住(与 planTextDetect 同一手法)。
+func planProportionCheck(enabled, haveClient, applicable bool) proportionCheckPlan {
+	switch {
+	case !enabled:
+		// 关掉的功能不该在事件流里留痕:否则"关掉"看起来就像"每张卡都量过且合格"。
+		return proportionCheckPlan{Run: false, Skipped: ""}
+	case !applicable:
+		// 类型不适用(器物/灵宠/妖兽/无实体没有人体比例,或 Q 版故意的二到三头身):
+		// 这不是"没验过",是"没这项" —— 同样不留痕,免得每张非人卡都刷一条。
+		return proportionCheckPlan{Run: false, Skipped: ""}
+	case !haveClient:
+		// 开着却没有可用能力:如实降级(调用方会把它写成一条 warn,不假装通过)。
+		return proportionCheckPlan{Run: false, Skipped: qc.ProportionSkipNoCapability}
+	default:
+		return proportionCheckPlan{Run: true}
+	}
+}
+
+// proportionCheckOutcome 一次"定妆照出图后"的比例自检实际走到了哪一步。
+//
+// 为什么要分成三态而不是 bool:调用方需要**区分**"没这项"与"开着却没有能力" ——
+// 前者连事件都不发,后者必须如实降级(但一次运行只提醒一次)。bool 会把两者混成一个
+// "false",于是要么每张非人卡都刷一条噪音,要么把"没能力"也静默掉。
+type proportionCheckOutcome int
+
+const (
+	proportionNotApplicable proportionCheckOutcome = iota // 开关关闭 / 类型不适用:连事件都不发
+	proportionNoCapability                                // 开着但没有可用视觉能力:调用方负责如实留痕
+	proportionChecked                                     // 真的量了(偏离/失败已按需告警)
+)
+
+// checkPortraitProportion 定妆照出图后的比例自检 —— **唯一实现点**(资产阶段与
+// 「单资产重新生成」共用同一份,免得两条出图路径量出两种结论)。
+//
+// 它自己负责:读图 → 调视觉模型 → 明显偏离时发 warn(文案点名哪一项、期望多少、量到多少)。
+// 它**不**负责:没有可用能力时的留痕(那是调用方的记账,见 proportionCheckOutcome 的说明)。
+func (c *Coordinator) checkPortraitProportion(ctx context.Context, proj *project.Project, ek EntityKind, imagePrompt, name, path string) proportionCheckOutcome {
+	// 质检总开关关掉时不做(用户明确表示不要质检);细粒度由比例自检自己那条三态开关管。
+	enabled := proj.Config.Params.QC.Enabled && proj.Config.Params.QC.ProportionCheckOn()
+	applicable := PortraitProportionCheckable(ek, imagePrompt)
+	// 与多视角校验共用同一份视觉模型配置(设置页 VLM);未配置返回 nil。
+	client := TurnaroundVerifier(c.cfg.Get().VLM)
+	if plan := planProportionCheck(enabled, client != nil, applicable); !plan.Run {
+		if plan.Skipped != "" {
+			return proportionNoCapability
+		}
+		return proportionNotApplicable
+	}
+	if strings.TrimSpace(path) == "" {
+		return proportionNotApplicable
+	}
+	rep, err := qc.DetectPortraitProportion(ctx, client, path, HumanProportionClausePresent(imagePrompt))
+	if err != nil {
+		// 读图/调用/解析失败 = "没验过",如实说出来,不当作通过(与画面文字检测同一口径)。
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+			"⚠ 定妆照「%s」比例自检失败(未判定,不当作通过):%v", name, err)
+		return proportionChecked
+	}
+	// 明显偏离才出声;比例正常或只有轻微偏差 → 静默,不刷屏。
+	if w := qc.ProportionWarnText(rep); w != "" {
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ 定妆照「%s」%s", name, w)
+	}
+	return proportionChecked
 }
 
 func kindLabel(kind string) string {
@@ -335,15 +446,53 @@ func assetImageSize(proj *project.Project) (int, int) {
 	return rp.Width, rp.Height
 }
 
-func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string) (string, error) {
+// genAssetImage 资产阶段/渲染前补齐的**单张参考图生成**(打印播报 + 交给唯一出口)。
+//
+// 「怎么出图」全部收在 genSheetImage 里(变体卡从主卡派生,见 sheetderive.go):
+// 这一层只负责"资产阶段的日志口径",不参与任何路线判断 —— 三条出图路径各写一份
+// "要不要派生/怎么降级"正是"同一个角色几张脸"复发的老毛病。
+func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string, assets map[string]project.Asset, ek EntityKind) (string, error) {
 	w, h := assetImageSize(proj)
-	safe := director.SanitizeForCache(kind + "_" + id)
-	out := filepath.Join(c.store.Dir(proj.ID), "assets", kind, safe+".png")
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
 	seed := nameSeed(kind, name)
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "%s 生成:%s「%s」(%d×%d)…", c.imageSourceLabel(), kindLabel(kind), name, w, h)
-	return ce.GenerateImage(ctx, imagePrompt, imageNegative, seed, w, h, out)
+	return c.genSheetImage(ctx, ce, sheetJob{
+		proj: proj, assets: assets, kind: kind, id: id, name: name,
+		prompt: imagePrompt, ek: ek, w: w, h: h, seed: seed,
+	})
+}
+
+// orderCharsMasterFirst 把一批角色卡按"同族主卡在前"重排,供资产阶段按序生成。
+//
+// 为什么必须排:变体卡(`char_01v2`)的定妆照是**从同族主卡派生**出来的
+// (见 sheetderive.go)。主卡图还没落盘时,变体只能退回文生图 —— 而"各自文生图"
+// 正是同一角色几张脸会漂的那个老毛病。
+//
+// 组间保持**首次出现**的顺序(不改写"谁先谁后"的既有观感),组内按档位号升序;
+// 认不出家族的卡(家族键为空)各自成组、保持原序。
+func orderCharsMasterFirst(chars []project.Character) []project.Character {
+	order := make([]string, 0, len(chars))
+	groups := map[string][]project.Character{}
+	for i, ch := range chars {
+		key := project.CharFamilyKey(ch.ID, ch.Name)
+		if key == "" {
+			key = "\x00anon:" + fmt.Sprint(i) // 认不出家族的卡不与他人合并
+		}
+		if _, ok := groups[key]; !ok {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], ch)
+	}
+	out := make([]project.Character, 0, len(chars))
+	for _, key := range order {
+		g := groups[key]
+		sort.SliceStable(g, func(i, j int) bool {
+			return project.CharVariantNumberOf(g[i].ID) < project.CharVariantNumberOf(g[j].ID)
+		})
+		out = append(out, g...)
+	}
+	return out
 }
 
 // entityKindSuffix 只在**角色**这一类后面挂实体类型(人/物/灵宠/妖兽/无实体/Q 版)。
@@ -724,9 +873,9 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		}
 		list = append(list, miss{kind, id, name, desc, prompt, ek})
 	}
-	for _, ch := range plan.Characters {
+	for _, ch := range orderCharsMasterFirst(plan.Characters) {
 		// 范围:单镜重渲时只补这一镜会用到的角色(否则会顺手生成全片资产,
-		// 见 asset_scope.go 的说明 —— 审计 P0-9)。
+		// 见 asset_scope.go 的说明 —— 审计 P0-9)。顺序:同族主卡在前(变体卡要从它派生)。
 		if !need.wantsChar(ch.ID) {
 			continue
 		}
@@ -789,7 +938,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	}
 	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(todo), c.imageSourceLabel())
 	for _, m := range todo {
-		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt)
+		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt, assets, m.ek)
 		if err != nil {
 			c.emit(proj.ID, PhaseRender, 0, "warn", 0, "补齐失败:%s「%s」:%v(该镜降级 t2va)", kindLabel(m.kind), m.name, err)
 			continue

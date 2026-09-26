@@ -134,6 +134,14 @@ type QCParams struct {
 	// (json 里没有这个键)会被静默读成"显式关闭",于是这条监控在**最需要它的老项目**上
 	// 一次都不跑。取指针后:缺键 = 未表态 = 开,用户显式关掉才是关。
 	EnableTextDetect *bool `json:"enable_text_detect"`
+	// EnableProportionCheck 定妆照**比例自检**(技能侧清单 §5.1):定妆照出图后按技能侧的
+	// 比例锚点核对三庭/眼距/头身比,明显偏离就告警(并建议重出该卡)——"丑"以前是主观的,
+	// 有锚点后它就是可测的。它跑在**资产生成**时(每张新出的定妆照一次视觉调用),
+	// 所以和画面文字检测一样放在质检参数里:它是质检功能,只是执行时机在资产阶段。
+	//
+	// 与 EnableTextDetect 同一套三态语义,理由也相同:默认**开**,而 bool 的 false 同时
+	// 表示"用户关了"和"这个字段还没有" —— 存量项目会被静默读成"显式关闭"。
+	EnableProportionCheck *bool `json:"enable_proportion_check"`
 }
 
 // TextDetectOn 画面文字检测是否生效:未表态(nil)按开处理。
@@ -141,6 +149,14 @@ type QCParams struct {
 // 关掉它不影响其它质检项 —— 报告里连条目都不写(见 pipeline.planTextDetect),
 // 于是"关掉"看起来就是"没这项",而不是"每镜都验过且干净"。
 func (q QCParams) TextDetectOn() bool { return q.EnableTextDetect == nil || *q.EnableTextDetect }
+
+// ProportionCheckOn 定妆照比例自检是否生效:未表态(nil)按开处理。
+//
+// 关掉它连事件都不发(见 pipeline.planProportionCheck 与 stages_assets.go 的接线),
+// 于是"关掉"就是"没这项",而不是"每张卡都量过且合格"。
+func (q QCParams) ProportionCheckOn() bool {
+	return q.EnableProportionCheck == nil || *q.EnableProportionCheck
+}
 
 // AssembleParams 合成阶段(assemble)参数。
 type AssembleParams struct {
@@ -305,6 +321,10 @@ func DefaultStageParams() StageParams {
 			// 模型烧进画面"这条长期监控(技能侧清单 §3.1a)——不默认开就等于又要靠人记得查。
 			// 未配置视觉模型时如实降级(报告里写"未配置视觉模型"),不会假装通过。
 			EnableTextDetect: Bool(true),
+			// 定妆照比例自检默认开(技能侧清单 §5.1):每张**新出**的定妆照一次视觉调用,
+			// 换来"人物比例有没有偏离技能侧锚点"这条可测的信号 —— 不默认开,就又要靠人
+			// 拿肉眼盯"丑不丑"。未配置视觉模型时如实降级(事件流里写明"未做",不假装通过)。
+			EnableProportionCheck: Bool(true),
 		},
 		Assemble: AssembleParams{
 			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)

@@ -28,6 +28,39 @@ watch(() => G.tick.library, refresh)
 
 const list = computed(() => lib.value[kind.value] || [])
 
+// ---------- 造型档归人(技能侧清单 §4.2) ----------
+//
+// 技能侧把"造型随剧情变"落成**一角色多张卡**:「翻篇·收容所」「翻篇·归零」…
+// 库里于是会同时躺着同一个人的好几档定妆照。按卡平铺显示,用户看到的就是
+// "怎么多出来好几个新角色";而这些卡本来就是同一个人换了一身衣服。
+//
+// 基名(family)由后端现算下发(条目名里「·」之前的部分)——前端不自己拆名字:
+// 拆法只有一份实现才可能与产线一致(与 char_kinds 同一条教训)。
+// 单档的角色(绝大多数)不插分组头,观感与原先完全一致。
+const libGroups = computed(() => {
+  const groups = new Map()
+  for (const e of list.value) {
+    const key = (kind.value === 'characters' && e.family) ? e.family : ('solo:' + e.kind + e.name)
+    let g = groups.get(key)
+    if (!g) { g = { key, base: e.family || e.name, items: [] }; groups.set(key, g) }
+    g.items.push(e)
+  }
+  return [...groups.values()]
+})
+
+// libCards 给模板的扁平列表:多档的人前面插一行分组头。
+// 直接铺平条目对象(而不是包一层 {e: …}),模板里的取属性层级才与原先一致。
+const libCards = computed(() => {
+  const out = []
+  for (const g of libGroups.value) {
+    if (g.items.length > 1) {
+      out.push({ _head: true, _key: 'head:' + g.key, _base: g.base, _count: g.items.length })
+    }
+    for (const e of g.items) out.push({ ...e, _head: false, _key: e.kind + e.name })
+  }
+  return out
+})
+
 // ---------- 资产详情弹窗 ----------
 // 展示该角色的**全部图片**(定妆照 + 多视角原图 + 转台图)、中文描述与英文提示词,
 // 并提供管理操作。图片清单由后端 /api/library/{kind}/{name} 给出。
@@ -437,37 +470,46 @@ async function remove(e) {
     </div>
 
     <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr))">
-      <div v-for="e in list" :key="e.kind + e.name" class="shot-card p-3 flex flex-col gap-2 relative"
-           :class="{ 'sel-on': sel.has(e.name) }" @click="batch && toggleSel(e.name)">
-        <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(e.name)">
-          <el-checkbox :model-value="sel.has(e.name)" size="large" />
+      <template v-for="row in libCards" :key="row._key">
+        <!-- 同一个人的第 2..N 个造型档:插一行分组头,说清"这是一个人、按场切换" -->
+        <div v-if="row._head"
+             style="grid-column:1/-1;display:flex;align-items:center;gap:8px;font-size:12px;color:var(--mx-text2);padding:2px 0 0">
+          <el-icon><User /></el-icon>
+          <b>「{{ row._base }}」</b>
+          <span>{{ row._count }} 个造型档 —— 同一个人按场切换的服装/状态(声线与身份继承主卡),不是 {{ row._count }} 个新角色</span>
         </div>
-        <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="openDetail(e)">
-          <img :src="`/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`"
-               style="width:100%;height:100%;object-fit:cover" loading="lazy"
-               @error="$event.target.style.display='none'"
-               @load="$event.target.style.display=''" />
-          <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:color-mix(in srgb, var(--mx-bg0) 40%, transparent)">
-            <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
+        <div v-else class="shot-card p-3 flex flex-col gap-2 relative"
+             :class="{ 'sel-on': sel.has(row.name) }" @click="batch && toggleSel(row.name)">
+          <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(row.name)">
+            <el-checkbox :model-value="sel.has(row.name)" size="large" />
           </div>
-          <button class="cover-del" title="删除该库资产" @click.stop="remove(e)">
-            <el-icon :size="13"><Delete /></el-icon>
-          </button>
+          <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="openDetail(row)">
+            <img :src="`/api/library/${row.kind}/${encodeURIComponent(row.name)}/image`"
+                 style="width:100%;height:100%;object-fit:cover" loading="lazy"
+                 @error="$event.target.style.display='none'"
+                 @load="$event.target.style.display=''" />
+            <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:color-mix(in srgb, var(--mx-bg0) 40%, transparent)">
+              <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
+            </div>
+            <button class="cover-del" title="删除该库资产" @click.stop="remove(row)">
+              <el-icon :size="13"><Delete /></el-icon>
+            </button>
+          </div>
+          <div class="flex items-center gap-2">
+            <b class="text-sm truncate flex-1">{{ row.name }}</b>
+            <el-tooltip v-if="row.kind === 'characters' && !cardHasViews(row)"
+                        content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
+              <el-tag size="small" type="warning" effect="plain">单视角</el-tag>
+            </el-tooltip>
+            <el-tag size="small" effect="plain" :type="sourceTone(row.source)">
+              {{ sourceLabel(row.source) }}
+            </el-tag>
+          </div>
+          <div class="text-xs" style="color:var(--mx-text2)">
+            ♻ 复用 {{ row.used_count }} 次 · 来自「{{ row.source_project || '-' }}」
+          </div>
         </div>
-        <div class="flex items-center gap-2">
-          <b class="text-sm truncate flex-1">{{ e.name }}</b>
-          <el-tooltip v-if="e.kind === 'characters' && !cardHasViews(e)"
-                      content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
-            <el-tag size="small" type="warning" effect="plain">单视角</el-tag>
-          </el-tooltip>
-          <el-tag size="small" effect="plain" :type="sourceTone(e.source)">
-            {{ sourceLabel(e.source) }}
-          </el-tag>
-        </div>
-        <div class="text-xs" style="color:var(--mx-text2)">
-          ♻ 复用 {{ e.used_count }} 次 · 来自「{{ e.source_project || '-' }}」
-        </div>
-      </div>
+      </template>
     </div>
   
 
