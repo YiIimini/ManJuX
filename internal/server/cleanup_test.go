@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -311,11 +312,11 @@ func TestCleanupRemovesStageGarbage(t *testing.T) {
 	if _, err := os.Stat(scratch); !os.IsNotExist(err) {
 		t.Error("临时对照目录应被清理")
 	}
-	if st, err := os.Stat(logPath); err != nil || st.Size() > 8<<20 {
-		t.Errorf("膨胀日志应轮转(归档 .1 并清空),实际 size=%v err=%v", st, err)
+	if st, err := os.Stat(logPath); err != nil || st.Size() != 9<<20 {
+		t.Errorf("未注入日志写入方时,清理不得擅自动运行日志,实际 size=%v err=%v", st, err)
 	}
-	if _, err := os.Stat(logPath + ".1"); err != nil {
-		t.Error("日志应归档为 .1,便于回溯")
+	if _, err := os.Stat(logPath + ".1"); !os.IsNotExist(err) {
+		t.Error("旧的 .1 归档不该再出现 —— 它靠 rename 一个正在写的文件实现,已废(见 TestCleanupClearsRuntimeLog)")
 	}
 	// 断言:该留的一个不能少
 	for _, p := range append([]string{fresh, script, filepath.Join(inputDir, "用户素材")}, keepRefs...) {
@@ -325,5 +326,78 @@ func TestCleanupRemovesStageGarbage(t *testing.T) {
 	}
 	if _, err := os.Stat(s.store.Dir(proj.ID)); err != nil {
 		t.Error("项目目录本身不得被清理")
+	}
+}
+
+// fakeRuntimeLog 假的运行日志清理口子。真实现是 main 包的 teeWriter(它有句柄),
+// server 包里用一个假实现就够:这里要钉的是"清理有没有请求写入方去清",不是 tee 本身
+// (tee 的原地截断由 main 包的 TestTeeWriterResetClearsInPlace 覆盖)。
+type fakeRuntimeLog struct {
+	called   int
+	freed    int64
+	archives int
+	err      error
+}
+
+func (f *fakeRuntimeLog) Reset() (int64, int, error) {
+	f.called++
+	return f.freed, f.archives, f.err
+}
+
+// TestCleanupClearsRuntimeLog 一键清理必须把运行日志也清掉(用户 2026-09-26:
+// 「右上角"一键清理"也需要清理掉运行日志」)。
+//
+// 钉两件事:① 必须调**写入方**的 Reset —— 清理侧自己删/改名一个正在被写的文件之后,
+// 日志会继续灌进那个已改名/已删除的文件,界面上看着"清空了",新日志却在孤儿文件里长;
+// ② 释放量与归档份数要如实进结果(不然"清理完成"就成了一句空话)。
+func TestCleanupClearsRuntimeLog(t *testing.T) {
+	s := newTestServer(t)
+	fake := &fakeRuntimeLog{freed: 3 << 20, archives: 2}
+	s.SetRuntimeLog(fake)
+
+	code, out := doReq(t, s, "POST", "/api/cleanup", map[string]any{})
+	if code != 200 {
+		t.Fatalf("清理应 200,实际 %d(%v)", code, out)
+	}
+	if fake.called != 1 {
+		t.Fatalf("一键清理应请求运行日志 Reset 恰一次,实际 %d 次", fake.called)
+	}
+	items, _ := out["items"].([]any)
+	hit := ""
+	for _, it := range items {
+		if str, _ := it.(string); strings.Contains(str, "运行日志") {
+			hit = str
+		}
+	}
+	if hit == "" {
+		t.Fatalf("清理结果里应有一项运行日志:%v", items)
+	}
+	if !strings.Contains(hit, "2 份归档") {
+		t.Errorf("结果要写明连归档一起清了:%s", hit)
+	}
+	if mb, _ := out["freedMB"].(float64); mb < 3 {
+		t.Errorf("运行日志的释放量应计入 freedMB,实际 %.2f", mb)
+	}
+}
+
+// TestCleanupRuntimeLogFailureIsReported 日志清理失败不能静默当成功:
+// 用户点的是"清理",结果里就必须说清哪一项没清掉(其余清理项照常进行)。
+func TestCleanupRuntimeLogFailureIsReported(t *testing.T) {
+	s := newTestServer(t)
+	s.SetRuntimeLog(&fakeRuntimeLog{err: errors.New("文件被占用")})
+
+	code, out := doReq(t, s, "POST", "/api/cleanup", map[string]any{})
+	if code != 200 {
+		t.Fatalf("单个清理项失败不该让整体失败,实际 %d(%v)", code, out)
+	}
+	items, _ := out["items"].([]any)
+	found := false
+	for _, it := range items {
+		if str, _ := it.(string); strings.Contains(str, "运行日志清理失败") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("日志清理失败必须在结果里说明:%v", items)
 	}
 }

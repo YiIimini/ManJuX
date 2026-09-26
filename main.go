@@ -43,7 +43,10 @@ func main() {
 	logDir := filepath.Join(exeDir, "data", "logs")
 	_ = os.MkdirAll(logDir, 0o755)
 	logPath := filepath.Join(logDir, "manjux.log")
-	if lw, lerr := newTee(logPath, 10<<20, os.Stdout); lerr == nil {
+	// 日志写入器要留给后面的 server(一键清理清日志走它,见 SetRuntimeLog 的说明),
+	// 所以变量提到 if 外面。
+	lw, lerr := newTee(logPath, 10<<20, os.Stdout)
+	if lerr == nil {
 		log.SetOutput(lw)
 		defer func() { _ = lw.Close() }()
 	} else {
@@ -106,6 +109,11 @@ func main() {
 	}()
 	coord := pipeline.New(store, cfgMgr, reg, f, bus, lib)
 	srv := server.New(cfgMgr, store, reg, coord, f, bus, lib)
+	// 「一键清理」里清运行日志走**写入方**(原地截断,不删也不改名):写句柄跟着文件走,
+	// server 侧自己去 rename 会把后续日志全写进孤儿文件(旧实现就是这个毛病)。
+	if lw != nil {
+		srv.SetRuntimeLog(lw)
+	}
 
 	// 4) 独立 HTTP 服务(浏览器访问/排障;桌面窗口不依赖它)
 	port, err := srv.Start(g.ServerPort)

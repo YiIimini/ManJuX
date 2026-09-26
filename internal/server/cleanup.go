@@ -227,21 +227,34 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		add("临时构建目录 data/_sb_build", sz)
 	}
 
-	// ⑨ 日志膨胀:应用日志与引擎日志在超过 8MB 时归档为 <名字>.1(保留上一份,便于回溯),
-	// 避免长期运行后 manjux.log / comfyui.log 无限增长(实测单机已 4.5MB 且无轮转)。
-	for _, lg := range []string{
-		filepath.Join(s.dataDir(), "logs", "manjux.log"),
-		filepath.Join(g.Comfy.RootDir, "logs", "comfyui.log"),
-	} {
-		st, err := os.Stat(lg)
-		if err != nil || st.Size() < 8<<20 {
-			continue
+	// ⑨ 运行日志(用户 2026-09-26:「右上角一键清理也需要清理掉运行日志」)。
+	//
+	// 走注入的 Reset —— **不能**在 server 侧自己删/改名:`manjux.log` 正被日志写句柄持有,
+	// 改名之后写入会继续落到那个已改名的文件上(新建的空文件永远空着,日志却在别处继续长),
+	// 删除同理。清空后紧接着那行「一键清理完成」就写在刚清空的日志里,留痕。
+	if s.logs != nil {
+		freed, archives, err := s.logs.Reset()
+		switch {
+		case err != nil:
+			res.Items = append(res.Items, fmt.Sprintf("运行日志清理失败:%v", err))
+		default:
+			label := "运行日志 data/logs/manjux.log(已清空"
+			if archives > 0 {
+				label += fmt.Sprintf(",连同 %d 份归档", archives)
+			}
+			add(label+")", freed)
 		}
-		sz := st.Size()
-		_ = os.Remove(lg + ".1")
-		if os.Rename(lg, lg+".1") == nil {
-			_ = os.WriteFile(lg, []byte{}, 0o644)
-			add(fmt.Sprintf("日志轮转 %s(%.1fMB → 归档 .1)", filepath.Base(lg), float64(sz)/1024/1024), 0)
+	}
+
+	// ⑩ 引擎日志:ComfyUI 自己的 logs/comfyui.log —— 它的写句柄在**外部进程**手里,
+	// 我们只有路径,所以既不删也不改名,只在超过 8MB 时原地截断(失败就跳过:那是引擎的
+	// 日志,不该让本应用的清理报错)。刻意不无条件清空:引擎日志是渲染排障的第一现场。
+	if root := strings.TrimSpace(g.Comfy.RootDir); root != "" {
+		comfyLog := filepath.Join(root, "logs", "comfyui.log")
+		if st, err := os.Stat(comfyLog); err == nil && st.Size() >= 8<<20 {
+			if os.Truncate(comfyLog, 0) == nil {
+				add(fmt.Sprintf("引擎日志 logs/comfyui.log 截断(%.1fMB)", float64(st.Size())/1024/1024), 0)
+			}
 		}
 	}
 

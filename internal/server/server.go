@@ -36,8 +36,9 @@ type Server struct {
 	ff    *ff.FF
 	bus   *pipeline.Bus
 	lib   *library.Library
-	mux   http.Handler // 已套上来源守卫(见 guardAPI)
-	quit  func()       // 桌面模式注入的优雅退出
+	mux   http.Handler  // 已套上来源守卫(见 guardAPI)
+	quit  func()        // 桌面模式注入的优雅退出
+	logs  runtimeLogger // 运行日志的清理口子(main 包的 teeWriter 注入;见 cleanup.go ⑨)
 
 	// startProdFn 是"拉起批量产线"的执行体,生产装配下为 nil(走真实 startBatch)。
 	//
@@ -55,6 +56,24 @@ type Server struct {
 // SetQuitFunc 注入桌面模式的退出函数(Wails runtime.Quit)。
 func (s *Server) SetQuitFunc(f func()) {
 	s.quit = f
+}
+
+// runtimeLogger 运行日志的清理口子(实现见 main 包的 teeWriter.Reset)。
+//
+// 为什么清日志得由**持有写句柄的一方**来做:一键清理原先在 server 侧自己
+// `os.Rename(manjux.log, manjux.log.1)` 再写个空文件 —— 而写句柄跟着文件走,改名之后
+// 日志继续灌进那个已改名的文件,磁盘上新建的空 manjux.log 永远空着,界面上看着
+// "日志清空了",实际新日志全在孤儿文件里,直到下一次轮转才露馅(2026-09-26 用户要求
+// 一键清理带上运行日志时发现的)。截断不移交句柄,才是安全的清空方式。
+type runtimeLogger interface {
+	// Reset 清空当前日志并删除全部归档;返回释放字节数与归档份数。
+	Reset() (freed int64, archives int, err error)
+}
+
+// SetRuntimeLog 注入运行日志的清理口子(桌面模式在 main 里注入 teeWriter;
+// 未注入时一键清理会跳过这一项,不影响其它清理项)。
+func (s *Server) SetRuntimeLog(l runtimeLogger) {
+	s.logs = l
 }
 
 // New 创建服务。

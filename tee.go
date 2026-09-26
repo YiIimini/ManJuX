@@ -35,13 +35,23 @@ func newTee(path string, maxBytes int64, console io.Writer) (*teeWriter, error) 
 	return w, nil
 }
 
+// open 打开(或创建)日志文件,并把文件指针移到末尾。
+//
+// **刻意不用 O_APPEND**:Windows 上以追加方式打开会拿到 FILE_APPEND_DATA 权限而**没有**
+// FILE_WRITE_DATA,于是同一个句柄调 Truncate 会被系统拒掉(Access is denied)——
+// 而"一键清理要能清空运行日志"恰恰依赖原地截断(见 Reset)。追加语义由 w.mu 保证:
+// 这个文件只有本进程这一个写者(单实例锁),加锁后 seek-末尾+write 与 O_APPEND 等价。
 func (w *teeWriter) open() error {
-	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := os.OpenFile(w.path, os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
 	}
 	st, err := f.Stat()
 	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekEnd); err != nil {
 		_ = f.Close()
 		return err
 	}
@@ -106,4 +116,43 @@ func (w *teeWriter) Close() error {
 	err := w.f.Close()
 	w.f = nil
 	return err
+}
+
+// Reset 清空运行日志:删除全部归档,并把当前日志文件**截断到 0**(句柄复用,不删文件、不改名)。
+//
+// 为什么清日志必须由持有句柄的这里来做:「一键清理」原先在 server 侧直接
+// `os.Rename(manjux.log, manjux.log.1)` 再写一个空文件 —— 而写句柄是**跟着文件走的**,
+// 改名之后日志继续往那个已改名的文件里灌,磁盘上新建的空 manjux.log 永远空着,直到下一次
+// 轮转才把这段错位暴露出来。同一类错误还有"直接删掉正在写的文件"(Windows 上要么删不掉,
+// 要么删掉后写入进了一个谁也看不见的孤儿文件)。截断不会转移句柄,写完照旧回到同一个文件。
+//
+// 返回:释放的字节数(含归档)与删除的归档份数。
+func (w *teeWriter) Reset() (int64, int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	var freed int64
+	archives := 0
+	if matches, err := filepath.Glob(w.path + ".*"); err == nil {
+		for _, old := range matches {
+			if st, e := os.Stat(old); e == nil {
+				freed += st.Size()
+			}
+			if os.Remove(old) == nil {
+				archives++
+			}
+		}
+	}
+	if w.f == nil {
+		return freed, archives, nil // 日志不可用(启动时就没打开成):归档清了就算清完
+	}
+	freed += w.n
+	if err := w.f.Truncate(0); err != nil {
+		return freed - w.n, archives, err
+	}
+	if _, err := w.f.Seek(0, io.SeekStart); err != nil {
+		return freed - w.n, archives, err
+	}
+	w.n = 0
+	return freed, archives, nil
 }
