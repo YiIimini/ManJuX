@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
 
 // novels_script.go 小说库的**第二个人口**:技能端已经出了脚本,平台就直接导包,不再跑 LLM 拆集。
@@ -149,7 +151,24 @@ func (s *Server) handleNovelProduceScript(w http.ResponseWriter, r *http.Request
 			filepath.Base(book)))
 		return
 	}
+	prefix := orDefault(bs.Book, filepath.Base(book))
 	s.opLog("📜 脚本创作:%s → 导入 %s(%d 集,契约 %s)",
 		filepath.Base(book), bs.Root, bs.Episodes, orDefault(bs.Version, "?"))
 	s.importPackageRoot(w, bs.Root)
+
+	// 导入只是"把脚本变成项目"。用户点这个入口的意图是**开始生产** —— 所以紧接着把这本
+	// 书的批量产线拉起来,与「视频制作」那条路对齐(它拆完集也会自动开产线)。
+	// 2026-09-26 用户问「脚本创作 导入后就完事了?」:原先确实就完了,用户得自己再去首页
+	// 找到那本书点「开始」。导入被拒收时走不到这里(importPackageRoot 已写了错误响应)。
+	eps := s.episodesOf(prefix)
+	if len(eps) == 0 {
+		return
+	}
+	if s.startBatch(prefix, eps) {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+			Message: fmt.Sprintf("📜 脚本创作:《%s》已导入 %d 集并启动批量产线(资产定妆→渲染→质检→成片)", prefix, len(eps))})
+	} else {
+		// 已经有别的批量在跑:入队而不是抢,让当前那批跑完自然接上
+		s.batchAppend(prefix, eps)
+	}
 }

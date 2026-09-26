@@ -201,14 +201,14 @@ async function produceScript(n) {
   const ep = n.script?.episodes || 0
   try {
     await ElMessageBox.confirm(
-      `将把《${n.name}》目录里已产出的脚本包直接导入(${ep} 集),不再跑 AI 拆集。` +
+      `将把《${n.name}》目录里已产出的脚本包直接导入(${ep} 集)并**自动开始批量产线**(资产定妆→渲染→质检→成片),不再跑 AI 拆集。` +
       `\n导入后到「项目」页即可开始资产与渲染;包不合契约会被整批拒收,不会留下半成品。`,
-      '脚本创作(跳过 AI 拆集)', { confirmButtonText: '导入', cancelButtonText: '取消', type: 'info' })
+      '脚本创作(跳过 AI 拆集)', { confirmButtonText: '导入并开始生产', cancelButtonText: '取消', type: 'info' })
   } catch { return }
   try {
     const r = await api.novelProduceScript(n.path)
     const cnt = Array.isArray(r?.results) ? r.results.length : ep
-    ElMessage.success(r?.message || `已导入 ${cnt} 集脚本`)
+    ElMessage.success(r?.message || `已导入 ${cnt} 集脚本,批量产线已启动`)
     await refresh()
     await refreshProjects()
     G.view = 'home'

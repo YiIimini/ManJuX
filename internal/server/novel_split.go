@@ -136,18 +136,11 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefix := strings.TrimSpace(in.Prefix)
-	re := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `·第\d+集`)
-	var eps []string
-	for _, p := range s.store.List() {
-		if re.MatchString(p.ID) {
-			eps = append(eps, p.ID)
-		}
-	}
+	eps := s.episodesOf(prefix)
 	if len(eps) == 0 {
 		writeErr(w, 404, fmt.Errorf("未找到「%s·第N集」系列项目,请先整本拆集", prefix))
 		return
 	}
-	sort.Slice(eps, func(i, j int) bool { return epNo(eps[i]) < epNo(eps[j]) })
 
 	if !s.startBatch(prefix, eps) {
 		writeErr(w, 409, fmt.Errorf("批量产线已在运行(%s 第 %d/%d 集)", batch.prefix, batch.cur, len(batch.projects)))
@@ -159,6 +152,27 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "prefix": prefix, "total": len(eps), "first": filepath.Base(eps[0]),
 	})
+}
+
+// episodesOf 一本书的**集项目清单**:按 `^前缀·第N集` 匹配项目 ID,按集号升序。
+//
+// 收成一处的理由:这条"什么算这本书的一集"的口径原先只写在批量入口里,而
+// 「脚本创作」导入后也要按同一口径开产线 —— 两处各写一遍,迟早一处松一处紧,
+// 表现就是"从 A 入口启动的批次比从 B 入口少几集"(2026-09-26 收口)。
+func (s *Server) episodesOf(prefix string) []string {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" {
+		return nil
+	}
+	re := regexp.MustCompile(`^` + regexp.QuoteMeta(prefix) + `·第\d+集`)
+	var eps []string
+	for _, p := range s.store.List() {
+		if re.MatchString(p.ID) {
+			eps = append(eps, p.ID)
+		}
+	}
+	sort.Slice(eps, func(i, j int) bool { return epNo(eps[i]) < epNo(eps[j]) })
+	return eps
 }
 
 func (s *Server) runNovelBatch(prefix string, eps []string) {
