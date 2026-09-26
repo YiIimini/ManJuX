@@ -29,23 +29,28 @@ import (
 
 func TestSheetVariantTrigger(t *testing.T) {
 	cases := []struct {
-		name   string
-		id, nm string
-		ek     EntityKind
-		want   bool
+		name    string
+		id, nm  string
+		ek      EntityKind
+		hasBase bool
+		want    bool
 	}{
-		{"主卡(id 无档位、名字无档名)→ 不派生", "char_01", "翻篇", KindHuman, false},
-		{"变体卡(id vK)→ 派生", "char_01v4", "翻篇·归零", KindSpiritPet, true},
-		{"变体卡(名字带档名,id 认不出)→ 派生", "abc", "翻篇·归零", KindHuman, true},
-		{"Q 版资产(平台自己起名「X · Q版」)→ 绝不派生", "char_01_chibi", "青禾 · Q版", KindChibi, false},
-		{"Q 版资产(即便 id 带 vK 也按类型挡)→ 不派生", "char_01v2_chibi", "青禾 · Q版2", KindChibi, false},
-		{"普通角色(id 数字尾但不是 vK)→ 不派生", "char_02", "小喇叭", KindSpiritPet, false},
-		{"空卡 → 不派生", "", "", KindHuman, false},
+		{"主卡(id 无档位、名字无档名)→ 不派生", "char_01", "翻篇", KindHuman, false, false},
+		{"变体卡(id vK)→ 派生", "char_01v4", "翻篇·归零", KindSpiritPet, true, true},
+		{"变体卡(名字带档名 + 方案里确有基名卡)→ 派生", "abc", "翻篇·归零", KindHuman, true, true},
+		// 2026-09-26 真机事故:《求你们骂我》的正卡名就叫「沈砚·一品」,id 仍是 char_01、
+		// 方案里也没有另一张"沈砚" —— 初版只凭"名字里有中点"就判成造型档,于是它去找一个
+		// 不存在的主卡,每次定妆都播报"主卡缺图,退回文生图"(而那张图一直是对的)。
+		{"正卡名里带中点但方案里没有基名卡 → **不派生**(不再误报主卡缺图)", "char_01", "沈砚·一品", KindHuman, false, false},
+		{"Q 版资产(平台自己起名「X · Q版」)→ 绝不派生", "char_01_chibi", "青禾 · Q版", KindChibi, true, false},
+		{"Q 版资产(即便 id 带 vK 也按类型挡)→ 不派生", "char_01v2_chibi", "青禾 · Q版2", KindChibi, true, false},
+		{"普通角色(id 数字尾但不是 vK)→ 不派生", "char_02", "小喇叭", KindSpiritPet, false, false},
+		{"空卡 → 不派生", "", "", KindHuman, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := sheetVariantTrigger(tc.id, tc.nm, tc.ek); got != tc.want {
-				t.Fatalf("sheetVariantTrigger(%q,%q,%s) = %v,期望 %v", tc.id, tc.nm, tc.ek, got, tc.want)
+			if got := sheetVariantTrigger(tc.id, tc.nm, tc.ek, tc.hasBase); got != tc.want {
+				t.Fatalf("sheetVariantTrigger(%q,%q,%s,hasBase=%v) = %v,期望 %v", tc.id, tc.nm, tc.ek, tc.hasBase, got, tc.want)
 			}
 		})
 	}

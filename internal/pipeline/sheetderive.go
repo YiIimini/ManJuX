@@ -112,17 +112,49 @@ type sheetJob struct {
 
 // sheetVariantTrigger 这张卡要不要走"从主卡派生"。
 //
-// id 带档位号(`char_01v4`)是机器写的,最可靠;**id 认不出来时才退回名字里的档名**
-// (`翻篇·归零`)。Q 版一律不走:平台给 Q 版资产起的名字叫「青禾 · Q版」,名字里也有
-// 「·」,但它不是同一个人换了衣服 —— 拿真人定妆照去派生 Q 版形象是错的。
-func sheetVariantTrigger(id, name string, ek EntityKind) bool {
+// 判据按可靠性排序:
+//
+//	① id 带档位号(`char_01v4`)—— 机器写的,最可靠;
+//	② 名字形如 `X·档名` **且方案里真的还有一张叫 X 的卡** —— 这才是"同一角色换了造型";
+//	③ Q 版一律不走:平台给 Q 版资产起的名字叫「青禾 · Q版」,名字里也有「·」,
+//	   但它不是同一个人换了衣服 —— 拿真人定妆照去派生 Q 版形象是错的。
+//
+// ⚠ 真机事故(2026-09-26):初版漏了 ② 的后半句,只凭"名字里有中点"判断,于是把
+// 《求你们骂我》的**正卡名「沈砚·一品」**(id 仍是 char_01、方案里也没有另一张"沈砚")
+// 判成了造型档 → 它去找一个不存在的主卡 → 每次资产定妆都播报"主卡缺图,退回文生图",
+// 而那张图其实一直是对的。**有中点 ≠ 有主卡**:先确认基名卡存在,再谈派生。
+func sheetVariantTrigger(id, name string, ek EntityKind, hasBaseCard bool) bool {
 	if NormalizeEntityKind(string(ek)) == KindChibi {
 		return false
 	}
 	if project.CharVariantNumberOf(id) > 0 {
 		return true
 	}
+	if !hasBaseCard {
+		return false
+	}
 	return project.CharVariantLabel(name) != ""
+}
+
+// hasBaseCard 方案里是否存在这张卡的"基名卡"(名字等于去掉档名后的基名)。
+//
+// 读不到方案时返回 false(按正卡处理):**不猜**比误报"主卡缺图"安全 ——
+// 那张图本来就是对的,误报只会让用户去追一个不存在的问题。
+func (c *Coordinator) hasBaseCard(j sheetJob) bool {
+	base := project.CharFamilyBaseName(j.name)
+	if base == "" || base == j.name {
+		return false
+	}
+	plan, err := c.store.LoadPlan(j.proj.ID)
+	if err != nil || plan == nil {
+		return false
+	}
+	for _, ch := range plan.Characters {
+		if ch.Name == base {
+			return true
+		}
+	}
+	return false
 }
 
 // sheetDeriveRoute 变体卡的出图路线。
@@ -224,7 +256,7 @@ func fileReadable(p string) bool {
 func (c *Coordinator) genSheetImage(ctx context.Context, ce engine.Engine, j sheetJob) (string, error) {
 	// 造型档只存在于**角色**里:场景/道具没有"同一个人换档"这回事
 	// (一个叫「临水城·夜」的场景不该被当成某人的造型档去派生)。
-	if j.kind != "characters" || !sheetVariantTrigger(j.id, j.name, j.ek) {
+	if j.kind != "characters" || !sheetVariantTrigger(j.id, j.name, j.ek, c.hasBaseCard(j)) {
 		return c.genPlainSheet(ctx, ce, j)
 	}
 	ref := c.resolveSheetRef(j)
