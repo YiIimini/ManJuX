@@ -1286,8 +1286,8 @@ body::after {
      刻意不用纯黑+backdrop-blur —— 那在亮图上会糊成一坨,和"精准小控件"的气质相反。 */
   background: color-mix(in srgb, var(--mx-bg2) 82%, transparent);
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, #ffffff 24%, transparent),
-    0 1px 5px color-mix(in srgb, #000000 50%, transparent);
+    inset 0 0 0 1px color-mix(in srgb, var(--mx-text) 24%, transparent),
+    0 1px 5px color-mix(in srgb, var(--mx-bg0) 60%, transparent);
   color: var(--mx-text);
   cursor: pointer;
   opacity: .8;
