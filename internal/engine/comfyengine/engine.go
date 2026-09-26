@@ -103,7 +103,30 @@ func (e *Engine) Name() string { return "comfy" }
 // Cfg 返回 ComfyUI 设置快照(WEB 界面地址等对外暴露用)。
 func (e *Engine) Cfg() config.ComfySettings { return e.cfg() }
 
-// Available 探测:不可达时按设置尝试代管启动。
+// StartOnBoot 应用启动时**预热** ComfyUI(按设置里的 AutoStart 决定要不要代管启动)。
+//
+// 为什么不能让 Available 兼职:Available 是"用之前确保可用"(带请求 ctx、会阻塞调用方),
+// 而这里是**开机预热** —— 失败只记日志,不阻塞窗口,也不该被某次请求的超时牵连。
+//
+// 为什么需要它(2026-09-26 用户要求「APP启动后 ComfyUI 自动启动」):
+// 原先只有懒启动 —— 第一次渲染才去拉 ComfyUI,用户要白等 1-2 分钟加载模型;
+// 更糟的是预检(preflight)按设计**不触发启动**(避免误启动),于是"没启动"会被读成
+// "不可用",整条管线在渲染阶段直接失败(实测:批量产线第 1 集就断在「无可用引擎」)。
+func (e *Engine) StartOnBoot(ctx context.Context) error {
+	c := e.cfg()
+	if !c.AutoStart {
+		return nil
+	}
+	e.setClient(NewClient(c.BaseURL))
+	if e.client().Alive(ctx) {
+		return nil // 已经在跑(用户自己开的):不重复拉起,也不接管
+	}
+	if err := e.launch(ctx, c); err != nil {
+		return err
+	}
+	return nil
+}
+
 func (e *Engine) Available(ctx context.Context) error {
 	e.setClient(NewClient(e.cfg().BaseURL))
 	if e.client().Alive(ctx) {

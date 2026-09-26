@@ -93,6 +93,17 @@ func main() {
 		bus.Publish(pipeline.Event{Phase: "comfy", Level: "info", Message: msg})
 	})
 	comfyEng.RunIdleWatcher()
+	// 开机预热 ComfyUI(2026-09-26 用户要求「APP启动后 ComfyUI 自动启动」):
+	// 后台起,不阻塞窗口;失败只记日志 —— 真正的可用性判定仍留给出像素的路径。
+	// 这一步同时消掉一个真实故障:预检按设计不触发启动,于是"没启动"会被读成"不可用",
+	// 批量产线第 1 集就断在「无可用引擎」(实测)。
+	go func() {
+		if err := comfyEng.StartOnBoot(context.Background()); err != nil {
+			log.Printf("[manjux] ⚠ ComfyUI 预热启动失败:%v(渲染时仍会再试一次)", err)
+			return
+		}
+		log.Printf("[manjux] ComfyUI 已就绪:%s", cfgMgr.Get().Comfy.BaseURL)
+	}()
 	coord := pipeline.New(store, cfgMgr, reg, f, bus, lib)
 	srv := server.New(cfgMgr, store, reg, coord, f, bus, lib)
 
