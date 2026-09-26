@@ -21,6 +21,7 @@ type novelItem struct {
 	Chapters int    `json:"chapters"` // 章节文件数
 	Cover    string `json:"cover"`    // 封面绝对路径(空=无)
 	Produced bool   `json:"produced"` // 是否已创建过系列项目
+	Hidden   bool   `json:"hidden"`   // 已隐藏(界面状态,见 novels_hidden.go)
 }
 
 // novelRoot 小说库根目录(设置项;空=未配置)。
@@ -47,13 +48,17 @@ func (s *Server) inNovelRoot(p string) bool {
 func (s *Server) handleNovels(w http.ResponseWriter, r *http.Request) {
 	root := s.novelRoot()
 	if root == "" {
-		writeJSON(w, 200, map[string]any{"root": "", "novels": []novelItem{}, "hint": "未配置小说目录,请在设置中填写"})
+		writeJSON(w, 200, map[string]any{"root": "", "novels": []novelItem{}, "hidden_count": 0, "hint": "未配置小说目录,请在设置中填写"})
 		return
 	}
 	if _, err := os.Stat(root); err != nil {
-		writeJSON(w, 200, map[string]any{"root": root, "novels": []novelItem{}, "hint": "目录不存在:" + root})
+		writeJSON(w, 200, map[string]any{"root": root, "novels": []novelItem{}, "hidden_count": 0, "hint": "目录不存在:" + root})
 		return
 	}
+	// 隐藏是界面状态(见 novels_hidden.go):默认**不列出**已隐藏的作品 —— 用户点"隐藏"
+	// 就是不想再看见它;要在库页重新找到它,前端用 ?hidden=1 再拉一次(顺带拿到计数)。
+	hiddenSet := s.loadHiddenNovels()
+	withHidden := r.URL.Query().Get("hidden") == "1"
 	var out []novelItem
 	ents, _ := os.ReadDir(root)
 	for _, e := range ents {
@@ -75,7 +80,23 @@ func (s *Server) handleNovels(w http.ResponseWriter, r *http.Request) {
 	}
 	// 默认**倒序**(用户 2026-09-24 定调):书名降序 —— 列表新加的书名排在前面。
 	sortNovels(out, novelSortDesc(r))
-	writeJSON(w, 200, map[string]any{"root": root, "novels": out})
+	// 打隐藏标记 + 过滤(打标记在排序之后,顺序不受影响)
+	visible := out[:0]
+	hiddenCount := 0
+	for i := range out {
+		if hiddenSet[s.novelHiddenKey(out[i].Path)] {
+			out[i].Hidden = true
+			hiddenCount++
+			if !withHidden {
+				continue
+			}
+		}
+		visible = append(visible, out[i])
+	}
+	out = visible
+	writeJSON(w, 200, map[string]any{
+		"root": root, "novels": out, "hidden_count": hiddenCount, "with_hidden": withHidden,
+	})
 }
 
 // novelSortDesc 解析排序方向:只有显式 ?sort=asc 才升序,其余一律默认**倒序**。

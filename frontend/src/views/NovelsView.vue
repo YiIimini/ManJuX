@@ -9,14 +9,18 @@ const root = ref('')
 const hint = ref('')
 const novels = ref([])
 const loading = ref(false)
+// 隐藏作品(界面状态,存 sidecar;见后端 novels_hidden.go):默认不列出,这里给一个开关把它请回来
+const withHidden = ref(false)
+const hiddenCount = ref(0)
 
 async function refresh() {
   loading.value = true
   try {
-    const d = await api.novels()
+    const d = await api.novels(withHidden.value)
     root.value = d.root || ''
     hint.value = d.hint || ''
     novels.value = d.novels || []
+    hiddenCount.value = d.hidden_count || 0
   } catch (e) { ElMessage.error(e.message) }
   loading.value = false
 }
@@ -179,6 +183,24 @@ async function removeNovel(n) {
 }
 
 const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 字'
+
+// 隐藏 / 取消隐藏(不删文件:只是从库里收起来,随时可请回来)
+async function toggleHidden(n) {
+  try {
+    const r = await api.novelHidden(n.path, !n.hidden)
+    hiddenCount.value = r.hidden_count || 0
+    ElMessage.success(r.hidden ? `《${n.name}》已隐藏(文件未动,可在右上「显示已隐藏」里找回)` : `《${n.name}》已取消隐藏`)
+    await refresh()
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+// 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
+// 以后再加动作只改这里 + 菜单项,卡片模板不必再堆@click.stop。
+function onCardCmd(cmd, n) {
+  if (cmd === 'produce') return produce(n)
+  if (cmd === 'hide') return toggleHidden(n)
+  if (cmd === 'remove') return removeNovel(n)
+}
 </script>
 
 <template>
@@ -193,6 +215,12 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
           </p>
         </div>
         <div class="flex-1"></div>
+        <el-tooltip v-if="hiddenCount || withHidden" placement="bottom"
+                    content="隐藏只是从库里收起来,文件不动;打开开关可把它们请回来">
+          <el-switch v-model="withHidden" size="small"
+                     :active-text="hiddenCount ? `显示已隐藏(${hiddenCount})` : '显示已隐藏'"
+                     @change="refresh" />
+        </el-tooltip>
         <div class="text-center"><div class="stat-num">{{ novels.length }}</div><div class="stat-label">小说</div></div>
         <el-tooltip content="重新扫描小说库目录(增删书后点此刷新)" placement="bottom">
           <el-button size="small" circle :loading="loading" @click="refresh"><el-icon><Refresh /></el-icon></el-button>
@@ -208,7 +236,8 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
 
     <div class="grid gap-5" style="grid-template-columns:repeat(auto-fill,minmax(216px,1fr))">
       <div v-for="n in novels" :key="n.path" class="shot-card cursor-pointer"
-           :title="'查看《' + n.name + '》章节目录与正文,可一键送入视频产线'" @click="openDetail(n)">
+           :class="{ 'is-hidden': n.hidden }"
+           :title="'查看《' + n.name + '》章节目录与正文,右上菜单可视频制作/隐藏/删除'" @click="openDetail(n)">
         <div class="relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px 10px 0 0;overflow:hidden">
           <img v-if="n.cover" :src="'/api/novels/cover?path=' + encodeURIComponent(n.cover)"
                style="width:100%;height:100%;object-fit:cover" loading="lazy" />
@@ -217,10 +246,28 @@ const fmtChars = (n) => n >= 10000 ? (n / 10000).toFixed(1) + ' 万字' : n + ' 
             <span class="timecode">{{ n.type === 'dir' ? '文件夹' : '单文件' }}</span>
           </div>
           <el-tag v-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 left-2">已创作</el-tag>
-          <!-- 右上:删除整本小说(磁盘文件;已创作系列项目不受影响) -->
-          <button class="cover-del" title="删除该书(磁盘文件)" @click.stop="removeNovel(n)">
-            <el-icon :size="13"><Delete /></el-icon>
-          </button>
+          <el-tag v-else-if="n.hidden" size="small" type="info" effect="dark" class="absolute top-2 left-2">已隐藏</el-tag>
+          <!-- 右上:作品菜单(视频制作 / 隐藏 / 删除)。
+               为什么收成一个菜单:原先只有一个删除按钮,而"隐藏"是比"删除"更常用的动作 ——
+               把不可逆的删除放在最容易误点的一格,本身就不对;菜单里删除仍是最后一项并带二次确认。 -->
+          <el-dropdown trigger="click" placement="bottom-end" @command="(c) => onCardCmd(c, n)">
+            <button class="cover-menu" title="作品菜单" @click.stop>
+              <el-icon :size="13"><MoreFilled /></el-icon>
+            </button>
+            <template #dropdown>
+              <el-dropdown-menu>
+                <el-dropdown-item command="produce" :disabled="producing">
+                  <el-icon><VideoCamera /></el-icon>视频制作
+                </el-dropdown-item>
+                <el-dropdown-item command="hide" divided>
+                  <el-icon><Hide /></el-icon>{{ n.hidden ? '取消隐藏' : '隐藏作品' }}
+                </el-dropdown-item>
+                <el-dropdown-item command="remove">
+                  <el-icon><Delete /></el-icon>删除作品
+                </el-dropdown-item>
+              </el-dropdown-menu>
+            </template>
+          </el-dropdown>
         </div>
         <div class="p-3 flex flex-col gap-1.5">
           <b class="text-sm truncate">《{{ n.name }}》</b>
