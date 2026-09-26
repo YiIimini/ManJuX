@@ -1276,7 +1276,7 @@ body::after {
    两边只有 hover 颜色不同。2026-09-26 教训:我曾给菜单钮另写一套"改进配方"并顺手把
    .cover-del 一起改了,等于把全站共用的控件外观重做了一遍 —— 而需求只是"把删除钮换成菜单钮"。
    尺寸/底色/描边/图标色放在这里**只定义一次**,两个钮不会再各走一套。 */
-.cover-del, .cover-menu {
+.cover-del, .cover-menu, .cover-zoom {
   width: 27px; height: 27px;
   display: grid;
   place-items: center;
@@ -1297,8 +1297,16 @@ body::after {
   position: absolute;
   top: 8px; right: 8px;
 }
+/* 放大预览钮(小说库书卡右下角;2026-09-26 用户要求封面重做的新封面能放大看)。
+   配方沿用上面那颗共享钮,只有定位不同 —— 右上角已被作品菜单占住,放大放右下角。 */
+.cover-zoom {
+  position: absolute;
+  left: 8px; bottom: 8px;
+  cursor: zoom-in;
+}
 .proj-card:hover .cover-del, .shot-card:hover .cover-del, .cover-del:hover,
-.shot-card:hover .cover-menu, .cover-menu:hover { opacity: 1; }
+.shot-card:hover .cover-menu, .cover-menu:hover,
+.shot-card:hover .cover-zoom, .cover-zoom:hover { opacity: 1; }
 .cover-del:hover:not(:disabled) { background: color-mix(in srgb, var(--mx-red) 88%, transparent); color: #fff; }
 .cover-del:disabled { opacity: .28 !important; cursor: not-allowed; }
 
@@ -1314,7 +1322,7 @@ body::after {
    style.css **之后**引入),同权重下后写的胜 —— 只写一遍时这段 position:absolute 会被
    `.el-dropdown` 顶成 relative,top/right 变成相对自身的偏移,钮就跑到封面左上角去了
    (2026-09-26 用户截图实测)。写两遍把权重提到 0,2,0,不再看引入顺序的脸色。 */
-.cover-menu:hover {
+.cover-menu:hover, .cover-zoom:hover {
   background: color-mix(in srgb, var(--mx-amber) 24%, color-mix(in srgb, var(--mx-bg0) 62%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 70%, transparent);
 }
@@ -1641,4 +1649,5 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   object-fit: cover;
   border-radius: 6px;
   display: block;
+  cursor: zoom-in; /* 点图放大(el-image-viewer),缩略图看不清构图 */
 }

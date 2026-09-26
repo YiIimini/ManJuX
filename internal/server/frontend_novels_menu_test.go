@@ -111,9 +111,14 @@ func TestCoverMenuPositioningLivesOnTheWrapper(t *testing.T) {
 	if !strings.Contains(css, ".cover-menu-wrap.cover-menu-wrap {") {
 		t.Error(".cover-menu-wrap 的选择器必须把类名写两遍(0,2,0)以压过 Element Plus 的 .el-dropdown —— 只写一遍会被它的 position:relative 顶掉,钮跑到左上角")
 	}
-	btn := cssBlockOf(t, css, ".cover-menu {")
-	if strings.Contains(btn, "position:") {
-		t.Errorf(".cover-menu 自己不许再定位 —— 这次就是栽在这里(相对 .el-dropdown 的 0 宽盒子):\n%s", btn)
+	// 菜单钮自己不许再定位(定位必须留在 wrapper 上)。
+	// 2026-09-26 加入封面放大钮 .cover-zoom 后,基础样式段成了三个类的并列选择器,原来那句
+	// 字面 `.cover-menu {` 再也匹配不到(并列段里的子串是 `.cover-menu, .cover-zoom {`)。
+	// 判据改成"行首独立块":并列段不算,真另开一块才算 —— .cover-del/.cover-zoom 各有自己的
+	// 定位块(它们不在 .el-dropdown 里,不受那条 relative 影响),而 .cover-menu 在,所以只有它
+	// 不许有。
+	if hasOwnBlock(css, ".cover-menu") {
+		t.Error(".cover-menu 不许另开样式块 —— 它长在 .el-dropdown 里,absolute 会被对方的 position:relative 接管(钮跑到左上角);定位请留在 .cover-menu-wrap 上")
 	}
 }
 
@@ -122,7 +127,11 @@ func TestCoverMenuPositioningLivesOnTheWrapper(t *testing.T) {
 // 2026-09-26 用户两次点我:先是我给菜单钮另写了一套"改进配方"(全站共用的删除钮也被我
 // 一起改了外观),他说「原来的删除按钮更换这个菜单按钮,调用函数更换成对的不就行了」——
 // 需求只是把删除钮换成菜单钮,不是重做控件。这条把"同源"钉住:
-// 基础样式写成 `.cover-del, .cover-menu { … }` 并列选择器、不许给 .cover-menu 另开样式块。
+// 基础样式写成并列选择器、不许给 .cover-menu 另开样式块。
+//
+// 2026-09-26 补:封面放大钮 .cover-zoom 入列(用户要求封面能放大预览),并列段变成三个类。
+// 规矩不变 —— 尺寸/底色/描边/图标色仍**只定义一次**,新钮跟着共享段走,不手搓第三套配方;
+// 它自己那块只允许写定位与光标。
 func TestCoverMenuSharesBaseStyleWithDeleteButton(t *testing.T) {
 	cssPath := filepath.Join("..", "..", "frontend", "src", "style.css")
 	raw, err := os.ReadFile(cssPath)
@@ -130,13 +139,14 @@ func TestCoverMenuSharesBaseStyleWithDeleteButton(t *testing.T) {
 		t.Fatalf("读不到 %s: %v", cssPath, err)
 	}
 	css := string(raw)
-	if !strings.Contains(css, ".cover-del, .cover-menu {") {
-		t.Error("菜单钮必须与删除钮并列共用基础样式(.cover-del, .cover-menu { … })")
+	const shared = ".cover-del, .cover-menu, .cover-zoom {"
+	if !strings.Contains(css, shared) {
+		t.Error("三个封面角标钮(删除/菜单/放大)必须并列共用基础样式(.cover-del, .cover-menu, .cover-zoom { … })")
 	}
-	if strings.Contains(css, "\n.cover-menu {") {
+	if hasOwnBlock(css, ".cover-menu") {
 		t.Error("出现了 .cover-menu 的独立样式块 —— 一旦分家,两钮观感迟早漂开;基础样式请写进并列选择器")
 	}
-	base := cssBlockOf(t, css, ".cover-del, .cover-menu {")
+	base := cssBlockOf(t, css, shared)
 	for _, want := range []string{"width: 27px", "height: 27px", "background:", "box-shadow:", "color:"} {
 		if !strings.Contains(base, want) {
 			t.Errorf("共享基础样式缺少 %q(尺寸/底色/描边/图标色必须一起定义):\n%s", want, base)
@@ -146,6 +156,29 @@ func TestCoverMenuSharesBaseStyleWithDeleteButton(t *testing.T) {
 	if strings.Contains(base, "position:") {
 		t.Errorf("共享基础样式里不该出现 position —— 菜单钮会跟着被 .el-dropdown 接管:\n%s", base)
 	}
+	// 放大钮自己的块只做定位:再抄一遍尺寸/底色就等于配方分家(这正是上一轮被骂的写法)
+	if !hasOwnBlock(css, ".cover-zoom") {
+		t.Fatal("放大钮需要自己的定位块(.cover-zoom)—— 共享段不带 position")
+	}
+	zoom := cssBlockOf(t, css, "\n.cover-zoom {")
+	for _, forbid := range []string{"width:", "height:", "background:", "box-shadow:", "color:", "border-radius:"} {
+		if strings.Contains(zoom, forbid) {
+			t.Errorf("放大钮的独立块里出现了 %q —— 观感必须只来自共享段,别手搓第二套配方:\n%s", forbid, zoom)
+		}
+	}
+}
+
+// hasOwnBlock 判断某个类是否**另开了独立样式块**(行首选择器,后跟 `{`)。
+// 并列选择器(如 `.cover-del, .cover-menu, .cover-zoom {`)不以行首 `.cover-menu {` 出现,故不算 ——
+// 这两条断言要区分的是"共用配方"与"自己另来一套",不是"提到过类名"。
+func hasOwnBlock(css, sel string) bool {
+	for _, line := range strings.Split(css, "\n") {
+		s := strings.TrimSpace(line)
+		if s == sel+" {" || s == sel+"{" {
+			return true
+		}
+	}
+	return false
 }
 
 // cssBlockOf 取某个选择器后面的第一对花括号内容(够用于本文件的两条断言)。

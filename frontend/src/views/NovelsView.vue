@@ -353,6 +353,23 @@ function candURL(file) {
   return '/api/novels/cover?path=' + encodeURIComponent(file) + '&t=' + coverBust.value
 }
 
+// 图片放大预览(用户 2026-09-26:「新制作的封面可以放大预览啊」)。
+// 用 Element Plus 自带的 el-image-viewer:滚轮/按钮缩放、旋转、多张左右翻页、Esc 关闭。
+// 它 Teleport 到 body、层级取自全局递增的弹层计数 —— 候选图正是在 el-dialog 里点开的,
+// 必须压在弹窗之上,所以 teleported + 显式 z-index 一起给,不吃弹窗的开窗顺序。
+const viewer = ref(null)   // { list: [url…], index: 从第几张开始 }
+function openViewer(list, index = 0) {
+  const urls = (list || []).filter(Boolean)
+  if (!urls.length) return
+  viewer.value = { list: urls, index: Math.max(0, Math.min(index, urls.length - 1)) }
+}
+// 候选:整批一起传 —— 点第 i 张就从第 i 张开始,左右能翻到同批其它候选(挑图时最省事)
+function viewCands(i) { openViewer(covCands.value.map(c => candURL(c.file)), i) }
+// 书卡封面:单张(它已是当前封面,看的是效果,不涉及挑图)
+function viewCover(n) {
+  openViewer(n.cover ? ['/api/novels/cover?path=' + encodeURIComponent(n.cover) + '&t=' + coverBust.value] : [])
+}
+
 // 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
 // 以后再加动作只改这里 + 菜单项,卡片模板不必再堆@click.stop。
 function onCardCmd(cmd, n) {
@@ -411,6 +428,11 @@ function onCardCmd(cmd, n) {
           </el-tag>
           <el-tag v-else-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 left-2">已创作</el-tag>
           <el-tag v-else-if="n.hidden" size="small" type="info" effect="dark" class="absolute top-2 left-2">已隐藏</el-tag>
+          <!-- 右下:封面放大预览(封面重做后要能看清细节;卡片主体点击是打开详情,
+               所以这里必须 stop,免得点放大顺手把详情弹窗也拉起来) -->
+          <button v-if="n.cover" class="cover-zoom" title="放大预览封面" @click.stop="viewCover(n)">
+            <el-icon :size="14"><ZoomIn /></el-icon>
+          </button>
           <!-- 右上:作品菜单(视频制作 / 隐藏 / 删除)。
                为什么收成一个菜单:原先只有一个删除按钮,而"隐藏"是比"删除"更常用的动作 ——
                把不可逆的删除放在最容易误点的一格,本身就不对;菜单里删除仍是最后一项并带二次确认。 -->
@@ -503,15 +525,15 @@ function onCardCmd(cmd, n) {
             <b class="text-xs">候选</b>
             <span class="timecode">{{ covCands.length }} 张</span>
             <div class="flex-1"></div>
-            <span class="timecode" style="font-size:10px">点「用这张」替换现封面</span>
+            <span class="timecode" style="font-size:10px">点图放大 · 点「用这张」替换现封面</span>
           </div>
           <div class="flex-1 overflow-y-auto tree-scroll">
             <div v-if="!covCands.length" class="text-xs py-8 text-center" style="color:var(--mx-text3)">
               还没有候选 —— 调好左边的参数,点「生成候选」
             </div>
             <div class="cand-grid">
-              <div v-for="c in covCands" :key="c.file" class="cand-item">
-                <img :src="candURL(c.file)" alt="" />
+              <div v-for="(c, i) in covCands" :key="c.file" class="cand-item">
+                <img :src="candURL(c.file)" alt="" title="点击放大预览(可左右翻其它候选)" @click="viewCands(i)" />
                 <div class="flex items-center gap-2 mt-1">
                   <span class="timecode" style="font-size:10px">seed {{ c.seed }}</span>
                   <div class="flex-1"></div>
@@ -678,5 +700,11 @@ function onCardCmd(cmd, n) {
       <!-- 右下角拖动柄:改弹窗宽高(受窗口边界约束) -->
       <div class="novel-dlg-grip" :class="{ on: resizing }" title="拖动调整弹窗大小" @mousedown="startResize"></div>
     </el-dialog>
+
+    <!-- 图片放大预览(封面重做候选 / 书卡封面共用):滚轮缩放、旋转、多张左右翻、Esc 关闭。
+         独立于弹窗挂载(teleported),所以候选图在封面重做弹窗里点开也不会被弹窗层级盖住。 -->
+    <el-image-viewer v-if="viewer" :url-list="viewer.list" :initial-index="viewer.index"
+                     :z-index="4000" teleported hide-on-click-modal show-progress
+                     @close="viewer = null" />
   </div>
 </template>
