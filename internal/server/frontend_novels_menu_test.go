@@ -71,3 +71,61 @@ func TestNovelsApiWiresHiddenFlag(t *testing.T) {
 		t.Error("前端调用的隐藏接口路径与后端路由不一致")
 	}
 }
+
+// TestCoverMenuPositioningLivesOnTheWrapper 封面菜单的定位必须在**外层 wrapper** 上。
+//
+// 2026-09-26 实测踩坑:Element Plus 的 .el-dropdown 自带 position:relative,按钮上的
+// absolute 会改为相对那个 0 宽度的 dropdown 盒子定位 → right:8px 落到封面边界之外,
+// 被 overflow:hidden 裁掉,现象就是"按钮不见了"。这条把修法钉住:
+// 模板里必须用 .cover-menu-wrap 包着,样式里那个类必须有 position:absolute,
+// 而 .cover-menu 自己**不许**再出现 position。
+func TestCoverMenuPositioningLivesOnTheWrapper(t *testing.T) {
+	vuePath := filepath.Join("..", "..", "frontend", "src", "views", "NovelsView.vue")
+	vue, err := os.ReadFile(vuePath)
+	if err != nil {
+		t.Fatalf("读不到 %s: %v", vuePath, err)
+	}
+	if !strings.Contains(string(vue), `class="cover-menu-wrap"`) {
+		t.Error("el-dropdown 上必须挂 .cover-menu-wrap(定位由外层承担)")
+	}
+	if !strings.Contains(string(vue), `class="cover-menu"`) {
+		t.Error("触发按钮仍应是 .cover-menu")
+	}
+
+	cssPath := filepath.Join("..", "..", "frontend", "src", "style.css")
+	raw, err := os.ReadFile(cssPath)
+	if err != nil {
+		t.Fatalf("读不到 %s: %v", cssPath, err)
+	}
+	css := string(raw)
+	wrap := cssBlockOf(t, css, ".cover-menu-wrap")
+	if !strings.Contains(wrap, "position: absolute") {
+		t.Errorf(".cover-menu-wrap 必须自己绝对定位(否则 dropdown 的 relative 会接管):\n%s", wrap)
+	}
+	if !strings.Contains(wrap, "top: 8px") || !strings.Contains(wrap, "right: 8px") {
+		t.Errorf(".cover-menu-wrap 应贴封面右上 8px:\n%s", wrap)
+	}
+	btn := cssBlockOf(t, css, ".cover-menu {")
+	if strings.Contains(btn, "position:") {
+		t.Errorf(".cover-menu 自己不许再定位 —— 这次就是栽在这里(相对 .el-dropdown 的 0 宽盒子):\n%s", btn)
+	}
+}
+
+// cssBlockOf 取某个选择器后面的第一对花括号内容(够用于本文件的两条断言)。
+func cssBlockOf(t *testing.T, css, selector string) string {
+	t.Helper()
+	i := strings.Index(css, selector)
+	if i < 0 {
+		t.Fatalf("样式里找不到 %s", selector)
+	}
+	open := strings.Index(css[i:], "{")
+	if open < 0 {
+		t.Fatalf("%s 后面没有 {", selector)
+	}
+	rest := css[i+open+1:]
+	end := strings.Index(rest, "}")
+	if end < 0 {
+		t.Fatalf("%s 的样式块没有收尾", selector)
+	}
+	return rest[:end]
+}

@@ -250,7 +250,8 @@ function onCardCmd(cmd, n) {
           <!-- 右上:作品菜单(视频制作 / 隐藏 / 删除)。
                为什么收成一个菜单:原先只有一个删除按钮,而"隐藏"是比"删除"更常用的动作 ——
                把不可逆的删除放在最容易误点的一格,本身就不对;菜单里删除仍是最后一项并带二次确认。 -->
-          <el-dropdown trigger="click" placement="bottom-end" @command="(c) => onCardCmd(c, n)">
+          <el-dropdown class="cover-menu-wrap" trigger="click" placement="bottom-end"
+                       @command="(c) => onCardCmd(c, n)">
             <button class="cover-menu" title="作品菜单" @click.stop>
               <el-icon :size="13"><MoreFilled /></el-icon>
             </button>

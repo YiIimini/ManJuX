@@ -1294,10 +1294,18 @@ body::after {
 /* 卡片封面右上「作品菜单」触发钮(2026-09-25:小说库把"删除"收进菜单,
    因为隐藏比删除更常用,而删除是不可逆的 —— 不该继续占着最容易误点的一格)。
    与 .cover-del 同尺寸同位置,但**悬停不转红**:红色是"要删东西"的暗示,菜单不是删除。
-   刻意不复用 .cover-del:那个类是各卡片共享的删除钮语义,改它会连累项目卡/资产卡。 */
-.cover-menu {
+   刻意不复用 .cover-del:那个类是各卡片共享的删除钮语义,改它会连累项目卡/资产卡。
+
+   ⚠ 定位必须放在**外层 wrapper** 上,不能放在按钮上(2026-09-26 实测踩坑):
+   Element Plus 的 .el-dropdown 自带 `position: relative`,按钮上的 absolute 会改为
+   相对那个 0 宽度的 dropdown 盒子定位 → right:8px 算到封面左边界之外,被封面的
+   overflow:hidden 裁掉,表现为"按钮不见了"。所以:外层定位,内层不定位。 */
+.cover-menu-wrap {
   position: absolute;
   top: 8px; right: 8px;
+  line-height: 0; /* 去掉 inline-block 基线留白,按钮才能铺满 27×27 */
+}
+.cover-menu {
   width: 27px; height: 27px;
   display: grid;
   place-items: center;
