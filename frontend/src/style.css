@@ -1272,47 +1272,46 @@ body::after {
 /* 数据卡封面右上操作钮(项目卡/剧集系列卡/资产库卡/作品卡/分镜卡统一)。
    常显(用户可感知有操作),卡悬停转清晰;删除钮悬停变红。
 
-   ⚠ 底色/描边/图标这四行是**共享基础**,删除钮与作品菜单钮一起用(见下面的并列选择器)。
-   不要只改其中一个 —— 2026-09-26 实测:作品菜单钮单独写了一套"纯黑 55% + 白环 26% + 模糊",
-   在亮封面上糊成一块灰黑团、在空封面的暗卡上又几乎看不见(用户截图投诉「按钮呢」),
-   而它和删除钮本该是同一种控件。 */
+   **配方就是原来那颗删除钮的配方,一个字没改** —— 作品菜单钮与它共用这段(见并列选择器),
+   两边只有 hover 颜色不同。2026-09-26 教训:我曾给菜单钮另写一套"改进配方"并顺手把
+   .cover-del 一起改了,等于把全站共用的控件外观重做了一遍 —— 而需求只是"把删除钮换成菜单钮"。
+   尺寸/底色/描边/图标色放在这里**只定义一次**,两个钮不会再各走一套。 */
 .cover-del, .cover-menu {
   width: 27px; height: 27px;
   display: grid;
   place-items: center;
   border: none;
   border-radius: 8px;
-  /* 深色玻璃 + 一圈可辨的白描边:亮封面压得住、暗卡上也看得见。
-     刻意不用纯黑+backdrop-blur —— 那在亮图上会糊成一坨,和"精准小控件"的气质相反。 */
-  background: color-mix(in srgb, var(--mx-bg2) 82%, transparent);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--mx-text) 24%, transparent),
-    0 1px 5px color-mix(in srgb, var(--mx-bg0) 60%, transparent);
-  color: var(--mx-text);
+  background: color-mix(in srgb, var(--mx-bg0) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 26%, transparent);
+  backdrop-filter: blur(4px);
+  color: var(--mx-text2);
   cursor: pointer;
-  opacity: .8;
+  opacity: .55;
   transition: all .15s;
+}
+/* 删除钮没有外层 wrapper,自己带定位;菜单钮的定位由 .cover-menu-wrap 承担
+   (⚠ 不能放进上面那段共享样式:Element Plus 的 .el-dropdown 自带 position:relative,
+   会把按钮的 absolute 接管过去,算出界后被封面 overflow:hidden 裁掉 = "按钮不见了") */
+.cover-del {
+  position: absolute;
+  top: 8px; right: 8px;
 }
 .proj-card:hover .cover-del, .shot-card:hover .cover-del, .cover-del:hover,
 .shot-card:hover .cover-menu, .cover-menu:hover { opacity: 1; }
 .cover-del:hover:not(:disabled) { background: color-mix(in srgb, var(--mx-red) 88%, transparent); color: #fff; }
 .cover-del:disabled { opacity: .28 !important; cursor: not-allowed; }
 
-/* 封面右上「作品菜单」触发钮(2026-09-25:小说库把"删除"收进菜单 —— 隐藏比删除常用,
-   而删除不可逆,不该独占最容易误点的那一格)。观感与删除钮同源,只有 hover 不同:
-   **悬停转银白/琥珀而不是红**,红色是"要删东西"的暗示,菜单不是删除。
-
-   ⚠ 定位必须放在**外层 wrapper** 上,不能放在按钮上(2026-09-26 实测踩坑):
-   Element Plus 的 .el-dropdown 自带 `position: relative`,按钮上的 absolute 会改为
-   相对那个 0 宽度的 dropdown 盒子定位 → right:8px 算到封面左边界之外,被封面的
-   overflow:hidden 裁掉,表现为"按钮不见了"。所以:外层定位,内层不定位。 */
+/* 作品菜单触发钮(2026-09-25:小说库把"删除"收进菜单 —— 隐藏比删除常用,而删除不可逆,
+   不该独占最容易误点的那一格)。观感与删除钮完全同源,只差 hover:菜单**悬停转银白/琥珀**,
+   不转红(红色是"要删东西"的暗示,菜单不是删除)。 */
 .cover-menu-wrap {
   position: absolute;
   top: 8px; right: 8px;
   line-height: 0; /* 去掉 inline-block 基线留白,按钮才能铺满 27×27 */
 }
 .cover-menu:hover {
-  background: color-mix(in srgb, var(--mx-amber) 24%, color-mix(in srgb, var(--mx-bg2) 88%, transparent));
+  background: color-mix(in srgb, var(--mx-amber) 24%, color-mix(in srgb, var(--mx-bg0) 62%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 70%, transparent);
 }
 
