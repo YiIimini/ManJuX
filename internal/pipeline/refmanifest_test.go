@@ -91,15 +91,65 @@ func TestEnsureRefManifestIsIdempotentAndLossless(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
 	_, roles, _ := RefPlan(dir, shot, assets, false)
 	base := "subject_definitions:\n<Subject 1> is Gu Qinghe …\n\nTwo pictures are attached in total.\n"
-	got := EnsureRefManifest(base, RefManifest(shot, roles))
+	got := EnsureRefManifest(base, shot, roles)
 	if !strings.Contains(got, "Two pictures are attached in total.") {
 		t.Error("原有提示词内容不得丢失")
 	}
-	if n := strings.Count(EnsureRefManifest(got, RefManifest(shot, roles)), refManifestKey); n != 1 {
+	if n := strings.Count(EnsureRefManifest(got, shot, roles), refManifestKey); n != 1 {
 		t.Errorf("权威清单必须幂等,实际 %d 次", n)
 	}
-	if plain := EnsureRefManifest(base, ""); plain != base {
+	if plain := EnsureRefManifest(base, shot, nil); plain != base {
 		t.Error("没有参考图(t2va)时不得改动提示词")
+	}
+}
+
+// TestEnsureRefManifestBindsSubjectToItsPicture 官方全参考模式的**绑定句式**必须落在
+// subject_definitions 里(2026-09-26 真机实测:角色仍漂移)。
+//
+// 官方 ref-en.txt §2.1/§2.2 要求:`<Subject 1> is the young woman **in <Picture 1>**, …`,
+// 并且"仅用于定义角色/场景/服装/风格的图片**不要**单列 <Picture N>,而要在对应
+// <Subject N> 的定义里引用它"。我们原先只写"以附图为准"(泛指),模型于是照**文字**重画 ——
+// 同一个沈砚在不同镜里成了不同的人。这条用例钉住"名字行被绑到它实际那张图上"。
+func TestEnsureRefManifestBindsSubjectToItsPicture(t *testing.T) {
+	dir, shot, assets := refmanAssets(t)
+	_, roles, _ := RefPlan(dir, shot, assets, false)
+	name := roles[0].Name
+	base := "subject_definitions:\n<Subject 1> is " + name + "（human）— 十八九岁、男、体型：瘦 —— 以附图为准。\n"
+	got := EnsureRefManifest(base, shot, roles)
+	if !strings.Contains(got, "<Subject 1> is "+name+" in <Picture 1>") {
+		t.Fatalf("角色行必须绑到它实际那张图(官方句式 in <Picture K>),实际:\n%s", got)
+	}
+	if !strings.Contains(got, "（human）— 十八九岁") {
+		t.Error("绑定不得吃掉原文(名字之后的描述必须原样保留)")
+	}
+	// 幂等:再跑一次不得出现两个 in <Picture
+	if n := strings.Count(EnsureRefManifest(got, shot, roles), " in <Picture 1>"); n != 1 {
+		t.Errorf("绑定必须幂等,实际出现 %d 次", n)
+	}
+	// 对不上的 subject(讲的不是这些参考图里的对象)不许硬塞编号
+	other := "subject_definitions:\n<Subject 1> is 路人甲 — 无参考图。\n"
+	if out := EnsureRefManifest(other, shot, roles); strings.Contains(out, "<Subject 1> is 路人甲 in <Picture") {
+		t.Errorf("名字对不上时不许猜编号:\n%s", out)
+	}
+}
+
+// TestOnScreenTextPolicyForbidsOwnNotes 画面文字规则必须点名"提示词自己的说明文字不是画面内容",
+// 并禁止烧字幕/系统面板(2026-09-26 真机实测:成片里出现【全城第一骂名状态】这种系统提示字幕,
+// 以及把我们自己的声线说明行/画风说明行烧成英文乱码字幕)。
+func TestOnScreenTextPolicyForbidsOwnNotes(t *testing.T) {
+	got := EnsureOnScreenTextRule("subject_definitions:\n<Subject 1> is 沈砚。\n")
+	for _, want := range []string{
+		"NEVER turn this prompt's own text", // 自己的说明文字不许画进画面
+		"voice descriptions",                // 点名被念出来的那一类行
+		"No burned-in subtitles",            // 不许烧字幕
+		"post-production",                   // 字幕/系统面板归后期
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("画面文字规则缺少「%s」:\n%s", want, got)
+		}
+	}
+	if !strings.Contains(got, onScreenTextMarker) {
+		t.Error("幂等判据标记串丢了 —— 会重复叠加")
 	}
 }
 

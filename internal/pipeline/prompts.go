@@ -285,7 +285,7 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
 	EnsureVoiceoverClause(shot) // 画外音镜次补"嘴唇闭合"(幂等,在装配点做一次)
-	return EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj))))
+	return EnsureVoiceInline(EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj)))), plan, plan.Characters)
 }
 
 // onScreenTextMarker 幂等判据(改了文案必须保留这个串,否则会重复叠加)。
@@ -308,16 +308,33 @@ func EnsureOnScreenTextRule(prompt string) string {
 	if strings.Contains(prompt, onScreenTextMarker) {
 		return prompt
 	}
-	return prompt + "\n\n" + onScreenTextMarker + " (mandatory): any text that is actually visible in frame — " +
-		"signage, banners, plaques, labels, subtitles, neon — MUST be written out inside English double quotation " +
-		"marks, verbatim, one quoted string per piece of text, with the original characters and punctuation preserved " +
-		"and never translated; the model renders exactly the quoted characters. " +
-		"No other text may appear anywhere in the frame: do not invent, guess or approximate characters for any " +
-		"surface you did not quote, and do not add watermarks, logos or captions. " +
-		"Omit text entirely when the shot does not call for it.\n" +
-		"(中文对照:画面里要出现的文字(招牌/匾额/标签/字幕/霓虹)**必须用英文双引号逐条写出、逐字保留**," +
-		"模型照引号里的字渲染;引号之外**不得出现任何文字** —— 未定义的文字才会被模型编成乱码;" +
-		"不需要文字的镜头就一个都不写。)"
+	return prompt + "\n\n" + onScreenTextMarker + " (mandatory):\n" +
+		// ① 该出现的文字:仍按官方指南"引号逐字"写,但**必须贴在承载它的物件上**
+		"1. The only text allowed to be visible in the frame is text the shot explicitly calls for as part of the " +
+		"scene (a shop sign, a plaque, a banner, a letter, a book cover). Each such piece MUST be written out inside " +
+		"English double quotation marks, verbatim, in its original characters and never translated, and it must " +
+		"appear ON the object that carries it — never as a centered caption/subtitle line.\n" +
+		// ② 本条是本次真机实测的修法(见下):我们自己的说明文字被画进了画面
+		"2. NEVER turn this prompt's own text into picture content. Every instruction, note, list item and label in " +
+		"this prompt — voice descriptions, style/medium notes, subject definitions, retention analysis, manifests, " +
+		"offscreen-narration notes and any bracketed annotation such as 【…】 or […] — is addressed to YOU as a " +
+		"production note. Do not draw it, do not caption it, do not subtitle it and do not speak it aloud.\n" +
+		// ③ 字幕/系统面板一律由后期加,模型自己烧上去就是废片
+		"3. No burned-in subtitles, no captions, no lower-third text, no watermarks, no logos and no floating UI " +
+		"panels or status cards. This film's captions — and any system/status panel — are composited in " +
+		"post-production, not by you.\n" +
+		// ④ 剧本括号批注:是"内容",不是"画面文字"
+		"4. Bracketed plot annotations in the shot text (e.g. 【检测到宿主处于…状态】) are STORY CONTENT to act on — " +
+		"render the moment they describe, never the characters inside the brackets.\n" +
+		// ⑤ 官方口径的兜底(原样保留):引号之外不得有字,没有就一个都不写
+		"5. No other text may appear anywhere in the frame: do not invent, guess or approximate characters for any " +
+		"surface you did not quote, and omit text entirely when the shot does not call for it.\n" +
+		"(中文对照:① 画面里真要出现的文字(招牌/匾额/标签)**必须用英文双引号逐条写出、逐字保留**,并贴在" +
+		"承载它的物件上 —— 不许做成居中的字幕条;② 提示词自己的任何说明文字(**声线描述、画风与介质说明、" +
+		"subject_definitions、retention_analysis、编号清单、旁白说明,以及【…】这类括号批注**)都是写给模型的" +
+		"制作说明,**不许画进画面、不许当字幕、不许念出来** —— 真机实测里被念出来/被烧成字幕的正是这些行;" +
+		"③ **不许烧任何字幕/说明条/水印/系统面板**:本片的字幕与系统面板一律由后期合成;④ 剧本里的括号批注" +
+		"(如【检测到宿主处于…状态】)是**剧情内容**,要把它描述的戏演出来,而不是把括号里的字显示出来。)"
 }
 
 // facesOnOf 项目开关(未表态 = 开);proj 为 nil 时按开处理。

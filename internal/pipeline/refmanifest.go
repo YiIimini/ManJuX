@@ -2,6 +2,8 @@ package pipeline
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -106,14 +108,78 @@ func RefManifest(shot project.Shot, roles []RefRole) string {
 	return sb.String()
 }
 
-// EnsureRefManifest 把权威清单接到提示词尾部(幂等:已带过就不再叠)。
+// EnsureRefManifest 把权威清单接到提示词尾部,并**把 subject_definitions 里的每个角色
+// 绑到它实际那张图上**(幂等:已带过就不再叠)。
+//
+// 【为什么要绑】(2026-09-26 真机实测:换风格后成片男主的脸仍与定妆照对不上)
+// MiniMax 官方的**全参考模式**格式(ref-en.txt §2.1/§2.2)写得非常明确:
+//
+//	<Subject 1> is the young woman **in <Picture 1>**, with long dark hair, …
+//	"If an image is used only to define a character, scene, costume, or style,
+//	 do not create a standalone picture entry. Instead, cite the image source
+//	 INSIDE the corresponding <Subject N> definition."
+//
+// 而我们的 subject_definitions 只写 `<Subject 1> is 沈砚（human）— 十八九岁…以附图为准`,
+// **没有把任何一张图绑到这个 subject 上**("附图"是泛指)。模型于是按**文字**重画:
+// 同一个沈砚在不同镜里成了不同的人(戴抹额的公子 / 十五六岁的少年 / 长刘海青年),
+// 而定妆照只用上了它的"风格" —— 这正是用户反复报的"角色漂移"。
+// 修复不是再喊一遍"照参考图",而是补上官方那句 `in <Picture K>`。
 //
 // 位置与画面文字规则、音频标记一致放在尾部:官方要求的六段结构(subject_definitions →
 // summary → retention_analysis → detailed_description → overall_soundscape →
 // non_diegetic_music)保持不变,清单作为一段结构性声明并列其后。
-func EnsureRefManifest(prompt, manifest string) string {
-	if strings.TrimSpace(manifest) == "" || strings.Contains(prompt, refManifestKey) {
+func EnsureRefManifest(prompt string, shot project.Shot, roles []RefRole) string {
+	if len(roles) == 0 {
 		return prompt
 	}
-	return strings.TrimRight(prompt, "\n") + "\n\n" + manifest
+	if strings.Contains(prompt, refManifestKey) {
+		return prompt
+	}
+	bound := bindSubjectsToPictures(prompt, roles)
+	return strings.TrimRight(bound, "\n") + "\n\n" + RefManifest(shot, roles)
+}
+
+// reSubjectLine 匹配 subject_definitions 里的一行,捕获编号与名字。
+// 例:`<Subject 1> is 沈砚（human）— 十八九岁…` → 1 / `沈砚`
+var reSubjectLine = regexp.MustCompile(`(?m)^<Subject (\d+)>\s+is\s+([^,，.。(\n（]+)`)
+
+// bindSubjectsToPictures 给 subject_definitions 里每个角色行补上它**实际那张图**的编号:
+//
+//	`<Subject 1> is 沈砚（human）— …`      →  `<Subject 1> is 沈砚 in <Picture 1>（human）— …`
+//
+// 编号一律从 roles(渲染器按实际装配顺序给出)里取,**不猜不造**;名字对不上的行原样保留
+// (对不上说明它讲的不是这些参考图里的对象,硬塞编号比不绑更坏)。已经有 "in <Picture"
+// 的行不动(幂等)。
+func bindSubjectsToPictures(prompt string, roles []RefRole) string {
+	// 名字 → 该对象的"身份权威"图片编号(拼合图不给编号:官方明确它只提供角度,
+	// 而让它当身份源正是 2026-09-25 镜头6 漂移的根因)。
+	auth := map[string]int{}
+	for _, r := range roles {
+		switch r.Kind {
+		case "character_front", "character_front_in_strip", "scene":
+			if _, ok := auth[r.Name]; !ok {
+				auth[r.Name] = r.Picture
+			}
+		}
+	}
+	if len(auth) == 0 {
+		return prompt
+	}
+	return reSubjectLine.ReplaceAllStringFunc(prompt, func(line string) string {
+		if strings.Contains(line, "in <Picture") {
+			return line // 已绑过
+		}
+		m := reSubjectLine.FindStringSubmatch(line)
+		if m == nil {
+			return line
+		}
+		num, name := m[1], strings.TrimSpace(m[2])
+		pic, ok := auth[name]
+		if !ok {
+			return line
+		}
+		// 在名字之后插入官方句式,名称原样保留(模型要在下文按名字继续指代)。
+		return "<Subject " + num + "> is " + name + " in <Picture " + strconv.Itoa(pic) + ">" +
+			strings.TrimPrefix(line, m[0])
+	})
 }
