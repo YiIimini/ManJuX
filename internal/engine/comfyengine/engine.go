@@ -584,10 +584,19 @@ func loaders(c config.ComfySettings, accel string) map[string]any {
 //	quality = Kijai Acc-8Step(并行解码蒸馏,人物质感/清晰度显著优于 Turbo,慢约 20%)
 //	turbo   = 官方 Turbo 4step(最快,人物偏糊)
 //	express = 官方 Turbo + int8 VAE(极速抽卡预览)
+//	refine  = **不挂任何蒸馏 LoRA**,按完整步数采样(用户 2026-09-26「现在渲染的真的垃圾」)。
+//
+// refine 这一档为什么必须单独存在:Turbo/Acc 那类 LoRA 是**蒸馏**权重,只配 4-8 步用;
+// 而项目参数里那个 Turbo 开关此前只放开了步数钳制(见 stages_render 的 `if rp.Turbo`),
+// LoRA 照样挂 —— 于是"关掉 Turbo、跑 20 步"实际是"挂着 4 步蒸馏 LoRA 跑 20 步",
+// 画质比 8 步还差,而从界面与日志上都看不出原因。
 //
 // Acc-8Step 对 int8 量化底模**不兼容**(tensor 32 vs 1024,官方修复未合并主线):
 // 量化底模自动回退 Turbo,配合 fp16 VAE + ref_image_size=max。
 func accelLoraFor(job engine.Job, c config.ComfySettings) string {
+	if job.Accel == "refine" {
+		return "" // 精修档:什么加速都不挂,让底模按自己的步数好好出图
+	}
 	turbo := c.TurboLoRARef2VA
 	if job.Mode != "ref2va" {
 		turbo = c.TurboLoRAFL2VA
@@ -692,6 +701,12 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 
 	steps := job.Steps
 	switch job.Accel {
+	case "refine":
+		// 精修档:不挂蒸馏 LoRA,步数按"完整采样"给足 —— 4 步蒸馏的锚定值在这里无意义。
+		// 20 是保底(低于它等于白关蒸馏),用户可以把项目参数 steps 调到更高。
+		if steps < 20 {
+			steps = 20
+		}
 	case "quality":
 		if steps < 8 {
 			steps = 8 // Acc-8Step 蒸馏锚定 8 步

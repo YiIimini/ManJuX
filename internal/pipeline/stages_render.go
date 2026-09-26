@@ -35,8 +35,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// 单镜渲染超时取自设置页(全局),此前该配置项被引擎写死忽略 —— 用户怎么改
 	// 都不生效,只能吃 45 分钟硬编码。现在经 Job.Timeout 透传给各引擎。
 	shotTimeout := time.Duration(g.Render.ShotTimeout) * time.Minute
-	if rp.Turbo {
-		// turbo LoRA 生效时步数钳到 4-8
+	if rp.Turbo && rp.Accel != "refine" {
+		// turbo LoRA 生效时步数钳到 4-8。
+		// refine 档例外:那一档**不挂蒸馏 LoRA**(见 accelLoraFor),步数不能被 4step/8step
+		// 的锚定值压回去 —— 否则"精修档"名存实亡,渲出来还是 8 步的糊图。
 		if rp.Steps > 8 {
 			rp.Steps = 8
 		}
@@ -340,7 +342,7 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	// 兼容:默认档(turbo/空)不附加标记 —— 与旧版指纹串完全一致,存量项目续跑不触发全量重渲;
 	// 显式 quality/express 档才追加(换档=有意重渲)。
 	accelTag := ""
-	if rp.Accel == "quality" || rp.Accel == "express" {
+	if rp.Accel == "quality" || rp.Accel == "express" || rp.Accel == "refine" {
 		accelTag = "accel" + rp.Accel
 	}
 	// qualityTag:采样环境版本(v1=2026-09-10 撤下 fp16_accumulation/ck-attention
