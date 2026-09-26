@@ -153,7 +153,12 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 409, fmt.Errorf("批量产线已在运行(%s 第 %d/%d 集)", batch.prefix, batch.cur, len(batch.projects)))
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "total": len(eps)})
+	// 回执必须带**书名**与首个集名:原先只回 {ok,total},前端只能弹"共 N 集" ——
+	// 用户点了 A 卡却启动了 B 卡时,界面上一个字都对不上,谁也说不清刚才点的是哪本
+	// (2026-09-26 用户报「我点的是《求你们骂我》,结果是另一部」)。机器可判的必须在回执里。
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "prefix": prefix, "total": len(eps), "first": filepath.Base(eps[0]),
+	})
 }
 
 func (s *Server) runNovelBatch(prefix string, eps []string) {
@@ -162,14 +167,16 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		batch.running = false
 		batch.mu.Unlock()
 	}()
+	// 启动横幅必须写清**跑的是哪一本、哪几集**:原先只有书名与集数,用户点了 A 卡却启动了
+	// B 卡时界面上对不上账(2026-09-26 用户报「我点的是《求你们骂我》,结果是另一部」)。
+	// 首末集名一列,"点 A 跑 B"当场可查 —— 机器可判的信息不该只留在用户脑子里。
+	tail := ""
+	if prodAlive(prefix) {
+		tail = ";拆集仍在进行,新集将实时入队"
+	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-		Message: fmt.Sprintf("▶ 批量产线启动:《%s》首批 %d 集,逐集串行(分镜→定妆→渲染→质检→成片)%s", prefix, len(eps),
-			func() string {
-				if prodAlive(prefix) {
-					return ";拆集仍在进行,新集将实时入队"
-				}
-				return ""
-			}())})
+		Message: fmt.Sprintf("▶ 批量产线启动:《%s》首批 %d 集,逐集串行(分镜→定妆→渲染→质检→成片)｜本批:%s … %s%s",
+			prefix, len(eps), filepath.Base(eps[0]), filepath.Base(eps[len(eps)-1]), tail)})
 	waitAnnounced := false
 	for i := 0; ; i++ {
 		batch.mu.Lock()

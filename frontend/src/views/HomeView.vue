@@ -228,7 +228,7 @@ onUnmounted(() => {
 async function startBatch(prefix) {
   try {
     const r = await api.novelBatchStart(prefix)
-    ElMessage.success(`批量产线已启动:共 ${r.total} 集,逐集串行生产`)
+    ElMessage.success(`《${r.prefix || prefix}》批量产线已启动:共 ${r.total} 集,逐集串行生产`)
     pollBatch()
   } catch (e) { ElMessage.error(e.message) }
 }
@@ -298,7 +298,7 @@ async function removeProject(p) {
 // 系列卡右上角删除:整部剧集合集(全部子项目)二次确认后逐集删除
 // ---- 卡片直达:开始(启动/续跑管线)与停止(停管线+释放显存) ----
 async function startSeriesBatch(prefix) {
-  try { await api.novelBatchStart(prefix); ElMessage.success('批量产线已启动(从中断处续跑)') }
+  try { const r = await api.novelBatchStart(prefix); ElMessage.success(`《${r.prefix || prefix}》批量产线已启动(从中断处续跑)`) }
   catch (e) { ElMessage.error(e.message) }
 }
 async function stopSeriesBatch() {
