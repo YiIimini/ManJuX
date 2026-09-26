@@ -1,6 +1,9 @@
 package pipeline
 
-import "github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+import (
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/project"
+)
 
 // imagesource.go 资产**来源标签**的唯一来源。
 //
@@ -28,3 +31,16 @@ func (c *Coordinator) imageSourceKey() string {
 func (c *Coordinator) chibiSourceKey() string {
 	return c.imageSourceKey() + "-chibi"
 }
+
+// imageSourceLabel 当前图像模型家族的用户可见名,给**事件/日志**用。
+//
+// 起因(2026-09-26 真机实测):资产阶段的事件还写着「Krea-2 生成:角色「沈砚」…」,
+// 而实际跑的已经是 Qwen-Image-2.1 —— 用户 2026-09-24 报过的同一句话(「Krea-2 字样
+// 写死了,应该显示正确的内容」)在提示词与资产来源上收了口,却漏在**运行日志**上。
+// 日志是用户判断"它到底在用什么出图"的唯一现场,这里写错等于现场造假。
+func (c *Coordinator) imageSourceLabel() string {
+	return project.AssetSourceLabel(c.imageSourceKey())
+}
+
+// ImageSourceLabel 对外暴露(供 server 侧的错误文案复用同一次解析)。
+func (c *Coordinator) ImageSourceLabel() string { return c.imageSourceLabel() }

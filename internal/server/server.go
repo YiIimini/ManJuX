@@ -38,6 +38,18 @@ type Server struct {
 	lib   *library.Library
 	mux   http.Handler // 已套上来源守卫(见 guardAPI)
 	quit  func()       // 桌面模式注入的优雅退出
+
+	// startProdFn 是"拉起批量产线"的执行体,生产装配下为 nil(走真实 startBatch)。
+	//
+	// 为什么留这个接缝:导入路径(项目包导入 / 脚本创作)现在会**自动开跑**,而单元测试
+	// 一旦真的拉起产线,就会去读项目、跑 ComfyUI、最后走到 quitApp(os.Exit)——那是进程级
+	// 副作用,会把整个测试进程掀掉(2026-09-26 实测:TestReapStaleBatchFreesSingleton 因为
+	// 被别的用例遗留的产线 goroutine 抢了全局单例而变红)。
+	//
+	// 测试里换成记录器,断言的是**"这条入口有没有请求开跑、开的是哪本书"**——恰恰就是
+	// 当初漏掉的那件事(用户点「项目包导入」导了 40 集,一行 ▶ 都没有)。真实产线的启动
+	// 由真机端到端跑覆盖,不靠单元测试假装。
+	startProdFn func(prefix string, eps []string) bool
 }
 
 // SetQuitFunc 注入桌面模式的退出函数(Wails runtime.Quit)。

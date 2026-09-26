@@ -479,6 +479,10 @@ func (s *Store) SavePlan(id string, plan *Plan) error {
 }
 
 // LoadPlan 读取分镜方案。
+//
+// 顺带做一次 mode 空值推断(见 shot_mode.go):契约把"空值"的推断交给平台,而所有
+// 消费者(渲染阶段、资产范围、2K 升级)都从这里拿 plan —— 在读取边界推断一次,
+// 四处同时正确。不写回磁盘,只影响本次读取的语义。
 func (s *Store) LoadPlan(id string) (*Plan, error) {
 	raw, err := os.ReadFile(s.PlanPath(id))
 	if err != nil {
@@ -488,6 +492,7 @@ func (s *Store) LoadPlan(id string) (*Plan, error) {
 	if err := jsonUnmarshal(string(raw), &p); err != nil {
 		return nil, err
 	}
+	p.NormalizeShotModes()
 	return &p, nil
 }
 

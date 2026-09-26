@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -68,5 +69,58 @@ func TestNoHardcodedImageSource(t *testing.T) {
 		if !strings.Contains(src, "imageSourceKey()") {
 			t.Errorf("%s 看不到 imageSourceKey() 调用 —— 若它确实会写资产来源,就是漏了", f)
 		}
+	}
+}
+
+// TestNoHardcodedModelNameInUserFacingStrings 结构性闸门:**用户可见的字符串**里
+// 不许再写死模型名。
+//
+// 起因(2026-09-26 真机实测):换到 Qwen-Image-2.1 之后,资产阶段的事件仍然播报
+// 「Krea-2 生成:角色「沈砚」(832×1248)…」。用户 2026-09-24 报过同一句话
+// (「资产库里的 Krea-2 字样写死了」),提示词与资产来源都收了口,**运行日志没收** ——
+// 而日志正是用户判断"它到底在用什么出图"的唯一现场,写错等于现场造假。
+//
+// 判据取"行里的**代码部分**含 Krea-2":先把 `//` 之后的注释切掉,所以
+// 「Krea-2 是蒸馏模型(CFG 1.0)…」这类历史注释不受影响;而
+// `emit(..., "Krea-2 生成:…")` / `fmt.Errorf("…(Krea-2)")` 一律现行。
+// 家族名字典本身(project/source_label.go 的 {"krea2","Krea-2"}、imagefamily.go 的
+// Label 字段)是**合法命名**,不在扫描范围。
+func TestNoHardcodedModelNameInUserFacingStrings(t *testing.T) {
+	const bad = "Krea-2"
+	dirs := []string{".", "../server"}
+	scanned := 0
+	for _, d := range dirs {
+		ents, err := os.ReadDir(d)
+		if err != nil {
+			t.Fatalf("读目录 %s 失败: %v", d, err)
+		}
+		for _, e := range ents {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			// 词典/家族表:这些文件的职责就是给模型起名字,允许出现。
+			if name == "imagefamily.go" || name == "source_label.go" {
+				continue
+			}
+			b, err := os.ReadFile(filepath.Join(d, name))
+			if err != nil {
+				t.Fatalf("读 %s 失败: %v", name, err)
+			}
+			scanned++
+			for i, line := range strings.Split(string(b), "\n") {
+				if idx := strings.Index(line, "//"); idx >= 0 {
+					line = line[:idx] // 注释不算用户可见内容
+				}
+				if strings.Contains(line, bad) {
+					t.Errorf("%s:%d 用户可见字符串里写死了模型名 %q:%s\n"+
+						"  模型名必须从当前家族取(项目侧 c.imageSourceLabel() / 服务侧 s.pipe.ImageSourceLabel()),否则换模型后日志说的是假话",
+						filepath.Join(d, name), i+1, bad, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	if scanned < 20 {
+		t.Fatalf("只扫到 %d 个文件 —— 闸门本身可能扫错了目录", scanned)
 	}
 }

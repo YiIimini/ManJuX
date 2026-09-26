@@ -165,7 +165,7 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			applyCover(newEps)
 			if !started {
 				started = true
-				if s.startBatch(series, newEps) {
+				if s.startProd(series, newEps) {
 					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 						Message: "🚀 首段拆集就绪,批量产线提前启动(拆集继续后台补集,产线实时消费)"})
 				} else {

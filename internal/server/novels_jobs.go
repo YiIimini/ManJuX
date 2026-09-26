@@ -203,6 +203,18 @@ func (s *Server) handleNovelJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"jobs": out})
 }
 
+// startProd 是"拉起批量产线"的唯一入口(导入自动开跑 / 手动开始 / 拆集边拆边跑都走它)。
+//
+// 生产装配下 startProdFn 为 nil,直达真实 startBatch;单元测试把它换成记录器 ——
+// 真实的 startBatch 会拉起整条产线(读项目、跑 ComfyUI、结束调 quitApp),那是进程级副作用,
+// 不该在单元测试里发生(原因详见 Server.startProdFn 字段注释)。
+func (s *Server) startProd(prefix string, eps []string) bool {
+	if s.startProdFn != nil {
+		return s.startProdFn(prefix, eps)
+	}
+	return s.startBatch(prefix, eps)
+}
+
 // startBatch 启动批量产线(供 produce 与手动接口共用)。
 func (s *Server) startBatch(prefix string, eps []string) bool {
 	if len(eps) == 0 {

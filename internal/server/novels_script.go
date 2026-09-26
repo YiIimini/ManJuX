@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-
-	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
 
 // novels_script.go 小说库的**第二个人口**:技能端已经出了脚本,平台就直接导包,不再跑 LLM 拆集。
@@ -152,36 +150,10 @@ func (s *Server) handleNovelProduceScript(w http.ResponseWriter, r *http.Request
 		return
 	}
 	prefix := orDefault(bs.Book, filepath.Base(book))
-	s.opLog("📜 脚本创作:%s → 导入 %s(%d 集,契约 %s)",
-		filepath.Base(book), bs.Root, bs.Episodes, orDefault(bs.Version, "?"))
+	s.opLog("📜 脚本创作:《%s》 → 导入 %s(%d 集,契约 %s)",
+		prefix, bs.Root, bs.Episodes, orDefault(bs.Version, "?"))
 	s.importPackageRoot(w, bs.Root)
-
-	// 导入只是"把脚本变成项目"。用户点这个入口的意图是**开始生产** —— 所以紧接着把这本
-	// 书的批量产线拉起来,与「视频制作」那条路对齐(它拆完集也会自动开产线)。
-	// 2026-09-26 用户问「脚本创作 导入后就完事了?」:原先确实就完了,用户得自己再去首页
-	// 找到那本书点「开始」。导入被拒收时走不到这里(importPackageRoot 已写了错误响应)。
-	eps := s.episodesOf(prefix)
-	if len(eps) == 0 {
-		return
-	}
-	// 启动前**先回收死批次** —— 产线是单例,失败/停下来的那批不会自己让位,不让位就永远起不来
-	// (2026-09-26:用户点脚本创作导入了 40 集,界面什么都不发生,根因就是这个)。这是本应用
-	// 自己的 bug,不该甩给用户去点「停止」。
-	s.reapStaleBatch()
-	if s.startBatch(prefix, eps) {
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-			Message: fmt.Sprintf("📜 脚本创作:《%s》已导入 %d 集并启动批量产线(资产定妆→渲染→质检→成片)", prefix, len(eps))})
-		return
-	}
-	// 起不来必须**大声说出来**。原先这里静默 batchAppend,而产线是**单例**:只要还残留着
-	// 另一本书的批次(哪怕它已经失败暂停、界面上什么都没在跑),新导入的这几十集就等于
-	// 喂进了那个死批次 —— 界面上什么都不发生,用户看到的就是"脚本创作导入后就完事了"
-	// (2026-09-26 用户报的正是这句)。静默降级在"单例资源"上是错的:必须点名谁占着它。
-	batch.mu.Lock()
-	holder, held, running := batch.prefix, len(batch.projects), batch.running
-	batch.mu.Unlock()
-	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-		Message: fmt.Sprintf("⚠ 脚本创作:《%s》已导入 %d 集,但批量产线被《%s》(%d 集, running=%v)占着 —— "+
-			"先在首页点那张卡的「停止」,再重新点「脚本创作」即可开跑", prefix, len(eps), holder, held, running)})
-	s.batchAppend(prefix, eps)
+	// 导入只是"把脚本变成项目"。用户点这个入口的意图是**开始生产**,而自动开跑长在
+	// importPackageRoot(导入本体)里 —— 所以两个入口(项目包导入 / 脚本创作)行为完全一致:
+	// 导完就起产线。这里**不再自己起一次**,避免同一本书被启动两遍。
 }

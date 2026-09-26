@@ -145,7 +145,7 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 	// 启动前先收拾死批次:单例被"停下来的旧批次"占着时,新批次永远起不来
 	// (这是本应用自己的 bug,不该让用户去手动点「停止」)。
 	s.reapStaleBatch()
-	if !s.startBatch(prefix, eps) {
+	if !s.startProd(prefix, eps) {
 		writeErr(w, 409, fmt.Errorf("批量产线已在运行(%s 第 %d/%d 集)", batch.prefix, batch.cur, len(batch.projects)))
 		return
 	}

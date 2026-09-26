@@ -51,7 +51,13 @@ func newTestServer(t *testing.T) *Server {
 	f := new(ff.FF) // 零值即可:被测路由只读 Ffmpeg 字段,不触发 ffprobe
 	bus := pipeline.NewBus()
 	coord := pipeline.New(store, cfg, reg, f, bus, lib)
-	return New(cfg, store, reg, coord, f, bus, lib)
+	s := New(cfg, store, reg, coord, f, bus, lib)
+	// 单元测试里绝不拉起真实产线:真实 startBatch 会起一条跑 ComfyUI/LLM、最后调 quitApp
+	// (os.Exit)的 goroutine,而 batch 是**包级单例** —— 它会把测试进程掀掉,也会抢走别的
+	// 用例的产线(2026-09-26 实测)。换成记录器后,被测的是"哪条入口请求了开跑、开的是哪本书"
+	// (这正是当初漏掉的行为),真实启动留给真机端到端。
+	s.startProdFn = func(string, []string) bool { return true }
+	return s
 }
 
 // doReq 发一个请求并解析响应体为 map(空体返回 nil)。

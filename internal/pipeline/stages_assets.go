@@ -139,7 +139,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					File: filepath.ToSlash(rel), ImagePrompt: imagePrompt,
 					Source: c.imageSourceKey(), Fingerprint: project.FingerprintFile(path),
 				}
-				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」(%s)", kindLabel(kind), name, EntityKindLabel(ek))
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」%s",
+					kindLabel(kind), name, entityKindSuffix(kind, ek))
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
 				if kind == "characters" && p.ViewsOn() {
 					pendingViews = append(pendingViews, pendingView{
@@ -303,8 +304,21 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
 	seed := nameSeed(kind, name)
-	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "Krea-2 生成:%s「%s」(%d×%d)…", kindLabel(kind), name, w, h)
+	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "%s 生成:%s「%s」(%d×%d)…", c.imageSourceLabel(), kindLabel(kind), name, w, h)
 	return ce.GenerateImage(ctx, imagePrompt, imageNegative, seed, w, h, out)
+}
+
+// entityKindSuffix 只在**角色**这一类后面挂实体类型(人/物/灵宠/妖兽/无实体/Q 版)。
+//
+// 场景没有实体类型,而原先是无条件挂 EntityKindLabel(ek) —— 场景的 ek 是零值,
+// 空值一路走到 default 得到「人」,于是真机日志里出现
+// 「✔ 已生成:场景「临水城」(人)」(2026-09-26 实测)。日志写错比不写更坏:
+// 用户看到会以为平台把场景当人画了,而这类"显示与事实不符"他已经报过两次。
+func entityKindSuffix(kind string, ek EntityKind) string {
+	if kind != "characters" {
+		return ""
+	}
+	return "(" + EntityKindLabel(ek) + ")"
 }
 
 // genCharacterViews 资产阶段的多视角产出:定妆照 → H3 Ref2V 转身视频 → 抽帧 →
@@ -565,7 +579,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地 ComfyUI 未就绪(%v),对应镜头将降级纯文生", len(list), err)
 		return false
 	}
-	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(Krea-2)…", len(list))
+	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(list), c.imageSourceLabel())
 	for _, m := range list {
 		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt)
 		if err != nil {

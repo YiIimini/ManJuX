@@ -175,6 +175,10 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 		// 后处理:与分镜阶段同等(台词时长预算 + 中文台词标记),再存盘
 		id := filepath.Base(dest)
 		details, overflow := s.planPostProcess(id, st.plan)
+		// 契约把 mode 空值交给平台推断(见 project/shot_mode.go),而技能端产出的方案
+		// 根本不写这个字段 —— 于是**导入时就推断并落盘**,盘上是具体值:
+		// 用户/技能端都能看到平台实际按什么模式跑,而不是读取时才算。
+		nMode := st.plan.NormalizeShotModes()
 		if err := s.store.SavePlan(id, st.plan); err != nil {
 			writeErr(w, 500, err)
 			return
@@ -183,8 +187,12 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 			Package: filepath.Base(st.pkg), ID: id, Shots: len(st.plan.Shots),
 			Warns: append(warnsText(st.issues), append(details, overflow...)...),
 		})
-		s.opLog("📥 已导入项目包(项目「%s」):%d 镜 / %d 角色 / %d 场景",
-			id, len(st.plan.Shots), len(st.plan.Characters), len(st.plan.Scenes))
+		tail := ""
+		if nMode > 0 {
+			tail = fmt.Sprintf("(其中 %d 镜 mode 为空,已按 ref2va 推断)", nMode)
+		}
+		s.opLog("📥 已导入项目包(项目「%s」):%d 镜 / %d 角色 / %d 场景%s",
+			id, len(st.plan.Shots), len(st.plan.Characters), len(st.plan.Scenes), tail)
 	}
 	added, total := s.store.Rescan() // 让新目录进索引(与 rescan 端点同一实现)
 	if len(added) > 0 {
@@ -195,6 +203,47 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 		"rescan_added": added, "projects_total": total,
 		"contract": fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
 	})
+	// 导入完就**自动开跑**。放在这里(导入本体)而不是各入口各写一遍:
+	// 导入入口不止一个(小说库「脚本创作」、项目包导入),谁漏一处,用户看到的就是
+	// "导入了但什么都不跑" —— 2026-09-26 实测:用户点的是「项目包导入」,日志里
+	// 只有 📥 40 行 + 🔄 重扫,一行 ▶ 都没有,而自动开跑只长在我那条入口上。
+	// 用户点"导入"的意图是出片,不是把文件抄进 data/projects。
+	bookPrefix := ""
+	for _, r := range results {
+		if r.ID != "" {
+			if i := strings.Index(r.ID, "·第"); i > 0 {
+				bookPrefix = r.ID[:i]
+				break
+			}
+		}
+	}
+	s.autoStartBatch(bookPrefix)
+}
+
+// autoStartBatch 导入成功后为**这一本**书启动批量产线。
+//
+// 只开一本:产线是**单例**(一张显卡),同时开多本只会互相拖死;用户一次导入多本时,
+// 先跑第一本,其余到首页点「开始」即可(界面会显示产线正在跑哪本)。
+func (s *Server) autoStartBatch(prefix string) {
+	if strings.TrimSpace(prefix) == "" {
+		return
+	}
+	eps := s.episodesOf(prefix)
+	if len(eps) == 0 {
+		return
+	}
+	s.reapStaleBatch() // 先请走死批次,否则单例被占着永远起不来
+	if s.startProd(prefix, eps) {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+			Message: fmt.Sprintf("📜 已导入并启动批量产线:《%s》%d 集(资产定妆→渲染→质检→成片)", prefix, len(eps))})
+		return
+	}
+	batch.mu.Lock()
+	holder, held, running := batch.prefix, len(batch.projects), batch.running
+	batch.mu.Unlock()
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+		Message: fmt.Sprintf("⚠ 《%s》已导入 %d 集,但批量产线被《%s》(%d 集, running=%v)占着 —— "+
+			"先在首页点那张卡的「停止」再点「开始」", prefix, len(eps), holder, held, running)})
 }
 
 // pkgManifest 技能端项目包的 manifest(契约声明 + 归属信息)。

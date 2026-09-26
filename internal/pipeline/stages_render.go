@@ -184,7 +184,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 参考图组装(ref2va):角色定妆照 + 场景图(契约与顺序见 RefPlan)
 		var refs []engine.RefImage
 		var roles []RefRole
-		mode := shot.Mode
+		mode := project.EffectiveShotMode(shot)
 		if proj.Config.Params.Assets.Source != "skip" && mode == "ref2va" {
 			var missing []string
 			refs, roles, missing = RefPlan(c.store.Dir(proj.ID), shot, assets,

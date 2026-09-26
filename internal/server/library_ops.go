@@ -76,7 +76,7 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 	// Krea-2 定妆照(按实体类型取景:抽卡也可能抽出一只器物/妖兽)
 	imgPath, err := s.genLibraryPortrait(ctx, card.Name, card.Description, card.ImagePrompt, pipeline.RandomSeed())
 	if err != nil {
-		writeErr(w, 500, fmt.Errorf("抽卡定妆失败(Krea-2):%w", err))
+		writeErr(w, 500, fmt.Errorf("抽卡定妆失败(%s):%w", s.pipe.ImageSourceLabel(), err))
 		return
 	}
 	entry, err := s.lib.Put("characters", card.Name, card.Description, card.ImagePrompt, imgPath, "", "gacha")
@@ -178,7 +178,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		defer cancel()
 		p, err := s.genLibraryPortrait(ctx, name, desc, prompt, pipeline.RandomSeed())
 		if err != nil {
-			writeErr(w, 500, fmt.Errorf("定妆生成失败(Krea-2):%w", err))
+			writeErr(w, 500, fmt.Errorf("定妆生成失败(%s):%w", s.pipe.ImageSourceLabel(), err))
 			return
 		}
 		imgPath = p
