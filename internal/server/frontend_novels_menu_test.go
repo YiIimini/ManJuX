@@ -105,6 +105,12 @@ func TestCoverMenuPositioningLivesOnTheWrapper(t *testing.T) {
 	if !strings.Contains(wrap, "top: 8px") || !strings.Contains(wrap, "right: 8px") {
 		t.Errorf(".cover-menu-wrap 应贴封面右上 8px:\n%s", wrap)
 	}
+	// 权重必须压过 Element Plus 的 .el-dropdown(main.js 把它的样式放在 style.css 之后,
+	// 同权重时后写的胜)—— 2026-09-26 实测:只写一遍类名时那段 absolute 被顶成 relative,
+	// 钮跑到封面左上角。判据直接看选择器本体:类名必须写两遍。
+	if !strings.Contains(css, ".cover-menu-wrap.cover-menu-wrap {") {
+		t.Error(".cover-menu-wrap 的选择器必须把类名写两遍(0,2,0)以压过 Element Plus 的 .el-dropdown —— 只写一遍会被它的 position:relative 顶掉,钮跑到左上角")
+	}
 	btn := cssBlockOf(t, css, ".cover-menu {")
 	if strings.Contains(btn, "position:") {
 		t.Errorf(".cover-menu 自己不许再定位 —— 这次就是栽在这里(相对 .el-dropdown 的 0 宽盒子):\n%s", btn)

@@ -1305,11 +1305,15 @@ body::after {
 /* 作品菜单触发钮(2026-09-25:小说库把"删除"收进菜单 —— 隐藏比删除常用,而删除不可逆,
    不该独占最容易误点的那一格)。观感与删除钮完全同源,只差 hover:菜单**悬停转银白/琥珀**,
    不转红(红色是"要删东西"的暗示,菜单不是删除)。 */
-.cover-menu-wrap {
+.cover-menu-wrap.cover-menu-wrap {
   position: absolute;
   top: 8px; right: 8px;
   line-height: 0; /* 去掉 inline-block 基线留白,按钮才能铺满 27×27 */
 }
+/* ↑ 类名故意写两遍:Element Plus 自带 `.el-dropdown{…}`(main.js 里它的样式在
+   style.css **之后**引入),同权重下后写的胜 —— 只写一遍时这段 position:absolute 会被
+   `.el-dropdown` 顶成 relative,top/right 变成相对自身的偏移,钮就跑到封面左上角去了
+   (2026-09-26 用户截图实测)。写两遍把权重提到 0,2,0,不再看引入顺序的脸色。 */
 .cover-menu:hover {
   background: color-mix(in srgb, var(--mx-amber) 24%, color-mix(in srgb, var(--mx-bg0) 62%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mx-amber) 70%, transparent);
