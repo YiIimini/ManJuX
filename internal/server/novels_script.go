@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -93,8 +94,12 @@ func (s *Server) findBookScript(bookPath string) *bookScript {
 
 // readPackageIdentity 读一个包的身份(书名 / 契约版本)。
 //
-// manifest.json 读不到时**用目录名当书名兜底**:书目录名就是书名(扫描器也是这么取名的),
-// 少一行字而已,不该因此让整本书的脚本检测失败。契约版本读不到就留空。
+// manifest.json 读不到时**用目录名当书名兜底**:少一行字而已,不该因此让整本书的脚本检测失败。
+//
+// 【踩过的坑 · 2026-09-26 真机】原先 `Version` 声明成 `string`,而技能端 manifest 里的
+// `version` 是**数字 2** —— `json.Unmarshal` 直接整条失败(类型不符),于是**书名也一起**
+// 掉进目录名兜底:小说库的脚本卡上显示的是「求你们骂我·第01集·求你们骂我」,版本永远是空。
+// 一个字段类型写错,连带另一个字段说谎 —— 所以这里按 `any` 收,数字/字符串都认。
 func readPackageIdentity(pkgDir string) (book, version string) {
 	book = filepath.Base(pkgDir)
 	raw, err := os.ReadFile(filepath.Join(pkgDir, "manifest.json"))
@@ -103,7 +108,7 @@ func readPackageIdentity(pkgDir string) (book, version string) {
 	}
 	var man struct {
 		Book    string `json:"book"`
-		Version string `json:"version"`
+		Version any    `json:"version"`
 	}
 	if json.Unmarshal(raw, &man) != nil {
 		return book, ""
@@ -111,7 +116,13 @@ func readPackageIdentity(pkgDir string) (book, version string) {
 	if strings.TrimSpace(man.Book) != "" {
 		book = strings.TrimSpace(man.Book)
 	}
-	return book, strings.TrimSpace(man.Version)
+	switch v := man.Version.(type) {
+	case string:
+		version = strings.TrimSpace(v)
+	case float64:
+		version = strconv.Itoa(int(v))
+	}
+	return book, version
 }
 
 func dedupStrings(in []string) []string {

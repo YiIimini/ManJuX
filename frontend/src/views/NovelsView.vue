@@ -34,6 +34,13 @@ const dlg = ref(null)       // {novel, chapters}
 const reading = ref(null)   // {name, text, truncated, chars}
 const readBusy = ref(false)
 const navCollapsed = ref(false)          // 右侧目录栏收起
+// 详情弹窗的分页:正文 / 剧本脚本 / 角色 / 场景(用户 2026-09-26:
+// 「剧本脚本、角色、场景相关内容也需要可查看详情内容」)
+const dlgTab = ref('read')
+const script = ref(null)        // /api/novels/script 的汇总(集清单 + 角色 + 场景)
+const scriptShots = ref([])     // 当前选中集的镜头明细
+const scriptEp = ref('')
+const scriptBusy = ref(false)
 const expandedDirs = ref(new Set())      // 展开的目录节点 key
 const chapTree = ref([])
 // 中文数字段→数值(卷二→2,卷二十三→23);非中文数字返回 null
@@ -124,7 +131,64 @@ async function openDetail(n) {
     walk(chapTree.value)
     expandedDirs.value = ex
     navCollapsed.value = false
+    // 剧本/角色/场景:异步补拉(它读的是技能端脚本包,可能不存在 —— 不挡阅读)
+    dlgTab.value = 'read'
+    script.value = null
+    scriptShots.value = []
+    scriptEp.value = ''
+    loadScript()
   } catch (e) { ElMessage.error(e.message) }
+}
+
+// loadScript 拉「剧本脚本/角色/场景」汇总(不跑 LLM,只读已有脚本包)。
+async function loadScript() {
+  if (!dlg.value) return
+  scriptBusy.value = true
+  try {
+    script.value = await api.novelScript(dlg.value.novel.path)
+    if (script.value?.found && (script.value.episodes || []).length) {
+      // 默认展开第一集:用户点「剧本脚本」要看的通常是"第01集到底拍了什么"
+      await pickEpisode(script.value.episodes[0].dir)
+    }
+  } catch (e) { script.value = { found: false, hint: e.message } }
+  finally { scriptBusy.value = false }
+}
+
+// pickEpisode 取某一集的镜头明细(40 集 × 60 镜一次全拉是几百 KB 的白等)
+async function pickEpisode(dir) {
+  if (!dlg.value) return
+  scriptEp.value = dir
+  try {
+    const r = await api.novelScript(dlg.value.novel.path, dir)
+    scriptShots.value = r.shots || []
+  } catch (e) { ElMessage.error(e.message); scriptShots.value = [] }
+}
+
+// ---------- 详情弹窗:鼠标拖动改大小 ----------
+// 为什么自己做而不是 CSS resize:需要同时受最小/最大尺寸约束,并且在拖动中实时生效;
+// CSS `resize: both` 只能改元素盒、改不到 el-dialog 的宽度与内部布局高度。
+const dlgW = ref(960)
+const dlgH = ref(620)
+const resizing = ref(false)
+function startResize(e) {
+  if (e.button !== 0) return
+  const sx = e.clientX, sy = e.clientY
+  const sw = dlgW.value, sh = dlgH.value
+  resizing.value = true
+  const move = (ev) => {
+    const maxW = Math.max(560, window.innerWidth - 80)
+    const maxH = Math.max(360, window.innerHeight - 100)
+    dlgW.value = Math.min(maxW, Math.max(560, sw + (ev.clientX - sx)))
+    dlgH.value = Math.min(maxH, Math.max(360, sh + (ev.clientY - sy)))
+  }
+  const up = () => {
+    resizing.value = false
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+  e.preventDefault()
 }
 function toggleDir(key) {
   if (expandedDirs.value.has(key)) expandedDirs.value.delete(key)
@@ -341,56 +405,147 @@ function onCardCmd(cmd, n) {
       </div>
     </div>
 
-    <!-- 阅读详情弹窗:章节文件管理 + 正文 -->
+    <!-- 阅读详情弹窗:章节文件管理 + 正文 + 剧本脚本 + 角色 + 场景
+         尺寸可拖(右下角拖柄):详情要看的既有正文也有分镜表,固定 860px 装不下。 -->
     <el-dialog :model-value="!!dlg" :title="dlg ? '《' + dlg.novel.name + '》· 阅读详情' : ''"
-               width="860px" top="5vh" @update:model-value="dlg = null">
+               :width="dlgW + 'px'" top="4vh" class="novel-dlg" @update:model-value="dlg = null">
       <template v-if="dlg">
-        <div class="flex items-center gap-3 mb-3 text-xs" style="color:var(--mx-text2)">
+        <div class="flex items-center gap-3 mb-2 text-xs" style="color:var(--mx-text2)">
           <span>{{ fmtChars(dlg.novel.chars) }}</span>
           <span>· {{ dlg.chapters.length }} 个章节文件</span>
+          <span v-if="script?.found">· 脚本 {{ script.episodes.length }} 集</span>
           <div class="flex-1"></div>
           <el-tag v-if="dlg.novel.produced" size="small" type="success">已创作(首页剧集合集)</el-tag>
+          <span class="timecode" style="font-size:10px" title="拖动右下角圆点调整弹窗大小">⇲ 可拖动改大小</span>
         </div>
-        <div class="flex gap-3" style="min-height:400px">
-          <!-- 主区:正文阅读 -->
-          <div class="panel p-4 flex flex-col flex-1" style="max-height:60vh;min-width:0">
-            <template v-if="reading">
-              <div class="flex items-center gap-2 mb-2">
-                <b class="text-xs truncate">{{ reading.name }}</b>
-                <span class="timecode">{{ reading.chars ? reading.chars.toLocaleString() + ' 字' : '' }}</span>
-                <span v-if="reading.truncated" class="timecode" style="color:var(--mx-yellow)">(过长已截断预览)</span>
-              </div>
-              <div class="text-xs flex-1 overflow-y-auto read-body" style="line-height:1.9;white-space:pre-wrap;color:var(--mx-text2)">{{ reading.text }}</div>
-            </template>
-            <div v-else class="flex-1 flex flex-col items-center justify-center gap-2" style="color:var(--mx-text3)">
-              <el-icon :size="30"><Reading /></el-icon>
-              <span class="text-xs">点击右侧目录中的章节阅读正文</span>
-            </div>
-          </div>
 
-          <!-- 右侧独立目录栏(可收起/展开;目录节点可折叠) -->
-          <div v-if="!navCollapsed" class="nav-tree flex flex-col" style="max-height:60vh">
-            <div class="flex items-center gap-2 px-3 py-2 flex-none" style="border-bottom:1px solid var(--mx-line)">
-              <el-icon :size="13" color="var(--mx-amber)"><Folder /></el-icon>
-              <b class="text-xs flex-1">目录</b>
-              <span class="timecode" style="font-size:10px">{{ dlg.chapters.length }}</span>
-              <el-button text size="small" @click="navCollapsed = true" title="收起目录栏">
-                <el-icon :size="13"><ArrowRight /></el-icon>
-              </el-button>
+        <el-tabs v-model="dlgTab" class="novel-dlg-tabs">
+          <!-- ① 正文(原有阅读区) -->
+          <el-tab-pane label="正文" name="read">
+            <div class="flex gap-3" :style="{ height: dlgH - 150 + 'px' }">
+              <div class="panel p-4 flex flex-col flex-1" style="min-width:0">
+                <template v-if="reading">
+                  <div class="flex items-center gap-2 mb-2">
+                    <b class="text-xs truncate">{{ reading.name }}</b>
+                    <span class="timecode">{{ reading.chars ? reading.chars.toLocaleString() + ' 字' : '' }}</span>
+                    <span v-if="reading.truncated" class="timecode" style="color:var(--mx-yellow)">(过长已截断预览)</span>
+                  </div>
+                  <div class="text-xs flex-1 overflow-y-auto read-body" style="line-height:1.9;white-space:pre-wrap;color:var(--mx-text2)">{{ reading.text }}</div>
+                </template>
+                <div v-else class="flex-1 flex flex-col items-center justify-center gap-2" style="color:var(--mx-text3)">
+                  <el-icon :size="30"><Reading /></el-icon>
+                  <span class="text-xs">点击右侧目录中的章节阅读正文</span>
+                </div>
+              </div>
+
+              <!-- 右侧独立目录栏(可收起/展开;目录节点可折叠) -->
+              <div v-if="!navCollapsed" class="nav-tree flex flex-col" :style="{ maxHeight: dlgH - 150 + 'px' }">
+                <div class="flex items-center gap-2 px-3 py-2 flex-none" style="border-bottom:1px solid var(--mx-line)">
+                  <el-icon :size="13" color="var(--mx-amber)"><Folder /></el-icon>
+                  <b class="text-xs flex-1">目录</b>
+                  <span class="timecode" style="font-size:10px">{{ dlg.chapters.length }}</span>
+                  <el-button text size="small" @click="navCollapsed = true" title="收起目录栏">
+                    <el-icon :size="13"><ArrowRight /></el-icon>
+                  </el-button>
+                </div>
+                <div class="flex-1 overflow-y-auto py-1.5 tree-scroll">
+                  <ChapterTree :nodes="chapTree" :expanded="expandedDirs" :reading="reading"
+                              @read="readChapter" @toggle="toggleDir" />
+                </div>
+              </div>
+              <!-- 收起态:展开按钮 -->
+              <div v-else class="flex flex-col align-center gap-2" style="width:34px;flex:none">
+                <el-button text size="small" @click="navCollapsed = false" title="展开目录栏">
+                  <el-icon :size="14"><ArrowLeft /></el-icon>
+                </el-button>
+                <span class="timecode" style="writing-mode:vertical-rl;font-size:10px">目录 {{ dlg.chapters.length }}</span>
+              </div>
             </div>
-            <div class="flex-1 overflow-y-auto py-1.5 tree-scroll">
-              <ChapterTree :nodes="chapTree" :expanded="expandedDirs" :reading="reading"
-                          @read="readChapter" @toggle="toggleDir" />
+          </el-tab-pane>
+
+          <!-- ② 剧本脚本:集清单 + 该集分镜明细(只读已有脚本包,不跑 LLM) -->
+          <el-tab-pane label="剧本脚本" name="script">
+            <div v-if="scriptBusy" class="text-xs py-6 text-center" style="color:var(--mx-text3)">读取脚本包…</div>
+            <div v-else-if="!script?.found" class="text-xs py-6 text-center" style="color:var(--mx-text3)">
+              {{ script?.hint || '这本书目录里没有技能端脚本包' }}
             </div>
-          </div>
-          <!-- 收起态:展开按钮 -->
-          <div v-else class="flex flex-col align-center gap-2" style="width:34px;flex:none">
-            <el-button text size="small" @click="navCollapsed = false" title="展开目录栏">
-              <el-icon :size="14"><ArrowLeft /></el-icon>
-            </el-button>
-            <span class="timecode" style="writing-mode:vertical-rl;font-size:10px">目录 {{ dlg.chapters.length }}</span>
-          </div>
-        </div>
+            <div v-else class="flex gap-3" :style="{ height: dlgH - 150 + 'px' }">
+              <!-- 集清单 -->
+              <div class="nav-tree flex flex-col" style="width:190px;flex:none">
+                <div class="flex items-center gap-2 px-3 py-2 flex-none" style="border-bottom:1px solid var(--mx-line)">
+                  <b class="text-xs flex-1">集({{ script.episodes.length }})</b>
+                  <span class="timecode" style="font-size:10px">{{ script.kind === 'series' ? '系列' : '单集' }}</span>
+                </div>
+                <div class="flex-1 overflow-y-auto py-1 tree-scroll">
+                  <div v-for="e in script.episodes" :key="e.dir" class="ep-row" :class="{ on: scriptEp === e.dir }"
+                       @click="pickEpisode(e.dir)">
+                    <b class="text-xs truncate">{{ e.episode }}</b>
+                    <span class="text-xs truncate" style="color:var(--mx-text3)">{{ e.title }}</span>
+                    <span class="timecode" style="font-size:10px">{{ e.shots }} 镜</span>
+                  </div>
+                </div>
+              </div>
+              <!-- 该集镜头表 -->
+              <div class="panel p-3 flex flex-col flex-1" style="min-width:0">
+                <div class="flex items-center gap-2 mb-2">
+                  <b class="text-xs">分镜明细</b>
+                  <span class="timecode">{{ scriptShots.length }} 镜</span>
+                  <span class="timecode" style="font-size:10px">景别 · 时长 · 台词/旁白</span>
+                </div>
+                <div class="flex-1 overflow-y-auto tree-scroll">
+                  <div v-for="s in scriptShots" :key="s.id" class="shot-row">
+                    <div class="flex items-center gap-2">
+                      <span class="timecode" style="min-width:38px">#{{ s.id }}</span>
+                      <el-tag size="small" effect="plain">{{ s.size || '—' }}</el-tag>
+                      <span class="timecode">{{ s.duration }}s</span>
+                      <el-tag size="small" :type="s.mode === 'ref2va' ? 'warning' : 'info'" effect="plain">{{ s.mode }}</el-tag>
+                    </div>
+                    <div class="text-xs mt-1" style="white-space:pre-wrap">{{ s.action }}</div>
+                    <div v-for="(d, i) in (s.dialogue || [])" :key="i" class="text-xs mt-1" style="color:var(--mx-amber)">💬 {{ d }}</div>
+                    <div v-if="s.narration" class="text-xs mt-1" style="color:var(--mx-text3)">🎙 旁白:{{ s.narration }}</div>
+                  </div>
+                  <div v-if="!scriptShots.length" class="text-xs py-6 text-center" style="color:var(--mx-text3)">选一集看分镜</div>
+                </div>
+              </div>
+            </div>
+          </el-tab-pane>
+
+          <!-- ③ 角色 -->
+          <el-tab-pane :label="`角色${script?.characters ? '（' + script.characters.length + '）' : ''}`" name="chars">
+            <div class="overflow-y-auto" :style="{ height: dlgH - 150 + 'px' }">
+              <div v-if="!script?.characters?.length" class="text-xs py-6 text-center" style="color:var(--mx-text3)">这本书的脚本里没有角色卡</div>
+              <div v-for="c in (script?.characters || [])" :key="c.id || c.name" class="card-item">
+                <div class="flex items-center gap-2">
+                  <b class="text-sm">{{ c.name }}</b>
+                  <el-tag size="small" effect="plain">{{ c.kind || 'human' }}</el-tag>
+                  <span class="timecode" style="font-size:10px">出场 {{ c.in }} 集</span>
+                  <span class="timecode" style="font-size:10px">{{ c.id }}</span>
+                </div>
+                <div class="text-xs mt-1" style="white-space:pre-wrap;color:var(--mx-text2)">{{ c.desc }}</div>
+                <div v-if="c.voice" class="text-xs mt-1" style="color:var(--mx-amber)">🔊 声线:{{ c.voice }}</div>
+                <details v-if="c.prompt" class="mt-1">
+                  <summary class="text-xs" style="cursor:pointer;color:var(--mx-text3)">定妆照提示词</summary>
+                  <div class="text-xs mt-1" style="white-space:pre-wrap;color:var(--mx-text3)">{{ c.prompt }}</div>
+                </details>
+              </div>
+            </div>
+          </el-tab-pane>
+
+          <!-- ④ 场景 -->
+          <el-tab-pane :label="`场景${script?.scenes ? '（' + script.scenes.length + '）' : ''}`" name="scenes">
+            <div class="overflow-y-auto" :style="{ height: dlgH - 150 + 'px' }">
+              <div v-if="!script?.scenes?.length" class="text-xs py-6 text-center" style="color:var(--mx-text3)">这本书的脚本里没有场景卡</div>
+              <div v-for="s in (script?.scenes || [])" :key="s.id || s.name" class="card-item">
+                <div class="flex items-center gap-2">
+                  <b class="text-sm">{{ s.name }}</b>
+                  <span class="timecode" style="font-size:10px">出现 {{ s.in }} 集</span>
+                  <span class="timecode" style="font-size:10px">{{ s.id }}</span>
+                </div>
+                <div class="text-xs mt-1" style="white-space:pre-wrap;color:var(--mx-text2)">{{ s.desc }}</div>
+              </div>
+            </div>
+          </el-tab-pane>
+        </el-tabs>
       </template>
       <template #footer>
         <el-button @click="dlg = null">关闭</el-button>
@@ -401,6 +556,8 @@ function onCardCmd(cmd, n) {
         </el-button>
         </el-tooltip>
       </template>
+      <!-- 右下角拖动柄:改弹窗宽高(受窗口边界约束) -->
+      <div class="novel-dlg-grip" :class="{ on: resizing }" title="拖动调整弹窗大小" @mousedown="startResize"></div>
     </el-dialog>
   </div>
 </template>

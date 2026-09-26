@@ -210,6 +210,9 @@ export const api = {
   novels: (withHidden) => req('GET', '/api/novels' + (withHidden ? '?hidden=1' : '')),
   novelHidden: (path, hidden) => req('POST', '/api/novels/hidden', { path, hidden }),
   novelDetail: (path) => req('GET', '/api/novels/detail?path=' + encodeURIComponent(path)),
+  // 剧本脚本/角色/场景(读技能端已产出的脚本包;episode 给出时带这一集的镜头明细)
+  novelScript: (path, episode) => req('GET', '/api/novels/script?path=' + encodeURIComponent(path) +
+    (episode ? '&episode=' + encodeURIComponent(episode) : '')),
   novelRead: (path) => req('GET', '/api/novels/read?path=' + encodeURIComponent(path)),
   novelDelete: (path) => req('DELETE', '/api/novels?path=' + encodeURIComponent(path)),
   openPath: (payload) => req('POST', '/api/open', payload),

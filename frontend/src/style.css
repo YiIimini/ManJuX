@@ -1583,3 +1583,43 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   background: transparent; transition: background .15s;
 }
 .side-resizer:hover::after { background: var(--mx-accent, var(--mx-amber)); }
+
+/* ── 小说详情弹窗:可拖动大小 + 剧本/角色/场景分页(2026-09-26 用户要求) ──
+   拖柄必须**绝对定位在 .el-dialog 上**,而 EP 的 .el-dialog 自带 position:relative,
+   这里再显式写一遍并以**双类名**(0,2,0)立住 —— 只写一遍会被 EP 的同权重规则顶掉
+   (封面菜单钮那次就是栽在这上面,见 frontend_novels_menu_test.go)。 */
+.novel-dlg.novel-dlg { position: relative; }
+.novel-dlg-grip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  border-right: 2px solid var(--mx-line);
+  border-bottom: 2px solid var(--mx-line);
+  border-radius: 0 0 6px 0;
+  z-index: 5;
+}
+.novel-dlg-grip:hover, .novel-dlg-grip.on { border-color: var(--mx-amber); }
+.novel-dlg-tabs .el-tabs__header { margin-bottom: 10px; }
+/* 集清单一行:集号 + 标题 + 镜数 */
+.ep-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+.ep-row:hover { background: var(--mx-hover-soft); }
+.ep-row.on { border-left-color: var(--mx-amber); background: var(--mx-hover-soft); }
+/* 镜头/角色/场景条目 */
+.shot-row, .card-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--mx-line);
+  border-radius: 8px;
+  background: var(--mx-hover-soft);
+}
+.shot-row:last-child, .card-item:last-child { margin-bottom: 0; }
