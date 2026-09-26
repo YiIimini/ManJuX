@@ -1623,3 +1623,22 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
   background: var(--mx-hover-soft);
 }
 .shot-row:last-child, .card-item:last-child { margin-bottom: 0; }
+/* 封面重做弹窗的候选网格(每张候选一列,窄窗自动换行) */
+.cand-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+}
+.cand-item {
+  border: 1px solid var(--mx-line);
+  border-radius: 8px;
+  padding: 6px;
+  background: var(--mx-hover-soft);
+}
+.cand-item img {
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+}

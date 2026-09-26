@@ -283,30 +283,74 @@ async function produceScript(n) {
   }
 }
 
-// 封面重做:用这本书自己的封面正向词(<书>/封面/pos-qwen21.txt)在本机 Qwen-Image-2.1
-// 上重新出一张封面。旧封面会先备份成 `封面.旧-<时间戳>.png`;这本书的集项目封面会一并刷新
-// (项目里的 cover.* 是导入时拷的副本,不刷新就会"封面换了但视频卡还是旧的")。
-async function redoCover(n) {
+// 封面重做:**可配置弹窗**(用户 2026-09-26:「做成一个用户自定义配置弹窗啊,重做需要点改变的啊」)。
+// 只换 seed 不叫重做 —— 同一个正向词重抽,构图几乎不变。所以把能"改变"的旋钮交给用户:
+// 正向词(可改可追加)、尺寸、张数、seed(可复现上次那张)、是否把新词存回技能端留档。
+// 三步走:读配置 → 出 N 张候选(不动现封面)→ 挑定后才落盘。
+const covOpen = ref(false)
+const covBusy = ref(false)
+const covNovel = ref(null)
+const covMeta = ref(null)      // 配置初始值(留档正向词/尺寸/上次 seed)
+const covCands = ref([])       // 候选图
+const covForm = ref({ prompt: '', append: '', w: 896, h: 1344, sizeKey: '896x1344', seed: 0, count: 1, savePrompt: false })
+
+async function openCoverDialog(n) {
+  covNovel.value = n
+  covCands.value = []
   try {
-    await ElMessageBox.confirm(
-      `将用《${n.name}》封面目录里的正向词重新生成一张封面(本机出图,896×1344,约 15-30 秒)。` +
-      `\n\n· 现有封面会先备份为「封面.旧-时间戳.png」,随时可换回\n` +
-      `· 这本书的集项目封面会一起刷新(你手动换过的那几集不动)`,
-      '封面重做', { confirmButtonText: '开始重做', cancelButtonText: '取消', type: 'info' })
-  } catch { return }
-  // 不传 background:主题覆盖闸门盯着裸色(见 internal/server/theme_coverage_test.go),
-  // 而 EP 默认遮罩已随主题走 —— 这里没有"必须自己上色"的理由。
-  const loading = ElLoading.service({ text: '封面生成中(本机 Qwen-Image-2.1)…' })
+    const c = await api.novelCoverConfig(n.path)
+    covMeta.value = c
+    covForm.value = {
+      prompt: c.prompt || '',
+      append: '',
+      w: c.width || 896, h: c.height || 1344,
+      sizeKey: `${c.width || 896}x${c.height || 1344}`,
+      seed: 0,
+      count: 1,
+      savePrompt: false,
+    }
+    covOpen.value = true
+  } catch (e) { ElMessage.error(e.message) } // 没有正向词/越界:原样展示后端那句话
+}
+
+// 尺寸预设选择(自定义时用下面两个数字输入)
+function onSizePick(key) {
+  covForm.value.sizeKey = key
+  const m = /^(\d+)x(\d+)$/.exec(key || '')
+  if (m) { covForm.value.w = +m[1]; covForm.value.h = +m[2] }
+}
+
+async function genCovers() {
+  if (!covNovel.value) return
+  const f = covForm.value
+  if (!f.prompt.trim()) { ElMessage.warning('正向词不能为空'); return }
+  const loading = ElLoading.service({ text: '封面生成中(本机 Qwen-Image-2.1,每张约 15-40 秒)…' })
+  covBusy.value = true
   try {
-    const r = await api.novelCoverRedo(n.path)
-    ElMessage.success(`封面已重做(seed ${r?.seed}${r?.projects ? `,刷新 ${r.projects} 个集` : ''})`)
-    coverBust.value = Date.now() // 同一路径新内容:必须换 URL 才看得到
+    const r = await api.novelCoverRedo({
+      path: covNovel.value.path, prompt: f.prompt, append: f.append,
+      width: f.w, height: f.h, seed: f.seed || 0, count: f.count || 1,
+      save_prompt: !!f.savePrompt,
+    })
+    covCands.value = r.candidates || []
+    ElMessage.success(`已生成 ${covCands.value.length} 张候选 —— 挑一张「用这张」才替换现封面`)
+  } catch (e) { ElMessage.error(e.message) } finally { covBusy.value = false; loading.close() }
+}
+
+async function applyCover(file) {
+  if (!covNovel.value) return
+  try {
+    const r = await api.novelCoverApply(covNovel.value.path, file)
+    ElMessage.success(`封面已更新${r?.projects ? `,刷新 ${r.projects} 个集` : ''}${r?.backup ? ';旧封面已备份' : ''}`)
+    covOpen.value = false
+    coverBust.value = Date.now()
     await refresh()
-  } catch (e) {
-    ElMessage.error(e.message) // 没正向词 / 引擎不可用:原样展示后端那句话
-  } finally {
-    loading.close()
-  }
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+// 候选图的预览地址(候选也在小说库内,走同一个只读接口)
+function candURL(file) {
+  return '/api/novels/cover?path=' + encodeURIComponent(file) + '&t=' + coverBust.value
 }
 
 // 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
@@ -314,7 +358,7 @@ async function redoCover(n) {
 function onCardCmd(cmd, n) {
   if (cmd === 'script') return produceScript(n)
   if (cmd === 'produce') return produce(n)
-  if (cmd === 'cover') return redoCover(n)
+  if (cmd === 'cover') return openCoverDialog(n)
   if (cmd === 'hide') return toggleHidden(n)
   if (cmd === 'remove') return removeNovel(n)
 }
@@ -404,6 +448,81 @@ function onCardCmd(cmd, n) {
         </div>
       </div>
     </div>
+
+    <!-- 封面重做:可配置弹窗(正向词/尺寸/张数/seed/存回留档 → 出候选 → 挑定落盘) -->
+    <el-dialog v-model="covOpen" :title="covNovel ? `封面重做 ·《${covNovel.name}》` : '封面重做'"
+               width="880px" top="5vh" append-to-body>
+      <div class="flex gap-3" style="min-height:300px">
+        <!-- 左:参数 -->
+        <div class="flex flex-col gap-2" style="width:340px;flex:none">
+          <div class="text-xs" style="color:var(--mx-text3)">正向词(留档 <code>pos-qwen21.txt</code>;改了直接用改过的)</div>
+          <el-input v-model="covForm.prompt" type="textarea" :rows="9" placeholder="英文正向词" />
+          <div class="text-xs" style="color:var(--mx-text3)">附加要求(可选,追加到正向词末尾)</div>
+          <el-input v-model="covForm.append" size="small" placeholder="例:黄昏逆光,更有烟火气;主角换成正脸" />
+          <div class="flex items-center gap-2">
+            <span class="text-xs" style="color:var(--mx-text3);width:52px">尺寸</span>
+            <el-select :model-value="covForm.sizeKey" size="small" style="flex:1" @change="onSizePick">
+              <el-option v-for="s in (covMeta?.sizes || [])" :key="s.w + 'x' + s.h"
+                         :label="s.label" :value="s.w + 'x' + s.h" />
+              <el-option label="自定义(右填宽高)" value="custom" />
+            </el-select>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs" style="color:var(--mx-text3);width:52px"></span>
+            <el-input-number v-model="covForm.w" size="small" :min="512" :max="2048" :step="16" controls-position="right" style="width:110px" />
+            <span class="text-xs">×</span>
+            <el-input-number v-model="covForm.h" size="small" :min="512" :max="2048" :step="16" controls-position="right" style="width:110px" />
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs" style="color:var(--mx-text3);width:52px">张数</span>
+            <el-select v-model="covForm.count" size="small" style="width:90px">
+              <el-option v-for="n in [1, 2, 3, 4]" :key="n" :label="n + ' 张'" :value="n" />
+            </el-select>
+            <span class="text-xs" style="color:var(--mx-text3)">一次多张便于挑</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs" style="color:var(--mx-text3);width:52px">seed</span>
+            <el-input-number v-model="covForm.seed" size="small" :min="0" controls-position="right" style="width:150px" />
+            <el-button v-if="covMeta?.last_seed" text size="small"
+                       @click="covForm.seed = covMeta.last_seed">用上次 {{ covMeta.last_seed }}</el-button>
+            <span class="text-xs" style="color:var(--mx-text3)">0 = 随机</span>
+          </div>
+          <el-checkbox v-model="covForm.savePrompt" size="small">
+            同时把新正向词存回封面留档(旧词备份为 .bak)
+          </el-checkbox>
+          <el-button type="primary" :loading="covBusy" @click="genCovers">
+            <el-icon><MagicStick /></el-icon>生成候选{{ covForm.count > 1 ? `（${covForm.count} 张）` : '' }}
+          </el-button>
+          <div class="text-xs" style="color:var(--mx-text3)">
+            生成只写「候选」,**不动现封面**;挑定「用这张」才替换(旧封面自动备份,集项目封面一并刷新)。
+          </div>
+        </div>
+        <!-- 右:候选 -->
+        <div class="panel p-3 flex-1 flex flex-col" style="min-width:0">
+          <div class="flex items-center gap-2 mb-2">
+            <b class="text-xs">候选</b>
+            <span class="timecode">{{ covCands.length }} 张</span>
+            <div class="flex-1"></div>
+            <span class="timecode" style="font-size:10px">点「用这张」替换现封面</span>
+          </div>
+          <div class="flex-1 overflow-y-auto tree-scroll">
+            <div v-if="!covCands.length" class="text-xs py-8 text-center" style="color:var(--mx-text3)">
+              还没有候选 —— 调好左边的参数,点「生成候选」
+            </div>
+            <div class="cand-grid">
+              <div v-for="c in covCands" :key="c.file" class="cand-item">
+                <img :src="candURL(c.file)" alt="" />
+                <div class="flex items-center gap-2 mt-1">
+                  <span class="timecode" style="font-size:10px">seed {{ c.seed }}</span>
+                  <div class="flex-1"></div>
+                  <el-button type="primary" size="small" @click="applyCover(c.file)">用这张</el-button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </el-dialog>
 
     <!-- 阅读详情弹窗:章节文件管理 + 正文 + 剧本脚本 + 角色 + 场景
          尺寸可拖(右下角拖柄):详情要看的既有正文也有分镜表,固定 860px 装不下。 -->

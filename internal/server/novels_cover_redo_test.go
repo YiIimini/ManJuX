@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,6 +91,72 @@ func TestRefreshProjectsCoverOnlyTouchesCopies(t *testing.T) {
 }
 
 func contains(s, sub string) bool { return len(s) >= len(sub) && (s == sub || indexOf(s, sub) >= 0) }
+
+// TestCoverRedoConfigAndApplySteps 可配置版的三段式(2026-09-26 用户:
+// 「做成一个用户自定义配置弹窗啊,重做需要点改变的啊」)必须真的分开:
+// 配置读初始值、生成只写候选不动现封面、挑定才落盘。
+func TestCoverRedoConfigAndApplySteps(t *testing.T) {
+	s := newTestServer(t)
+	root := s.novelRoot()
+	book := filepath.Join(root, "书J")
+	writeFile(t, filepath.Join(book, "封面", coverRedoPromptFile), []byte("A cinematic key visual of a river city"))
+	writeFile(t, filepath.Join(book, "封面", "封面.png"), []byte("CURRENT-COVER"))
+
+	// ① 配置:给弹窗初始值(正词 + 尺寸预设 + 现封面尺寸)
+	code, out := doReq(t, s, "GET", "/api/novels/cover-config?path="+urlEnc(book), nil)
+	if code != 200 {
+		t.Fatalf("配置接口应 200,实际 %d(%v)", code, out)
+	}
+	if p, _ := out["prompt"].(string); !strings.Contains(p, "river city") {
+		t.Errorf("应回带留档正向词,实际 %q", p)
+	}
+	if sizes, _ := out["sizes"].([]any); len(sizes) < 3 {
+		t.Errorf("应给若干尺寸预设,实际 %v", out["sizes"])
+	}
+
+	// ② 生成:引擎不可用时 503(测试环境没装 comfy),且**不许**动现封面
+	code, out = doReq(t, s, "POST", "/api/novels/cover-redo",
+		map[string]any{"path": book, "prompt": "改过的词", "width": 1024, "height": 1024, "count": 2})
+	if code != 503 {
+		t.Fatalf("引擎不可用应 503,实际 %d(%v)", code, out)
+	}
+	if b := readFile(t, filepath.Join(book, "封面", "封面.png")); string(b) != "CURRENT-COVER" {
+		t.Error("生成阶段不许改现封面 —— 候选与定稿必须分开")
+	}
+
+	// ③ 落盘:只认本书封面目录下的候选
+	outside := filepath.Join(t.TempDir(), "x.png")
+	writeFile(t, outside, []byte("HACK"))
+	if code, _ := doReq(t, s, "POST", "/api/novels/cover-apply",
+		map[string]any{"path": book, "file": outside}); code == 200 {
+		t.Error("书目录之外的图片不许设为封面")
+	}
+	cand := filepath.Join(book, "封面", coverCandidatesDir, "c1-1.png")
+	writeFile(t, cand, []byte("NEW-COVER"))
+	if code, out := doReq(t, s, "POST", "/api/novels/cover-apply",
+		map[string]any{"path": book, "file": cand}); code != 200 {
+		t.Fatalf("挑定候选应 200,实际 %d(%v)", code, out)
+	}
+	if b := readFile(t, filepath.Join(book, "封面", "封面.png")); string(b) != "NEW-COVER" {
+		t.Errorf("落盘后封面应是挑中的那张,实际 %q", string(b))
+	}
+}
+
+// TestNormCoverSize 尺寸规整:夹在 [512,2048] 并对齐 16;缺省回技能端口径。
+func TestNormCoverSize(t *testing.T) {
+	cases := []struct{ w, h, wantW, wantH int }{
+		{0, 0, 896, 1344},
+		{1024, 1024, 1024, 1024},
+		{100, 100, 512, 512},
+		{4000, 4000, 2048, 2048},
+		{900, 1350, 896, 1344}, // 900→896(16 的倍数向下),1350→1344
+	}
+	for _, c := range cases {
+		if w, h := normCoverSize(c.w, c.h); w != c.wantW || h != c.wantH {
+			t.Errorf("normCoverSize(%d,%d) = %d×%d,期望 %d×%d", c.w, c.h, w, h, c.wantW, c.wantH)
+		}
+	}
+}
 
 func indexOf(s, sub string) int {
 	for i := 0; i+len(sub) <= len(s); i++ {
