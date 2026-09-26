@@ -143,6 +143,7 @@ export const api = {
   // 角色卡编辑(目前用于改**实体类型**:人/物/灵宠/妖兽/无实体/Q版 —— 决定走哪套渲染方法)
   putCharacter: (id, payload) => req('PUT', `/api/projects/${encodeURIComponent(id)}/character`, payload),
   novelProduce: (path, max) => req('POST', '/api/novels/produce', { path, max_episodes: max }),
+  novelProduceScript: (path) => req('POST', '/api/novels/produce-script', { path }),
   novelSplit: (name, text, max) => req('POST', '/api/novel-split', { name, text, max_episodes: max }),
   novelBatchStart: (prefix) => req('POST', '/api/novel-batch', { prefix }),
   novelBatchStop: () => req('DELETE', '/api/novel-batch'),

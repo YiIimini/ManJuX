@@ -194,9 +194,33 @@ async function toggleHidden(n) {
   } catch (e) { ElMessage.error(e.message) }
 }
 
+// 脚本创作:直接导入技能端已产出的脚本包(manifest.json + plan/plan.json),
+// **不走 LLM 拆集** —— 平台侧那一步单集 2-6 分钟深度推理,token 与时间全省。
+// 与「视频制作」是两个人**口**:这个入口找不到包就明确报错,不悄悄回落到 LLM。
+async function produceScript(n) {
+  const ep = n.script?.episodes || 0
+  try {
+    await ElMessageBox.confirm(
+      `将把《${n.name}》目录里已产出的脚本包直接导入(${ep} 集),不再跑 AI 拆集。` +
+      `\n导入后到「项目」页即可开始资产与渲染;包不合契约会被整批拒收,不会留下半成品。`,
+      '脚本创作(跳过 AI 拆集)', { confirmButtonText: '导入', cancelButtonText: '取消', type: 'info' })
+  } catch { return }
+  try {
+    const r = await api.novelProduceScript(n.path)
+    const cnt = Array.isArray(r?.results) ? r.results.length : ep
+    ElMessage.success(r?.message || `已导入 ${cnt} 集脚本`)
+    await refresh()
+    await refreshProjects()
+    G.view = 'home'
+  } catch (e) {
+    ElMessage.error(e.message) // 契约拒收 / 找不到包:原样展示后端那句话
+  }
+}
+
 // 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
 // 以后再加动作只改这里 + 菜单项,卡片模板不必再堆@click.stop。
 function onCardCmd(cmd, n) {
+  if (cmd === 'script') return produceScript(n)
   if (cmd === 'produce') return produce(n)
   if (cmd === 'hide') return toggleHidden(n)
   if (cmd === 'remove') return removeNovel(n)
@@ -245,7 +269,10 @@ function onCardCmd(cmd, n) {
             <el-icon :size="34" color="var(--mx-text3)"><Reading /></el-icon>
             <span class="timecode">{{ n.type === 'dir' ? '文件夹' : '单文件' }}</span>
           </div>
-          <el-tag v-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 left-2">已创作</el-tag>
+          <el-tag v-if="n.script" size="small" type="warning" effect="dark" class="absolute top-2 left-2">
+            脚本 {{ n.script.episodes }} 集
+          </el-tag>
+          <el-tag v-else-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 left-2">已创作</el-tag>
           <el-tag v-else-if="n.hidden" size="small" type="info" effect="dark" class="absolute top-2 left-2">已隐藏</el-tag>
           <!-- 右上:作品菜单(视频制作 / 隐藏 / 删除)。
                为什么收成一个菜单:原先只有一个删除按钮,而"隐藏"是比"删除"更常用的动作 ——
@@ -257,7 +284,11 @@ function onCardCmd(cmd, n) {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="produce" :disabled="producing">
+                <el-dropdown-item command="script" :disabled="!n.script"
+                                  :title="n.script ? '直接导入技能端已产出的脚本包(不再跑 AI 拆集)' : '这本书目录里没有技能端脚本包(需要 manifest.json + plan/plan.json)'">
+                  <el-icon><Document /></el-icon>脚本创作{{ n.script ? `（${n.script.episodes} 集）` : '' }}
+                </el-dropdown-item>
+                <el-dropdown-item command="produce" divided :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
                 </el-dropdown-item>
                 <el-dropdown-item command="hide" divided>

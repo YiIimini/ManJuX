@@ -166,3 +166,48 @@ func cssBlockOf(t *testing.T, css, selector string) string {
 	}
 	return rest[:end]
 }
+
+// TestNovelsCoverMenuHasScriptEntry 小说库「脚本创作」入口(2026-09-26 用户要求新增)。
+//
+// 这个入口的意义是**省掉 LLM 拆集**:技能端已直出脚本,平台解析到就导包。
+// 钉三件事:菜单里有它、只在有脚本包时可用(**没有包就不给点**,避免用户以为能用)、
+// 走的是专用接口而不是复用它旁边的「视频制作」(后者是 LLM 那条路)。
+func TestNovelsCoverMenuHasScriptEntry(t *testing.T) {
+	vuePath := filepath.Join("..", "..", "frontend", "src", "views", "NovelsView.vue")
+	vue, err := os.ReadFile(vuePath)
+	if err != nil {
+		t.Fatalf("读不到 %s: %v", vuePath, err)
+	}
+	src := string(vue)
+	for _, want := range []string{
+		`command="script"`,        // 菜单项
+		"脚本创作",                    // 文案
+		`:disabled="!n.script"`,   // 没有包就不给点
+		"api.novelProduceScript(", // 走专用接口
+		"function produceScript(", // 命令出口
+		"n.script.episodes",       // 角标/菜单显示集数
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("脚本创作入口缺少 %q", want)
+		}
+	}
+	// 「视频制作」必须还在(它是 LLM 那条路,两个入口并存,不是替换)
+	if !strings.Contains(src, `command="produce"`) || !strings.Contains(src, "视频制作") {
+		t.Error("「视频制作」入口不该被脚本创作取代")
+	}
+}
+
+// TestStoreWiresProduceScript 前端 api 层:路径必须与后端路由同名(写错一个字母就是静默 404)。
+func TestStoreWiresProduceScript(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "store.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	if !strings.Contains(src, "/api/novels/produce-script") {
+		t.Error("store.js 缺少 produce-script 接口")
+	}
+	if !strings.Contains(src, "novelProduceScript:") {
+		t.Error("store.js 缺少 novelProduceScript 包装")
+	}
+}

@@ -64,7 +64,15 @@ func (s *Server) importPackages(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("需要 path(项目包目录或系列根目录)"))
 		return
 	}
-	root := strings.TrimSpace(in.Path)
+	s.importPackageRoot(w, strings.TrimSpace(in.Path))
+}
+
+// importPackageRoot 导入逻辑本体(与 HTTP 入口解耦)。
+//
+// 为什么拆出来:小说库新增的「脚本创作」入口要**直接复用同一条路** —— 校验、系列对账、
+// 后处理(台词时长预算 / <d>[Chinese] 标记兜底)全在这里。另写一份"只导一个目录"的实现,
+// 两边必然分叉,而分叉的后果是"从这个入口进来的包少了一道校验"这种最难查的形态。
+func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 	fi, err := os.Stat(root)
 	if err != nil || !fi.IsDir() {
 		writeErr(w, 400, fmt.Errorf("目录不存在:%s", root))

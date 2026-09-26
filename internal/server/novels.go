@@ -14,14 +14,15 @@ import (
 )
 
 type novelItem struct {
-	Name     string `json:"name"`     // 书名(=文件夹名/文件主干)
-	Path     string `json:"path"`     // 书目录(或文件)绝对路径
-	Type     string `json:"type"`     // dir / file
-	Chars    int    `json:"chars"`    // 正文字数估算
-	Chapters int    `json:"chapters"` // 章节文件数
-	Cover    string `json:"cover"`    // 封面绝对路径(空=无)
-	Produced bool   `json:"produced"` // 是否已创建过系列项目
-	Hidden   bool   `json:"hidden"`   // 已隐藏(界面状态,见 novels_hidden.go)
+	Name     string      `json:"name"`             // 书名(=文件夹名/文件主干)
+	Path     string      `json:"path"`             // 书目录(或文件)绝对路径
+	Type     string      `json:"type"`             // dir / file
+	Chars    int         `json:"chars"`            // 正文字数估算
+	Chapters int         `json:"chapters"`         // 章节文件数
+	Cover    string      `json:"cover"`            // 封面绝对路径(空=无)
+	Produced bool        `json:"produced"`         // 是否已创建过系列项目
+	Hidden   bool        `json:"hidden"`           // 已隐藏(界面状态,见 novels_hidden.go)
+	Script   *bookScript `json:"script,omitempty"` // 目录里发现的技能端脚本包(nil=没有,见 novels_script.go)
 }
 
 // novelRoot 小说库根目录(设置项;空=未配置)。
@@ -80,6 +81,11 @@ func (s *Server) handleNovels(w http.ResponseWriter, r *http.Request) {
 	}
 	// 默认**倒序**(用户 2026-09-24 定调):书名降序 —— 列表新加的书名排在前面。
 	sortNovels(out, novelSortDesc(r))
+	// 标记"这本书目录里有没有技能端脚本包"(见 novels_script.go):有的话界面上给第二个
+	// 入口「脚本创作」—— 直接导包,不再跑 LLM 拆集。检测放在排序后,批量读盘的顺序更顺。
+	for i := range out {
+		out[i].Script = s.findBookScript(out[i].Path)
+	}
 	// 打隐藏标记 + 过滤(打标记在排序之后,顺序不受影响)
 	visible := out[:0]
 	hiddenCount := 0
