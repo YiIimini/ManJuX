@@ -144,6 +144,8 @@ export const api = {
   putCharacter: (id, payload) => req('PUT', `/api/projects/${encodeURIComponent(id)}/character`, payload),
   novelProduce: (path, max) => req('POST', '/api/novels/produce', { path, max_episodes: max }),
   novelProduceScript: (path) => req('POST', '/api/novels/produce-script', { path }),
+  // 封面重做:用 <书>/封面/pos-qwen21.txt 的正向词在本机重出一张(旧封面自动备份,集项目封面一并刷新)
+  novelCoverRedo: (path, seed) => req('POST', '/api/novels/cover-redo', { path, seed: seed || 0 }),
   novelSplit: (name, text, max) => req('POST', '/api/novel-split', { name, text, max_episodes: max }),
   novelBatchStart: (prefix) => req('POST', '/api/novel-batch', { prefix }),
   novelBatchStop: () => req('DELETE', '/api/novel-batch'),

@@ -2,7 +2,7 @@
 <script setup>
 import { G, api, refreshProjects } from '../store'
 import { ref, computed, onMounted, watch } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import ChapterTree from '../components/ChapterTree.vue'
 
 const root = ref('')
@@ -12,6 +12,8 @@ const loading = ref(false)
 // 隐藏作品(界面状态,存 sidecar;见后端 novels_hidden.go):默认不列出,这里给一个开关把它请回来
 const withHidden = ref(false)
 const hiddenCount = ref(0)
+// 封面地址带一个时间戳:重做封面后文件路径不变,不加它浏览器会一直显示缓存里的旧封面
+const coverBust = ref(Date.now())
 
 async function refresh() {
   loading.value = true
@@ -217,11 +219,38 @@ async function produceScript(n) {
   }
 }
 
+// 封面重做:用这本书自己的封面正向词(<书>/封面/pos-qwen21.txt)在本机 Qwen-Image-2.1
+// 上重新出一张封面。旧封面会先备份成 `封面.旧-<时间戳>.png`;这本书的集项目封面会一并刷新
+// (项目里的 cover.* 是导入时拷的副本,不刷新就会"封面换了但视频卡还是旧的")。
+async function redoCover(n) {
+  try {
+    await ElMessageBox.confirm(
+      `将用《${n.name}》封面目录里的正向词重新生成一张封面(本机出图,896×1344,约 15-30 秒)。` +
+      `\n\n· 现有封面会先备份为「封面.旧-时间戳.png」,随时可换回\n` +
+      `· 这本书的集项目封面会一起刷新(你手动换过的那几集不动)`,
+      '封面重做', { confirmButtonText: '开始重做', cancelButtonText: '取消', type: 'info' })
+  } catch { return }
+  // 不传 background:主题覆盖闸门盯着裸色(见 internal/server/theme_coverage_test.go),
+  // 而 EP 默认遮罩已随主题走 —— 这里没有"必须自己上色"的理由。
+  const loading = ElLoading.service({ text: '封面生成中(本机 Qwen-Image-2.1)…' })
+  try {
+    const r = await api.novelCoverRedo(n.path)
+    ElMessage.success(`封面已重做(seed ${r?.seed}${r?.projects ? `,刷新 ${r.projects} 个集` : ''})`)
+    coverBust.value = Date.now() // 同一路径新内容:必须换 URL 才看得到
+    await refresh()
+  } catch (e) {
+    ElMessage.error(e.message) // 没正向词 / 引擎不可用:原样展示后端那句话
+  } finally {
+    loading.close()
+  }
+}
+
 // 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
 // 以后再加动作只改这里 + 菜单项,卡片模板不必再堆@click.stop。
 function onCardCmd(cmd, n) {
   if (cmd === 'script') return produceScript(n)
   if (cmd === 'produce') return produce(n)
+  if (cmd === 'cover') return redoCover(n)
   if (cmd === 'hide') return toggleHidden(n)
   if (cmd === 'remove') return removeNovel(n)
 }
@@ -263,7 +292,7 @@ function onCardCmd(cmd, n) {
            :class="{ 'is-hidden': n.hidden }"
            :title="'查看《' + n.name + '》章节目录与正文,右上菜单可视频制作/隐藏/删除'" @click="openDetail(n)">
         <div class="relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px 10px 0 0;overflow:hidden">
-          <img v-if="n.cover" :src="'/api/novels/cover?path=' + encodeURIComponent(n.cover)"
+          <img v-if="n.cover" :src="'/api/novels/cover?path=' + encodeURIComponent(n.cover) + '&t=' + coverBust"
                style="width:100%;height:100%;object-fit:cover" loading="lazy" />
           <div v-else class="absolute inset-0 flex flex-col items-center justify-center gap-2">
             <el-icon :size="34" color="var(--mx-text3)"><Reading /></el-icon>
@@ -290,6 +319,10 @@ function onCardCmd(cmd, n) {
                 </el-dropdown-item>
                 <el-dropdown-item command="produce" divided :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
+                </el-dropdown-item>
+                <el-dropdown-item command="cover"
+                                  title="用封面目录里的正向词(pos-qwen21.txt)重新生成封面;旧封面自动备份,集项目封面一并刷新">
+                  <el-icon><Picture /></el-icon>封面重做
                 </el-dropdown-item>
                 <el-dropdown-item command="hide" divided>
                   <el-icon><Hide /></el-icon>{{ n.hidden ? '取消隐藏' : '隐藏作品' }}

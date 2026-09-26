@@ -284,6 +284,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/novel-jobs", s.handleNovelJobs)
 	m.HandleFunc("DELETE /api/novel-jobs", s.handleNovelJobsDelete)
 	m.HandleFunc("GET /api/novels/cover", s.handleNovelCover)
+	m.HandleFunc("POST /api/novels/cover-redo", s.handleNovelCoverRedo)
 	m.HandleFunc("GET /api/novels/detail", s.handleNovelDetail)
 	m.HandleFunc("GET /api/novels/read", s.handleNovelRead)
 	m.HandleFunc("POST /api/novels/produce", s.handleNovelProduce)
