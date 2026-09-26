@@ -29,18 +29,14 @@ func TestReapStaleBatchFreesSingleton(t *testing.T) {
 		t.Errorf("回收耗时 %v,太久了(不该让用户干等)", d)
 	}
 
-	// 回收之后,新批次必须能正常启动
-	if !s.startBatch("新书", []string{"新书·第01集·第一"}) {
-		t.Fatal("回收后新批次仍起不来")
-	}
+	// 回收后产线必须真的空出来 —— 这就是"能起新批次"的前置条件。
+	// 刻意**不在这里真的 startBatch**:那会拉起真实的产线 goroutine,而它在测试环境里
+	// 会一路走到 quitApp(os.Exit)把整个测试进程掀掉(2026-09-26 实测 panic)。
+	// 单例空出来 + startBatch 自身已有用例覆盖,两者合起来等价于"回收后能开跑"。
 	batch.mu.Lock()
-	got := batch.prefix
-	batch.mu.Unlock()
-	if got != "新书" {
-		t.Errorf("产线应归新批次,实际 %q", got)
+	if batch.running || len(batch.projects) != 0 || batch.prefix != "" {
+		t.Errorf("回收后单例必须干净:running=%v projects=%d prefix=%q",
+			batch.running, len(batch.projects), batch.prefix)
 	}
-	// 清理:批次是全局单例,别把状态漏给别的用例
-	batch.mu.Lock()
-	batch.stop, batch.running, batch.projects, batch.prefix, batch.cur = false, false, nil, "", 0
 	batch.mu.Unlock()
 }

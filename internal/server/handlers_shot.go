@@ -414,9 +414,15 @@ func (s *Server) quitApp(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 		// 桌面模式走 winctl(置放行标志再 Quit,防 OnBeforeClose 反复拦截)
 		winctl.Default.ForceQuit()
-		if s.quit != nil {
-			s.quit()
+		if s.quit == nil {
+			// 没注入退出函数 = 不是桌面运行时(测试 / 裸 HTTP 服务):
+			// **不许排那记兜底强杀**。否则任何打到 /api/quit 的用例都会在 2.3 秒后
+			// 被 os.Exit(0) 掀掉整个测试进程(2026-09-26 实测:api_guard_test 打
+			// /api/quit 后,只要包里还有别的耗时用例,就会 panic "unexpected call to
+			// os.Exit(0) during test")。兜底强杀本来就是给桌面端 Quit 未生效准备的。
+			return
 		}
+		s.quit()
 		time.Sleep(2 * time.Second) // 兜底:Quit 未生效则强杀
 		os.Exit(0)
 	}()
