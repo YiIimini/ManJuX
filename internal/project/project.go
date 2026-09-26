@@ -294,7 +294,11 @@ func (s *Store) loadMeta(p *Project) error {
 	if err != nil {
 		return err
 	}
-	return jsonUnmarshal(string(raw), p)
+	if err := jsonUnmarshal(string(raw), p); err != nil {
+		return err
+	}
+	p.ensureDefaultParams()
+	return nil
 }
 
 // Create 新建项目:name 仅允许中文/字母/数字/下划线/连字符。
@@ -376,6 +380,32 @@ func (s *Store) Get(id string) (*Project, bool) {
 	}
 	cp := *p
 	return &cp, true
+}
+
+// ensureDefaultParams 读盘兜底:参数的空白补平台默认。
+//
+// 【为什么必须有这一处】2026-09-26 实测事故:技能端导入的 `project.json` 里
+// `config.params` 是空的 `{}`(技能端只写 id/name/config,不写平台的分阶段参数)。
+// 后果是一条链:
+//
+//	assets.source 为空 → 资产阶段**连引擎都不去要**(comfyGen 保持 nil)
+//	→ 资产 0/3 却报 ✔ 就绪 → 镜头降级 t2va 纯文生 → 到渲染阶段才因"无可用引擎"失败,
+//	批量产线第 1 集就断。
+//
+// 契约承诺"好包导入后与平台自产包**等价**",而等价的前提是**参数有默认值** ——
+// 所以兜底放在**读盘**这一处(不是导入那一处):已经导进来的项目、以及任何来源的
+// 老项目,都在同一处被补齐,不必逐个入口去补。
+//
+// 判据取两个关键字段(Assets.Source 与 Script.Styles 同时为空 = 从没配过),
+// 而不是"整个结构等于零值" —— 后者要逐字段比较,参数表每加一个字段就得改一次。
+func (p *Project) ensureDefaultParams() {
+	if p == nil {
+		return
+	}
+	if strings.TrimSpace(p.Config.Params.Assets.Source) != "" || len(p.Config.Params.Script.Styles) > 0 {
+		return
+	}
+	p.Config.Params = DefaultStageParams()
 }
 
 // SaveMeta 更新项目元数据。
