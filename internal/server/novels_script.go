@@ -167,8 +167,17 @@ func (s *Server) handleNovelProduceScript(w http.ResponseWriter, r *http.Request
 	if s.startBatch(prefix, eps) {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 			Message: fmt.Sprintf("📜 脚本创作:《%s》已导入 %d 集并启动批量产线(资产定妆→渲染→质检→成片)", prefix, len(eps))})
-	} else {
-		// 已经有别的批量在跑:入队而不是抢,让当前那批跑完自然接上
-		s.batchAppend(prefix, eps)
+		return
 	}
+	// 起不来必须**大声说出来**。原先这里静默 batchAppend,而产线是**单例**:只要还残留着
+	// 另一本书的批次(哪怕它已经失败暂停、界面上什么都没在跑),新导入的这几十集就等于
+	// 喂进了那个死批次 —— 界面上什么都不发生,用户看到的就是"脚本创作导入后就完事了"
+	// (2026-09-26 用户报的正是这句)。静默降级在"单例资源"上是错的:必须点名谁占着它。
+	batch.mu.Lock()
+	holder, held, running := batch.prefix, len(batch.projects), batch.running
+	batch.mu.Unlock()
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+		Message: fmt.Sprintf("⚠ 脚本创作:《%s》已导入 %d 集,但批量产线被《%s》(%d 集, running=%v)占着 —— "+
+			"先在首页点那张卡的「停止」,再重新点「脚本创作」即可开跑", prefix, len(eps), holder, held, running)})
+	s.batchAppend(prefix, eps)
 }
