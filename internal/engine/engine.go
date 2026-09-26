@@ -54,6 +54,15 @@ type Job struct {
 	// 人物的口型与动作节奏会跟随音频 —— 这是「音频驱动」(Audio Drive)的入口,
 	// 对应精确台词路线:先把配音做成确定资产,再用它驱动画面。
 	Audios []string
+
+	// CondCache 两阶段渲染(条件缓存 .pt):项目参数优先,未表态(nil)时回退全局设置
+	// 里的 comfy.cond_cache。
+	//
+	// 为什么要让项目说了算:项目参数抽屉里一直有这个开关(render.cond_cache,默认开),
+	// 而真正决定行为的是全局设置 —— 用户关掉它,只要全局开着就照样写 .pt(该目录曾堆到
+	// 4.9GB),反过来项目开着而全局关着也没人告知。属于"能点、能存、无日志、无效果"的
+	// 假开关(见 pipeline/caps_params.go 的同名提示)。
+	CondCache *bool
 }
 
 // Result 渲染结果。
@@ -197,6 +206,19 @@ func AlignLength(base int) int {
 	}
 	delta := (5 - base%17 + 17) % 17
 	return base + delta
+}
+
+// AlignLengthDown 向下取到 H3 的 17k+5 网格(已在网格上则原样返回)。
+//
+// 与 AlignLength(向上)的分工:向上用于"我要渲这么多帧"(宁多勿少,成片不会缩水);
+// 向下用于"我要贴回一段**已存在**的素材"—— 局部重绘要拿 H3 的输出逐帧贴回源片,
+// 帧数必须 ≤ 源片帧数,多一帧都会让贴回节点拿到比底片更长的结果
+// (见 server 侧 maskFixFrames)。
+func AlignLengthDown(base int) int {
+	if base <= 5 {
+		return 5
+	}
+	return 5 + (base-5)/17*17
 }
 
 // SnapCanvas 将宽/高对齐到 32 的倍数(不低于 32)。

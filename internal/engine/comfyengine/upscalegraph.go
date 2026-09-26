@@ -3,6 +3,9 @@ package comfyengine
 import (
 	"context"
 	"fmt"
+	"log"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -18,6 +21,51 @@ func upscalePad(frames int) int {
 		return 0
 	}
 	return (8 - ((frames - 1) % 8)) % 8
+}
+
+// esrganScale 从超分权重文件名推它的**原生放大倍数**(0 = 认不出)。
+//
+// 命名约定在社区权重里高度统一:`4x-UltraSharp` / `RealESRGAN_x4plus` /
+// `RealESRGAN_x2plus` / `2x_ModernSpanimationVista` / `HAT_SRx4` —— 倍数总是与
+// 字母 x 相邻(`4x` 或 `x4`)。**认不出来就返回 0**(调用方按历史行为当 4× 处理并
+// 写日志),不猜、也不拒绝服务:BSRGAN / remacri / NMKD-Superscale 这类名字里
+// 确实不含倍数。
+func esrganScale(modelName string) int {
+	name := strings.ToLower(filepath.Base(strings.TrimSpace(modelName)))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c < '0' || c > '9' {
+			continue
+		}
+		if i+1 < len(name) && name[i+1] == 'x' {
+			return int(c - '0') // 4x / 2x
+		}
+		if i > 0 && name[i-1] == 'x' {
+			return int(c - '0') // x4 / x2
+		}
+	}
+	return 0
+}
+
+// defaultESRGANScale 认不出权重倍数时按 4× 处理 —— 与 engine.DefaultESRGANUpscaleModel
+// (4x-UltraSharp)一致,也就是本功能一直以来的实际行为。
+const defaultESRGANScale = 4
+
+// upscaleDownScale ESRGAN 原生输出 → 目标 2× 需要的缩放比;
+// 返回 0 表示**不需要**缩放节点(权重本身就是 2×),第二个返回值表示倍数是否认得出来。
+//
+// 为什么不能写死 0.5(2026-09-26 渲染管线审查):0.5 只对 4× 权重成立。换成 2× 权重
+// (RealESRGAN_x2plus 之类)时 2× → ×0.5 = 原分辨率,用户拿到一个和源片一样大的文件,
+// 而界面报「2× 放大完成」—— 静默假成功。倍数由权重自己决定,所以只能按名字推。
+func upscaleDownScale(modelName string) (float64, bool) {
+	s := esrganScale(modelName)
+	if s <= 0 {
+		return 2.0 / float64(defaultESRGANScale), false
+	}
+	if s == 2 {
+		return 0, true
+	}
+	return 2.0 / float64(s), true
 }
 
 // buildUpscaleGraph 构造"放大后处理"工作流:在已完成的镜头上追加 2× 放大分支。
@@ -78,12 +126,16 @@ func buildUpscaleGraph(srcVideo string, opt UpscaleOptions, length int, fps floa
 		g["81"] = nd("ImageUpscaleWithModel", map[string]any{
 			"upscale_model": link("80", 0), "image": link("11", 0),
 		})
-		// 逐帧超分**不保证**正好 2×(ESRGAN 多为 4×)→ 用 ImageScale 收敛到精确 2×,
-		// 尺寸从上方链路的实际输出推导(用比例缩放,target 由调用方给宽高亦可)
-		g["82"] = nd("ImageScaleBy", map[string]any{
-			"image": link("81", 0), "upscale_method": "lanczos", "scale_by": 0.5,
-		})
-		images = link("82", 0)
+		// 逐帧超分**不保证**正好 2×(ESRGAN 多为 4×)→ 用 ImageScaleBy 收敛到精确 2×。
+		// 但缩放比必须按**权重自己的倍数**推:写死 0.5 只对 4× 权重成立,换 2× 权重时
+		// 2×→×0.5 等于没放大却报成功(见 upscaleDownScale)。
+		images = link("81", 0)
+		if by, _ := upscaleDownScale(opt.ModelName); by > 0 {
+			g["82"] = nd("ImageScaleBy", map[string]any{
+				"image": link("81", 0), "upscale_method": "lanczos", "scale_by": by,
+			})
+			images = link("82", 0)
+		}
 	}
 
 	// 重混**原始音轨**(放大不碰声音)
@@ -107,6 +159,14 @@ type Link2 = []any
 func (e *Engine) Upscale(ctx context.Context, srcVideoPath string, opt UpscaleOptions, length int, fps float64, outName, outPath string, timeout time.Duration) (string, error) {
 	if err := e.Available(ctx); err != nil {
 		return "", err
+	}
+	// 权重名里认不出倍数时按 4× 处理(= 历史行为),但要留痕:这种权重配错时
+	// 产物会"看起来成功了但没放大",没有日志事后无从判断。
+	if opt.Type != "ltx" {
+		if _, known := upscaleDownScale(opt.ModelName); !known {
+			log.Printf("[comfy] ⚠ 无法从超分权重名「%s」判定放大倍数,按 %d× 处理;若产物尺寸不是源片的 2×,请改用带 2x/4x 的权重名",
+				opt.ModelName, defaultESRGANScale)
+		}
 	}
 	upName, err := e.client().UploadImage(ctx, srcVideoPath)
 	if err != nil {

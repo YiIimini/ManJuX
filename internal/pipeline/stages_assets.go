@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"image"
+	_ "image/jpeg" // 复用来的定妆照/场景图可能是 jpeg:注册解码器才能读宽高
+	_ "image/png"
 	"os"
 	"path/filepath"
 	"sort"
@@ -79,9 +82,12 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					a.Fingerprint = fp
 					assets[id] = a
 				}
-				// 存量回填:项目已有资产若库中无同名条目,自动沉淀入库
+				// 存量回填:项目已有资产若库中无同名条目,自动沉淀入库。
+				// 判据用 Find(而不是只认精确名):同一角色换了叫法时库里已有条目,
+				// 只认精确名会拿本集叫法**新建一条**,同一角色在库里变成两条
+				// (描述为空的那条从此再也不会被别名/描述匹配命中)。
 				if c.lib != nil {
-					if _, _, ok := c.lib.Match(kind, name); !ok {
+					if _, _, ok := c.lib.Find(kind, name, description); !ok {
 						if _, err := c.lib.Put(kind, name, description, imagePrompt, full, proj.ID, a.Source); err == nil {
 							c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(存量回填)", kindLabel(kind), name)
 						}
@@ -97,38 +103,39 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		// ① 资产库复用:名称精确匹配之外还认"同一角色的另一种叫法"(别名/描述指纹),
 		//    否则 LLM 换个称呼就要重出一张定妆照 —— 用户看到的正是"相同角色无中生有
 		//    多产生出定妆照"(2026-09-12 报障)。判定为同一人时库里会记下别名。
-		if c.lib != nil {
-			if e, img, ok := c.lib.Find(kind, name, description); ok {
-				destDir := filepath.Join(c.store.Dir(proj.ID), "assets", kind)
-				_ = os.MkdirAll(destDir, 0o755)
-				dest := filepath.Join(destDir, director.SanitizeForCache(kind+"_"+id)+filepath.Ext(img))
-				if raw, err := os.ReadFile(img); err == nil {
-					_ = os.WriteFile(dest, raw, 0o644)
-					// 多视角图/转台图一并带进项目(按项目侧命名):只带主图的话,
-					// 复用回来的角色在 H3 渲染里就只有一张正面照,多视角参考形同虚设
-					// —— 而"库里有、项目没有"正是 2026-09-12 用户实证的根因。
-					copied := copyAssetRelated(c.lib.RelatedFiles(kind, name), destDir,
-						director.SanitizeForCache(kind+"_"+id))
-					rel, _ := filepath.Rel(c.store.Dir(proj.ID), dest)
-					assets[id] = project.Asset{
-						ID: id, Kind: kind, Name: name,
-						File: filepath.ToSlash(rel), ImagePrompt: imagePrompt,
-						Source: "library", Fingerprint: project.FingerprintFile(dest),
-					}
-					c.lib.BumpUsed(kind, name)
-					reused++
-					via := ""
-					if e != nil && strings.TrimSpace(e.Name) != name {
-						via = fmt.Sprintf("(同一角色,已按「%s」的定妆照复用)", e.Name)
-					}
-					if copied > 0 {
-						c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成;含 %d 张多视角)", kindLabel(kind), name, via, copied)
-					} else {
-						c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成)", kindLabel(kind), name, via)
-					}
-					return
+		//    实现与渲染前的 backfillAssets 共用(reuseFromLibrary):两条补齐路径必须
+		//    同一套"先查库、再生成"语义(见该函数的说明)。
+		if r, ok := c.reuseFromLibrary(proj.ID, kind, id, name, description); ok {
+			assets[id] = project.Asset{
+				ID: id, Kind: kind, Name: name,
+				File: r.Rel, ImagePrompt: r.PromptFor(imagePrompt),
+				Source: "library", Fingerprint: project.FingerprintFile(r.Dest),
+			}
+			// 场景图的方向必须与本项目画幅一致:库按 kind+name 命中,条目里没有宽高,
+			// 于是某个场景的朝向由"第一个生成它的项目"单方面锁定 —— 竖幅项目复用横向
+			// 场景图(或反过来)时,参考图与成片画幅不一致,H3 只能自行裁切/拉伸,构图与
+			// 信息量错位而界面上看不出任何异常。这里不静默喂进去:发现就如实说清楚,
+			// 由用户决定重生成(重生成会写入共享条目,故不替用户做主)。
+			if kind == "scenes" {
+				rw := proj.Config.Params.Render.Width
+				rh := proj.Config.Params.Render.Height
+				if iw, ih, ierr := imagePixelSize(r.Dest); ierr == nil && sceneOrientationMismatch(iw, ih, rw, rh) {
+					c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+						"⚠ 复用的场景图「%s」方向与本项目画幅不一致(图 %d×%d,项目 %d×%d):渲染时模型只能自行裁切/拉伸 —— 需要贴合画幅请对这张图点「重新生成」",
+						name, iw, ih, rw, rh)
 				}
 			}
+			reused++
+			via := ""
+			if r.Name != name {
+				via = fmt.Sprintf("(同一角色,已按「%s」的定妆照复用)", r.Name)
+			}
+			if r.Copied > 0 {
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成;含 %d 张多视角)", kindLabel(kind), name, via, r.Copied)
+			} else {
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成)", kindLabel(kind), name, via)
+			}
+			return
 		}
 		// ② Krea-2 生成缺失参考图;成功后自动入库供后续项目复用
 		if comfyGen != nil && strings.TrimSpace(imagePrompt) != "" {
@@ -347,6 +354,114 @@ func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Proje
 	return turn
 }
 
+// libReuse 一次成功的库复用:项目侧落点 + 配对元数据。
+type libReuse struct {
+	Dest   string // 项目侧主图绝对路径
+	Rel    string // 项目侧主图相对路径(斜杠分隔,写进资产表用)
+	Name   string // 库条目的**权威名字**(别名命中时与本集叫法不同)
+	Prompt string // 库条目自己的 image_prompt(空 = 条目没记)
+	Copied int    // 一并带进项目的多视角/转台图张数
+}
+
+// PromptFor 复用时的 imagePrompt 取值:条目自带提示词时以**条目**为准。
+//
+// 为什么不能写本集方案那段:复用的是库里的**像素**,而本集那段是另一套措辞
+// (含本集 castContrastBlock / plan.Style)。写进去会被下游当成"这张图的提示词"
+// —— 补多视角时按它拼编辑指令(角度帧被拉向另一种长相)、写回库时又覆盖共享条目的
+// 元数据,错配从一集扩散到全剧集。
+func (r libReuse) PromptFor(fallback string) string {
+	if strings.TrimSpace(r.Prompt) != "" {
+		return r.Prompt
+	}
+	return fallback
+}
+
+// reuseFromLibrary 把库条目(主图 + 多视角/转台图)复制进项目资产目录。
+// ok=false = 库里没有可用条目(或读不到),调用方照旧自己生成。
+//
+// **两条补齐路径共用**(资产阶段的 check 与渲染前的 backfillAssets):后者此前完全
+// 不查库,于是资产阶段没跑过就直接渲染时,同一角色会重新生成另一张脸并反写覆盖共享
+// 条目(库里的旧图被新图顶替、角度图被清掉),而先跑的那一集仍在用旧脸 —— 跨集成了
+// "两个沈砚",界面上两边还显示同一个名字。语义收在一处,才不会有一条路径漏掉。
+func (c *Coordinator) reuseFromLibrary(projID, kind, id, name, description string) (libReuse, bool) {
+	if c.lib == nil {
+		return libReuse{}, false
+	}
+	e, img, ok := c.lib.Find(kind, name, description)
+	if !ok {
+		return libReuse{}, false
+	}
+	raw, err := os.ReadFile(img)
+	if err != nil || len(raw) == 0 {
+		return libReuse{}, false
+	}
+	destDir := filepath.Join(c.store.Dir(projID), "assets", kind)
+	_ = os.MkdirAll(destDir, 0o755)
+	base := director.SanitizeForCache(kind + "_" + id)
+	dest := filepath.Join(destDir, base+filepath.Ext(img))
+	if err := os.WriteFile(dest, raw, 0o644); err != nil {
+		return libReuse{}, false
+	}
+	// **必须用条目自己的名字查关联图**(审计):RelatedFiles/EntryDir 都是按传入的
+	// 名字推目录的,而别名命中时条目目录名是 e.Name、调用方手上是本集叫法 → 目录不存在
+	// → 返回 nil → 库里的 _view_*.png / _turnaround.png 一张都不复制,界面却仍报
+	// 「♻ 资产库复用」;同一个名字错位也让 BumpUsed 读不到 asset.json(复用计数永不涨)。
+	libName := name
+	if e != nil && strings.TrimSpace(e.Name) != "" {
+		libName = e.Name
+	}
+	copied := copyAssetRelated(c.lib.RelatedFiles(kind, libName), destDir, base)
+	c.lib.BumpUsed(kind, libName)
+	r := libReuse{Dest: dest, Name: libName, Copied: copied}
+	if e != nil {
+		r.Prompt = strings.TrimSpace(e.ImagePrompt)
+	}
+	if rel, err := filepath.Rel(c.store.Dir(projID), dest); err == nil {
+		r.Rel = filepath.ToSlash(rel)
+	}
+	return r, true
+}
+
+// imagePixelSize 读图片宽高(只读文件头,不解码像素)。
+func imagePixelSize(path string) (int, int, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer f.Close()
+	cfg, _, err := image.DecodeConfig(f)
+	if err != nil {
+		return 0, 0, err
+	}
+	return cfg.Width, cfg.Height, nil
+}
+
+// sceneOrientationMismatch 这张图的方向是否与项目画幅**明确相反**(横↔竖)。
+//
+// 只判"明确相反":正方形图、任一边读不到(0)时都不判 —— 宁可少说一句,
+// 不要凭猜测报错(方形场景图在竖幅项目里只是轻微裁切,不是本条要报的那个错)。
+func sceneOrientationMismatch(imgW, imgH, projW, projH int) bool {
+	if imgW <= 0 || imgH <= 0 || projW <= 0 || projH <= 0 {
+		return false
+	}
+	return (imgW > imgH && projH > projW) || (imgH > imgW && projW > projH)
+}
+
+// viewsEntityKind 渲染前补多视角时的**实体类型取值链**:库条目里"看图判定"的结果优先,
+// 方案文本推断兜底 —— 与 server.resolveEntityKind 保持同一套优先级。
+//
+// 为什么要看库:库里为了这个坑专门存了视觉模型**看图**判定的 EntityKind(用户上传一张
+// 铜雀、名字叫「阿凿」,按文本推断会当成"人"去做原地转身,而器物该走转台自转),
+// 库侧「补全多视角」真的用了它,而渲染前补齐此前只看方案文本 → 同一张图两条路径两种
+// 做法:要么被身份闸门拒绝白烧 GPU,要么产出一张与主图形态不符的角度图当第二张参考。
+// 库里的值不合规(空/未知键)时原样回落文本推断,不硬认。
+func viewsEntityKind(textKind EntityKind, libEntityKind string) EntityKind {
+	if k := NormalizeEntityKind(libEntityKind); k != "" {
+		return k
+	}
+	return textKind
+}
+
 // copyAssetRelated 把库条目的多视角图/转台图按**项目侧命名**复制到定妆照同目录。
 //
 // 为什么必须改名:渲染时 turnaroundPath() 按主图主名拼 `<base>_turnaround.png`
@@ -387,8 +502,8 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 	}
 	dir := c.store.Dir(proj.ID)
 	type want struct {
-		id, name, prompt string
-		kind             EntityKind
+		id, name, prompt, desc string
+		kind                   EntityKind
 	}
 	var list []want
 	seen := map[string]bool{}
@@ -416,13 +531,26 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 			}
 			seen[cid] = true
 			ek := KindHuman
+			desc := ""
 			for _, ch := range plan.Characters {
 				if ch.ID == cid {
 					ek = ResolveEntityKind(ch)
+					desc = ch.Description
 					break
 				}
 			}
-			list = append(list, want{id: cid, name: a.Name, prompt: a.ImagePrompt, kind: ek})
+			// 库里存着**看图判定**的 EntityKind(上传图由视觉模型判的),它比按方案文本
+			// 推断更可信:用户上传一张铜雀、名字叫「阿凿」,按文本推断会当成"人"去做
+			// 原地转身,而器物该走转台自转(库侧「补全多视角」早就按这个优先级取值,
+			// 渲染前补齐这条路径此前只看方案文本)。
+			libKind := ""
+			if c.lib != nil && strings.TrimSpace(a.Name) != "" {
+				if e, _, ok := c.lib.Find("characters", a.Name, desc); ok && e != nil {
+					libKind = e.EntityKind
+				}
+			}
+			ek = viewsEntityKind(ek, libKind)
+			list = append(list, want{id: cid, name: a.Name, prompt: a.ImagePrompt, desc: desc, kind: ek})
 		}
 	}
 	if len(list) == 0 {
@@ -447,13 +575,26 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 		a := assets["char:"+w.id]
 		master := filepath.Join(dir, a.File)
 		prompt := w.prompt
-		desc := ""
+		desc := strings.TrimSpace(w.desc)
+		// 库里这条角色的**权威名字**:w.name 是本集叫法,别名命中时条目目录名是
+		// e.Name —— 按本集叫法 Put 会在库里**新建第二个条目**(safeName 不同),
+		// 同一角色于是有两条记录(一条有角度图、一条只有主图),后续按名字取参考图
+		// 的结果取决于目录名排序,表现为"随机的一致性差异";新条目的描述还是空串,
+		// 从此再也参与不了别名/描述匹配。用条目自己的名字写回,同一角色保持一条。
+		libName := w.name
+		libDesc := desc
 		if c.lib != nil {
-			if e, _, ok := c.lib.Match("characters", w.name); ok {
+			// Find 而不是 Match:别名条目按本集叫法精确匹配必然 miss(见上)。
+			if e, _, ok := c.lib.Find("characters", w.name, w.desc); ok && e != nil {
+				libName = e.Name
 				if strings.TrimSpace(prompt) == "" {
 					prompt = e.ImagePrompt
 				}
-				desc = e.Description
+				// 描述留空会把库里已有的描述覆盖成空串(Put 无条件写入),那就
+				// 用条目自己的描述 —— 库里没记过时才用方案里的。
+				if strings.TrimSpace(libDesc) == "" {
+					libDesc = e.Description
+				}
 			}
 		}
 		if strings.TrimSpace(prompt) == "" {
@@ -478,7 +619,7 @@ func (c *Coordinator) backfillAssetViews(ctx context.Context, proj *project.Proj
 		rel, _ := filepath.Rel(dir, turn)
 		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 多视角就绪:角色「%s」(%s),本次渲染起作第二张参考", w.name, filepath.ToSlash(rel))
 		if c.lib != nil {
-			if _, err := c.lib.Put("characters", w.name, desc, prompt, master, proj.ID, a.Source); err != nil {
+			if _, err := c.lib.Put("characters", libName, libDesc, prompt, master, proj.ID, a.Source); err != nil {
 				c.emit(proj.ID, PhaseRender, 0, "warn", 0, "多视角写回资产库失败:角色「%s」:%v", w.name, err)
 			}
 		}
@@ -569,18 +710,53 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	if len(list) == 0 {
 		return true
 	}
+	// ① 先查库(这一步**不需要 GPU**):库里已有这个角色/场景时直接复用同一张图。
+	//
+	// 为什么必须排在"引擎是否可用"之前:旧实现这条路径完全不查库,于是资产阶段没跑过
+	// 就直接渲染时,同一角色会重新生成另一张脸并反写覆盖共享条目(旧图被顶替、角度图被
+	// 清掉),而先跑的那一集仍用旧脸 —— 跨集成了"两个沈砚",界面上两边显示同一个名字。
+	// 顺带:本地引擎没起来时,库里明明有整套参考图也会报「缺 N 张参考图,将降级纯文生」,
+	// 白白把镜头降级(复用只是复制像素,不需要引擎)。
+	var todo []miss
+	for _, m := range list {
+		r, ok := c.reuseFromLibrary(proj.ID, m.kind, m.id, m.name, m.desc)
+		if !ok {
+			todo = append(todo, m)
+			continue
+		}
+		assets[m.id] = project.Asset{
+			ID: m.id, Kind: m.kind, Name: m.name,
+			File: r.Rel, ImagePrompt: r.PromptFor(m.prompt),
+			Source: "library", Fingerprint: project.FingerprintFile(r.Dest),
+		}
+		via := ""
+		if r.Name != m.name {
+			via = fmt.Sprintf("(同一角色,已按「%s」复用)", r.Name)
+		}
+		if r.Copied > 0 {
+			c.emit(proj.ID, PhaseRender, 0, "success", 0, "♻ 渲染前补齐:%s「%s」%s(资产库复用,免生成;含 %d 张多视角)", kindLabel(m.kind), m.name, via, r.Copied)
+		} else {
+			c.emit(proj.ID, PhaseRender, 0, "success", 0, "♻ 渲染前补齐:%s「%s」%s(资产库复用,免生成)", kindLabel(m.kind), m.name, via)
+		}
+	}
+	if len(todo) == 0 {
+		_ = c.store.SaveAssets(proj.ID, assets)
+		return true
+	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
-		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地引擎不可用,对应镜头将降级纯文生(建议先启动 ComfyUI)", len(list))
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地引擎不可用,对应镜头将降级纯文生(建议先启动 ComfyUI)", len(todo))
+		_ = c.store.SaveAssets(proj.ID, assets)
 		return false
 	}
 
 	if err := eng.Available(ctx); err != nil {
-		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地 ComfyUI 未就绪(%v),对应镜头将降级纯文生", len(list), err)
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地 ComfyUI 未就绪(%v),对应镜头将降级纯文生", len(todo), err)
+		_ = c.store.SaveAssets(proj.ID, assets)
 		return false
 	}
-	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(list), c.imageSourceLabel())
-	for _, m := range list {
+	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(todo), c.imageSourceLabel())
+	for _, m := range todo {
 		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt)
 		if err != nil {
 			c.emit(proj.ID, PhaseRender, 0, "warn", 0, "补齐失败:%s「%s」:%v(该镜降级 t2va)", kindLabel(m.kind), m.name, err)
@@ -594,7 +770,11 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		}
 		c.emit(proj.ID, PhaseRender, 0, "success", 0, "✔ 已补齐:%s「%s」(%s)", kindLabel(m.kind), m.name, EntityKindLabel(m.ek))
 		if c.lib != nil {
-			_, _ = c.lib.Put(m.kind, m.name, m.desc, m.prompt, path, proj.ID, c.imageSourceKey())
+			// 写库失败不能静默:以前是 `_, _ =`,于是"✔ 已补齐"照报,而库里其实没有
+			// 这个条目 —— 后续项目复不到它,用户只会觉得"怎么又生成了一张"。
+			if _, err := c.lib.Put(m.kind, m.name, m.desc, m.prompt, path, proj.ID, c.imageSourceKey()); err != nil {
+				c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 写回资产库失败(不影响本项目):%s「%s」:%v", kindLabel(m.kind), m.name, err)
+			}
 		}
 	}
 	_ = c.store.SaveAssets(proj.ID, assets)

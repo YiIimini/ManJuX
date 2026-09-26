@@ -1,6 +1,7 @@
 package comfyengine
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -92,6 +93,47 @@ func TestMaskGraphContract(t *testing.T) {
 		if _, ok := uncropInputs[in]; !ok {
 			t.Errorf("SubjectUncrop 缺少输入 %q(缺它就无法把重绘结果贴回原位)", in)
 		}
+	}
+}
+
+// TestMaskGraphSamplesFullCanvas 局部重绘的采样画布是**整幅机位画布**。
+//
+// 2026-09-26 渲染管线审查指出:本文件的注释与架构文档曾写"H3 只看到要重绘的那一块、
+// 省一个数量级成本",与图不符 —— 裁剪结果(MVEx_SubjectCrop)只作为 ref_images 参考图
+// 进入条件,而 H3 的 width/height 一直是整幅 w×h,采样成本与整镜重渲同级;
+// "省"只体现在"其余像素逐帧原样保留"这个语义上。这里把真实代价钉死:
+// 若哪天改成按裁剪尺寸采样(需要运行时尺寸,属于改链路的设计决定),这条会失败,
+// 提醒同时改掉代价描述,别再让注释替代码许愿。
+func TestMaskGraphSamplesFullCanvas(t *testing.T) {
+	c := testComfySettings()
+	job := baseJob("ref2va")
+	graph := buildMaskGraph(job, c, MaskOptions{
+		SourceVideo: "shot_003.mp4", Prompt: "p", Target: "the bronze sparrow", ObjectIndex: "0",
+	}, 768, 1344, 124)
+
+	_, inputs := findNode(t, graph, "MiniMaxH3ReferenceToVideo")
+	if inputs == nil {
+		t.Fatal("缺少 H3 条件节点")
+	}
+	if inputs["width"] != 768 || inputs["height"] != 1344 {
+		t.Errorf("采样画布应是整幅机位画布(768x1344),实际 %vx%v —— 若真改成按裁剪尺寸采样,"+
+			"请同时更正文档与注释里的成本口径", inputs["width"], inputs["height"])
+	}
+	for _, k := range []string{"denoise_mask", "mask"} {
+		if _, ok := inputs[k]; ok {
+			t.Errorf("遮罩并未进入采样输入(实际是后置贴回),不该出现 %q", k)
+		}
+	}
+	// 遮罩只接给裁剪与回贴这两个节点
+	cropID, cropIn := findNode(t, graph, "MVEx_SubjectCrop")
+	if cropID == "" || cropIn == nil {
+		t.Fatal("缺少 MVEx_SubjectCrop")
+	}
+	if fmt.Sprint(cropIn["masks"]) == "" {
+		t.Error("裁剪节点必须拿到遮罩")
+	}
+	if _, in := findNode(t, graph, "MVEx_SubjectUncrop"); in == nil {
+		t.Fatal("缺少 MVEx_SubjectUncrop")
 	}
 }
 

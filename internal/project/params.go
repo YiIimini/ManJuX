@@ -97,9 +97,17 @@ type RenderParams struct {
 	Steps     int    `json:"steps"`      // turbo 4-8 / 基线 20
 	Seed      int64  `json:"seed"`       // 0=每镜随机;非 0=全项目固定
 	Turbo     bool   `json:"turbo"`      // 是否挂加速 LoRA(全局 Comfy 设置提供文件名)
-	CondCache bool   `json:"cond_cache"` // 两阶段渲染(条件缓存)
+	CondCache *bool  `json:"cond_cache"` // 两阶段渲染(条件缓存);nil = 未表态,回退全局设置
 	Seam      bool   `json:"seam"`       // 镜间连续接缝(MotionContext;仅本地 ComfyUI;相邻镜同分辨率)
 }
+
+// CondCacheOn 条件缓存是否生效:未表态(nil)按开处理。
+//
+// 为什么是三态而不是 bool:这个开关既要能"由项目显式关掉"(此前是假开关:项目里关掉、
+// 只要全局开着就照样写 .pt,那个目录堆到过 4.9GB),又不能在**缺键**的旧 project.json 上
+// 被零值误读成"关" —— bool 的 false 同时表示"用户关了"和"这个字段还没有",
+// 一旦传给引擎就会把"没表态"当成"显式关闭",把缓存静默关掉(慢一倍且无提示)。
+func (r RenderParams) CondCacheOn() bool { return r.CondCache == nil || *r.CondCache }
 
 // QCParams 质检阶段(qc)参数。
 type QCParams struct {
@@ -157,7 +165,7 @@ func DefaultStageParams() StageParams {
 			// Seam 默认开:镜间连续(MotionContext)让相邻镜头运镜/画面延续,
 			// 配合音频中点切与叠化,整片观感丝滑;上一镜无存档自动降级普通
 			// 渲染,云端/混合链安全(2026-09-09 用户定调直接升级)。
-			Steps: 8, Seed: 0, Turbo: true, CondCache: true, Seam: true,
+			Steps: 8, Seed: 0, Turbo: true, CondCache: Bool(true), Seam: true,
 		},
 		QC: QCParams{
 			Enabled: true, DarkRatioFail: 0.60, DarkRatioWarn: 0.45,

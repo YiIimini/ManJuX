@@ -45,6 +45,51 @@ func TestSeamRenderLength(t *testing.T) {
 	}
 }
 
+// TestSeamRenderLengthStaysOnGrid 接缝长度的算术必须被精确钉住,而不是只判"补够了没"。
+//
+// 2026-09-26 渲染管线审查指出:注释原先承诺"保证成片时长不缩水",而实际成片时长会跟
+// 普通渲染差 −5 或 +12 帧(取决于 L mod 17);既有判据只断言"补偿量 >= 22",于是
+// 这类偏差既不会被测出来,也不会被人看出来。**偏差本身消不掉**(网格间距 17 < 钉入的
+// 22 帧,而提交长度必须落在 17k+5 上 —— 见 seamRenderLength 的说明),所以这里改为
+// 把真实算术与"提交值必须落在网格上"这条硬约束一起钉死:
+//
+//	提交长度 = AlignLength(L+22) ∈ 17k+5   ← 提交值必须合法,否则 VAE 只按更低的
+//	                                          网格点编码(成片反而更短)
+//	成片长度 = 提交长度 − 22,与 AlignLength(L) 相差 −5 或 +12 帧
+func TestSeamRenderLengthStaysOnGrid(t *testing.T) {
+	cases := []struct {
+		jobLen     int
+		wantSubmit int
+	}{
+		{96, 124},  // 4 秒:普通 107 → 接缝 102(−5)
+		{120, 158}, // 5 秒:普通 124 → 接缝 136(+12)
+		{107, 141}, // L 恰在网格上:普通 107 → 接缝 119(+12)
+		{124, 158},
+		{141, 175},
+		{5, 39},
+	}
+	for _, c := range cases {
+		submit := seamRenderLength(c.jobLen, true)
+		if submit != c.wantSubmit {
+			t.Errorf("seamRenderLength(%d, true) = %d,期望 %d", c.jobLen, submit, c.wantSubmit)
+		}
+		if (submit-5)%17 != 0 {
+			t.Errorf("提交给 H3 的帧数 %d 不在 17k+5 网格上 —— VAE 会按更低的网格点编码,成片反而更短", submit)
+		}
+		plain := seamRenderLength(c.jobLen, false)
+		if plain != engine.AlignLength(c.jobLen) {
+			t.Errorf("非接缝长度应恒为 AlignLength(%d)=%d,实际 %d", c.jobLen, engine.AlignLength(c.jobLen), plain)
+		}
+		diff := (submit - seamHeadFrames) - plain
+		if diff != -5 && diff != 12 {
+			t.Errorf("L=%d:接缝成片与普通成片应相差 −5 或 +12 帧(网格间距 17 < 钉入 22),实际 %d", c.jobLen, diff)
+		}
+		if submit-seamHeadFrames <= 0 {
+			t.Errorf("L=%d:裁掉 %d 帧头后不能没有画面", c.jobLen, seamHeadFrames)
+		}
+	}
+}
+
 // TestSeamHeadFramesMatchesGraph 补偿用的帧数必须与图里 MotionContext 的
 // context_length 一致 —— 改一处漏一处会让成片悄悄变长或变短。
 func TestSeamHeadFramesMatchesGraph(t *testing.T) {

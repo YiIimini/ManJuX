@@ -165,6 +165,19 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	// 引擎层不做本地缓存,避免绕过指纹校验复用旧文件
 	final := filepath.Join(job.OutputDir, job.OutputName+".mp4")
 
+	// seed:云端**不支持**(H3 的 /v2/video_generation 请求体只有 model/content/
+	// duration/resolution/ratio —— 官方文档 API reference,社区实测亦写明
+	// "There is no seed parameter. Generations are not reproducible",
+	// 见 awesome-minimax-h3 的 minimax-video/references/api-reference.md)。
+	// 而"固定种子"与单镜 seed 是平台上真会生效的参数,切到云端后静默失效、零反馈
+	// (审计 M32)。能力提示清单(caps_params.go 的 unsupportedParamNote)只覆盖
+	// Seam/CondCache,所以这里至少把"这一镜的 seed 没生效"播报出去。
+	if job.Seed != 0 && job.OnProgress != nil {
+		job.OnProgress(2, fmt.Sprintf(
+			"⚠ 云端引擎不支持 seed(请求体无该字段,产物不可复现):本镜的 seed=%d 不生效 —— 要按 seed 复现请改用本地引擎",
+			job.Seed))
+	}
+
 	content := []map[string]any{
 		{"type": "text", "text": job.Prompt},
 	}
@@ -183,10 +196,34 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 			"role":      role,
 		})
 	}
+	// 时长:云端只吃整数秒,而它的合法区间比计划侧(PlanMinShotSeconds=4)更窄 ——
+	// clampDuration 会把一条 4 秒镜**静默**抬成 5 秒。这不是小事:同一条 plan 走云端
+	// 每一条 4 秒镜都变长(整集比计划长),走本地却是 AlignLength 后的 4.46 秒,
+	// 两条路的产物时长不一致,而日志/事件里一个字都没有(审计:云端时长静默抬升)。
+	//
+	// 为什么不去掉钳制直接原样提交:官方文档把 duration 写成一小组取值
+	// (https://platform.minimax.io/docs/api-reference/video-generation-v2-create ,
+	// 页面为客户端渲染的取值表,无法逐字复核),社区整理的 H3 API 参考记官方枚举为
+	// 5/10/15、同时实测"任意整数都被接受"(https://github.com/joeVenner/awesome-minimax-h3
+	// 的 minimax-video/references/api-reference.md)—— 两处口径不一致,而猜错的代价是
+	// 一次 400 直接让整镜失败(400 属 fatal,不会重试,也不计费回滚)。
+	// 所以保留保守区间,但把"被改写了"这件事如实播报出去,由用户决定是否改用本地引擎。
+	wantSec := job.Length / 24
+	sec, durationAdjusted := submitDuration(job.Length)
+	if durationAdjusted && job.OnProgress != nil {
+		if wantSec <= 0 {
+			job.OnProgress(2, fmt.Sprintf(
+				"⚠ 本镜未给出渲染帧数(Length=%d),云端按最短 %d 秒提交:成片时长不受镜头计划约束", job.Length, sec))
+		} else {
+			job.OnProgress(2, fmt.Sprintf(
+				"⚠ 云端时长受限:本镜计划 %d 秒(%d 帧),云端按 %d 秒生成 —— 与本地引擎的帧数对齐口径不同,两条路产物时长会不一致",
+				wantSec, job.Length, sec))
+		}
+	}
 	body := map[string]any{
 		"model":      c.Model,
 		"content":    content,
-		"duration":   clampDuration(job.Length / 24),
+		"duration":   sec,
 		"resolution": orDefault(c.Resolution, "768P"),
 		// ratio 始终显式传:ref2va 下云端不按参考图自动取竖横,缺省会落 16:9
 		"ratio": ratioFor(job.Width, job.Height),
@@ -370,6 +407,16 @@ func clampDuration(sec int) int {
 		return 15
 	}
 	return sec
+}
+
+// submitDuration 本次提交给云端的时长(秒),以及它是否被云端区间改写过。
+//
+// 抽成纯函数是为了让"计划 4 秒 → 云端 5 秒"这条可被直接断言 —— 它此前埋在
+// body 字面量里,只有真发一次请求(花一次额度)才看得见效果。
+func submitDuration(lengthFrames int) (sec int, adjusted bool) {
+	want := lengthFrames / 24
+	sec = clampDuration(want)
+	return sec, sec != want
 }
 
 func orDefault(s, def string) string {

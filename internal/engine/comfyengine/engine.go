@@ -252,6 +252,20 @@ func (e *Engine) ClearQueue(ctx context.Context) {
 // 而降级普通渲染时,只清了 PrevShot、**没有回滚 +22** —— 于是那一镜既不裁头
 // (降级后图里没有 Trim 节点),又多渲 22 帧(约 0.9 秒),逐镜累积到成片。
 // 现在降级与长度补偿是同一处决定,想漏也漏不掉。
+//
+// **成片时长仍会与普通渲染差 ±若干帧**(2026-09-26 渲染管线审查更正了原先
+// "保证成片时长不缩水"的承诺,它不成立):
+//
+//	普通:AlignLength(L)              = 17k+5,  例如 L=96 → 107 帧
+//	接缝:AlignLength(L+22) − 22      = 17k,     例如 L=96 → 124−22 = 102 帧(短 5 帧)
+//	                                              L=120 → 158−22 = 136 帧(长 12 帧)
+//
+// 这是网格本身决定的,不能靠"对齐后再补 22"绕开:提交的长度必须落在 17k+5 上,
+// 否则 H3 侧的视频 VAE 会按**较低的网格点**编码,而那一档位覆盖的是输入的前
+// 17m+5 帧而不是最后 17m+5 帧(ComfyUI-H3-Motion-Context/nodes.py:79-90 写明
+// 了这条公式与后果)—— 于是模型实际只按 AlignLength(L) 帧出图,再裁掉 22 帧头,
+// 成片反而更短(上例会变成 85 帧)。所以这里保持"提交值落在网格上"这一硬约束,
+// 并把差异如实记在此处,不再宣称时长不缩水;真正要对齐时长应在成片侧处理。
 func seamRenderLength(jobLength int, seamActive bool) int {
 	if seamActive {
 		return engine.AlignLength(jobLength + seamHeadFrames)
@@ -265,7 +279,20 @@ const seamHeadFrames = 22
 
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
 	touchBusy()
+	// 收尾也打一次点(2026-09-26 渲染管线审查):空闲看门狗只认「最近一次引擎调用」,
+	// 而管线在镜与镜之间有一段不碰引擎的间隙(下载产物、写清单、后处理)。旧实现只在
+	// 入口打点,于是单镜耗时一旦超过 IdleStopMin(默认 10 分钟;refine/quality 档与长镜
+	// 都属于此列),巡检正好落在镜间那 1~3 秒空档就把引擎判成空闲并 taskkill ——
+	// 下一镜白付一次冷启动,更糟的是顺手打断刚提交的任务。
+	defer touchBusy()
 	c := e.cfg()
+	// 帧数缺失必须当场报错(2026-09-26 渲染管线审查):Job.Length 的注释写着
+	// "17k+5 网格,engine 自行对齐",而 AlignLength(0) 会把它兜成 5 帧(0.21 秒)——
+	// 漏传 Length 的调用方(音频驱动接口)会拿到一支 5 帧的片子,而接口照样返回
+	// 成功、日志照写「✔ 音频驱动完成」。0/负数不是"未填"的合法写法。
+	if job.Length <= 0 {
+		return nil, fmt.Errorf("渲染帧数未指定(job.Length=%d):调用方必须传计划帧数(=时长×24),对齐到 H3 的 17k+5 网格由引擎负责", job.Length)
+	}
 	if err := e.Available(ctx); err != nil {
 		return nil, err
 	}
@@ -282,7 +309,8 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		}
 	}
 	// 帧数(含接缝补偿):pinned 头(22 帧)会被 Trim 裁掉,接缝生效时须加回,
-	// 保证成片时长不缩水;**降级时必须不加**(见 seamRenderLength 的说明)。
+	// 否则成片会比计划短 22 帧;**降级时必须不加**(见 seamRenderLength 的说明:
+	// 网格量化后成片与普通渲染仍差 −5/+12 帧,那不是漏补,是 17k+5 网格决定的)。
 	seamActive := job.Seam && job.PrevShot > 0
 	length := seamRenderLength(job.Length, seamActive)
 	w, h := engine.SnapCanvas(job.Width, job.Height)
@@ -308,13 +336,19 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		}
 		uploadedAudios = append(uploadedAudios, an)
 	}
-	if c.CondCache && e.client().HasNode(ctx, classCondSave) {
-		// 缓存键含参考图内容指纹:换定妆照(同名覆盖)后自动失效,防旧条件隐性复用
-		var refFPs []string
-		for _, ref := range job.RefImages {
-			refFPs = append(refFPs, ref.Path+":"+fileFingerprint(ref.Path))
-		}
-		cacheName := condCacheName(job.ProjectID, job.ShotID, job.Prompt, refFPs, w, h, length)
+	if condCacheEnabled(job, c) && e.client().HasNode(ctx, classCondSave) {
+		// 键必须覆盖**全部**参与 encode 图的输入(2026-09-26 渲染管线审查)。
+		// 旧实现只放参考图的内容指纹,于是:
+		//   - 音频不在键里 —— 音频是条件的一等输入(addConditionNode 的 ref_audios),
+		//     同一镜换一版配音重跑「音频驱动」时 prompt/refs/w/h/length 全同 → 命中
+		//     上一次的条件 → 采样吃的是**旧配音**编码出的隐空间,口型仍跟着旧音频,
+		//     而接口返回 ok:true、日志写「✔ 音频驱动完成」(该功能最核心的承诺被静默破坏);
+		//   - 模式/加速档/CLIP/VAE 也不在键里 —— 它们决定用哪个条件节点、哪套编码器与
+		//     哪张 VAE(express 档换 int8 VAE,见 loaders),变了同样必须重编码。
+		keyParts := condKeyParts(job, c)
+		// 键格式换代:旧格式的记账/数据一次性清掉(否则它们既命中不了也删不掉)
+		purgeLegacyCondCache(c, job.ProjectID)
+		cacheName := condCacheName(job.ProjectID, job.ShotID, job.Prompt, keyParts, w, h, length)
 		if e.condExists(c, job.ProjectID, cacheName) {
 			condRef = "cache:" + cacheName
 		} else {
@@ -365,7 +399,11 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	if err := e.client().Download(dlCtx, *video, dest); err != nil {
 		return nil, fmt.Errorf("产物下载失败: %w", err)
 	}
-	e.client().Free(context.Background())
+	// 这里**不再**逐镜 /free(2026-09-26 渲染管线审查):unload_models 会把 UNet
+	// (~20GB)+CLIP+VAE 从显存卸掉,下一镜得重新从磁盘加载。管线侧的口径是
+	// "渲染期间模型常驻、收尾才交还"(coordinator 的 releaseVRAM /
+	// ReleaseVRAMIfIdle),逐镜释放等于一集 N 镜多付 N 次加载,还把两阶段条件缓存
+	// 省下的时间吃掉;而它是本模块里唯一一处没有理由注释的显存动作。
 	return &engine.Result{VideoPath: dest, Engine: e.Name()}, nil
 }
 
@@ -393,13 +431,82 @@ func condProjectDir(c config.ComfySettings, projectID string) string {
 	return filepath.Join(condSidecarDir(c), "manjux_"+projectID)
 }
 
-// condPtDir H3 条件缓存的数据目录:插件把 CONDITIONING 序列化为 .pt 存于此。
+// condPtDirs H3 条件缓存的数据目录:插件把 CONDITIONING 序列化为 .pt 存于此。
 // 与 sidecar 记账目录是**两个不同的位置** —— 数据在 ComfyUI 侧,记账在本应用侧。
-func condPtDir(c config.ComfySettings) string {
-	if strings.TrimSpace(c.RootDir) == "" {
-		return ""
+//
+// 目录解析与清理/管理页共用 comfydirs.go 的实现(2026-09-26 渲染管线审查):
+// 旧实现只拼 `<root>/ComfyUI/models/conditioning`,而本机模型在
+// `<root>/ComfyUI/shared/models/`(extra_model_paths 的 base_path)—— 于是删除项目时
+// 一个 .pt 都没删,日志却照样打「已清理」,目录只增不减(历史堆积 4.9GB / 17.4GB)。
+func condPtDirs(c config.ComfySettings) []string {
+	return ModelDirs(c.RootDir, "conditioning")
+}
+
+// removeCondData 删除某条缓存对应的 .pt 数据文件,返回是否真的删掉了一个。
+func removeCondData(dirs []string, cacheName string) bool {
+	removed := false
+	for _, dir := range dirs {
+		p := filepath.Join(dir, cacheName+".pt")
+		if err := os.Remove(p); err == nil {
+			removed = true
+		} else if !os.IsNotExist(err) {
+			log.Printf("[comfy] ⚠ 条件缓存数据删除失败:%s: %v", p, err)
+		}
 	}
-	return filepath.Join(c.RootDir, "ComfyUI", "models", "conditioning")
+	return removed
+}
+
+// condKeyVersion 条件缓存键的格式版本。**改动键的组成时必须一起改它**:它保证
+// 旧格式的 .ok/.pt 一律不再被命中,并由 purgeLegacyCondCache 做一次性清理 ——
+// 否则那些文件既命中不了、也不会被删(原先只在删项目时才清),只增不减。
+// 变量而非常量:测试要把它顶到下一版来钉住"版本参与哈希"。
+var condKeyVersion = "ck2"
+
+// condPurgeMu 串行化"换键清理"与缓存读写:RENDER 可并发(批量产线),两个镜头同时
+// 进来时,若都判定"还没迁移"就会互相删掉对方刚写好的 .ok。标记文件写在临界区内,
+// 因此后到者一定看到标记而跳过。
+var condPurgeMu sync.Mutex
+
+// purgeLegacyCondCache 键格式换代时,清掉本项目**旧格式**的条件缓存(记账 + 数据)。
+//
+// 只在项目目录里没有当前版本的标记文件时执行一次;清完写标记。清掉的只是缓存,
+// 下一次渲染会重新预编码(一次性成本),换来的是"旧键不再可能被命中"这件事可验证。
+func purgeLegacyCondCache(c config.ComfySettings, projectID string) {
+	if strings.TrimSpace(projectID) == "" {
+		return
+	}
+	condPurgeMu.Lock()
+	defer condPurgeMu.Unlock()
+
+	dir := condProjectDir(c, projectID)
+	marker := filepath.Join(dir, ".key"+condKeyVersion)
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	dirs := condPtDirs(c)
+	removedDocs, removedData := 0, 0
+	if entries, err := os.ReadDir(dir); err == nil {
+		for _, ent := range entries {
+			name := ent.Name()
+			if ent.IsDir() || !strings.HasSuffix(name, ".ok") {
+				continue
+			}
+			cache := strings.TrimSuffix(name, ".ok")
+			if removeCondData(dirs, cache) {
+				removedData++
+			}
+			if os.Remove(filepath.Join(dir, name)) == nil {
+				removedDocs++
+			}
+		}
+	}
+	if removedDocs > 0 || removedData > 0 {
+		log.Printf("[comfy] 条件缓存键格式化(%s):已清理旧缓存 %d 条记账 / %d 个 .pt(下次渲染会重新预编码)", condKeyVersion, removedDocs, removedData)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return // 写不了标记就下次再试,不影响渲染
+	}
+	_ = os.WriteFile(marker, []byte(time.Now().Format(time.RFC3339)), 0o644)
 }
 
 // CleanupProjectCache 删除某项目的全部条件缓存(数据 + 记账)。
@@ -411,26 +518,43 @@ func condPtDir(c config.ComfySettings) string {
 //   - 记账:data/cond_cache/manjux_<projectID>/。
 //
 // 旧实现只清后者,导致 .pt 永久滞留 —— 实测该目录已堆积 4.9GB 且只增不减。
+// 2026-09-26 又修了另一半:数据目录只认标准布局,shared 布局下一个都找不到,
+// 却照样报「已清理」—— 现在按 ModelDirs 遍历全部布局,并对"没删干净"如实告警。
 func (e *Engine) CleanupProjectCache(projectID string) {
 	c := e.cfg()
 	sidecar := condProjectDir(c, projectID)
 
-	removed := 0
-	if ptDir := condPtDir(c); ptDir != "" {
-		if entries, err := os.ReadDir(sidecar); err == nil {
-			for _, ent := range entries {
-				name := ent.Name()
-				if ent.IsDir() || !strings.HasSuffix(name, ".ok") {
-					continue
-				}
-				// .ok 的文件名就是 cacheName(不含扩展名),据此定位同名 .pt
-				if os.Remove(filepath.Join(ptDir, strings.TrimSuffix(name, ".ok")+".pt")) == nil {
-					removed++
-				}
+	// .ok 的文件名就是 cacheName(不含扩展名),据此定位同名 .pt
+	var caches []string
+	if entries, err := os.ReadDir(sidecar); err == nil {
+		for _, ent := range entries {
+			name := ent.Name()
+			if ent.IsDir() || !strings.HasSuffix(name, ".ok") {
+				continue
 			}
+			caches = append(caches, strings.TrimSuffix(name, ".ok"))
 		}
 	}
-	if err := os.RemoveAll(sidecar); err == nil {
+
+	dirs := condPtDirs(c)
+	removed := 0
+	for _, cache := range caches {
+		if removeCondData(dirs, cache) {
+			removed++
+		}
+	}
+
+	if err := os.RemoveAll(sidecar); err != nil {
+		return
+	}
+	switch {
+	case len(caches) == 0:
+		log.Printf("[comfy] 已清理项目条件缓存:%s(记账里没有 .pt 需要删)", sidecar)
+	case removed < len(caches):
+		// 报成功却没删干净是这条路径的老毛病,必须让人看见
+		log.Printf("[comfy] ⚠ 项目条件缓存只清掉 %d/%d 个 .pt:%s(已查找目录:%s —— 其余可能在别处或已被手动删除)",
+			removed, len(caches), sidecar, strings.Join(dirs, "; "))
+	default:
 		log.Printf("[comfy] 已清理项目条件缓存:%s(连带 %d 个 .pt 数据文件)", sidecar, removed)
 	}
 }
@@ -447,10 +571,41 @@ func markCondReady(c config.ComfySettings, projectID, cacheName string) {
 		[]byte(time.Now().Format(time.RFC3339)), 0o644)
 }
 
+// condKeyParts 条件缓存键的输入清单:**凡是会改变 encode 图产出的东西都必须在这里**。
+//
+// 单独立成函数是为了能被测试逐个钉住(每个输入变一下,键必须变)——
+// "缓存键漏项"的症状是"改了配置/换了素材却静默复用旧条件",没有别的观测面。
+// 覆盖范围:
+//
+//	参考图  路径 + 内容指纹(同名覆盖定妆照也要失效)
+//	参考音频 路径 + 内容指纹(**换配音重跑音频驱动必须失效**,审计 2026-09-26 高危)
+//	mode    决定用 Ref2V 还是 I2V 条件节点
+//	accel   决定挂哪条加速 LoRA(只影响采样),但 express 会换 int8 视频 VAE
+//	CLIP / 视频 VAE / 音频 VAE 文件名  决定编码器本身
+func condKeyParts(job engine.Job, c config.ComfySettings) []string {
+	parts := make([]string, 0, len(job.RefImages)+len(job.Audios)+5)
+	for _, ref := range job.RefImages {
+		parts = append(parts, "img:"+ref.Path+":"+fileFingerprint(ref.Path))
+	}
+	for _, a := range job.Audios {
+		parts = append(parts, "audio:"+a+":"+fileFingerprint(a))
+	}
+	return append(parts,
+		"mode:"+job.Mode,
+		"accel:"+job.Accel,
+		"clip:"+c.CLIP,
+		"vae:"+videoVAEFor(c, job.Accel),
+		"audio_vae:"+c.AudioVAE,
+	)
+}
+
 // condCacheName 条件缓存键名(含项目子目录前缀)。
+// keyParts 是**全部**参与 encode 图的输入的可辨认摘要(参考图/音频内容指纹、模式、
+// 加速档、CLIP/VAE 文件名…):凡是会改变 CONDITIONING 的输入都必须在里面,否则就是
+// 「改了设置/换了素材却跳过重编码」的静默错(2026-09-26 渲染管线审查)。
 // 文件落盘路径:cond_cache/{projectID}/s{shotID}_{hash}.ok
-func condCacheName(projectID string, shotID int, prompt string, refFPs []string, w, h, length int) string {
-	sum := md5.Sum([]byte(fmt.Sprint(projectID, shotID, prompt, refFPs, w, h, length)))
+func condCacheName(projectID string, shotID int, prompt string, keyParts []string, w, h, length int) string {
+	sum := md5.Sum([]byte(fmt.Sprint(condKeyVersion, projectID, shotID, prompt, keyParts, w, h, length)))
 	return "s" + strconv.Itoa(shotID) + "_" + hex.EncodeToString(sum[:])[:8]
 }
 
@@ -556,18 +711,26 @@ func buildEncodeGraph(job engine.Job, c config.ComfySettings, uploaded, audios [
 	return g
 }
 
-func loaders(c config.ComfySettings, accel string) map[string]any {
-	videoVAE := c.VideoVAE
-	if accel == "express" {
-		// 极速档:int8 量化 VAE 解码提速 30-50%(有损,预览/抽卡用;文件缺失回退 fp16)
-		const int8VAE = "minimax_h3_video_vae_int8_convrot.safetensors"
-		if modelFileExists(c, int8VAE, []string{"vae"}) {
-			videoVAE = int8VAE
-		}
+// videoVAEFor 本次作业实际用的视频 VAE 文件名。**唯一实现**。
+//
+// 抽出来是因为它有两个消费者:loaders 拿它建图,条件缓存键拿它做键的一部分。
+// 各写一份的后果是"express 档换了 int8 VAE 却复用旧 VAE 算出的条件隐空间"。
+func videoVAEFor(c config.ComfySettings, accel string) string {
+	if accel != "express" {
+		return c.VideoVAE
 	}
+	// 极速档:int8 量化 VAE 解码提速 30-50%(有损,预览/抽卡用;文件缺失回退 fp16)
+	const int8VAE = "minimax_h3_video_vae_int8_convrot.safetensors"
+	if modelFileExists(c, int8VAE, []string{"vae"}) {
+		return int8VAE
+	}
+	return c.VideoVAE
+}
+
+func loaders(c config.ComfySettings, accel string) map[string]any {
 	return map[string]any{
 		"1": nd("CLIPLoader", map[string]any{"clip_name": c.CLIP, "type": "minimax"}),
-		"2": nd("VAELoader", map[string]any{"vae_name": videoVAE}),
+		"2": nd("VAELoader", map[string]any{"vae_name": videoVAEFor(c, accel)}),
 		"3": nd("VAELoader", map[string]any{"vae_name": c.AudioVAE}),
 	}
 }

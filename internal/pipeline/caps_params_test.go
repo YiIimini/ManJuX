@@ -14,7 +14,7 @@ import (
 // 守两件事:① 做不到的参数被跳过时**说出来**(旧实现静默);② 管线里不再靠
 // 引擎名做能力判断(字符串比较在新增引擎时必漏)。
 func TestUnsupportedParamNote(t *testing.T) {
-	rp := project.RenderParams{Seam: true, CondCache: true}
+	rp := project.RenderParams{Seam: true, CondCache: project.Bool(true)}
 	note := unsupportedParamNote(engine.CapsOf("api"), rp)
 	if note == "" {
 		t.Fatal("云端 + 开了接缝/条件缓存时必须给出提示,否则用户以为生效了")

@@ -22,7 +22,10 @@ func unsupportedParamNote(caps engine.Caps, rp project.RenderParams) string {
 	if rp.Seam && !caps.Seam {
 		miss = append(miss, "镜间连续接缝")
 	}
-	if rp.CondCache && !caps.Local {
+	// 这里只认**显式勾选**:CondCacheOn() 把 nil(缺键/未表态)当开,那是"生效性"口径;
+	// 而这条提示是给"用户自己在项目里开了、引擎却给不了"用的 —— 拿生效性口径来刷,
+	// 会让每个没碰过该开关的项目在云端引擎下都收到一条无意义的告警(闸门 TestUnsupportedParamNote 钉住)。
+	if rp.CondCache != nil && *rp.CondCache && !caps.Local {
 		miss = append(miss, "两阶段条件缓存")
 	}
 	if len(miss) == 0 {

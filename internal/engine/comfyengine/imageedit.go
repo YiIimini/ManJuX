@@ -53,7 +53,21 @@ type ImageEditOptions struct {
 	Seed      int64
 	UseTurbo  bool          // 2511:Lightning 4 步 LoRA;2.1 无对应 LoRA,此标志被忽略
 	UseAngles bool          // 2511:Multiple-Angles LoRA;2.1 不需要(它自带参考图机制)
-	Timeout   time.Duration // 0 = 引擎默认
+	Timeout   time.Duration // <=0 时用**图像级**兜底 defaultImageTimeout(10 分钟),不是单镜的 45 分钟
+}
+
+// imageEditTimeout 编辑链路的实际超时。**唯一实现**,便于单测钉住"用的是图像级档位"。
+//
+// 回归(2026-09-26 渲染管线审查):旧实现把 0 原样透传下去,而 WaitForDone 在 timeout<=0
+// 时回退的是 **defaultShotTimeout(45 分钟)** —— 一张多视角图卡住要白等 45 分钟,而这条
+// 链路处在"渲染前资产补齐"里,每个角色 3 张、失败还要重试,最坏把整条管线堵上小时级。
+// 项目里早就为此另立了 defaultImageTimeout(handlers_enhance.go 的注释写着定妆图那条链
+// 就是因为"共用一个 45 分钟"才分开的),只是这条路没用上。
+func imageEditTimeout(opt ImageEditOptions) time.Duration {
+	if opt.Timeout > 0 {
+		return opt.Timeout
+	}
+	return defaultImageTimeout
 }
 
 // EditImage 用 Qwen-Image-Edit 生成一张"同主体、不同视角"的图,返回本地路径。
@@ -78,7 +92,7 @@ func (e *Engine) EditImage(ctx context.Context, opt ImageEditOptions, outPath st
 		upNames = append(upNames, n)
 	}
 	graph := buildEditGraph(c, opt, upNames)
-	hist, err := e.submitAndWait(ctx, graph, opt.Timeout, nil)
+	hist, err := e.submitAndWait(ctx, graph, imageEditTimeout(opt), nil)
 	if err != nil {
 		return "", err
 	}

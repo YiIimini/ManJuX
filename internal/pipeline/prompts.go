@@ -34,16 +34,11 @@ import (
 // 只有"脸"这一种写法。器物锁的是结构/材质/部件,无实体锁的是形体与透明感,妖兽锁的是
 // 物种与体量 —— 给一只铜雀写"脸型/五官/肤色/年龄感照抄参考图",模型当然给你画一个人。
 func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
-	type named struct {
-		name, desc string
-		voice      string
-		kind       EntityKind
-	}
-	var chars, scenes []named
+	var chars, scenes []anchorChar
 	for _, cid := range shot.Characters {
 		for _, ch := range plan.Characters {
 			if ch.ID == cid && strings.TrimSpace(ch.Description) != "" {
-				chars = append(chars, named{
+				chars = append(chars, anchorChar{
 					name: ch.Name, desc: strings.TrimSpace(ch.Description),
 					voice: strings.TrimSpace(ch.Voice), kind: ResolveEntityKind(ch),
 				})
@@ -52,7 +47,7 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	}
 	for _, sc := range plan.Scenes {
 		if sc.ID == shot.Scene && strings.TrimSpace(sc.Description) != "" {
-			scenes = append(scenes, named{name: sc.Name, desc: strings.TrimSpace(sc.Description)})
+			scenes = append(scenes, anchorChar{name: sc.Name, desc: strings.TrimSpace(sc.Description)})
 		}
 	}
 	if len(chars) == 0 && len(scenes) == 0 {
@@ -98,7 +93,13 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	// (折纸、搬箱、甩上肩),模型就优先保住动作,把外貌细节当装饰丢掉。
 	// 更关键的是:2 张参考图与 3 张参考图的镜头都漂(与拼合图无关),所以只能从**锁定措辞**
 	// 上收紧 —— 用"这三条不许动"把外貌从"形容词"提升为"事实"。
-	if len(chars) > 0 {
+	//
+	// **必须按实体类型分发**(审计):这段写的是发型/发长/服装层数 —— 人形词汇。
+	// 器物/灵体镜头里同时出现「ARTEFACT CLAUSE: no human face, no living eyes, no
+	// flesh」与「头发不得随时间变长」,等于把"头发/服装"重新塞回条件里,有把铜雀、
+	// 妖兽拉回人形的风险(2026-09-24 报障「阿凿是一只铜雀却渲染成人物」的同一类)。
+	// 与 PortraitHairClause(已按 Kind 分发)保持同一写法:只对有人物头发的类型注入。
+	if hasHumanLikeChar(chars) {
 		sb.WriteString("【外貌不变项(逐帧核对,不得随剧情放松)】以下每一条都是**身份事实**而不是形容词," +
 			"任何镜头、任何动作、任何情绪下都不得改变:\n" +
 			"- 发型与**发长**:参考图上是短发就是短发。头发不得随时间变长、变散、变成飘动的长发;" +
@@ -140,6 +141,15 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 		// 类型质感 + 反错误形态(不得拟人化/不得实体化/不得缩水)。
 		// AntiForm **不受角色动漫化开关影响**:它不是画风选择,而是"这东西本来是什么形态"的
 		// 正确性问题 —— 关了动画化也不该把铜雀画成人。
+		//
+		// **RenderLook 要与图像侧同一道守卫**:上游点名写实/3D 时不能加这一块 ——
+		// 它是介质条款("手绘线稿脸 / 赛璐璐平涂 / 哑光"),而同一段提示词里
+		// styleAndMediumBlock 正在写「以上风格由剧集设定指定,照此渲染」+ STYLE AUTHORITY。
+		// 两句对撞,模型只会二选一地糊:逐镜摇摆、跨集画风不一致,而定妆照按 styleExpand
+		// 的 photoreal 分支画成写实 —— 又回到"参考图与成片不在同一个视觉世界"那个老根因。
+		// 图像侧早就加了这个守卫(styleExpand: facesOn && !styleIsPhotoreal),
+		// 视频侧漏了,而视频侧才是真正出像素的那一端。
+		styleIsPhotoreal := photorealRequested(planStyle(plan))
 		seen := map[EntityKind]bool{}
 		for _, c := range chars {
 			if seen[c.kind] {
@@ -147,7 +157,7 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			}
 			seen[c.kind] = true
 			p := EntityProfileOf(c.kind)
-			if facesOn && p.RenderLook != "" {
+			if facesOn && !styleIsPhotoreal && p.RenderLook != "" {
 				sb.WriteString(strings.TrimRight(p.RenderLook, "\n") + "\n")
 			}
 			if p.AntiForm != "" {
@@ -157,6 +167,35 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	}
 	sb.WriteString(styleAndMediumBlock(plan, facesOn))
 	return sb.String() + "\n" + shot.H3Prompt
+}
+
+// anchorChar 身份锚定里的一条出场对象(角色带类型与声线,场景只用名字+描述)。
+type anchorChar struct {
+	name, desc string
+	voice      string
+	kind       EntityKind
+}
+
+// hasHumanLikeChar 本镜是否有"有头发/有服装"类型的主体(人类 / Q 版)。
+//
+// 用于把"发型与发长、服装层数"这类**人形外貌**条款只发给该发的镜头:器物/妖兽/
+// 灵宠/无实体镜头里出现这些词,等于把主体往人形上拽。
+func hasHumanLikeChar(chars []anchorChar) bool {
+	for _, c := range chars {
+		switch NormalizeEntityKind(string(c.kind)) {
+		case KindHuman, KindChibi:
+			return true
+		}
+	}
+	return false
+}
+
+// planStyle 安全取全片风格串(plan 为 nil 时返回空串)。
+func planStyle(plan *project.Plan) string {
+	if plan == nil {
+		return ""
+	}
+	return plan.Style
 }
 
 // styleAndMediumBlock 全片风格段 + (开启角色动漫化时的)渲染介质覆盖 + 画风硬约束。
@@ -617,10 +656,17 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 	// 图像侧(Krea-2,蒸馏/CFG 1.0)不认否定词,还会把否定词里的名词当指令画出来 ——
 	// 统一剥掉再进提示词(见 artstyle.go 的 StripNegations)。
 	style := StripNegations(rawStyle)
-	if strings.TrimSpace(style) == "" && !facesOn {
-		return ""
-	}
 	prof := EntityProfileOf(kind)
+	if strings.TrimSpace(style) == "" && !facesOn {
+		// 只丢"介质画风块"(SheetLook),**不丢身份忠实度**(SheetIdentity):
+		// 后者(按文字画、不得美化/放大眼睛/柔化下颌/变年轻)与画风无关,是防生成模型
+		// "美人先验"的硬约束,而且是它全项目**唯一**的注入点。旧实现在这里直接 return
+		// 空串,「关掉角色动漫化拍真人剧 + 方案里没有风格串」这一组合下,定妆照提示词
+		// 里一条"脸必须与角色卡逐项一致"的约束都没有 —— 定妆照是全片身份的权威,
+		// 它一偏,成片与角色卡就永远对不上,而提示词里没有任何痕迹可查。
+		// PortraitPrompt 的注释本来就写着分工是"只有 SheetLook 看 FacesOn"。
+		return prof.SheetIdentity
+	}
 	s := strings.ToLower(style)
 	has3D := strings.Contains(s, "3d") || strings.Contains(s, "bjd") || strings.Contains(style, "虚拟人") || strings.Contains(style, "虚拟偶像")
 	hasAnime := strings.Contains(style, "国漫") || strings.Contains(style, "动漫") || strings.Contains(style, "动画") || strings.Contains(s, "anime") || strings.Contains(s, "donghua")

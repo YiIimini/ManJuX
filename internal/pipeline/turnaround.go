@@ -80,6 +80,28 @@ type TurnaroundOptions struct {
 	Emit           func(format string, args ...any)
 }
 
+// defaultVerifyRetries 「校验不过就换种子重出」的默认次数(= 多出 1 轮,共 2 轮)。
+//
+// 文档一直写着"默认 1",而三个调用方(stages_assets 定妆照后 / backfillAssetViews /
+// 库「补全多视角」)都只传 Verify、没传 VerifyRetries —— 于是 attempts 恒为 1,
+// 「换种子重出」那条分支**永远不执行**(死代码)。后果不是崩溃而是静默降级:VLM 只要
+// 判一次不合格,该角色本次就丢弃全部角度帧、退回单张正面照,而日志只说"多视角生成
+// 失败",用户不知道这本来是一次重试就能拿到的结果。默认值写在注释里等于没有。
+const defaultVerifyRetries = 1
+
+// verifyAttempts 本次多视角最多出几轮:未表态(<=0)按默认 1 轮重试兜底;
+// 没配视觉模型时恒为 1 轮(判不了"像不像本人",重出没有意义)。
+func verifyAttempts(o TurnaroundOptions) int {
+	if o.Verify == nil {
+		return 1
+	}
+	retries := o.VerifyRetries
+	if retries <= 0 {
+		retries = defaultVerifyRetries
+	}
+	return 1 + retries
+}
+
 // GenerateTurnaround 定妆照 → 多视角图 → 校验 → 横向拼转台图(返回转台图绝对路径)。
 // 生成方式按 o.Source 分流:默认走图像编辑(见 viewedit.go),回退到 H3 转身视频。
 // 任何一步失败都返回错误(由调用方决定告警还是阻断)。
@@ -159,10 +181,7 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	if baseSeed == 0 {
 		baseSeed = nameSeed("turnaround", o.Name)
 	}
-	attempts := 1
-	if o.Verify != nil && o.VerifyRetries > 0 {
-		attempts += o.VerifyRetries
-	}
+	attempts := verifyAttempts(o)
 	if o.Verify == nil {
 		emit("多视角:未配置视觉模型,本次不做「与定妆照是否同一%s」的校验", kindLabel)
 	}

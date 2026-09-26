@@ -10,6 +10,7 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/h3api"
+	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -141,6 +142,67 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		return err
 	}
 	rel, _ := filepath.Rel(c.store.Dir(projectID), out)
+	// 产物校验:下载回来的 2K 文件此前**没有任何检查** —— 云端若返回一个丢音轨、
+	// 时长被改、甚至没真放大的片子,平台会把它当交付物留在盘上,还报「✔ 2K 定稿完成」。
+	// 源片那侧早有 Validate2KBase 把关(见上),产物这侧不能空着。
+	if verr := verify2KArtifact(c.ff, base, out); verr != nil {
+		return fmt.Errorf("2K 产物校验未通过:%v —— 文件已保留在 %s,请先播放确认再决定是否使用", verr, filepath.ToSlash(rel))
+	}
+	if shotID > 0 {
+		// 如实说清这个文件是什么:它**不进镜头清单、不参与合成**(合成按 manifest.File
+		// 收片),成片里这一镜仍是 768p。旧实现只报「✔ 2K 定稿完成」,用户为单镜 2K
+		// 付了云额度,却拿到一个既不在成片里、界面上也无处下载的文件。
+		c.emit(projectID, "pipeline", shotID, "success", 100,
+			"✔ 2K 定稿完成:%s(任务 %s;这是**独立导出文件**:不进镜头清单、不参与合成,成片这一镜仍为 768p)",
+			filepath.ToSlash(rel), taskID)
+		return nil
+	}
 	c.emit(projectID, "pipeline", shotID, "success", 100, "✔ 2K 定稿完成:%s(任务 %s)", rel, taskID)
+	return nil
+}
+
+// verify2KArtifact 校验云端返回的 2K 产物(探测源片与产物后比对)。
+func verify2KArtifact(f *ff.FF, src, out string) error {
+	si, err := f.Probe(src)
+	if err != nil {
+		return fmt.Errorf("源片探测失败:%w", err)
+	}
+	oi, err := f.Probe(out)
+	if err != nil {
+		return fmt.Errorf("产物探测失败:%w", err)
+	}
+	return validate2KArtifact(si, oi)
+}
+
+// validate2KArtifact 2K 产物的判据本体(纯函数,便于穷举):
+//   - 有画面:宽高非零;
+//   - **真的变大了**:像素数严格大于源片(H3 的 768P → 云端再生成 2K);
+//   - 音轨还在:源片有音轨时产物也必须有(口型与音轨是这条流水线的核心产物);
+//   - 时长没被改:与源片的差不超过公差,否则成片时间轴会与其它镜头对不上。
+//
+// 公差按时长放宽(0.25 秒与 0.2% 取大):单镜(几秒)按 0.25 秒卡死,成片(几分钟)
+// 允许 0.2% 的浮动 —— 云端重编码极可能差一两帧,不该因此把一次成功的定稿判成失败。
+func validate2KArtifact(src, out *ff.ProbeInfo) error {
+	if src == nil || out == nil {
+		return fmt.Errorf("探测结果为空")
+	}
+	if out.Width <= 0 || out.Height <= 0 {
+		return fmt.Errorf("产物没有有效画面(%dx%d)", out.Width, out.Height)
+	}
+	if out.Width*out.Height <= src.Width*src.Height {
+		return fmt.Errorf("产物并未放大(源 %dx%d → 产物 %dx%d)", src.Width, src.Height, out.Width, out.Height)
+	}
+	if src.HasAudio && !out.HasAudio {
+		return fmt.Errorf("产物丢了音轨(源片有音轨)")
+	}
+	if src.Duration > 0 && out.Duration > 0 {
+		tol := 0.25
+		if p := src.Duration * 0.002; p > tol {
+			tol = p
+		}
+		if d := out.Duration - src.Duration; d > tol || d < -tol {
+			return fmt.Errorf("时长与源片不符(源 %.2fs → 产物 %.2fs,公差 %.2fs)", src.Duration, out.Duration, tol)
+		}
+	}
 	return nil
 }

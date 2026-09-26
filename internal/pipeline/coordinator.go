@@ -371,6 +371,11 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 	started := time.Now()
 	c.emit(proj.ID, "pipeline", 0, "info", 0, "▶ 管线启动:%s", strings.Join(stageLabels(stages), " → "))
 	var err error
+	// qcFailed 全流程里质检不通过时的**留痕**:合成照旧继续(用户定调"带瑕疵继续合成,
+	// 按报告单镜重渲"),但这次运行不许再以"完成"收尾 —— 坏镜已经拼进成片,批产线若
+	// 把它当成完成就会自动跳下一集,而用户只看到过一条 warn(审计:质检在最主要的
+	// 入口「一键全流程」上拦不住任何坏镜,结尾却报「全流程完成 + 成片就绪」)。
+	var qcFailed error
 	for _, st := range stages {
 		if ctx.Err() != nil {
 			ended = ResultStopped
@@ -387,9 +392,12 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 			err = c.runRender(ctx, proj, only, engineOverride, seedOverride)
 		case PhaseQC:
 			err = c.runQC(ctx, proj)
-			// 全流程中质检不通过不中止:带瑕疵继续合成,用户按报告单镜重渲
+			// 全流程中质检不通过不中止:带瑕疵继续合成,用户按报告单镜重渲。
+			// 但结论必须留痕(qcFailed),见上面的说明 —— 不许把 error 清成 nil 之后
+			// 又在结尾打「✔ 全流程完成」。
 			if err != nil && phase == PhaseAll && ctx.Err() == nil {
 				c.emit(proj.ID, PhaseQC, 0, "warn", 100, "⚠ %v(全流程继续,请稍后按报告单镜重渲)", err)
+				qcFailed = err
 				err = nil
 			}
 		case PhaseAssemble:
@@ -408,7 +416,16 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		}
 	}
 	if phase == PhaseAll {
-		c.emit(proj.ID, "pipeline", 0, "success", 100, "✔ 全流程完成,耗时 %s", time.Since(started).Round(time.Second))
+		if qcFailed != nil {
+			// 带瑕疵收尾:成片产出了,但这次运行**不算完成**(批产线据此停住不自动跳集,
+			// 状态与结尾文案也如实说明成片里含不合格镜头)。
+			ended = ResultFailed
+			c.emit(proj.ID, "pipeline", 0, "warn", 100,
+				"⚠ 全流程跑完但**质检未通过**:%v —— 成片已按现有镜头合成(带瑕疵),请按报告单镜重渲后重新合成;本次不计为完成",
+				qcFailed)
+		} else {
+			c.emit(proj.ID, "pipeline", 0, "success", 100, "✔ 全流程完成,耗时 %s", time.Since(started).Round(time.Second))
+		}
 	}
 }
 
@@ -434,12 +451,31 @@ func stageLabel(id string) string {
 // releaseVRAM 释放本地引擎占用的显存并把结果如实播报(引擎未运行/云端引擎时静默)。
 //
 // 「专职某一项,避免资源抢占」的落地点:重活做完就把显存交还,别攥着不放。
-// 只在**没有正在跑的管线**时由一次性操作调用(callers 自己判断);管线内部的调用
-// 由本函数放行(projID 就是当前管线自己)。
+//
+// **必须过同一道准入闸**(审计):管线收尾那一刻,同一张卡上完全可能还有别的东西在跑
+// —— 用户在 ComfyUI WEB 里排的队、或经独立 HTTP 端口发起的一次性操作(局部重绘/
+// 音频驱动/重生成定妆照,它们不受管线互斥约束)。/free 会把**正在执行**的任务权重
+// 卸掉:接下来每步重新流式加载(实测 150s/步,整镜 45 分钟超时)。旧实现只在
+// ReleaseVRAMIfIdle 里判队列,管线收尾这条路径**无条件**卸权重,与 idle 看门狗、
+// ReleaseVRAMIfIdle 三处口径互相矛盾。
 func (c *Coordinator) releaseVRAM(projID, why string) {
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
 		return
+	}
+	if ce, ok := eng.(*comfyengine.Engine); ok {
+		actx, acancel := context.WithTimeout(context.Background(), 5*time.Second)
+		st, aerr := ce.Admin(actx)
+		acancel()
+		if !vramReleaseAllowed(st, aerr) {
+			// 探测不到队列状态时也不释放(宁可多占一会儿显存,不可毁掉正在跑的任务)。
+			if st != nil && st.QueueKnown && st.Running+st.Pending > 0 {
+				c.emit(projID, "system", 0, "info", 0,
+					"🧽 %s:引擎上还有任务(运行 %d / 排队 %d),暂不释放显存 —— 不打断正在跑的任务",
+					why, st.Running, st.Pending)
+			}
+			return
+		}
 	}
 	before, hasBefore := sysmon.VRAMUsedMB()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -469,27 +505,10 @@ func (c *Coordinator) releaseVRAM(projID, why string) {
 // ReleaseVRAMIfIdle 供**一次性 GPU 操作**(抽卡/自定义新建/补全多视角/局部重绘/
 // 音频驱动/单资产重生成/2K 定稿)收尾调用:没有管线在跑就把显存交还桌面;
 // 有管线在跑时不动 —— 那块 GPU 正被管线使用,释放会把它的模型从显存里踢出去。
-// 可靠性护栏:ComfyUI 队列里还有活时**绝不**释放 —— /free 会卸载模型,若那条
-// 任务正在执行,它的权重会被踢出显存(接下来每步重新流式加载,等同白跑甚至超时)。
-// 队列为空才是真正的空闲,这时释放才安全。
+// 队列护栏在 releaseVRAM 内部(队列非空则跳过,见那里的说明)。
 func (c *Coordinator) ReleaseVRAMIfIdle(why string) {
 	if c.HasRunning() {
 		return
-	}
-	eng, err := c.reg.Get("comfy")
-	if err != nil {
-		return
-	}
-	ce, ok := eng.(*comfyengine.Engine)
-	if !ok {
-		c.releaseVRAM("", why) // 非本地引擎:没有"卸权重"这回事,照旧交还
-		return
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	st, aerr := ce.Admin(ctx)
-	cancel()
-	if !vramReleaseAllowed(st, aerr) {
-		return // 队列非空 / 探测不到:不许抢(见函数说明)
 	}
 	c.releaseVRAM("", why)
 }

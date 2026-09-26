@@ -18,6 +18,7 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
@@ -85,9 +86,75 @@ func (s *Server) prepareShotEnhance(w http.ResponseWriter, r *http.Request, suff
 		src:      filepath.Join(s.store.Dir(id), m.File),
 		outName:  outName,
 		outPath:  filepath.Join(s.store.Dir(id), "clips", outName+".mp4"),
-		timeout:  time.Duration(s.cfg.Get().Render.ShotTimeout) * time.Minute,
+		timeout:  enhanceTimeout(time.Duration(s.cfg.Get().Render.ShotTimeout) * time.Minute),
 		engineCE: ce,
 	}, true
+}
+
+// enhanceChainGrace 两项增强(局部重绘/音频驱动)在单镜渲染预算之外**额外的**链路开销。
+//
+// 这两条链比一次整镜渲染更长:要先把源镜头上传到 ComfyUI、跑一遍 SAM3 逐帧跟踪
+// (整镜渲染没有这一步)、渲完还要贴回原画面再下载;而它们此前与整镜渲染共用同一份
+// `render.shot_timeout` —— 一次合法但偏慢的重绘会在 H3 采样完成、快贴回时被杀在
+// 超时上,GPU 时间已经花掉,重跑等于白烧一倍。
+//
+// 给一段明确、有界的宽限,而不是让两条链共用一个数(定妆图那条链当初也是因为
+// "共用一个 45 分钟"才另立了 comfyengine.defaultImageTimeout)。
+const enhanceChainGrace = 15 * time.Minute
+
+// enhanceTimeout 增强链路的超时预算 = 单镜渲染超时 + 链路开销宽限。
+//
+// shotTimeout <= 0 表示设置页那项没配(或配成 0):此时交回 0,让引擎用自身的兜底值
+// (comfyengine.defaultShotTimeout)—— 直接返回 0+15 分钟反而比引擎兜底更短。
+func enhanceTimeout(shotTimeout time.Duration) time.Duration {
+	if shotTimeout <= 0 {
+		return 0
+	}
+	return shotTimeout + enhanceChainGrace
+}
+
+// maskFixFrames 局部重绘要提交给 H3 的帧数 = **源片的实际帧数**。
+//
+// 为什么不能用计划时长×24(审计:局部重绘的帧数用「计划时长」):源片是本地引擎
+// 渲出来的 AlignLength(计划帧数)(4 秒镜 96 → 实际 107 帧),而 ⑦ 的
+// MVEx_SubjectUncrop 拿的是源片的**全部帧** —— 传 96 会让 H3 只出 96 帧去贴
+// 107 帧的底片:要么节点尺寸/帧数不匹配直接抛错,要么尾部 11 帧保留未修的崩坏内容、
+// 成片还短 0.46 秒。2× 放大那条链路早就是 ffprobe 实测源片(见 handleShotUpscale),
+// 这里与它同一套。
+//
+// 帧数向下取到 H3 的 17k+5 网格:本地引擎的产物本就在网格上(向下取是恒等变换),
+// 只有源片来自云端(帧数不在网格上)时才会回收几帧 —— 那时宁可靠 H3 能接受的
+// 长度去贴回(尾部几帧不修),也不要让节点因为非法 length 直接失败。
+func maskFixFrames(info *ff.ProbeInfo) (int, error) {
+	if info == nil || info.Duration <= 0 {
+		return 0, fmt.Errorf("源镜头时长异常,无法确定帧数:局部重绘要与源片逐帧对齐")
+	}
+	fps := info.FPS
+	if fps <= 0 {
+		fps = 24 // 极少数容器不报帧率,按 H3 的产出口径兜底(与 2× 放大一致)
+	}
+	n := int(math.Round(info.Duration * fps))
+	if n <= 1 {
+		return 0, fmt.Errorf("源镜头时长异常(%.2fs),无法确定帧数", info.Duration)
+	}
+	return engine.AlignLengthDown(n), nil
+}
+
+// enhanceJob 两项增强能力共同的 Job 组装(差异只有 Audios)。
+//
+// 抽成纯函数是为了让"帧数到底传了什么"可被单测断言 —— 这里前后漏过两次:
+// 音频驱动的 Job **完全没有 Length**(引擎按 AlignLength(0)=5 帧建 latent 与条件编码,
+// 接口却返回 ok),局部重绘传的是计划帧数而不是源片帧数(见 maskFixFrames)。
+func enhanceJob(ctx *shotEnhanceCtx, rp project.RenderParams, prompt string, refs []engine.RefImage, frames int, audios []string) engine.Job {
+	return engine.Job{
+		ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
+		Prompt: prompt, Mode: "ref2va", RefImages: refs,
+		Audios: audios,
+		Length: frames,
+		Width:  rp.Width, Height: rp.Height, Seed: rp.Seed,
+		Steps: rp.Steps, Accel: rp.Accel,
+		OutputDir: filepath.Dir(ctx.outPath), OutputName: ctx.outName, Timeout: ctx.timeout,
+	}
 }
 
 // comfyEngine 取本地 ComfyUI 引擎(两项增强能力都依赖它)。
@@ -138,6 +205,14 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	}
 	// 事前体检:节点(SAM3/MaskVidExperiments)+ 权重(sam3 checkpoint)。这条链路
 	// 要上传源视频、跑十几分钟,缺件必须在点下去之前说清,而不是跑到一半抛原始报文。
+	//
+	// 先确保引擎可用再体检(审计 M25):MaskAssets 在引擎**不可达**时按设计返回空
+	// ("不把连不上误判成缺文件"),冷启动时体检因此被静默跳过 —— 用户先白等 1-2 分钟
+	// 启动,再拿到 ComfyUI 的原始 node_errors。放大那条链路早就这么做了,这里补齐。
+	if err := ctx.engineCE.Available(r.Context()); err != nil {
+		writeErr(w, 503, fmt.Errorf("局部重绘需要本地 ComfyUI:%w", err))
+		return
+	}
 	if miss := ctx.engineCE.MaskAssets(r.Context()); len(miss) > 0 {
 		writeErr(w, 409, fmt.Errorf("局部重绘前置条件不满足:\n- %s", strings.Join(miss, "\n- ")))
 		return
@@ -163,17 +238,25 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	prompt = pipeline.EnsureRefManifest(prompt, *ctx.shot, roles)
 
 	s.opLog("✨ 局部重绘:%s 镜 %d 开始(目标:%s)", ctx.proj.ID, ctx.shot.ID, strings.TrimSpace(in.Target))
+	// 帧数取源片的**实际帧数**(不是计划时长×24):贴回原画面对帧数必须逐帧一致,
+	// 见 maskFixFrames。探测失败就明确报错 —— 蒙一个长度只会让 ComfyUI 侧的
+	// SAM3 跟踪 + H3 重绘(十几分钟)跑完才在贴回节点上失败。
+	info, err := s.ff.Probe(ctx.src)
+	if err != nil {
+		writeErr(w, 500, fmt.Errorf("读取源镜头信息失败: %w", err))
+		return
+	}
+	frames, err := maskFixFrames(info)
+	if err != nil {
+		writeErr(w, 400, err)
+		return
+	}
+	job := enhanceJob(ctx, rp, prompt, refs, frames, nil)
 	if _, err := ctx.engineCE.MaskFix(r.Context(), ctx.src, comfyengine.MaskOptions{
 		Prompt:      prompt,
 		Target:      strings.TrimSpace(in.Target),
 		ObjectIndex: in.ObjectIndex,
-	}, engine.Job{
-		ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
-		Prompt: prompt, Mode: "ref2va", RefImages: refs,
-		Width: rp.Width, Height: rp.Height, Seed: rp.Seed,
-		Steps: rp.Steps, Accel: rp.Accel,
-		OutputName: ctx.outName, Timeout: ctx.timeout,
-	}, rp.Width, rp.Height, ctx.shot.Duration*24, ctx.outPath); err != nil {
+	}, job, rp.Width, rp.Height, frames, ctx.outPath); err != nil {
 		s.opLog("✕ 局部重绘失败:%v", err)
 		writeErr(w, 500, fmt.Errorf("局部重绘失败:%w", err))
 		return
@@ -340,14 +423,12 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 
 	s.opLog("🎙 音频驱动:%s 镜 %d 开始", ctx.proj.ID, ctx.shot.ID)
 	// 音频走 Job.Audios → H3 Ref2V 的 ref_audios 条件(见 comfyengine 的音频参考实现)
-	if _, err := ctx.engineCE.Render(r.Context(), engine.Job{
-		ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
-		Prompt: prompt, Mode: "ref2va", RefImages: refs,
-		Audios: []string{in.AudioPath},
-		Width:  rp.Width, Height: rp.Height, Seed: rp.Seed,
-		Steps: rp.Steps, Accel: rp.Accel,
-		OutputDir: filepath.Dir(ctx.outPath), OutputName: ctx.outName, Timeout: ctx.timeout,
-	}); err != nil {
+	// Length 必须显式给:漏了它,引擎侧 AlignLength(0) 会把它兜成 5 帧(0.21 秒),
+	// 于是产出一支 5 帧的片子而接口照样报成功。这一路没有贴回,长度就取**本镜的
+	// 计划帧数**(引擎再按 17k+5 对齐)—— 与局部重绘取源片帧数是两种不同的口径,
+	// 但都经由 enhanceJob 一处组装,免得再漏。
+	if _, err := ctx.engineCE.Render(r.Context(),
+		enhanceJob(ctx, rp, prompt, refs, ctx.shot.Duration*24, []string{in.AudioPath})); err != nil {
 		s.opLog("✕ 音频驱动失败:%v", err)
 		writeErr(w, 500, fmt.Errorf("音频驱动失败:%w", err))
 		return

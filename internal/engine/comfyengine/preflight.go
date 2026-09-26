@@ -32,6 +32,26 @@ const (
 	classEmptyLatAV = "EmptyMiniMaxH3LatentAV"
 )
 
+// engineReachable 体检前的引擎可用性前置:**不可达时先按设置把它拉起来**。
+//
+//	旧实现是「不可达就返回空(无缺失)」,理由是"调用方在此之前已确认过引擎可用" ——
+//	但渲染阶段并没有:stages_render 直接调 Preflight,其后只调 ClearQueue/FreeVRAM
+//	(都不启动引擎),本阶段第一次 Available 要等第一镜的 Render。而引擎被空闲看门狗
+//	停掉(默认 10 分钟)后是常态,于是冷启动下「缺插件节点 / 缺 SAM3 权重 / 缺放大
+//	权重」的体检被静默跳过,失败退回"跑到一半才由 ComfyUI 抛原始报文" ——
+//	正是这几处注释声称已经消灭的体验(2026-09-26 渲染管线审查)。
+//
+//	现在先确保可用:调的是渲染/放大/局部重绘本身都会调的那个 Available(含按
+//	AutoStart 代管启动;已存活时只是一次探测,不额外花时间)。**仍然不可达时依旧返回
+//	nil**,不把"连不上"伪造成"缺文件/缺节点":调用方随后自己会拿到精确的引擎错误,
+//	这条边界由 TestUpscaleAssetsEngineDown 钉住。
+func (e *Engine) engineReachable(ctx context.Context) bool {
+	if e.client().Alive(ctx) {
+		return true
+	}
+	return e.Available(ctx) == nil
+}
+
 // PreflightOptions 本次渲染的取镜范围。
 type PreflightOptions struct {
 	Modes []string // 本次会渲染到的 mode(如 ref2va / t2va),决定检查哪条生成链
@@ -49,13 +69,11 @@ type PreflightOptions struct {
 // 只覆盖 graph 根节点(生成链入口 + sigma 偏移):它们缺失必然全镜失败,提前
 // 阻断是净收益;可选能力(条件缓存/镜间接缝)刻意不列入,以免误判挡住生产。
 //
-// 引擎不可达时返回空:不把「暂时连不上」误判成「节点缺失」(调用方在此之前
-// 已确认过引擎可用,这里只是兜底)。
+// 引擎不可达时返回空:不把「暂时连不上」误判成「节点缺失」(调用方随后会拿到
+// 精确的引擎错误)。但**先尝试把它拉起来** —— 冷启动下"没体检"不等于"没缺失",
+// 见 engineReachable。
 func (e *Engine) Preflight(ctx context.Context, opt PreflightOptions) []string {
-	// 只在引擎已就绪时体检:不可达就交给原有渲染路径处理(只有它才该按
-	// AutoStart 决定是否代管启动)。这样既避免预检触发意外启动,也避免把
-	// 「暂时连不上」误判成「节点缺失」而挡住本可运行的任务。
-	if !e.client().Alive(ctx) {
+	if !e.engineReachable(ctx) {
 		return nil
 	}
 	required := map[string]string{}
@@ -119,9 +137,10 @@ type upscaleAsset struct {
 // 要帮用户分清「缺插件还是缺模型」,但当时只实现了节点那一半。
 //
 // 引擎不可达时返回空:与 Preflight 同理 —— 连不上不等于资产缺失,那是 Available
-// 的职责(只有它该按 AutoStart 决定要不要代管启动)。
+// 的职责。但同样**先尝试拉起**(见 engineReachable):放大链路虽已在上游调过
+// Available,其它调用方(如未来新增的入口)不该再踩"冷启动静默跳过体检"这个坑。
 func (e *Engine) UpscaleAssets(ctx context.Context, opt engine.UpscaleOptions) []string {
-	if !e.client().Alive(ctx) {
+	if !e.engineReachable(ctx) {
 		return nil
 	}
 
@@ -192,8 +211,10 @@ var maskNodes = []struct {
 // 最需要"事前说清"的功能:一次要上传源视频、跑十几分钟。
 //
 // 引擎不可达时返回空:与 Preflight/UpscaleAssets 同一条原则 —— 连不上不等于资产缺失。
+// 但局部重绘的调用点(MaskFix handler)**没有**先调 Available,所以这里必须先尝试拉起,
+// 否则冷启动时 SAM3/插件体检会被静默跳过(2026-09-26 渲染管线审查)。
 func (e *Engine) MaskAssets(ctx context.Context) []string {
-	if !e.client().Alive(ctx) {
+	if !e.engineReachable(ctx) {
 		return nil
 	}
 	var missing []string

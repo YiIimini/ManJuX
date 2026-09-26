@@ -128,6 +128,18 @@ const (
 	ViewSourceH3   = "h3"   // H3 转身视频抽帧(旧路径:视频模型会顺手重设计角色)
 )
 
+// viewEditTimeout 单张角度图的超时上限 —— 现已由引擎侧统一兜底,这里不再自带一份。
+//
+// 回归背景(审计:多视角图像编辑吃 45 分钟单镜上限且全程无进度):ImageEditOptions.Timeout
+// 传 0 时,引擎旧实现把它落到**单镜视频**的 45 分钟兜底上,而图像编辑是"每张数秒"的操作;
+// 多视角补齐又处在"渲染前资产补齐"链路上,单张卡死最多白等 45 分钟(每个角色 3 张、失败
+// 还要重出若干轮),用户既无日志也无百分比。
+//
+// 该行为已由 comfyengine 侧修复(EditImage 现在走 imageEditTimeout(opt):<=0 时回退
+// **图像级**的 defaultImageTimeout=10 分钟,并有对应单测钉住)—— 同一语义只留一处实现,
+// 所以这里继续传 0,由引擎决定。进度回调仍缺:需要在 comfyengine 的 ImageEditOptions 上
+// 增加 onProgress 字段,不在本分区改动范围内。
+
 // GenerateViewsEdit 用图像编辑逐角度生成多视角,返回转台图路径。
 //
 // 与 H3 路径共用:产物命名、VLM 身份闸门、失败策略(换种子重试 → 仍不行则丢弃全部角度帧)。
@@ -161,10 +173,7 @@ func GenerateViewsEdit(ctx context.Context, ce engine.Engine, f *ff.FF, o Turnar
 	if baseSeed == 0 {
 		baseSeed = nameSeed("viewedit", o.Name)
 	}
-	attempts := 1
-	if o.Verify != nil && o.VerifyRetries > 0 {
-		attempts += o.VerifyRetries
-	}
+	attempts := verifyAttempts(o)
 	emit("多视角:「%s」(%s)改用图像编辑逐角度生成(Qwen-Image-Edit,每张数秒)…", o.Name, kindLabel)
 
 	lastReason := ""
@@ -188,7 +197,9 @@ func GenerateViewsEdit(ctx context.Context, ce engine.Engine, f *ff.FF, o Turnar
 				// "不用 LoRA"跑;权重下齐后若发现转角度不足,把它改回 true 做 A/B ——
 				// 这个开关留着就是为这一次对比。
 				UseAngles: false,
-				Timeout:   0,
+				// 0 = 交给引擎的**图像级**兜底(10 分钟),不是单镜视频的 45 分钟
+				// —— 见 EditImage 的 imageEditTimeout 与上面那段回归说明。
+				Timeout: 0,
 			}, out)
 			if err != nil {
 				emit("多视角:「%s」%s 角度生成失败:%v", o.Name, a.Brief, err)

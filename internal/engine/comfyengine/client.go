@@ -407,6 +407,12 @@ func (c *Client) Queue(ctx context.Context) (running, pending []string, err erro
 // defaultShotTimeout 单镜渲染兜底上限(作业未显式指定 Timeout 时使用)。
 const defaultShotTimeout = 45 * time.Minute
 
+// maxProbeFails 连续探测失败多少次即判定引擎不可达(轮询心跳 3 秒 → 约 18 秒)。
+// 取值理由:正常的 ComfyUI 不会连续 6 次(18 秒)都不回应 /history,而偶发丢包或
+// 单次 GC 停顿不足以连挂 6 次;判死得太晚就是白等 45~90 分钟。
+// 变量而非常量:回归测试要把阈值压到 1,否则这条用例得白等 18 秒。
+var maxProbeFails = 6
+
 // defaultImageTimeout 定妆图生成的兜底上限。图像生成没有单镜作业可依,
 // 取一个明显短于整镜渲染的值,避免 Krea-2 卡死时白等 45 分钟。
 const defaultImageTimeout = 10 * time.Minute
@@ -431,6 +437,7 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 	submitted := time.Now() // 提交时刻(仅用于排队计时与展示)
 	var execStart time.Time // 首次观察到"正在执行"的时刻
 	missCount := 0          // 连续不在队列且无 history 的次数
+	probeFails := 0         // 连续探测(History)失败次数 —— 引擎死掉时靠它判死
 	lastNote := ""          // 进度文案去重:同文案不重复上报
 	report := func(pct int, note string) {
 		if note == lastNote {
@@ -464,8 +471,24 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 			}
 			h, err := c.History(ctx, promptID)
 			if err != nil {
-				continue // 网络抖动容忍
+				// 网络抖动容忍,但"引擎已死"不是抖动(2026-09-26 渲染管线审查):
+				// ComfyUI 被 OOM 杀掉/崩溃后 History 与 Queue 会**一路**失败,旧实现
+				// 只 continue,于是界面持续显示「排队中/执行中 · 已 N 分」,最长空转
+				// 45 分钟(任务还没轮到执行则 90 分钟)才抛超时,之后才走到
+				// "释放显存 + 重试"的恢复路径 —— 一次崩溃代价接近一小时机时,而且
+				// 把"引擎已死"误导成"在排队"。连续失败即判死,交给上层恢复。
+				probeFails++
+				if probeFails >= maxProbeFails {
+					return nil, fmt.Errorf("%w(连续 %d 次探测 ComfyUI 无响应,约 %s;引擎可能已退出或不可达: %v)",
+						engine.ErrRenderTimeout, probeFails, fmtDur(time.Duration(maxProbeFails)*3*time.Second), err)
+				}
+				if probeFails >= 2 {
+					// 文案必须与"排队中"区分开:引擎没回应时说自己"在排队"是假话
+					report(2, fmt.Sprintf("ComfyUI 无响应 · 已等 %s", fmtDur(now.Sub(submitted))))
+				}
+				continue
 			}
+			probeFails = 0
 			if h == nil {
 				runIDs, pendIDs, qerr := c.Queue(ctx)
 				if qerr == nil && !containsID(runIDs, promptID) && !containsID(pendIDs, promptID) {
@@ -493,7 +516,9 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 						report(50, "执行中")
 					}
 				} else {
-					report(2, fmt.Sprintf("排队中 · 已等 %s", fmtDur(now.Sub(submitted))))
+					// qerr != nil = 队列也读不到:这时报「排队中」是假话(引擎不可达),
+					// 用户要能一眼区分"在排队"与"引擎没回应"(审计 2026-09-26)
+					report(2, fmt.Sprintf("ComfyUI 无响应 · 已等 %s", fmtDur(now.Sub(submitted))))
 				}
 				continue
 			}

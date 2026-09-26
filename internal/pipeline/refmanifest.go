@@ -139,20 +139,51 @@ func EnsureRefManifest(prompt string, shot project.Shot, roles []RefRole) string
 	return strings.TrimRight(bound, "\n") + "\n\n" + RefManifest(shot, roles)
 }
 
-// reSubjectLine 匹配 subject_definitions 里的一行,捕获编号与名字。
-// 例:`<Subject 1> is 沈砚（human）— 十八九岁…` → 1 / `沈砚`
-var reSubjectLine = regexp.MustCompile(`(?m)^<Subject (\d+)>\s+is\s+([^,，.。(\n（]+)`)
+// reSubjectLine 匹配 subject_definitions 里的一行,捕获编号与 `is` 之后的**前缀**。
+//
+// 前缀放宽到「is 之后到行尾/换行」的整段(不再在第一个逗号/句点/括号处截断):
+// 官方句式要求 `<Subject N> is <角色名>`,但 LLM 会写成
+// `<Subject 1> is a slim seventeen-year-old boy named 沈砚（human）— …`
+// 这类自然句 —— 旧判据把整段当名字去精确比对,必然查不到 → 原样返回、不绑图、
+// 不打日志,于是"补官方句式"这条修复(2026-09-26 真机根因修复)静默失效,回到
+// 「模型按文字重画、同一个沈砚每镜不同人」。名字的定位改由 nameInSubjectTail 做。
+var reSubjectLine = regexp.MustCompile(`(?m)^<Subject (\d+)>\s+is\s+(.+)$`)
 
 // bindSubjectsToPictures 给 subject_definitions 里每个角色行补上它**实际那张图**的编号:
 //
 //	`<Subject 1> is 沈砚（human）— …`      →  `<Subject 1> is 沈砚 in <Picture 1>（human）— …`
+//	`<Subject 1> is a slim boy named 沈砚…` → `<Subject 1> is a slim boy named 沈砚 in <Picture 1>…`
 //
 // 编号一律从 roles(渲染器按实际装配顺序给出)里取,**不猜不造**;名字对不上的行原样保留
 // (对不上说明它讲的不是这些参考图里的对象,硬塞编号比不绑更坏)。已经有 "in <Picture"
 // 的行不动(幂等)。
 func bindSubjectsToPictures(prompt string, roles []RefRole) string {
-	// 名字 → 该对象的"身份权威"图片编号(拼合图不给编号:官方明确它只提供角度,
-	// 而让它当身份源正是 2026-09-25 镜头6 漂移的根因)。
+	auth := authorityPictures(roles)
+	if len(auth) == 0 {
+		return prompt
+	}
+	return reSubjectLine.ReplaceAllStringFunc(prompt, func(line string) string {
+		m := reSubjectLine.FindStringSubmatch(line)
+		if m == nil {
+			return line
+		}
+		num, tail := m[1], m[2]
+		if strings.Contains(tail, "in <Picture") {
+			return line // 已绑过
+		}
+		name, pic, ok := nameInSubjectTail(tail, auth)
+		if !ok {
+			return line
+		}
+		// 在名字之后插入官方句式,名称与其余描述原样保留(模型要在下文按名字继续指代)。
+		i := strings.Index(tail, name)
+		return "<Subject " + num + "> is " + tail[:i] + name + " in <Picture " + strconv.Itoa(pic) + ">" + tail[i+len(name):]
+	})
+}
+
+// authorityPictures 名字 → 该对象的"身份权威"图片编号。拼合图不给编号:官方明确它只
+// 提供角度,而让它当身份源正是 2026-09-25 镜头6 漂移的根因。
+func authorityPictures(roles []RefRole) map[string]int {
 	auth := map[string]int{}
 	for _, r := range roles {
 		switch r.Kind {
@@ -162,24 +193,67 @@ func bindSubjectsToPictures(prompt string, roles []RefRole) string {
 			}
 		}
 	}
-	if len(auth) == 0 {
-		return prompt
+	return auth
+}
+
+// subjectNameWindow 「is」之后多长的窗口内认名字(字符数)。
+//
+// 放宽到整行之后必须给一个窗口:名字之外的前半句是自然语言("a slim
+// seventeen-year-old boy"),窗口太小会漏、太大则可能撞上后文里提到的别人。
+const subjectNameWindow = 40
+
+// nameInSubjectTail 在 `is` 之后的**前缀**里做包含式名字匹配,命中最长者胜。
+//
+// 为什么要包含式而不是整段精确相等:句子由 LLM 写,官方句式只要求
+// `<Subject N> is [full description of the character]`,完全可能写成
+// "…is a slim seventeen-year-old boy named 沈砚, …"。旧实现把 is 与第一个逗号/括号
+// 之间整段当名字去查表,这类写法必然 miss → 不绑图、不打日志,于是"补官方句式"这条
+// 修复静默失效,回到"同一个沈砚每镜不同人"。
+func nameInSubjectTail(tail string, auth map[string]int) (string, int, bool) {
+	r := []rune(tail)
+	if len(r) > subjectNameWindow {
+		r = r[:subjectNameWindow]
 	}
-	return reSubjectLine.ReplaceAllStringFunc(prompt, func(line string) string {
-		if strings.Contains(line, "in <Picture") {
-			return line // 已绑过
+	window := string(r)
+	bestName, bestPic, bestLen := "", 0, -1
+	for name, pic := range auth {
+		if strings.TrimSpace(name) == "" {
+			continue
 		}
-		m := reSubjectLine.FindStringSubmatch(line)
-		if m == nil {
-			return line
+		if !strings.Contains(window, name) {
+			continue
 		}
-		num, name := m[1], strings.TrimSpace(m[2])
-		pic, ok := auth[name]
-		if !ok {
-			return line
+		if n := len([]rune(name)); n > bestLen {
+			bestName, bestPic, bestLen = name, pic, n
 		}
-		// 在名字之后插入官方句式,名称原样保留(模型要在下文按名字继续指代)。
-		return "<Subject " + num + "> is " + name + " in <Picture " + strconv.Itoa(pic) + ">" +
-			strings.TrimPrefix(line, m[0])
-	})
+	}
+	if bestLen < 0 {
+		return "", 0, false
+	}
+	return bestName, bestPic, true
+}
+
+// subjectBindStats 数这份提示词里"能绑上图的 subject 行 / subject 行总数"。
+//
+// 用途只有一个:让"一行都没绑上"这件事**可见**。绑定失败时提示词照旧附清单、日志
+// 照旧正常,属于最难发现的一类回归(2026-09-26 真机实测过:换风格后男主脸仍与定妆照
+// 对不上,根因就是没绑)。判据与 bindSubjectsToPictures 共用 nameInSubjectTail。
+//
+// 调用方须传**绑定之前**的提示词(绑过之后每行都含 in <Picture,统计会失真)。
+func subjectBindStats(prompt string, roles []RefRole) (bound, total int) {
+	auth := authorityPictures(roles)
+	if len(auth) == 0 {
+		return 0, 0
+	}
+	for _, m := range reSubjectLine.FindAllStringSubmatch(prompt, -1) {
+		total++
+		if strings.Contains(m[2], "in <Picture") {
+			bound++
+			continue
+		}
+		if _, _, ok := nameInSubjectTail(m[2], auth); ok {
+			bound++
+		}
+	}
+	return bound, total
 }

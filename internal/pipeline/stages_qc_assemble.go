@@ -36,6 +36,13 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	reports := map[string]qc.Report{}
 	failed := 0
 	checked := 0
+	// notChecked 本应质检、却因为没有可用产物而根本没被看的镜头(未渲染/失败/文件丢了)。
+	//
+	// 为什么要单独数:旧实现只在 checked==0 时报错,一旦有**一部分**镜头缺席就照旧
+	// 打「✔ 质检通过:N 镜全部合格」并写一份干净的 qc_report.json —— 一集 20 镜里
+	// 挂了 5 镜,用户看到的是"这一集没问题",只有全流程跑到合成阶段才会以
+	// 「镜头 N 尚未渲染完成」炸掉。这是典型"报成功其实没做"。
+	var notChecked []int
 	vlmFlagged := 0 // VLM 审片未通过的镜头数(只标记,不自动重渲)
 
 	// VLM 智能审片(可选):抽帧判分 + 重渲建议
@@ -56,10 +63,12 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 		key := strconv.Itoa(shot.ID)
 		m, ok := manifest[key]
 		if !ok || m.Status != project.ShotDone || m.File == "" {
+			notChecked = append(notChecked, shot.ID)
 			continue
 		}
 		full := filepath.Join(c.store.Dir(proj.ID), m.File)
 		if _, err := os.Stat(full); err != nil {
+			notChecked = append(notChecked, shot.ID)
 			continue
 		}
 		checked++
@@ -69,6 +78,13 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			// 台词应有口播时长:与渲染时长同源(镜头时长已按台词做过预算),这里
 			// 用同一套语速常量核对成片里到底说没说够 —— 词与曲同源才比得准。
 			ExpectedSpeechSec: compose.ShotSpeechBudget(shot),
+			// 与**本镜计划**对账(审计 M29/M28):全局 3–18s 拦不住 3.0–3.9s 的残片
+			// (计划下限是 4s),画幅/帧率此前只被"记录"、从不与规格核对 ——
+			// 合成对画幅差异是 scale+pad(补黑边)、对帧率是强制 fps=24,全是静默兜底。
+			ExpectedDuration: float64(shot.Duration),
+			ExpectWidth:      proj.Config.Params.Render.Width,
+			ExpectHeight:     proj.Config.Params.Render.Height,
+			ExpectFPS:        24, // 渲染帧数口径即 shot.Duration*24,见 stages_render.go 的 shotFrames
 		})
 		if vlmClient != nil && r.OK {
 			brief := fmt.Sprintf("%s/%s/角色:%v", shot.ShotSize, shot.Camera, shot.Characters)
@@ -107,22 +123,76 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	if werr := fsutil.WriteFileAtomic(reportPath, raw); werr != nil {
 		c.emit(proj.ID, PhaseQC, 0, "warn", 0, "⚠ 质检报告写入失败(%v),详细结果仅在本次会话可见", werr)
 	}
-	if checked == 0 {
-		return fmt.Errorf("没有已完成的镜头可质检:请先运行「渲染出片」")
+	if len(notChecked) > 0 {
+		// 缺镜必须说出来:报告里不塞合成条目(前端把 qc_report.json 的每个键都当成
+		// 一份镜头报告来渲染,见 ProjectView/PipelineBar),而是走事件 + 阶段结论。
+		c.emit(proj.ID, PhaseQC, 0, "warn", 0,
+			"⚠ 有 %d 个镜头没有可质检的产物,未纳入本次质检:%s",
+			len(notChecked), shotIDList(notChecked))
 	}
-	if failed > 0 {
-		return fmt.Errorf("质检发现 %d 个不合格镜头(报告见 output/qc_report.json),请在故事板中单镜重渲", failed)
+	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged)
+	if v.Msg != "" {
+		c.emit(proj.ID, PhaseQC, 0, v.Level, 100, "%s", v.Msg)
 	}
-	if vlmFlagged > 0 {
+	return v.Err
+}
+
+// qcVerdict 质检阶段的结论(纯函数,便于穷举)。
+type qcVerdict struct {
+	Level string // success / warn / error
+	Msg   string
+	Err   error // 非 nil = 阶段失败(Level=error)
+}
+
+// qcVerdictOf 由四个计数折出结论:total 方案总镜数、checked 实际检查过、failed 不合格、
+// notChecked 根本没产物因而没被看、vlmFlagged VLM 未通过。
+//
+// 为什么值得抽成纯函数:旧实现的判据只有 checked==0 与 failed>0 —— **缺镜既不影响结论
+// 也不进文案**,于是一集 20 镜里挂了 5 镜也能得到「✔ 质检通过:15 镜全部合格」和一份
+// 干净的 qc_report.json;"全部合格"这句话本身就是在骗人(剩下 5 镜根本没被看过)。
+// 现在缺镜一律判不合格(文案带上镜号),只有"确实检查过的镜全部合格且没有缺镜"才是 success。
+func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged int) qcVerdict {
+	missing := len(notChecked)
+	switch {
+	case checked == 0:
+		return qcVerdict{Level: "error", Err: fmt.Errorf("没有已完成的镜头可质检:请先运行「渲染出片」")}
+	case failed > 0:
+		if missing > 0 {
+			msg := fmt.Sprintf("质检发现 %d 个不合格镜头、另有 %d 个镜头尚无产物(未质检;报告见 output/qc_report.json),请在故事板中补齐/单镜重渲", failed, missing)
+			return qcVerdict{Level: "error", Msg: msg, Err: fmt.Errorf("%s", msg)}
+		}
+		return qcVerdict{Level: "error",
+			Err: fmt.Errorf("质检发现 %d 个不合格镜头(报告见 output/qc_report.json),请在故事板中单镜重渲", failed)}
+	case missing > 0:
+		msg := fmt.Sprintf("质检只覆盖 %d/%d 镜:%d 镜尚无可用产物(未质检:%s)请先「渲染出片」补齐后再质检/合成",
+			checked, total, missing, shotIDList(notChecked))
+		return qcVerdict{Level: "error", Msg: msg, Err: fmt.Errorf("%s", msg)}
+	case vlmFlagged > 0:
 		// 只标记、不自动重渲:同一 prompt 同一 seed 重跑大概率复现同样结果,
 		// 真正的返工要改提示词或换 seed,由用户看过标记后自行决定(2026-09-11 定调)。
-		c.emit(proj.ID, PhaseQC, 0, "warn", 100,
+		return qcVerdict{Level: "warn", Msg: fmt.Sprintf(
 			"⚠ 质检完成:%d 镜机械指标合格,其中 %d 镜 VLM 审片未通过(详情见 output/qc_report.json 或阶段详情),未自动重渲",
-			checked, vlmFlagged)
-		return nil
+			checked, vlmFlagged)}
+	default:
+		return qcVerdict{Level: "success", Msg: fmt.Sprintf("✔ 质检通过:%d/%d 镜全部合格", checked, total)}
 	}
-	c.emit(proj.ID, PhaseQC, 0, "success", 100, "✔ 质检通过:%d 镜全部合格", checked)
-	return nil
+}
+
+// shotIDList 把镜号缩成一行(缺镜提示用):「3、7、12」;过长时折叠成「…等 N 个」。
+func shotIDList(ids []int) string {
+	const maxShown = 12
+	parts := make([]string, 0, len(ids))
+	for i, id := range ids {
+		if i >= maxShown {
+			break
+		}
+		parts = append(parts, strconv.Itoa(id))
+	}
+	out := strings.Join(parts, "、")
+	if len(ids) > maxShown {
+		out += fmt.Sprintf(" …等 %d 个", len(ids))
+	}
+	return out
 }
 
 func audioLabel(has bool) string {

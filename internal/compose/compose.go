@@ -91,6 +91,12 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 	}()
 	res := &Result{}
+	// announce 把"静默兜底"改成如实播报:画幅补黑边、缺音轨、转场参数被改写都走这里。
+	announce := func(msg string) {
+		if onProgress != nil {
+			onProgress(5, msg)
+		}
+	}
 
 	// ---- 步骤一:逐镜规范化(重编码,统一分辨率/fps/采样)----
 	if onProgress != nil {
@@ -105,6 +111,19 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		part := filepath.Join(work, fmt.Sprintf("part_%03d.mp4", i))
 		vf := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,fps=24,setsar=1",
 			p.Width, p.Height, p.Width, p.Height)
+		// 输入镜头本身的规格要**先量一次**(审计 L13):规范化的 scale+pad 会把任何画幅
+		// 差异静默兜成"补黑边",fps 也会被强制成 24 —— 成片里混着带黑边的镜头,
+		// 而日志与报告里一个字都没有。量的是**输入**(part 是刚被我们缩放过的东西,
+		// 它的宽高必然等于目标,查它等于什么都没查)。
+		if src, serr := f.Probe(clip); serr == nil {
+			if src.Width > 0 && src.Height > 0 && (src.Width != p.Width || src.Height != p.Height) {
+				announce(fmt.Sprintf("⚠ 第 %d 镜画幅 %d×%d 与成片 %d×%d 不一致:已缩放并补黑边(画面不变形,但这一镜会带边)",
+					i+1, src.Width, src.Height, p.Width, p.Height))
+			}
+			if !src.HasAudio {
+				announce(fmt.Sprintf("⚠ 第 %d 镜没有音轨:成片里这一段是静音(该镜的配音/环境声缺失)", i+1))
+			}
+		}
 		// apad + -shortest:音轨补齐到与画面等长。H3 产物偶有音轨略短于视频,
 		// 不补的话后面按"画面时长"裁音频会越界(表现为末尾静音或整轨前移)。
 		if _, err := f.Run(ctx, "-y", "-i", clip,
@@ -119,6 +138,12 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		if err != nil {
 			return nil, err
 		}
+		// 规范化后的 part 必须真的是目标规格:fps 那条滤镜若被解析失败,
+		// 成片帧率就与 shotFrames 的 24fps 口径脱钩(时长、字幕、接缝全按 24 算)。
+		if info.FPS > 0 && math.Abs(info.FPS-24) > 0.05 {
+			announce(fmt.Sprintf("⚠ 第 %d 镜规范化后帧率为 %.2ffps(应为 24):时长与字幕按 24fps 推导,请检查 ffmpeg 版本",
+				i+1, info.FPS))
+		}
 		parts = append(parts, part)
 		durations = append(durations, info.Duration)
 		if onProgress != nil {
@@ -127,35 +152,34 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	}
 
 	// 每镜在成片中的实际起始时间:转场(fade/dissolve)两镜重叠 FadeSec,
-	// 成片总长比各镜累加短 (n-1)*FadeSec —— 字幕时间轴必须按此偏移,
-	// 否则转场模式下字幕会逐步超前画面(2026-09-09 修正)。
-	trans := p.Transition
-	fd := p.FadeSec
-	if fd <= 0 {
-		fd = 0.5
-	}
-	starts := make([]float64, len(parts))
-	{
-		var acc float64
-		for i, d := range durations {
-			starts[i] = acc
-			acc += d
-			if trans != "cut" && i < len(parts)-1 && d > fd {
-				acc -= fd
-			}
+	// 成片总长比各镜累加短 (n-1)*FadeSec(逐接缝重叠被压小时按实际的算)——
+	// 字幕时间轴必须按此偏移,否则转场模式下字幕会逐步超前画面(2026-09-09 修正)。
+	//
+	// 2026-09-26 审计补齐(三套判据):偏移量不能由"又一套判据"推 —— 旧实现这里
+	// 判 `trans != "cut"`,画面那边判 `switch p.Transition { case "fade" }`,
+	// 音轨那边判 `durations[i] <= d`。参数为空串/被写坏时,字幕按"有重叠"扣、
+	// 画面却是零重叠硬切:全片字幕逐镜提前 i×FadeSec、res.Duration 少报
+	// (n-1)×FadeSec,而日志里一个字都没有。现在三处消费者(画面 xfade 的 offset /
+	// 字幕 starts / 音轨接缝)全部读下面这一份 fades,判据分裂无处可生。
+	trans := effectiveTransition(p.Transition)
+	fd, fadeClamped := clampFadeSec(p.FadeSec)
+	fades := seamFades(trans, durations, fd)
+	starts := shotStarts(durations, fades)
+	// 参数被改写就如实播报:静默改参数与"参数不生效"是同一类缺陷的两面。
+	for _, note := range transitionNotes(p.Transition, p.FadeSec, fd, fadeClamped) {
+		if onProgress != nil {
+			onProgress(3, note)
 		}
 	}
 
 	// ---- 步骤二:拼接 ----
 	var master string
-	// dissolve(xfade 像素溶解,颗粒噪点观感)按用户 2026-09-10 定调不再使用,
-	// 存量项目参数里的 dissolve 一律按 fade(平滑交叉叠化)执行,不迁移数据。
-	if p.Transition == "dissolve" {
-		p.Transition = "fade"
-	}
-	switch p.Transition {
-	case "fade":
-		master, err = stitchWithTransitions(ctx, f, parts, durations, work, p, res, onProgress)
+	switch trans {
+	case transFade:
+		// dissolve(xfade 像素溶解,颗粒噪点观感)按用户 2026-09-10 定调不再使用,
+		// 存量项目参数里的 dissolve 一律按 fade(平滑交叉叠化)执行,不迁移数据
+		// (归一化在 effectiveTransition 里)。
+		master, err = stitchWithTransitions(ctx, f, parts, durations, starts, fades, work, trans, res, onProgress)
 		if err != nil {
 			return nil, err
 		}
@@ -174,10 +198,8 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	if plan != nil {
 		_ = os.WriteFile(srtPath, []byte(BuildSRT(plan, starts, durations)), 0o644)
 	}
-	total := sum(durations)
-	if trans != "cut" && len(parts) > 1 {
-		total -= float64(len(parts)-1) * fd // 转场重叠扣除后的真实成片时长
-	}
+	// 成片总长:各镜累加 − 各接缝重叠(与画面链、字幕起点同源)。
+	total := filmDuration(durations, fades)
 	res.SRTPath = srtPath
 
 	chain, _, note := prepareAudio(ctx, f, master, p)
@@ -202,8 +224,12 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 			return nil, fmt.Errorf("终混失败: %w", err)
 		}
 	} else {
+		// 不烧字幕这一路**视频零滤镜**:master 已经是同规格 x264(硬切路 -c:v copy、
+		// 叠化路 xfade 后 crf18 重编),这里再解一遍码、再压一遍等于白付一次整集
+		// medium 编码(分钟级),并把每一镜又推一代 x264 代次损失(审计 M35)——
+		// 与该文件自己的音频纪律("中间轨一律无损")自相矛盾。mkv→mp4 允许视频流复制。
 		if _, err := f.Run(ctx, append(args,
-			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+			"-c:v", "copy",
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
 			"-movflags", "+faststart", finalPath)...); err != nil {
 			return nil, fmt.Errorf("终混失败: %w", err)
@@ -214,8 +240,191 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	}
 	failed = false // 成功:清理中间目录;失败保留 compose-*-failed 现场供排查
 	res.FinalPath = finalPath
-	res.Duration = total
+	// 成片时长以**实测**为准(审计:时长误报)。算术累加依赖"每镜重叠恰好等于
+	// fades",而容器时间基与末帧对齐会让实测差几十毫秒;UI 的
+	// 「✔ 成片就绪:final.mp4(N 秒)」吃的就是这个值 —— 报个算错的值,等于让人
+	// 按错的时间轴去排下一集。探测失败才退回算术值(不阻断出片)。
+	if info, perr := f.Probe(finalPath); perr == nil && info.Duration > 0 {
+		res.Duration = info.Duration
+	} else {
+		res.Duration = total
+	}
 	return res, nil
+}
+
+// ---------- 转场判据(唯一收口点) ----------
+//
+// 画面重叠、字幕偏移、成片时长、音轨接缝这四处必须由**同一份**判据推出。
+// 2026-09-26 渲染管线审计在这里抓出三套互不一致的判据:
+//
+//	字幕 starts[] : `trans != "cut"`(参数为空串/写错时也按"有重叠"扣)
+//	画面 xfade    : `switch p.Transition { case "fade" }`(空串/写错走硬切)
+//	音轨接缝      : `durations[i] <= d` 时**整个接缝不让**(两镜音频都保持整段)
+//
+// 三者不一致的后果都不是报错,而是"字幕逐镜提前、成片时长少报、音轨比画面长"
+// 这类静默漂移。下面把它收成四件各自可单测的事:归一化转场、钳制转场时长、
+// 逐接缝算实际重叠、由重叠推字幕起点/成片总长/音频窗口。
+
+// 归一化后的转场取值(只有这两种会进入拼接)。
+const (
+	transCut  = "cut"
+	transFade = "fade"
+)
+
+// 转场时长的允许区间。
+//
+// 下界 0.1 s 沿用既有口径(pipeline 的 resolveFadeSec 测试里"项目显式 0.1 是合法
+// 最小值");上界 3 s 是安全网 —— `AssembleParams.FadeSec` 此前**没有任何上界**
+// (project 的 Sanitize 不校验它,config 的 render.fade_sec 全包无校验),一个被
+// 写坏的值(单位写错、复制粘贴成 60)会让整部片子变成一场长叠化,而画面、字幕、
+// 音轨三者的重叠还得一起跟着漂。超过 3 秒的叠化已不是"转场"而是特效。
+const (
+	minFadeSec     = 0.1
+	maxFadeSec     = 3.0
+	defaultFadeSec = 0.5
+)
+
+// minSeamFade 单条接缝重叠的下限(1 帧 @24fps):xfade 不接受 0 时长,而源片时长
+// 探测异常(≈0)时逐接缝重叠会被算成 0 —— 那时给一帧,让整条链仍然自洽。
+const minSeamFade = 1.0 / 24
+
+// effectiveTransition 归一化转场:只有 fade/dissolve 走叠化,其余(含空串与手改
+// JSON 写进来的任意值)一律硬切 —— 与 project.StageParams.Sanitize 的"非法值按
+// cut"同一口径。区别在于 Sanitize 只在**保存参数**时生效(读盘兜底
+// ensureDefaultParams 在已有 scheme 时直接 return),这里是装载之后的最后一道。
+func effectiveTransition(s string) string {
+	switch s {
+	case "fade", "dissolve":
+		return transFade
+	default:
+		return transCut
+	}
+}
+
+// clampFadeSec 把转场时长钳到合法区间,并回报是否被改写。
+// 0/负值/NaN 视为"用默认值"(AssembleParams.FadeSec 的既有约定),不算改写。
+func clampFadeSec(sec float64) (float64, bool) {
+	if math.IsNaN(sec) || sec <= 0 {
+		return defaultFadeSec, false
+	}
+	if sec < minFadeSec {
+		return minFadeSec, true
+	}
+	if sec > maxFadeSec {
+		return maxFadeSec, true
+	}
+	return sec, false
+}
+
+// transitionNotes 转场参数被改写时该如实播报的话(无需播报时返回空切片)。
+func transitionNotes(rawTrans string, rawSec, fd float64, clamped bool) []string {
+	var out []string
+	switch rawTrans {
+	case "cut", "fade", "dissolve":
+	default:
+		out = append(out, fmt.Sprintf(
+			"⚠ 转场参数「%s」非法(只接受 cut/fade/dissolve),本条按 %s 执行:字幕时间轴与成片时长同步按此推导",
+			rawTrans, transCut))
+	}
+	if clamped {
+		out = append(out, fmt.Sprintf(
+			"⚠ 转场时长 %.2fs 超出允许区间 %.1f–%.1fs,已按 %.2fs 执行", rawSec, minFadeSec, maxFadeSec, fd))
+	}
+	return out
+}
+
+// seamFades 逐接缝的实际重叠时长(秒),与 durations 等长(最后一镜后面没有接缝,
+// 恒为 0 —— 这样三处消费者都能直接按下标取用)。
+//
+// 为什么要**逐个接缝**算而不是全片一个 fd:某一镜短于转场时(用户把 FadeSec 调到
+// 2s、而某镜只有 1.5s),全局 fd 会同时让 xfade 的 offset 变成负数、音轨那边又
+// "整个接缝不让" —— 画面与音轨从此对不齐。
+//
+// 上限取"相邻任一镜的**一半**",而不是"相邻任一镜的全长":
+//
+//	· 一半是 xfade 能成立的必要条件(重叠窗口必须落在两镜之内);
+//	· 全长只保证"装得下",却会让一镜被前后两条接缝吃光 —— 那条镜在成片里
+//	  永远没有一帧是自己独占的(在时间轴上被跳过),成片比计划短了一整镜;
+//	· 取一半后每镜至少保留自身 50% 的独占画面,时间轴严格推进(见
+//	  TestShotStartsMatchPictureOverlap 的单调性断言)。
+//
+// 正常参数(fd ≤ 0.5s、镜长 ≥ 4s)下 min(一半) 恒等于 fd,行为与旧实现一致;
+// 只有病态参数(转场长于半镜)才会被压下来。
+func seamFades(trans string, durations []float64, fd float64) []float64 {
+	fades := make([]float64, len(durations))
+	if trans != transFade {
+		return fades
+	}
+	for i := 0; i+1 < len(durations); i++ {
+		half := math.Min(durations[i], durations[i+1]) / 2
+		f := math.Min(fd, half)
+		if f < minSeamFade {
+			// 连一帧的叠化都排不出来:只能给到可用的一半 —— 绝不能超过它,
+			// 否则 starts 会倒退、xfade 的 offset 会变成负数。
+			f = math.Min(minSeamFade, half)
+		}
+		fades[i] = f
+	}
+	return fades
+}
+
+// shotStarts 每镜在成片时间轴上的真实起点 —— 字幕必须直接吃这个数组。
+// 与 xfade 的 offset 是同一个量(offset = 后一镜在成片里的起点),
+// 由 TestShotStartsMatchPictureOverlap 钉住。
+func shotStarts(durations, fades []float64) []float64 {
+	starts := make([]float64, len(durations))
+	var acc float64
+	for i := range durations {
+		starts[i] = acc
+		acc += durations[i]
+		if i < len(fades) {
+			acc -= fades[i]
+		}
+	}
+	return starts
+}
+
+// filmDuration 成片总长 = 各镜累加 − 各接缝重叠(= 末镜起点 + 末镜时长)。
+func filmDuration(durations, fades []float64) float64 {
+	return sum(durations) - sum(fades)
+}
+
+// seamAudioWindows 由各接缝的重叠时长与切点推出每镜保留的音频区间。
+//
+// 不变式(由 TestSeamAudioWindowsMatchPictureOverlap 钉住):每个接缝两镜让出的
+// 音频之和**恰好等于**画面让出的重叠 ——
+//
+//	(durations[i]-tails[i]) + heads[i+1] == fades[i]
+//
+// 旧实现在"短镜"接缝上直接跳过(两镜音频都保持整段),这条不变式就破了:
+// 音轨比画面长,且越往后累积越多 —— 音画整体错位,却全程不报错。
+// cuts[i] 是接缝 i 的切点(相对后一镜头部,∈ [0, fades[i]]),越界一律夹回窗口内。
+func seamAudioWindows(durations, fades, cuts []float64) (heads, tails []float64) {
+	n := len(durations)
+	heads = make([]float64, n)
+	tails = make([]float64, n)
+	for i := 0; i < n; i++ {
+		heads[i], tails[i] = 0, durations[i]
+	}
+	for i := 0; i+1 < n; i++ {
+		d := fades[i]
+		if d <= 0 {
+			continue // 硬切/退化源片:这条接缝不让出音频
+		}
+		t := 0.0
+		if i < len(cuts) {
+			t = cuts[i]
+		}
+		if t < 0 {
+			t = 0
+		}
+		if t > d {
+			t = d
+		}
+		tails[i] = durations[i] - (d - t)
+		heads[i+1] = t
+	}
+	return heads, tails
 }
 
 // ---------- 音频链 ----------
@@ -351,18 +560,17 @@ func stitchCut(ctx context.Context, f *ff.FF, parts []string, work string, onPro
 
 // stitchWithTransitions xfade 视频链 + **按静音落刀**的音频链拼接。
 //
-// 视频:xfade 叠化,链式推进(旧实现,不动)。
-// 音频:每个接缝要交出 fd 秒(与画面重叠等长),旧实现固定砍在重叠区中点 ——
-// 等于每镜头尾各砍 fd/2,台词压在头尾就被切掉半句(用户报「配音不完整」的根因)。
-// 现在改为:用 internal/audio 的能量包络求解切点,让"让出去的这段"尽量落在没人声的
+// 视频:xfade 叠化,链式推进;每个接缝的 offset 直接取 starts[i](= 后一镜在成片里的
+// 起点),duration 取 fades[i-1] —— 与字幕时间轴、音频让出量同源,不再各自累加。
+// 音频:每个接缝要交出 fades[i] 秒(与画面重叠**等长**),旧实现固定砍在重叠区中点 ——
+// 等于每镜头尾各砍一半,台词压在头尾就被切掉半句(用户报「配音不完整」的根因)。
+// 现在用 internal/audio 的能量包络求解切点,让"让出去的这段"尽量落在没人声的
 // 地方;两镜都可裁区间内人人声时,自然退回中点(与旧行为一致,不留新问题)。
-func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations []float64, work string, p Params, res *Result, onProgress func(int, string)) (string, error) {
+//
+// starts/fades 由调用方(Compose)统一推导后传入,本函数不自行再算一遍。
+func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations, starts, fades []float64, work, trans string, res *Result, onProgress func(int, string)) (string, error) {
 	if onProgress != nil {
-		onProgress(60, "拼接(转场 "+p.Transition+")")
-	}
-	d := p.FadeSec
-	if d <= 0 {
-		d = 0.5
+		onProgress(60, "拼接(转场 "+trans+")")
 	}
 	n := len(parts)
 	args := []string{"-y"}
@@ -371,18 +579,24 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 	}
 	var filters []string
 	// 视频链(pad 名自带方括号,直接拼接;再包一层会变 [[0:v]] 导致解析失败)
+	//
+	// offset 直接取 starts[i] —— 它不是"又算一遍",而是与字幕起点**同一个值**:
+	// xfade 的 offset 就是后一镜在成片时间轴上的起点。旧实现各自累加一次,
+	// 于是字幕与画面可以各说各话(见文件头 seamFades 的说明)。
 	lastV := "[0:v]"
-	acc := durations[0]
 	for i := 1; i < n; i++ {
 		outV := fmt.Sprintf("[v%d]", i)
-		filters = append(filters, fmt.Sprintf("%s[%d:v]xfade=transition=%s:duration=%.2f:offset=%.2f%s",
-			lastV, i, p.Transition, d, acc-d, outV))
+		filters = append(filters, fmt.Sprintf("%s[%d:v]xfade=transition=%s:duration=%.3f:offset=%.3f%s",
+			lastV, i, trans, fades[i-1], starts[i], outV))
 		lastV = outV
-		acc += durations[i] - d
 	}
 
 	// ---- 音频链:逐接缝求解切点 ----
 	envs := make([]*audio.Envelope, n)
+	// undecoded 包络解不出来的镜号:这些接缝会退回"中点切"(每镜头尾各砍一半),
+	// 正是用户报过的「配音不完整」旧行为 —— 必须让用户看见是**哪几镜**没评估到,
+	// 而不是留一句"人声损失已最小化"(审计 M37)。
+	var undecoded []int
 	for i, part := range parts {
 		if ctx.Err() != nil {
 			return "", ctx.Err()
@@ -390,38 +604,45 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 		e, err := audio.Decode(ctx, f, part)
 		if err != nil {
 			envs[i] = nil // 解不出来就按"无包络"处理(该接缝回退中点切)
+			undecoded = append(undecoded, i+1)
 			continue
 		}
 		envs[i] = e
 	}
-	// head[i]/tail[i] 为该镜保留的音频区间(秒)。窗口内切点 t 的含义见 audio.SolveCut。
-	heads := make([]float64, n)
-	tails := make([]float64, n)
-	silentCut := 0
-	for i := 0; i < n; i++ {
-		heads[i], tails[i] = 0, durations[i]
-	}
+	// 逐接缝切点(相对后一镜头部,∈ [0, fades[i]])。让出多少音频由 seamAudioWindows
+	// 统一结算 —— 那边保证"让出的音频 == 画面让出的重叠"这条不变式。
+	cuts := make([]float64, n)
+	evaluated := 0 // 真正求解过的接缝数(分母不能把没评估的算成"已最小化")
+	seamCount := 0 // 有重叠、本该求解的接缝数
 	for i := 0; i+1 < n; i++ {
-		if durations[i] <= d || durations[i+1] <= d {
-			continue // 超短镜:整段保留(与旧实现的兜底一致)
+		d := fades[i]
+		if d <= 0 {
+			continue
 		}
-		t := audio.SolveCut(envs[i], durations[i]-d, envs[i+1], d, d)
-		// 判定"这一刀落在静音里":让出的两段都没有人声
-		if envs[i] != nil && envs[i+1] != nil {
-			on := envs[i].Speech()
-			onIn := envs[i+1].Speech()
-			lost := envs[i].SpeechSeconds(on, durations[i]-d+t, durations[i]) +
-				envs[i+1].SpeechSeconds(onIn, 0, t)
-			if lost <= audio.Hop {
-				silentCut++
-			}
+		seamCount++
+		if envs[i] == nil || envs[i+1] == nil {
+			continue // 缺包络:SolveCut 会回退中点,不计入"已求解"
 		}
-		tails[i] = durations[i] - (d - t)
-		heads[i+1] = t
+		evaluated++
+		cuts[i] = audio.SolveCut(envs[i], durations[i]-d, envs[i+1], d, d)
+	}
+	// head[i]/tail[i] 为该镜保留的音频区间(秒)。
+	heads, tails := seamAudioWindows(durations, fades, cuts)
+	// 判定"这一刀落在静音里":让出的两段(前镜尾 + 后镜头)都没有人声。
+	// 让出的区间正是 [tails[i], durations[i]] 与 [0, heads[i+1]]。
+	silentCut := 0
+	for i := 0; i+1 < n; i++ {
+		if envs[i] == nil || envs[i+1] == nil || tails[i] >= durations[i] {
+			continue
+		}
+		lost := envs[i].SpeechSeconds(envs[i].Speech(), tails[i], durations[i]) +
+			envs[i+1].SpeechSeconds(envs[i+1].Speech(), 0, heads[i+1])
+		if lost <= audio.Hop {
+			silentCut++
+		}
 	}
 	if res != nil {
-		res.AudioNotes = append(res.AudioNotes,
-			fmt.Sprintf("接缝切点:%d/%d 处完全落在静音(其余按最接近静音的时点切,人声损失已最小化)", silentCut, n-1))
+		res.AudioNotes = append(res.AudioNotes, seamFeedback(silentCut, evaluated, seamCount, undecoded)...)
 	}
 
 	const afade = 0.02
@@ -502,6 +723,51 @@ func sum(d []float64) float64 {
 	return s
 }
 
+// subtitleWindow 该镜字幕可用的时间窗(相对镜头起点),返回 [start, end] 偏移。
+//
+// SRT(外发)与 ASS(烧录)必须用**同一个**窗口:此前一个用 8%~88%、另一个用
+// 10%~90%,同一句话在两份字幕里落在两个时间点上,作者拿导出的 SRT 去平台对轨
+// 会发现对不齐(审计 M36)。窗口本身仍按"镜头时长均分",与真实人声落点对齐
+// 那半边属于产品/设计决策(要动 Envelope 到字幕链的传递),不在本次范围内。
+func subtitleWindow(d float64) (start, end float64) {
+	const inset = 0.1
+	return d * inset, d * (1 - inset)
+}
+
+// joinInts 把镜号拼成 "1、3、5"(播报用)。
+func joinInts(xs []int) string {
+	parts := make([]string, len(xs))
+	for i, v := range xs {
+		parts[i] = fmt.Sprint(v)
+	}
+	return strings.Join(parts, "、")
+}
+
+// seamFeedback 接缝切点的如实回显(审计 M37)。
+//
+// 为什么分母只算**真正求解过**的接缝:旧实现写死 `silentCut/(n-1)`,把"音轨包络
+// 解不出来、根本没评估"的接缝也算进分母 —— 用户看到「接缝切点:0/9 处完全落在静音…
+// 人声损失已最小化」,完全判断不出有 9 个接缝其实都退回了中点切(每镜头尾各砍一半,
+// 正是「配音不完整」这条老毛病的原样),自然也不会去重渲。
+//
+//	silent    落在静音的接缝数
+//	evaluated 真正求解过的接缝数(= 分母)
+//	seams     有重叠、本该求解的接缝数(> evaluated 说明有接缝没评估)
+//	undecoded 音轨分析失败的镜号
+func seamFeedback(silent, evaluated, seams int, undecoded []int) []string {
+	notes := []string{fmt.Sprintf(
+		"接缝切点:%d/%d 处完全落在静音(其余按最接近静音的时点切,人声损失已最小化)", silent, max(evaluated, 1))}
+	if unevaluated := seams - evaluated; unevaluated > 0 {
+		notes = append(notes, fmt.Sprintf(
+			"⚠ 有 %d 个接缝未做静音求解,已退回中点切(每镜头尾各让出一半):台词压在头尾会被削", unevaluated))
+	}
+	if len(undecoded) > 0 {
+		notes = append(notes, fmt.Sprintf(
+			"⚠ 第 %s 镜的音轨分析失败 —— 这是接缝退回中点切的原因,建议重渲这几镜", joinInts(undecoded)))
+	}
+	return notes
+}
+
 // ---------- 字幕生成 ----------
 
 // BuildSRT 依据镜头实际起始/时长生成 SRT 时间轴(starts 为转场扣除后的镜起始)。
@@ -521,9 +787,11 @@ func BuildSRT(plan *project.Plan, starts, durations []float64) string {
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		// 台词区约 8%-88%,多行均分
+		// 台词区约 8%-88%,多行均分 —— 与 ASS 共用同一个窗口(见 subtitleWindow)
 		lines := strings.Split(text, "\n")
-		start, end := t+d*0.08, t+d*0.88
+		start, end := subtitleWindow(d)
+		start += t
+		end += t
 		seg := (end - start) / float64(len(lines))
 		for j, ln := range lines {
 			ls := start + seg*float64(j) + 0.05
@@ -603,9 +871,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 		if strings.TrimSpace(shot.Narration) != "" && len(shot.Dialogue) == 0 {
 			style = "Narration"
 		}
-		span := d * 0.8                   // 字幕显示窗口:镜头头尾各留 10%
+		// 窗口与 SRT 同源(审计 M36):subtitleWindow 是唯一出处,此处不再自己写 0.1/0.8。
+		ws, we := subtitleWindow(d)
+		span := we - ws                   // 镜头头尾各留 10%
 		seg := span / float64(len(parts)) // 每条均分
-		start := t + d*0.1
+		start := t + ws
 		for _, p := range parts {
 			p = strings.TrimSpace(p)
 			if p == "" {

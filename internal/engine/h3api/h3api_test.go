@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -306,6 +307,167 @@ func TestRegenerate2KRejectsBadModel(t *testing.T) {
 	}
 	if n := atomic.LoadInt32(&f.creates); n != 0 {
 		t.Errorf("应在提交前拦住,实际创建了 %d 个任务", n)
+	}
+}
+
+// TestSubmitDurationReportsRaise 纯函数面:被云端区间改写时必须给出 adjusted=true。
+//
+// 96 帧 = 4 秒,在计划侧(PlanMinShotSeconds=4)完全合法,云端的下限却是 5 秒 ——
+// 这就是"静默抬升"的入口:同一条 plan 走云端每条 4 秒镜都变长,走本地却是
+// AlignLength 后的 4.46 秒,两条路产物时长不一致。
+func TestSubmitDurationReportsRaise(t *testing.T) {
+	cases := []struct {
+		name     string
+		frames   int
+		sec      int
+		adjusted bool
+	}{
+		{"4 秒镜被抬到云端下限", 96, 5, true},
+		{"正好 5 秒不动", 120, 5, false},
+		{"10 秒不动", 240, 10, false},
+		{"上游没给帧数", 0, 5, true},
+		{"15 秒不动", 360, 15, false},
+		{"超过云端上限被压回", 480, 15, true},
+	}
+	for _, c := range cases {
+		sec, adjusted := submitDuration(c.frames)
+		if sec != c.sec || adjusted != c.adjusted {
+			t.Errorf("%s: submitDuration(%d) = (%d, %v),期望 (%d, %v)",
+				c.name, c.frames, sec, adjusted, c.sec, c.adjusted)
+		}
+	}
+}
+
+// TestRenderWarnsWhenCloudDurationIsRaised 静默抬升必须变成**可见**(审计:云端时长静默抬升)。
+//
+// 断言两件事:①真正提交给云端的 duration 是被改写后的值(5,而不是计划的 4);
+// ②OnProgress 里出现"计划 N 秒 → 云端 M 秒"的播报 —— 没有这句,用户从日志与界面
+// 都看不出这一镜为什么比计划长,只有换回本地引擎渲染时才会暴露。
+func TestRenderWarnsWhenCloudDurationIsRaised(t *testing.T) {
+	var sent atomic.Value // 提交出去的请求体(字符串)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			raw, _ := io.ReadAll(r.Body)
+			sent.Store(string(raw))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"t"}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden) // 查询一律拒绝:本条不关心后续
+	}))
+	t.Cleanup(ts.Close)
+	base := ts.URL
+	e := New(func() config.MiniMaxSettings {
+		return config.MiniMaxSettings{BaseURL: base, APIKey: "k", Model: "MiniMax-H3"}
+	})
+	e.pollEvery = time.Millisecond
+
+	job := testJob(t)
+	job.Length = 96 // 4 秒镜
+	job.Timeout = 300 * time.Millisecond
+	var notes []string
+	job.OnProgress = func(_ int, note string) { notes = append(notes, note) }
+	_, _ = e.Render(context.Background(), job) // 后续 403 失败与本节无关
+
+	raw, _ := sent.Load().(string)
+	if raw == "" {
+		t.Fatal("没有捕获到提交请求")
+	}
+	var body struct {
+		Duration int `json:"duration"`
+	}
+	if err := json.Unmarshal([]byte(raw), &body); err != nil {
+		t.Fatalf("解析提交体失败: %v\n%s", err, raw)
+	}
+	if body.Duration != 5 {
+		t.Errorf("云端下限为 5 秒,提交的 duration 应为 5,实际 %d", body.Duration)
+	}
+	joined := strings.Join(notes, "|")
+	if !strings.Contains(joined, "计划 4 秒") || !strings.Contains(joined, "云端按 5 秒") {
+		t.Errorf("时长被改写必须如实播报「计划 N 秒 → 云端按 M 秒」,实际进度文案:%q", joined)
+	}
+}
+
+// TestRenderWarnsWhenLengthMissing 上游没给帧数(Length=0)时同样要播报 ——
+// 这类调用曾是静默的:引擎按 AlignLength(0)=5 帧建图编码,接口却返回 ok。
+func TestRenderWarnsWhenLengthMissing(t *testing.T) {
+	var sent atomic.Value
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			raw, _ := io.ReadAll(r.Body)
+			sent.Store(string(raw))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"t"}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(ts.Close)
+	base := ts.URL
+	e := New(func() config.MiniMaxSettings {
+		return config.MiniMaxSettings{BaseURL: base, APIKey: "k", Model: "MiniMax-H3"}
+	})
+	e.pollEvery = time.Millisecond
+
+	job := testJob(t)
+	job.Length = 0
+	job.Timeout = 300 * time.Millisecond
+	var notes []string
+	job.OnProgress = func(_ int, note string) { notes = append(notes, note) }
+	_, _ = e.Render(context.Background(), job)
+
+	if raw, _ := sent.Load().(string); raw == "" {
+		t.Fatal("没有捕获到提交请求")
+	}
+	if joined := strings.Join(notes, "|"); !strings.Contains(joined, "未给出渲染帧数") {
+		t.Errorf("未指定帧数必须播报(否则成片时长不受镜头计划约束而无人知晓),实际:%q", joined)
+	}
+}
+
+// TestRenderWarnsWhenSeedRequested M32:云端不支持 seed(H3 请求体里没有该字段,
+// 产物不可复现),而"固定种子/单镜 seed"在界面上是真能设的 —— 静默失效必须变成可见。
+func TestRenderWarnsWhenSeedRequested(t *testing.T) {
+	var sent atomic.Value
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			raw, _ := io.ReadAll(r.Body)
+			sent.Store(string(raw))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"task_id":"t"}`))
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	t.Cleanup(ts.Close)
+	base := ts.URL
+	e := New(func() config.MiniMaxSettings {
+		return config.MiniMaxSettings{BaseURL: base, APIKey: "k", Model: "MiniMax-H3"}
+	})
+	e.pollEvery = time.Millisecond
+
+	job := testJob(t)
+	job.Seed = 424242
+	job.Timeout = 300 * time.Millisecond
+	var notes []string
+	job.OnProgress = func(_ int, note string) { notes = append(notes, note) }
+	_, _ = e.Render(context.Background(), job)
+
+	if joined := strings.Join(notes, "|"); !strings.Contains(joined, "不支持 seed") {
+		t.Errorf("设了 seed 就必须播报云端不支持,实际进度文案:%q", joined)
+	}
+	// 请求体里本来就不该有 seed(有的话说明另一处改了契约,这条断言会提醒)
+	if raw, _ := sent.Load().(string); strings.Contains(raw, "seed") {
+		t.Errorf("云端请求体不含 seed,实际:%s", raw)
+	}
+
+	// 没设 seed 时保持安静(不制造噪声)
+	job2 := testJob(t)
+	job2.Timeout = 300 * time.Millisecond
+	var notes2 []string
+	job2.OnProgress = func(_ int, note string) { notes2 = append(notes2, note) }
+	_, _ = e.Render(context.Background(), job2)
+	if joined := strings.Join(notes2, "|"); strings.Contains(joined, "不支持 seed") {
+		t.Errorf("未设 seed 时不该播报 seed,实际:%q", joined)
 	}
 }
 

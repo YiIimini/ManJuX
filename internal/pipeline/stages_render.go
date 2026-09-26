@@ -141,32 +141,59 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// 并释放残留显存:上一阶段(Krea-2 定妆/抽卡等)模型常驻会把 H3 主模型
 	// (~20GB)挤出显存触发 dynamic VRAM loading——每步在 CPU↔GPU 搬权重,
 	// 实测 150s/步(正常 ~2s),极端时整镜 45 分钟超时(2026-09-10 血案)。
+	//
+	// 【必须先过准入闸】旧实现无条件动手,而这一步有两颗地雷:
+	//   - ClearQueue 会把**别人排队中**的任务清掉(那边的 WaitForDone 会以
+	//     「任务已从队列消失」失败);
+	//   - FreeVRAM 是 /free 卸权重,正跑着的任务会被踢出显存 → 每步重新流式加载
+	//     (实测 150s/步,整镜 45 分钟超时)。
+	// 一次性 GPU 操作(局部重绘/音频驱动/重生成定妆照)不受管线互斥约束,用户完全
+	// 可能"先点了它再点渲染出片"。所以这里与 ReleaseVRAMIfIdle 共用同一道准入
+	// (vramReleaseAllowed):探测不到队列状态、或队列里还有活,就**不动手**,只说明。
 	if caps.Queue {
-		eng.ClearQueue(ctx)
-		b, hasB := sysmon.VRAMUsedMB()
-		_ = eng.FreeVRAM(ctx)
-		// 卸载+empty_cache 是异步落下去的,立刻读会永远得到"没释放"(实测一直显示
-		// 22.3 GB → 22.3 GB,用户据此以为这步是假的)。这里轮询最多 5 秒取最小值,
-		// 如实反映释放结果;若确实没降也照实说,不粉饰。
-		if hasB {
-			after, ok := b, false
-			for i := 0; i < 10; i++ {
-				time.Sleep(500 * time.Millisecond)
-				if a, hasA := sysmon.VRAMUsedMB(); hasA {
-					ok = true
-					if a < after {
-						after = a
-					}
-					if after < b-256 { // 已明显下降,不用再等
-						break
+		allowed := true
+		if ce, ok := eng.(*comfyengine.Engine); ok {
+			actx, acancel := context.WithTimeout(ctx, 5*time.Second)
+			st, aerr := ce.Admin(actx)
+			acancel()
+			if !vramReleaseAllowed(st, aerr) {
+				busy := ""
+				if st != nil {
+					busy = fmt.Sprintf("(运行中 %d / 排队 %d)", st.Running, st.Pending)
+				}
+				c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+					"⚠ 引擎上还有别的任务%s,本次**跳过**渲染前的清队与显存释放 —— 不打断别人的任务;"+
+						"若这一镜跑得异常慢,请在引擎空闲时重跑本阶段", busy)
+				allowed = false
+			}
+		}
+		if allowed {
+			eng.ClearQueue(ctx)
+			b, hasB := sysmon.VRAMUsedMB()
+			_ = eng.FreeVRAM(ctx)
+			// 卸载+empty_cache 是异步落下去的,立刻读会永远得到"没释放"(实测一直显示
+			// 22.3 GB → 22.3 GB,用户据此以为这步是假的)。这里轮询最多 5 秒取最小值,
+			// 如实反映释放结果;若确实没降也照实说,不粉饰。
+			if hasB {
+				after, ok := b, false
+				for i := 0; i < 10; i++ {
+					time.Sleep(500 * time.Millisecond)
+					if a, hasA := sysmon.VRAMUsedMB(); hasA {
+						ok = true
+						if a < after {
+							after = a
+						}
+						if after < b-256 { // 已明显下降,不用再等
+							break
+						}
 					}
 				}
-			}
-			if ok {
-				if after >= b {
-					c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB(引擎无可卸载的常驻模型)", b/1024)
-				} else {
-					c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB → %.1f GB(腾出主模型常驻空间)", b/1024, after/1024)
+				if ok {
+					if after >= b {
+						c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB(引擎无可卸载的常驻模型)", b/1024)
+					} else {
+						c.emit(proj.ID, PhaseRender, 0, "info", 0, "🧽 渲染前释放显存:%.1f GB → %.1f GB(腾出主模型常驻空间)", b/1024, after/1024)
+					}
 				}
 			}
 		}
@@ -176,6 +203,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// (本字段引入之前的清单)。刚换过底模时这些镜头仍是旧模型的画面:
 	// 如实提示,让用户自己决定要不要全量重渲 —— 不静默替他烧 GPU。
 	legacyModel := 0
+	// refBindWarned 本次运行是否已经就"subject 一行都没绑上图"告警过(只报一次即可,
+	// 逐镜刷屏会把真正的关键信息淹掉)。
+	refBindWarned := false
 	var failures []string
 	for i, shot := range shots {
 		if ctx.Err() != nil {
@@ -214,17 +244,43 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 参考图**权威清单**:张数与编号由渲染器按实际装配结果写出(LLM 看不见张数,
 		// 猜错就会把多视角拼合图当成场景图 —— 2026-09-25 镜头6 角色漂移的根因,见
 		// refmanifest.go)。无参考图时 RefManifest 返回空串,提示词原样放行。
+		//
+		// 绑定前先量一次"有多少 subject 行能绑到图上":一行都没绑上 = 官方句式没落进
+		// 提示词,模型会回到"按文字重画角色"(同一角色逐镜不同人),而清单照附、日志照写,
+		// 看不出任何异常。这类静默回归必须说出来(每次运行只说一次,不逐镜刷屏)。
+		if len(roles) > 0 && !refBindWarned {
+			if b, tot := subjectBindStats(prompt, roles); tot > 0 && b == 0 {
+				refBindWarned = true
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+					"⚠ 分镜方案的 subject_definitions 一行都没能绑到参考图(角色名与句式对不上):模型会按**文字**重画角色,"+
+						"同一角色可能逐镜不同人 —— 建议核对方案里的 `<Subject N> is <角色名>` 写法")
+			}
+		}
 		prompt = EnsureRefManifest(prompt, shot, roles)
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。
-		inputFP := renderFingerprint(prompt, refs, rp, mode, rp.Seed)
+		//
+		// 【单镜 seed 覆盖必须进指纹】旧实现传的是 rp.Seed(项目配置值),于是
+		// ShotTuneDialog 的 seed 输入框(与「随机 seed」按钮)在提示词/时长/模式都没改
+		// 时**完全不生效**:inputFP 与上一次逐字相同 → 走"产物有效,跳过(断点续跑)"
+		// 分支 → 视频还是旧的那条,而前端弹「已按微调参数重渲」。判据见
+		// fingerprintSeed(未显式换 seed 时与旧指纹串逐字一致,存量项目不会被判失效)。
+		inputFP := renderFingerprint(prompt, refs, rp, mode, fingerprintSeed(rp, seedOverride, shot))
 		outName := fmt.Sprintf("shot_%03d", shot.ID)
 
 		// 断点续跑:同输入指纹 + 帧数对得上 + 文件存在 → 跳过
 		wantFrames := shotFrames(shot)
 		wantModel := renderModelTag(c.cfg.Get(), mode, engName)
-		if m, ok := manifest[strconv.Itoa(shot.ID)]; ok && shotArtifactValid(m, inputFP, wantFrames, wantModel) {
+		// 接缝生效时这一镜还依赖**上游那一镜的 latent**:记下渲它时上游的指纹,
+		// 跳过前比一次(上游被重渲过 = 槽里的 latent 已经不是当初那份)。
+		// 上游不在本次范围内(单镜重渲)时,manifest 里的值就是它当前的版本。
+		seamHere := rp.Seam && caps.Seam && shot.ID > 1
+		wantSeamFrom := ""
+		if seamHere {
+			wantSeamFrom = manifest[strconv.Itoa(shot.ID-1)].InputFP
+		}
+		if m, ok := manifest[strconv.Itoa(shot.ID)]; ok && shotArtifactValid(m, inputFP, wantFrames, wantModel, wantSeamFrom) {
 			full := filepath.Join(c.store.Dir(proj.ID), m.File)
 			if st, err := os.Stat(full); err == nil && st.Size() > 0 {
 				skipped++
@@ -255,6 +311,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				Timeout:  shotTimeout,
 				Seam:     rp.Seam && caps.Seam,
 				PrevShot: shot.ID - 1,
+				// 项目参数 render.cond_cache 必须真的说了算:交给引擎,未表态时由引擎
+				// 回退全局设置(见 engine.Job.CondCache 的说明)。
+				CondCache: rp.CondCache, // 三态:*bool 直接透传(nil = 未表态 → 引擎回落全局设置)
 				OnProgress: func(p int, note string) {
 					total := base + p/len(shots)
 					if total > 100 {
@@ -290,6 +349,13 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
 		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", wantFrames, wantModel)
+		if seamHere {
+			// 记下"渲这一镜时上游是谁":上游日后被重渲(指纹变)时,这一镜必须跟着重渲,
+			// 否则接缝处钉的还是旧 latent(画面跳变,而成片与阶段照常报成功)。
+			m := manifest[strconv.Itoa(shot.ID)]
+			m.SeamFrom = wantSeamFrom
+			manifest[strconv.Itoa(shot.ID)] = m
+		}
 		if res.TaskID != "" {
 			manifest[strconv.Itoa(shot.ID)] = mergeTask(manifest[strconv.Itoa(shot.ID)], res.TaskID)
 		}
@@ -333,6 +399,24 @@ func engineLabel(name string) string {
 	return name
 }
 
+// fingerprintSeed 指纹里该写哪个 seed:唯一判据来源。
+//
+// 两条要求同时成立才正确:
+//   - **换 seed 必须换指纹**:单镜微调(ShotTuneDialog 的 seed 输入框/「随机 seed」)
+//     在提示词、时长、模式都没改时,旧实现让 inputFP 逐字不变 → 走跳过分支 →
+//     视频还是旧的那条,而界面报「已按微调参数重渲」(典型"能调、看着生效、实际没做");
+//   - **没换 seed 时指纹串必须与旧版逐字一致**:否则升级一版就让存量项目所有已渲镜头
+//     判为失效(几十集全量重渲)。所以未显式覆盖时仍写 rp.Seed(旧行为),不写派生值。
+//
+// 随机种子绝不会流到这里:渲染链路用的 seed 由 ShotSeed 派生(确定性),随机种子只
+// 出现在 RandomSeed() 那类显式抽卡动作里(见 stages_assets.go 的说明)。
+func fingerprintSeed(rp project.RenderParams, seedOverride int64, shot project.Shot) int64 {
+	if seedOverride <= 0 {
+		return rp.Seed
+	}
+	return ShotSeed(rp.Seed, seedOverride, shot.ID, shot.Characters)
+}
+
 func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderParams, mode string, seed int64) string {
 	var files []string
 	for _, r := range refs {
@@ -365,7 +449,11 @@ func shotFrames(shot project.Shot) int { return shot.Duration * 24 }
 // Length 的兼容语义:`Length == 0` 表示这份清单是**本字段引入之前**写的,判据不推翻
 // 指纹结论 —— 否则升级一版就会让所有存量项目的已渲镜头集体重渲(几十集的代价),
 // 而它并不比"照旧"更正确。渲染过一次之后 Length 就有值了,从此改动必被抓住。
-func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int, wantModel string) bool {
+//
+// wantSeamFrom:本镜若吃上游接缝(wantSeamFrom 非空 = 接缝生效,值为上游当前的 InputFP)。
+// 上游被重渲过 → 槽里的 latent 换了 → 本镜的产物作废(否则接缝处画面跳变而无人知晓)。
+// 老清单没记这一列(SeamFrom=="")时不推翻指纹结论 —— 与 Length/Model 同一条兼容口径。
+func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int, wantModel, wantSeamFrom string) bool {
 	if m.Status != project.ShotDone || m.File == "" || m.InputFP != inputFP {
 		return false
 	}
@@ -377,6 +465,9 @@ func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int, w
 	if m.Model != "" && wantModel != "" && m.Model != wantModel {
 		return false
 	}
+	if wantSeamFrom != "" && m.SeamFrom != "" && m.SeamFrom != wantSeamFrom {
+		return false
+	}
 	return true
 }
 
@@ -384,14 +475,50 @@ func shotArtifactValid(m project.ClipManifest, inputFP string, wantFrames int, w
 //
 // 为什么必须有它:用户换了底模(2026-09-24 换 Minimax-h3_Singularity)之后,
 // 断点续跑会拿旧模型的产物当"已完成"跳过 —— 一集里两种画风混着,而指纹看不出来。
+//
+// 除了底模/LoRA 名字,还有几项**同样决定画面却不体现在文件名里**的全局设置
+// (云端分辨率、本地 VideoVAE/CLIP、SageAttention 开关):改了它们再点重渲,
+// 旧实现会一路"产物有效,跳过",用户以为新设置生效、成片还是旧设置出的画面。
+// 用 modelRuntimeTag 收口,并且**只在偏离内置默认值时才追加** —— 保持未改过设置
+// 的机器上标签串与旧版逐字相同(否则升级一版就把存量项目的已渲镜头全部判失效)。
 func renderModelTag(g config.Settings, mode, engName string) string {
+	base := ""
 	if engName == "api" {
-		return "api:" + g.MiniMax.Model
+		base = "api:" + g.MiniMax.Model
+	} else if mode == "ref2va" {
+		base = g.Comfy.UNetRef2VA + "+" + g.Comfy.TurboLoRARef2VA
+	} else {
+		base = g.Comfy.UNetFL2VA + "+" + g.Comfy.TurboLoRAFL2VA
 	}
-	if mode == "ref2va" {
-		return g.Comfy.UNetRef2VA + "+" + g.Comfy.TurboLoRARef2VA
+	return base + modelRuntimeTag(g, engName)
+}
+
+// modelRuntimeTag 运行期"决定画面"的设置(默认值时不产生任何标记,见 renderModelTag)。
+func modelRuntimeTag(g config.Settings, engName string) string {
+	def := config.Default()
+	var tags []string
+	if engName == "api" {
+		// 云端分辨率(768P/2K/480P 是真正的出像素规格,设置页可改)
+		if res := strings.TrimSpace(g.MiniMax.Resolution); res != "" && res != def.MiniMax.Resolution {
+			tags = append(tags, "res"+res)
+		}
+	} else {
+		if v := strings.TrimSpace(g.Comfy.VideoVAE); v != "" && v != def.Comfy.VideoVAE {
+			tags = append(tags, "vae:"+v)
+		}
+		if c := strings.TrimSpace(g.Comfy.CLIP); c != "" && c != def.Comfy.CLIP {
+			tags = append(tags, "clip:"+c)
+		}
+		// SageAttention:nil(自动)与 true 是同一个状态(见 handlers_comfy.go 的判据),
+		// 只有显式关掉才改画面。
+		if g.Comfy.SageAttention != nil && !*g.Comfy.SageAttention {
+			tags = append(tags, "sageoff")
+		}
 	}
-	return g.Comfy.UNetFL2VA + "+" + g.Comfy.TurboLoRAFL2VA
+	if len(tags) == 0 {
+		return ""
+	}
+	return "|" + strings.Join(tags, ",")
 }
 
 func (c *Coordinator) setShotStatus(projectID string, manifest map[string]project.ClipManifest, shotID int, st project.ShotStatus, eng, file, fp, errMsg string) {

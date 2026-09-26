@@ -37,6 +37,14 @@ func (s *Server) putShot(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("参数错误(shot_id 必填)"))
 		return
 	}
+	// 时长先校验(审计 M30):旧实现把区间外的值**静默忽略**却照样回 200 ok ——
+	// 用户以为改成功了(界面上的输入框也照旧显示新值),渲染时用的还是旧时长。
+	// 合法区间与计划契约同源,别处再写一遍就成了第二个口径。
+	if in.Duration != 0 && (in.Duration < project.PlanMinShotSeconds || in.Duration > project.PlanMaxShotSeconds) {
+		writeErr(w, 400, fmt.Errorf("镜头时长需在 %d–%d 秒之间(收到 %d)",
+			project.PlanMinShotSeconds, project.PlanMaxShotSeconds, in.Duration))
+		return
+	}
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
 		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
@@ -46,24 +54,75 @@ func (s *Server) putShot(w http.ResponseWriter, r *http.Request) {
 		if plan.Shots[i].ID != in.ShotID {
 			continue
 		}
+		before := plan.Shots[i]
 		if strings.TrimSpace(in.H3Prompt) != "" {
 			plan.Shots[i].H3Prompt = in.H3Prompt
 		}
-		if in.Duration >= 4 && in.Duration <= 10 {
+		if in.Duration != 0 {
 			plan.Shots[i].Duration = in.Duration
 		}
 		if in.Mode == "ref2va" || in.Mode == "t2va" {
 			plan.Shots[i].Mode = in.Mode
 		}
+		// 与分镜/导入两条路径**同一份**后处理(审计 M30):台词时长预算、[Chinese]
+		// 语言标记、画外音「嘴唇闭合」约束、台词溢出告警。此前改时长这条路上
+		// 全都不跑 —— 把 10s 镜改成 4s 时,按 4.5 字/秒需要 6.7s 的台词没有任何提示,
+		// 渲出来必是台词截断/语速崩坏,而接口回的是 200 ok。
+		details, overflow := s.planPostProcess(id, plan)
 		if err := s.store.SavePlan(id, plan); err != nil {
 			writeErr(w, 500, err)
 			return
 		}
-		writeJSON(w, 200, map[string]any{"ok": true})
+		// 改了会影响像素或时长的字段之后,成片/质检报告等派生品必须作废(审计 M31):
+		// 平台判断"成片就绪"的唯一依据是 output/final.mp4 存在,不动作废的话用户
+		// 看到"成片就绪"、下载到的却是**旧方案**的成片,质检结论也停在上一版方案上。
+		// (镜头级的产物不用在这里动:渲染阶段的断点续跑按输入指纹判定,
+		// 提示词/时长/模式任一改动都会让指纹失配 → 下次渲染自然重渲该镜。)
+		after := plan.Shots[i]
+		changed := after.H3Prompt != before.H3Prompt ||
+			after.Duration != before.Duration ||
+			after.Mode != before.Mode
+		invalidated := 0
+		if changed {
+			invalidated = s.invalidateDerived(id, fmt.Sprintf("镜头 %d 已改", in.ShotID))
+		}
+		writeJSON(w, 200, map[string]any{
+			"ok": true, "duration": plan.Shots[i].Duration,
+			"duration_details": details, "dialogue_overflow": overflow,
+			"derived_invalidated": invalidated,
+		})
 		return
 	}
 	writeErr(w, 404, fmt.Errorf("镜头不存在: %d", in.ShotID))
 }
+
+// invalidateDerived 作废派生品(成片 / 2K 定稿 / 质检报告 / 剪辑素材包),返回清掉的项数。
+//
+// 为什么必须显式作废(审计 M31):判定"成片就绪"的唯一依据是
+// `<项目>/output/final.mp4` 存在(状态接口、输出页、质检报告读取都只 os.Stat),
+// 而 putShot / importPlan 改完方案**不动作废** —— 用户拿到的是按旧方案合成的成片,
+// 质检结论也停在上一版方案上。deleteShot 一直是对的,这里把同一动作收成一个函数共用。
+func (s *Server) invalidateDerived(id, why string) int {
+	outDir := filepath.Join(s.store.Dir(id), "output")
+	ents, err := os.ReadDir(outDir)
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range ents {
+		if os.RemoveAll(filepath.Join(outDir, e.Name())) == nil {
+			n++
+		}
+	}
+	if n > 0 {
+		s.opLog("🧹 已作废派生品(%s):成片/质检报告/素材包共 %d 项,需重新质检与合成", id, n)
+	}
+	return n
+}
+
+// deleteStaleManifest 已移除:镜头级产物的作废由渲染阶段的输入指纹判定
+// (提示词/时长/模式任一改动都会让指纹失配 → 下次渲染重渲该镜),这里不该越权删清单,
+// 否则"改了提示词但暂时不想重渲"的用户会被 assemble 直接挡在门外。
 
 // deleteShot 删除单个分镜:方案移除该镜 + 清理渲染产物与清单项;
 // 成片/质检报告/素材包为派生品一并作废(镜头序列已变),其它镜头不受影响。
@@ -111,14 +170,9 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// 派生品作废(成片/2K 定稿/质检报告/剪辑素材包)
-	outDir := filepath.Join(s.store.Dir(id), "output")
-	if ents, err := os.ReadDir(outDir); err == nil {
-		for _, e := range ents {
-			_ = os.RemoveAll(filepath.Join(outDir, e.Name()))
-		}
-	}
+	removed := s.invalidateDerived(id, fmt.Sprintf("镜头 %d 已删除", shotID))
 	s.opLog("🗑 已删除镜头 %d(项目「%s」,成片已作废待重合成)", shotID, id)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "derived_invalidated": removed})
 }
 
 // planPostProcess 导入路径上与分镜阶段**同等**的后处理:台词时长预算 + 中文台词标记兜底。
@@ -199,6 +253,9 @@ func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	// 覆盖方案 = 把上一版方案的成片/质检报告全部作废(审计 M31):否则项目页仍旧
+	// 报「成片就绪」、输出页仍列出 final.mp4,用户下载到的是一镜都没进片的新方案的旧成片。
+	invalidated := s.invalidateDerived(id, "分镜方案已重新导入")
 	if warns := warnsText(issues); len(warns) > 0 {
 		for _, wmsg := range warns {
 			s.opLog("· 契约提示:%s", wmsg)
@@ -210,8 +267,9 @@ func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 		"ok": true, "shots": len(in.Plan.Shots),
 		"characters": len(in.Plan.Characters), "scenes": len(in.Plan.Scenes),
 		"duration_details": details, "dialogue_overflow": overflow,
-		"warns":    warnsText(issues),
-		"contract": fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
+		"derived_invalidated": invalidated,
+		"warns":               warnsText(issues),
+		"contract":            fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
 	})
 }
 

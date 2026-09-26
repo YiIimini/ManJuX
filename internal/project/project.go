@@ -160,7 +160,19 @@ type ClipManifest struct {
 	// 画风/质感不一致而没人发现。与 P0-8 同一类缺陷,处理方式也一致:
 	// **不往指纹里加字段**(那会让存量项目全部重渲),而是单独记一列并纳入跳过判据;
 	// 老清单没有这个键(Model=="")时不推翻指纹结论,只提示用户"这些镜头是换模型之前渲的"。
-	Model     string    `json:"model,omitempty"`
+	Model string `json:"model,omitempty"`
+	// SeamFrom 接缝链的**上游依赖**:渲这一镜时,上一镜的 InputFP 是什么。
+	//
+	// 为什么要单独记(审计:接缝链的上游依赖不在下游镜头的判据里):镜间连续是跨镜
+	// 硬依赖 —— 上一镜渲完会把它的 AV latent 写进固定槽 clip_N,下一镜开头 22 帧钉的
+	// 就是那份 latent。用户只重渲镜 N(改提示词/时长/档位)之后,镜 N+1 的指纹没变,
+	// 于是被判「产物有效,跳过」,它钉的仍是**旧**镜 N 的尾部:接缝处画面跳变、色调
+	// 突变,而成片照常合成、阶段照常报成功。
+	//
+	// 处理方式与 Length/Model 一致:**不往指纹里加字段**(那会让存量项目全部重渲),
+	// 而是单独记一列。老清单没有这个键(空串)时不推翻指纹结论,只对"接缝确实生效且
+	// 上游指纹变了"的新清单判失效。
+	SeamFrom  string    `json:"seam_from,omitempty"`
 	TaskID    string    `json:"task_id"` // 云端任务 id(如有)
 	Error     string    `json:"error"`
 	UpdatedAt time.Time `json:"updated_at"`

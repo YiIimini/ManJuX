@@ -54,6 +54,10 @@ func (e *Engine) MaskFix(ctx context.Context, srcVideoPath string, opt MaskOptio
 	if err := opt.validate(); err != nil {
 		return "", err
 	}
+	// 与 Render 同理:进出都打点,免得空闲看门狗在长作业期间把引擎判成空闲
+	// (这条链路要上传源视频、跑十几分钟 —— 见 idle.go 的 shouldIdleStop)。
+	touchBusy()
+	defer touchBusy()
 	if err := e.Available(ctx); err != nil {
 		return "", err
 	}
@@ -86,8 +90,15 @@ func (e *Engine) MaskFix(ctx context.Context, srcVideoPath string, opt MaskOptio
 
 // buildMaskGraph 构造「局部重绘」工作流:跟踪目标区域 → 裁出 → H3 重绘 → 贴回原画面。
 //
-// 用途:某镜只有局部崩坏(手部/道具/人脸)时,**只重生成那一块**,其余画面逐帧原样保留
-// —— 相比整镜重渲省一个数量级的成本,而且不会把本来正确的部分一起改掉。
+// 用途:某镜只有局部崩坏(手部/道具/人脸)时,把目标区域**作为参考图**喂给 H3 重绘,
+// 再用遮罩只把那块贴回原画面 —— 相比整镜重渲,省下的是"正确部分被模型一起改掉"的风险。
+//
+// **代价要说清(2026-09-26 渲染管线审查更正)**:H3 拿到的是**整幅机位画布**
+// (width/height 用的是 w/h,不是裁剪尺寸),采样成本与整镜重渲同级;"省一个数量级"
+// 只体现在"只有一块被替换"的语义上。曾经写成"H3 只看到要重绘的那一块、省一个数量级",
+// 与图不符 —— 裁剪结果确实只作为 ref_images 参考图进入条件,并没有缩小采样画布。
+// (真按裁剪尺寸采样需要 MVEx_SubjectCrop 的**运行时**尺寸喂给 H3 的 width/height,
+// 静态图构建拿不到,属于改链路的设计决定,不在本次缺陷修复范围内。)
 //
 // 链路(全部是 ComfyUI 核心节点 + MaskVidExperiments,不需要额外插件包):
 //
@@ -95,9 +106,9 @@ func (e *Engine) MaskFix(ctx context.Context, srcVideoPath string, opt MaskOptio
 //	CheckpointLoaderSimple(sam3.1)            SAM3 跟踪模型
 //	→ SAM3_VideoTrack                         跨帧跟踪目标
 //	→ SAM3_TrackToMask                        跟踪数据转遮罩
-//	→ MVEx_SubjectCrop                        按遮罩裁出主体
-//	→ MiniMaxH3ReferenceToVideo               以裁剪画面为参考重绘
-//	→ MVEx_SubjectUncrop                      把重绘结果贴回原帧
+//	→ MVEx_SubjectCrop                        按遮罩裁出主体(作为 H3 的参考图)
+//	→ MiniMaxH3ReferenceToVideo               按整幅画布重绘(参考图锁外观)
+//	→ MVEx_SubjectUncrop                      只把遮罩区域贴回原帧
 //
 // 与 ALLinONE 的 Mask 模式同源(它用的是同一批节点);区别是这里不引入
 // VideoHelperSuite 等额外依赖 —— 帧的取用直接走 ComfyUI 核心的 GetVideoComponents。
@@ -133,7 +144,9 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 		"object_indices": opt.ObjectIndex,
 	})
 
-	// ③ 按遮罩裁出主体:H3 只看到"要重绘的那一块",尺寸落在 32 网格上
+	// ③ 按遮罩裁出主体:裁剪结果作为 H3 的**参考图**(锁住要重绘那一块的外观,
+	//    而不是整幅画面的构图)。注意 H3 的采样画布仍是整幅 w×h(见函数头说明):
+	//    裁剪尺寸落在 32 网格上是给节点算 bbox 用的。
 	g["15"] = nd("MVEx_SubjectCrop", map[string]any{
 		"original_images": link("11", 0),
 		"masks":           link("14", 0),
