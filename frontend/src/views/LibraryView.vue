@@ -3,15 +3,22 @@ import { G, api, fileToB64, sourceLabel, sourceTone} from '../store'
 import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
-const lib = ref({ characters: [], scenes: [] })
+// 分类与后端 library.Kinds 一致(characters / scenes / props)。
+// props(道具)是 2026-09-26 用户要求新增的:「资产库 新增一个 道具 管理页面」。
+const lib = ref({ characters: [], scenes: [], props: [] })
 const kind = ref('characters')
 const loading = ref(false)
+
+// kindLabel 分类中文名(卡片、弹窗、提示语共用一处)
+const kindLabel = { characters: '角色', scenes: '场景', props: '道具' }
+const kindWord = computed(() => kindLabel[kind.value] || '资产')
 
 async function refresh() {
   loading.value = true
   try {
     const d = await api.library()
-    lib.value = d.characters || d.scenes ? d : { characters: [], scenes: [] }
+    // 用后端给的分类清单兜底:缺哪一类就补空数组,免得新分类上线后界面因 undefined 崩掉
+    lib.value = { characters: d.characters || [], scenes: d.scenes || [], props: d.props || [] }
   } catch (e) { ElMessage.error('资产库读取失败:' + e.message) }
   loading.value = false
 }
@@ -231,7 +238,7 @@ async function batchDelete() {
   refresh()
 }
 
-const kindLabel = { characters: '角色', scenes: '场景' }
+// 分类中文名统一在文件顶部定义(kindLabel),这里不再重复一份
 
 // ---- 抽卡 & 自定义新建(仅角色)----
 const gachaBusy = ref(false)
@@ -277,15 +284,24 @@ function onNativeDrop(ev) {
   createImage.value = null
   createForm.mode = 'upload'
 }
+// openCreate 打开创建弹窗,并按当前分类选好默认来源:
+// 角色可以"提示词生成",道具/场景只有上传一条路(代生成用的是角色定妆照那套取景,
+// 拿来画道具会跑偏),所以默认落在上传模式,免得用户填完提示词才发现生成不了。
+function openCreate() {
+  createForm.mode = kind.value === 'characters' ? 'generate' : 'upload'
+  createOpen.value = true
+}
 async function doCreate() {
-  if (!createForm.name.trim()) { ElMessage.warning('请填写角色名'); return }
+  if (!createForm.name.trim()) { ElMessage.warning(`请填写${kindWord.value}名`); return }
   createBusy.value = true
   try {
     // JSON + base64/路径双通道:桌面 webview 的 wails 代理会截断 multipart
     // 大文件(2026-09-09「源图不存在」根因),浏览器模式同样可用
+    const k = kind.value
     const body = { name: createForm.name.trim(), description: createForm.description }
     if (createForm.mode === 'upload') {
-      // 白底化默认开(用户 2026-09-24 定调:上传图也走 Qwen-Image-Edit 生成白底角色)
+      // 白底化默认开(用户 2026-09-24 定调:上传图也走 Qwen-Image-Edit 生成白底角色);
+      // 非角色分类后端不看这个字段(道具/场景的主图不当锁脸锚点,没必要付编辑开销)
       body.whiten = createForm.whiten
       if (createNativePath.value) {
         body.image_path = createNativePath.value
@@ -299,13 +315,14 @@ async function doCreate() {
       if (!createForm.image_prompt.trim()) { ElMessage.warning('请填写生成提示词'); createBusy.value = false; return }
       body.image_prompt = createForm.image_prompt.trim()
     }
-    const d = await api.libraryCreateCharacter(body)
+    const d = await api.libraryCreateAsset(k, body)
     // 白底化没做成时后端会如实回 note(降级为原图入库)—— 必须说出来,不能假装成功
-    if (d.note) ElMessage.warning(`角色「${d.entry.name}」已入库:${d.note}`)
-    else ElMessage.success(`角色「${d.entry.name}」已入库`)
+    const done = `${kindLabel[k] || '资产'}「${d.entry.name}」已入库`
+    if (d.note) ElMessage.warning(`${done}:${d.note}`)
+    else ElMessage.success(done)
     createOpen.value = false
     createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null; createNativePath.value = null
-    kind.value = 'characters'
+    kind.value = k
     refresh()
   } catch (e) { ElMessage.error(e.message) } finally { createBusy.value = false }
 }
@@ -329,8 +346,8 @@ async function remove(e) {
     <div class="panel p-5 mb-5 relative overflow-hidden">
       <h1 class="text-lg font-bold m-0 mb-1">资产库 <span class="timecode">ASSET LIBRARY</span></h1>
       <p class="text-sm m-0" style="color:var(--mx-text2)">
-        角色/场景一次定妆,<b style="color:var(--mx-amber)">全项目复用</b>——新项目遇到同名资产自动引用(免生成、天然形象一致)。
-        本地模型生成与手动上传的资产都会自动入库;复用计数排序。
+        角色/场景/道具一次入库,<b style="color:var(--mx-amber)">全项目复用</b>——新项目遇到同名资产自动引用(免生成、天然形象一致)。
+        本地模型生成与手动上传的资产都会自动入库;复用计数排序。道具(器物/机关/法宝)在上方切到「道具」分类管理。
       </p>
     </div>
 <!-- 角色运营:抽卡 / 自定义新建 -->
@@ -350,7 +367,7 @@ async function remove(e) {
       </div>
       <el-divider direction="vertical" style="height:34px" />
       <el-tooltip content="手动建角色:上传现成图片或填提示词本地模型生成后入库" placement="top">
-        <el-button plain @click="createOpen = true">
+        <el-button plain @click="openCreate">
           <el-icon class="mr-1"><Plus /></el-icon>自定义新建(上传图 / 提示词生成)
         </el-button>
       </el-tooltip>
@@ -367,10 +384,30 @@ async function remove(e) {
       </div>
     </div>
 
+    <!-- 道具(用户 2026-09-26:「资产库 新增一个 道具 管理页面」):
+         器物/机关/法宝这类静物。没有抽卡、没有多视角、不白底化 —— 那些都是为"角色要当
+         锁脸参考"设计的;道具这边就一件事:传一张图进来、写清材质配色、按名复用。 -->
+    <div v-else-if="kind === 'props'" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
+      <div class="flex items-center gap-3 flex-1 min-w-[300px]">
+        <div class="stage-ico active" style="width:38px;height:38px"><el-icon :size="18"><Suitcase /></el-icon></div>
+        <div>
+          <div class="text-sm"><b>道具库</b> <span class="timecode">PROPS</span></div>
+          <div class="text-xs" style="color:var(--mx-text3)">器物 / 机关 / 法宝:上传一张图入库,自动看图补中文描述与英文提示词,重抽也按这条提示词来</div>
+        </div>
+        <div class="flex-1"></div>
+        <el-tooltip content="上传一张道具图入库(自动补齐中文描述与英文提示词)" placement="top">
+          <el-button type="primary" @click="openCreate">
+            <el-icon class="mr-1"><Plus /></el-icon>上传道具
+          </el-button>
+        </el-tooltip>
+      </div>
+    </div>
+
     <div class="flex items-center gap-3 mb-4">
       <el-radio-group v-model="kind">
         <el-radio-button value="characters">角色({{ lib.characters?.length || 0 }})</el-radio-button>
         <el-radio-button value="scenes">场景({{ lib.scenes?.length || 0 }})</el-radio-button>
+        <el-radio-button value="props">道具({{ lib.props?.length || 0 }})</el-radio-button>
       </el-radio-group>
       <div class="flex-1"></div>
       <template v-if="batch">
@@ -430,18 +467,23 @@ async function remove(e) {
     </div>
   
 
-    <!-- 自定义新建角色:上传图或提示词生成 -->
-    <el-dialog v-model="createOpen" title="自定义新建角色" width="560px">
+    <!-- 自定义新建库资产:角色可上传或提示词生成;道具/场景只有上传一条路
+         (代生成用的是"半身定妆照"取景模板,画道具会跑偏 —— 后端也据此拒绝) -->
+    <el-dialog v-model="createOpen" :title="`自定义新建${kindWord}`" width="560px">
       <el-form label-position="top">
-        <el-form-item label="角色名(同名自动覆盖更新)">
-          <el-input v-model="createForm.name" maxlength="20" placeholder="如:林凡" />
+        <el-form-item :label="`${kindWord}名(同名自动覆盖更新)`">
+          <el-input v-model="createForm.name" maxlength="20"
+                    :placeholder="kind === 'props' ? '如:旧铜镜 / 木匣' : (kind === 'scenes' ? '如:河神庙' : '如:林凡')" />
         </el-form-item>
-        <el-form-item label="外貌/服装/气质描述(中文,供跨项目一致性)">
-          <el-input v-model="createForm.description" type="textarea" :rows="2" placeholder="20岁黑发少年,青色布衣,眼神明亮…" />
+        <el-form-item :label="kind === 'props' ? '外观/材质/配色描述(中文,供跨项目一致性)' : '外貌/服装/气质描述(中文,供跨项目一致性)'">
+          <el-input v-model="createForm.description" type="textarea" :rows="2"
+                    :placeholder="kind === 'props'
+                      ? '旧铜镜,镜背浮雕缠枝纹,边缘磕碰、绿锈斑驳…'
+                      : '20岁黑发少年,青色布衣,眼神明亮…'" />
         </el-form-item>
-        <el-form-item label="定妆照来源">
+        <el-form-item :label="kind === 'props' ? '道具图来源' : '定妆照来源'">
           <el-radio-group v-model="createForm.mode">
-            <el-radio-button value="generate">提示词生成</el-radio-button>
+            <el-radio-button v-if="kind === 'characters'" value="generate">提示词生成</el-radio-button>
             <el-radio-button value="upload">上传参考图片</el-radio-button>
           </el-radio-group>
         </el-form-item>
@@ -452,13 +494,19 @@ async function remove(e) {
         <!-- 白底化:上传图常带花背景,而这张主图会被当参考图喂进渲染(花背景会把
              布景/光线一起带进成片)。默认勾选 —— 走 Qwen-Image-Edit-2511 只换背景、
              不动主体;编辑链路没就绪时后端会退回原图并在提示里说明原因。 -->
-        <el-form-item v-if="createForm.mode === 'upload'">
+        <el-form-item v-if="createForm.mode === 'upload' && kind === 'characters'">
           <el-switch v-model="createForm.whiten" />
           <span class="text-xs ml-2" style="color:var(--mx-text2)">白底化(用 Qwen-Image-Edit 只换背景,不改主体)</span>
           <div class="text-xs mt-1" style="color:var(--mx-text3)">
             换成纯白背景便于当参考图;关闭则原图直接入库。没做成时会让原图入库并说明原因。
           </div>
-        </el-form-item>        <el-form-item v-else label="参考图片(png / jpg / webp)">
+        </el-form-item>
+        <!-- 上传区:上传模式才显示。
+             ⚠ 这里原先是 `<el-form-item v-else …>`(配在上面的白底化 v-if 上)—— v-if/v-else
+             是**上传模式显示白底化、生成模式反而显示上传区**,上传模式下压根看不到上传控件
+             (2026-09-26 新增道具分类时发现:道具没有"生成"这条路,一眼就露馅)。改成按
+             `mode === 'upload'` 独立判断。 -->
+        <el-form-item v-if="createForm.mode === 'upload'" label="参考图片(png / jpg / webp)">
           <div v-if="!createImage && !createNativePath" class="upload-zone" style="--wails-drop-target: drop"
                @click="createInput?.click()" @dragover.prevent @drop.prevent="createImage = $event.dataTransfer?.files?.[0] || null"
                @mx-filedrop="onNativeDrop">

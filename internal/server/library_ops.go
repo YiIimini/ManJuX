@@ -88,16 +88,34 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"entry": entry, "theme": theme, "trait": trait})
 }
 
-// handleLibraryCreateCharacter 自定义新建:上传图片直接定妆,或按描述生成。
+// handleLibraryCreateAsset 自定义新建:上传图片直接入库,或(角色)按描述生成。
+// 按 kind 分流,见函数内的说明。
 // 支持 JSON(image_b64/image_path,桌面模式主通道,见 upload_payload.go)
 // 与 multipart(浏览器模式兼容):name(必)、description、image_prompt、mode=upload|generate
-func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Request) {
+// handleLibraryCreateAsset POST /api/library/{kind} 建一条库资产。
+//
+// 2026-09-26:原先只服务角色(POST /api/library/characters),用户要求「资产库新增一个
+// 道具管理页面」后改成按 kind 分流 —— 但**不是**把角色那套流程套到所有分类上:
+//
+//	characters 走完整流程:白底化 → 看图判实体类型 → 缺图时文生图定妆 → 自动补描述/提示词;
+//	props      上传图直接入库 + 自动补描述/提示词(道具版措辞,见 assetDescribeWording);
+//	           不白底化、不判实体类型 —— 白底化是为了让角色主图能当"锁脸锚点"喂进渲染,
+//	           道具当前只做库内管理,没有这条用途;判类型则是给多视角/渲染方法用的,同理。
+//	scenes     与 props 同路(此前场景只能靠项目侧自动入库,现在也能手动建)。
+func (s *Server) handleLibraryCreateAsset(w http.ResponseWriter, r *http.Request) {
+	kind := r.PathValue("kind")
+	if !library.ValidKind(kind) {
+		writeErr(w, 400, fmt.Errorf("kind 必须是 %s", strings.Join(library.Kinds, "/")))
+		return
+	}
+	label := library.KindLabel(kind)
+	isCharacter := kind == "characters"
 	var name, desc, prompt, imgPath string
 	uploaded := false
 	// uploadedKind 看图判定的实体类型(空 = 没判出来,退回按名称/描述推断)
 	uploadedKind := ""
 	// wantWhiten 上传图是否白底化(默认**开**:用户 2026-09-24 定调"上传后也走
-	// Qwen-Image-Edit 生成白底角色");显式传 whiten=false 可跳过。
+	// Qwen-Image-Edit 生成白底角色");显式传 whiten=false 可跳过。仅角色适用。
 	wantWhiten := true
 	var cleanup func()
 	defer func() {
@@ -125,7 +143,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 			wantWhiten = *in.Whiten
 		}
 		if name == "" {
-			writeErr(w, 400, fmt.Errorf("角色名必填"))
+			writeErr(w, 400, fmt.Errorf("%s名必填", label))
 			return
 		}
 		if in.ImageB64 != "" || in.ImagePath != "" {
@@ -165,13 +183,20 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if name == "" {
-		writeErr(w, 400, fmt.Errorf("角色名必填"))
+		writeErr(w, 400, fmt.Errorf("%s名必填", label))
 		return
 	}
 
 	if imgPath == "" {
 		if prompt == "" {
 			writeErr(w, 400, fmt.Errorf("请上传参考图片,或填写生成提示词"))
+			return
+		}
+		if !isCharacter {
+			// 非角色分类暂不代生成:genLibraryPortrait 用的是"半身定妆照"那套取景,
+			// 拿来画道具/场景只会跑偏。有图就入库,想换一张可以入库后用「重抽」
+			// (那时用的是条目自己的提示词,措辞已经对了)。
+			writeErr(w, 400, fmt.Errorf("请上传一张%s图(本分类暂不支持按提示词代生成)", label))
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
@@ -191,10 +216,11 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 		// 白底化(用户 2026-09-24 要求):上传图背景五花八门,而这张主图会被当作
 		// 参考图喂进渲染(锁脸锚点),花背景会把布景/光线一起带进成片。
 		// 走 Qwen-Image-Edit-2511 图生图把背景换成纯白 —— 只改背景、不动主体。
+		// 只对角色做:其它分类的主图当前不进渲染参考链,没必要付这次编辑开销。
 		//
 		// 失败绝不阻断上传:拿不到编辑链路(权重没下齐/ComfyUI 没起)时保留原图入库,
 		// 并把原因写进 note 让界面如实告诉用户,而不是假装白底化了。
-		if wantWhiten {
+		if wantWhiten && isCharacter {
 			ctx, cancel := context.WithTimeout(r.Context(), genOuterTimeout)
 			out, werr := s.whitenUploaded(ctx, name, desc, imgPath)
 			cancel()
@@ -215,7 +241,7 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 	descNote := ""
 	if uploaded {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
-		d, p, via, ek, derr := s.describePortrait(ctx, name, desc, imgPath)
+		d, p, via, ek, derr := s.describeAsset(ctx, kind, name, desc, imgPath)
 		cancel()
 		if derr != nil {
 			descNote = "未生成描述与提示词(" + derr.Error() + ")"
@@ -236,13 +262,13 @@ func (s *Server) handleLibraryCreateCharacter(w http.ResponseWriter, r *http.Req
 	}
 	note += descNote
 
-	entry, err := s.lib.Put("characters", name, desc, prompt, imgPath, "", source)
+	entry, err := s.lib.Put(kind, name, desc, prompt, imgPath, "", source)
 	if err != nil {
 		writeErr(w, 500, err)
 		return
 	}
 	if uploadedKind != "" {
-		if e2, kerr := s.lib.SetEntityKind("characters", name, uploadedKind); kerr == nil {
+		if e2, kerr := s.lib.SetEntityKind(kind, name, uploadedKind); kerr == nil {
 			entry = e2
 			if note != "" {
 				note += ";"
@@ -489,7 +515,8 @@ func (s *Server) librarySetMeta(w http.ResponseWriter, r *http.Request) {
 // 这段逻辑原先只长在「重新生成描述」这个**手动按钮**后面,于是上传入库的条目
 // 描述与提示词都是空的 —— 而提示词正是后续"重抽一张""换背景""补多视角"的依据,
 // 空着等于这些能力对该条目全都不存在。现在上传时也用同一条逻辑自动补。
-func (s *Server) describePortrait(ctx context.Context, name, desc, imgPath string) (string, string, string, string, error) {
+func (s *Server) describeAsset(ctx context.Context, kind, name, desc, imgPath string) (string, string, string, string, error) {
+	wording := assetDescribeWording(kind)
 	g := s.cfg.Get()
 	var card struct {
 		Description string `json:"description"`
@@ -504,12 +531,8 @@ func (s *Server) describePortrait(ctx context.Context, name, desc, imgPath strin
 	vlm := llm.New(g.VLM.BaseURL, g.VLM.APIKey, g.VLM.Model, 180)
 	if vlm.Configured() && strings.TrimSpace(imgPath) != "" {
 		if dataURL, err := s.imageDataURL(ctx, imgPath); err == nil {
-			const sys = `你是角色设定师。看参考图,输出严格 JSON(无 markdown 包裹):` +
-				`{"description":"中文外貌/服装/气质描述,80-120字,具体可画,包含发型发色",` +
-				`"image_prompt":"英文文生图提示词,半身定妆照(面部特征+发型+服装+气质+光线),120词内",` +
-				`"entity_kind":"这张图里的主体属于哪一类:human(人)/object(器物·机关·傀儡·雕像·灯笼这类非生命体)/spirit_pet(小型灵物·宠物)/beast(大型或凶猛的非人生物)/incorporeal(鬼魂·灵体·无形体)/chibi(Q版大头身)。只填这一个英文键值。"}`
-			out, err := vlm.ChatVision(ctx, sys, []llm.VisionContent{
-				{Role: "user", Text: "角色名:" + name + "。请据此图输出设定。", Images: []string{dataURL}},
+			out, err := vlm.ChatVision(ctx, wording.vlm, []llm.VisionContent{
+				{Role: "user", Text: wording.subject + name + "。请据此图输出设定。", Images: []string{dataURL}},
 			}, true)
 			if err == nil {
 				if json.Unmarshal([]byte(trimJSON(out)), &card) == nil && card.ImagePrompt != "" {
@@ -527,9 +550,8 @@ func (s *Server) describePortrait(ctx context.Context, name, desc, imgPath strin
 			return "", "", "", "", fmt.Errorf("需要配置 LLM(或 VLM)才能自动生成描述与提示词")
 		}
 		out, err := client.Chat(ctx, []llm.Message{
-			{Role: "system", Content: "你是角色设定师。输出严格 JSON(无 markdown 包裹):" +
-				`{"description":"中文外貌/服装/气质描述,80-120字","image_prompt":"英文文生图提示词,半身定妆照(面部+发型+服装+光线),120词内","entity_kind":"human/object/spirit_pet/beast/incorporeal/chibi 之一"}`},
-			{Role: "user", Content: "角色名:" + name + "\n现有描述(可为空,可扩写):" + desc},
+			{Role: "system", Content: wording.text},
+			{Role: "user", Content: wording.subject + name + "\n现有描述(可为空,可扩写):" + desc},
 		}, true)
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("生成失败:%w", err)
@@ -551,6 +573,49 @@ func (s *Server) describePortrait(ctx context.Context, name, desc, imgPath strin
 	return card.Description, card.ImagePrompt, via, ek, nil
 }
 
+// assetDescribeWording 「看图写描述与提示词」在各类资产上的措辞。
+//
+// 为什么要分:同一套角色措辞套到道具上,提示词会写成"半身定妆照(面部+发型+服装)",
+// 而重抽用的正是这条提示词 —— 一件铜雀会被画成一个穿着铜雀的人。分类不同,要给模型的
+// 问法和要它产出的"取景"都不同。
+type assetWording struct {
+	vlm     string // 视觉模型 system
+	text    string // 文本模型 system
+	subject string // user 提示的前缀("角色名:"/"道具名:")
+}
+
+func assetDescribeWording(kind string) assetWording {
+	if kind == "props" {
+		return assetWording{
+			vlm: `你是道具美术设定师。看参考图,输出严格 JSON(无 markdown 包裹):` +
+				`{"description":"中文外观描述,80-120字:器型/材质/配色/纹样/新旧与磨损,具体可画",` +
+				`"image_prompt":"英文文生图提示词,单件道具完整特写(外形+材质+配色+纹样+光照),纯色背景,画面里不出现人物,120词内"}`,
+			text: `你是道具美术设定师。输出严格 JSON(无 markdown 包裹):` +
+				`{"description":"中文外观描述,80-120字:器型/材质/配色/纹样/新旧与磨损","image_prompt":"英文文生图提示词,单件道具完整特写(外形+材质+配色+纹样+光照),纯色背景,不出现人物,120词内"}`,
+			subject: "道具名:",
+		}
+	}
+	if kind == "scenes" {
+		return assetWording{
+			vlm: `你是场景美术设定师。看参考图,输出严格 JSON(无 markdown 包裹):` +
+				`{"description":"中文场景描述,80-120字:空间/建筑/材质/光线/时间与气氛,具体可画",` +
+				`"image_prompt":"英文文生图提示词,场景环境图(空间结构+建筑材质+光线气氛),空景不出现人物,120词内"}`,
+			text: `你是场景美术设定师。输出严格 JSON(无 markdown 包裹):` +
+				`{"description":"中文场景描述,80-120字:空间/建筑/材质/光线/时间与气氛","image_prompt":"英文文生图提示词,场景环境图(空间结构+建筑材质+光线气氛),空景不出现人物,120词内"}`,
+			subject: "场景名:",
+		}
+	}
+	return assetWording{
+		vlm: `你是角色设定师。看参考图,输出严格 JSON(无 markdown 包裹):` +
+			`{"description":"中文外貌/服装/气质描述,80-120字,具体可画,包含发型发色",` +
+			`"image_prompt":"英文文生图提示词,半身定妆照(面部特征+发型+服装+气质+光线),120词内",` +
+			`"entity_kind":"这张图里的主体属于哪一类:human(人)/object(器物·机关·傀儡·雕像·灯笼这类非生命体)/spirit_pet(小型灵物·宠物)/beast(大型或凶猛的非人生物)/incorporeal(鬼魂·灵体·无形体)/chibi(Q版大头身)。只填这一个英文键值。"}`,
+		text: `你是角色设定师。输出严格 JSON(无 markdown 包裹):` +
+			`{"description":"中文外貌/服装/气质描述,80-120字","image_prompt":"英文文生图提示词,半身定妆照(面部+发型+服装+光线),120词内","entity_kind":"human/object/spirit_pet/beast/incorporeal/chibi 之一"}`,
+		subject: "角色名:",
+	}
+}
+
 func (s *Server) libraryDescribe(w http.ResponseWriter, r *http.Request) {
 	if s.lib == nil {
 		writeErr(w, 500, fmt.Errorf("资产库未启用"))
@@ -564,7 +629,7 @@ func (s *Server) libraryDescribe(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Minute)
 	defer cancel()
-	d, p, via, ek, derr := s.describePortrait(ctx, name, e.Description, master)
+	d, p, via, ek, derr := s.describeAsset(ctx, kind, name, e.Description, master)
 	if derr != nil {
 		writeErr(w, 400, derr)
 		return

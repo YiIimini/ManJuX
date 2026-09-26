@@ -287,7 +287,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/{kind}/{name}/describe", s.libraryDescribe)
 	m.HandleFunc("PUT /api/library/{kind}/{name}", s.librarySetMeta)
 	m.HandleFunc("POST /api/library/gacha", s.handleLibraryGacha)
-	m.HandleFunc("POST /api/library/characters", s.handleLibraryCreateCharacter)
+	m.HandleFunc("POST /api/library/{kind}", s.handleLibraryCreateAsset)
 	m.HandleFunc("GET /api/comfy/versions", s.comfyVersions)
 	m.HandleFunc("PUT /api/projects/{id}/shot", s.putShot)
 	m.HandleFunc("PUT /api/projects/{id}/character", s.putCharacter)

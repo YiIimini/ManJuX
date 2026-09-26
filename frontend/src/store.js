@@ -196,7 +196,8 @@ export const api = {
   librarySetMeta: (kind, name, payload) => req('PUT', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`, payload),
   libraryDelete: (kind, name) => req('DELETE', `/api/library/${encodeURIComponent(kind)}/${encodeURIComponent(name)}`),
   libraryGacha: () => req('POST', '/api/library/gacha'),
-  libraryCreateCharacter: (payload) => req('POST', '/api/library/characters', payload),
+  // 库资产创建:按分类走同一条路(characters 走完整定妆流程,props/scenes 上传图入库)
+  libraryCreateAsset: (kind, payload) => req('POST', `/api/library/${encodeURIComponent(kind)}`, payload),
   putShot: (id, shot) => req('PUT', `/api/projects/${encodeURIComponent(id)}/shot`, shot),
   deleteShot: (id, shotID) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}`),
   maskFix: (id, shotID, target) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`, { target }),

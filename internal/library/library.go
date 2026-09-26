@@ -1,5 +1,5 @@
-// Package library 跨项目资产库:角色定妆照/场景图一次入库全局复用。
-// 存储:data/assets_library/{characters|scenes}/<safe_name>/{asset.json, image}
+// Package library 跨项目资产库:角色定妆照/场景图/道具图一次入库全局复用。
+// 存储:data/assets_library/{characters|scenes|props}/<safe_name>/{asset.json, image}
 // 匹配策略:名称精确匹配(TrimSpace);生成/上传成功的资产自动入库。
 package library
 
@@ -138,6 +138,42 @@ func entryRelatedImages(dir string) []string {
 	return outs
 }
 
+// Kinds 资产库的分类。**单一真源**:建目录(New)、分类校验(entryDir)、列表分组(List)
+// 都从这里取 —— 此前这三处各自硬编码 "characters"/"scenes",新增一类资产要满仓找字符串,
+// 漏一处就表现为"存进去了,但列表里看不见"。
+//
+//	characters 角色:定妆照 + 多视角原图/转台图
+//	scenes     场景:一张场景图
+//	props      道具:器物/机关/法宝这类既不是角色、也不是场景的东西
+//	           (用户 2026-09-26:「资产库 新增一个 道具 管理页面」)
+var Kinds = []string{"characters", "scenes", "props"}
+
+// validKind 是否为已知分类。
+func validKind(kind string) bool {
+	for _, k := range Kinds {
+		if k == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidKind 分类是否合法(供 server 在解析请求时先挡一道)。
+func ValidKind(kind string) bool { return validKind(kind) }
+
+// KindLabel 分类的中文名(错误文案与提示语用;前端另有一份显示用的映射)。
+func KindLabel(kind string) string {
+	switch kind {
+	case "characters":
+		return "角色"
+	case "scenes":
+		return "场景"
+	case "props":
+		return "道具"
+	}
+	return "资产"
+}
+
 // Library 资产库(线程安全)。
 type Library struct {
 	mu   sync.RWMutex
@@ -146,7 +182,7 @@ type Library struct {
 
 // New 打开/创建资产库。
 func New(root string) (*Library, error) {
-	for _, sub := range []string{"characters", "scenes"} {
+	for _, sub := range Kinds {
 		if err := os.MkdirAll(filepath.Join(root, sub), 0o755); err != nil {
 			return nil, err
 		}
@@ -177,10 +213,8 @@ func (l *Library) entryDir(kind, name string) (string, error) {
 	if sn == "" {
 		return "", fmt.Errorf("资产名不可用")
 	}
-	switch kind {
-	case "characters", "scenes":
-	default:
-		return "", fmt.Errorf("kind 必须是 characters/scenes")
+	if !validKind(kind) {
+		return "", fmt.Errorf("kind 必须是 %s", strings.Join(Kinds, "/"))
 	}
 	return filepath.Join(l.root, kind, sn), nil
 }
@@ -279,15 +313,21 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 	if ext == "" {
 		ext = ".png"
 	}
-	imgName := "portrait" + ext
-	if kind == "scenes" {
-		imgName = "image" + ext
+	// 主图文件名按分类区分(翻库时一眼能认出这是什么):角色是定妆照 portrait,
+	// 场景是 image,道具是 prop。
+	imgName := "image" + ext
+	switch kind {
+	case "characters":
+		imgName = "portrait" + ext
+	case "props":
+		imgName = "prop" + ext
 	}
 	_ = os.MkdirAll(dir, 0o755)
 	// 清掉旧扩展图(换格式时避免双图)
 	if old, err := os.ReadDir(dir); err == nil {
 		for _, f := range old {
-			if strings.HasPrefix(f.Name(), "portrait.") || strings.HasPrefix(f.Name(), "image.") {
+			if strings.HasPrefix(f.Name(), "portrait.") || strings.HasPrefix(f.Name(), "image.") ||
+				strings.HasPrefix(f.Name(), "prop.") {
 				if f.Name() != imgName {
 					_ = os.Remove(filepath.Join(dir, f.Name()))
 				}
@@ -580,12 +620,13 @@ func (l *Library) BumpUsed(kind, name string) {
 	}
 }
 
-// List 全部条目(按类型分组)。
+// List 全部条目(按分类分组)。
 func (l *Library) List() map[string][]Entry {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	out := map[string][]Entry{"characters": {}, "scenes": {}}
-	for _, kind := range []string{"characters", "scenes"} {
+	out := map[string][]Entry{}
+	for _, kind := range Kinds {
+		out[kind] = []Entry{}
 		base := filepath.Join(l.root, kind)
 		entries, _ := os.ReadDir(base)
 		for _, de := range entries {
