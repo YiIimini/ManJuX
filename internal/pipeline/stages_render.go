@@ -555,15 +555,16 @@ func seamBlockers(plan *project.Plan, shot, prev project.Shot, resetEvery int) [
 		out = append(out, fmt.Sprintf("每 %d 镜重建一次锚点(镜 %d 是新一轮首镜,累积漂移在此清零)",
 			resetEvery, shot.ID))
 	}
-	// ①-a 同场景:换场不接(钉进去的 22 帧是另一个地方)。
+	// ① 同场景:换场不接(钉进去的 22 帧是另一个地方)。
 	if shot.Scene != prev.Scene {
 		out = append(out, fmt.Sprintf("与前镜不同场景(%s → %s)",
 			sceneNameOf(plan, prev.Scene), sceneNameOf(plan, shot.Scene)))
 	}
-	// ①-b 角色集合有交集:换人不接(钉进去的是别人的脸与服饰)。
-	if !charactersIntersect(shot.Characters, prev.Characters) {
-		out = append(out, "与前镜没有共同出场角色")
-	}
+	// ⚠ 这里**特意没有**"角色集合必须有交集"这条判据。初版加过,实测后被撤掉:
+	// 《求你们骂我》第 01 集 64 镜里相邻镜有共同出场角色的只有 40/63,而同场景的有 60/63 ——
+	// 也就是说那条判据会白断 23 处接缝,而被断掉的恰恰是**正反打**(同一空间里 A 说话→B 说话):
+	// 它们角色不同、但背景/光线/机位必须连续,接缝在这种镜头上价值最高。
+	// 接缝要的是"空间连续",不是"人相同"。
 	return out
 }
 
