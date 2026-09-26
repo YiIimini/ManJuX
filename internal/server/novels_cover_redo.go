@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -324,6 +325,10 @@ func lastCoverSeed(bookDir string) int64 {
 }
 
 // listCoverCandidates 已有候选(弹窗重开时能接着挑)。
+//
+// seed 从文件名解析回来:候选是"重开弹窗接着挑"的对象,而挑的时候第一眼要看的就是
+// seed(哪张是哪次抽的、能不能复现);缺了它前端只能显示空,或者再猜一遍文件名 —— 那是
+// 同一套命名规则的两份实现,迟早对不上。解析只此一处。
 func listCoverCandidates(bookDir string) []map[string]any {
 	dir := filepath.Join(bookDir, "封面", coverCandidatesDir)
 	ents, err := os.ReadDir(dir)
@@ -339,9 +344,24 @@ func listCoverCandidates(bookDir string) []map[string]any {
 	sort.Strings(names)
 	out := make([]map[string]any, 0, len(names))
 	for _, n := range names {
-		out = append(out, map[string]any{"file": filepath.Join(dir, n), "name": n})
+		out = append(out, map[string]any{"file": filepath.Join(dir, n), "name": n, "seed": seedFromCandName(n)})
 	}
 	return out
+}
+
+// seedFromCandName 从候选文件名取 seed(命名规则见出图那段:`c<seed>-<毫秒>.png`)。
+// 名字不合规则就返回 0 —— 前端据此显示「seed —」,不假装知道。
+func seedFromCandName(name string) int64 {
+	s := strings.TrimPrefix(name, "c")
+	i := strings.IndexByte(s, '-')
+	if i <= 0 {
+		return 0
+	}
+	v, err := strconv.ParseInt(s[:i], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func readTextOr(path, def string) string {

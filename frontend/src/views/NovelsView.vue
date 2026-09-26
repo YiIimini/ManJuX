@@ -4,6 +4,7 @@ import { G, api, refreshProjects } from '../store'
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import ChapterTree from '../components/ChapterTree.vue'
+import CoverCompare from '../components/CoverCompare.vue'
 
 const root = ref('')
 const hint = ref('')
@@ -309,6 +310,9 @@ async function openCoverDialog(n) {
       count: 1,
       savePrompt: false,
     }
+    // 已有候选:重开弹窗接着挑(后端本来就在返回它,前端此前丢掉了 —— 于是每开一次弹窗都得
+    // 重新出图才能比)。候选目录里的老图也能直接进对比视图,省一次 GPU。
+    covCands.value = c.candidates || []
     covOpen.value = true
   } catch (e) { ElMessage.error(e.message) } // 没有正向词/越界:原样展示后端那句话
 }
@@ -353,18 +357,38 @@ function candURL(file) {
   return '/api/novels/cover?path=' + encodeURIComponent(file) + '&t=' + coverBust.value
 }
 
-// 图片放大预览(用户 2026-09-26:「新制作的封面可以放大预览啊」)。
-// 用 Element Plus 自带的 el-image-viewer:滚轮/按钮缩放、旋转、多张左右翻页、Esc 关闭。
-// 它 Teleport 到 body、层级取自全局递增的弹层计数 —— 候选图正是在 el-dialog 里点开的,
-// 必须压在弹窗之上,所以 teleported + 显式 z-index 一起给,不吃弹窗的开窗顺序。
+// 封面对比:候选不再走"单张放大"(用户 2026-09-26:「重做的封面放大预览左侧需要显示旧的,
+// 右侧显示新的,这样才好对比」)。挑封面的唯一问题是"它比现在这张好吗",单张全屏回答不了。
+// 对比视图见 components/CoverCompare.vue:左旧右新、共用一套缩放平移、← → 换候选。
+const cmpOpen = ref(false)
+const cmpIndex = ref(0)
+const cmpItems = computed(() => covCands.value.map(c => ({ file: c.file, url: candURL(c.file), seed: c.seed })))
+function openCompare(i) {
+  if (!covCands.value.length) return
+  cmpIndex.value = Math.max(0, Math.min(i, covCands.value.length - 1))
+  cmpOpen.value = true
+}
+// 左栏的"旧"= 本书现封面。coverBust 必须带:重做后封面文件名不变,不加它会显示缓存里的旧图。
+function oldCoverURL() {
+  const n = covNovel.value
+  return n && n.cover ? '/api/novels/cover?path=' + encodeURIComponent(n.cover) + '&t=' + coverBust.value : ''
+}
+// 对比视图里直接定稿:比完就换,不用关掉回弹窗里再找那张
+function onCompareApply(c) {
+  cmpOpen.value = false
+  if (c) applyCover(c.file)
+}
+
+// 图片放大预览(书卡封面走这条;候选走上面的对比视图)。
+// 用 Element Plus 自带的 el-image-viewer:滚轮/按钮缩放、旋转、Esc 关闭。
+// 它 Teleport 到 body、层级取自全局递增的弹层计数 —— teleported + 显式 z-index 一起给,
+// 不吃弹窗的开窗顺序。
 const viewer = ref(null)   // { list: [url…], index: 从第几张开始 }
 function openViewer(list, index = 0) {
   const urls = (list || []).filter(Boolean)
   if (!urls.length) return
   viewer.value = { list: urls, index: Math.max(0, Math.min(index, urls.length - 1)) }
 }
-// 候选:整批一起传 —— 点第 i 张就从第 i 张开始,左右能翻到同批其它候选(挑图时最省事)
-function viewCands(i) { openViewer(covCands.value.map(c => candURL(c.file)), i) }
 // 书卡封面:单张(它已是当前封面,看的是效果,不涉及挑图)
 function viewCover(n) {
   openViewer(n.cover ? ['/api/novels/cover?path=' + encodeURIComponent(n.cover) + '&t=' + coverBust.value] : [])
@@ -473,7 +497,7 @@ function onCardCmd(cmd, n) {
 
     <!-- 封面重做:可配置弹窗(正向词/尺寸/张数/seed/存回留档 → 出候选 → 挑定落盘) -->
     <el-dialog v-model="covOpen" :title="covNovel ? `封面重做 ·《${covNovel.name}》` : '封面重做'"
-               width="880px" top="5vh" append-to-body>
+               width="880px" top="5vh" append-to-body @close="cmpOpen = false">
       <div class="flex gap-3" style="min-height:300px">
         <!-- 左:参数 -->
         <div class="flex flex-col gap-2" style="width:340px;flex:none">
@@ -525,7 +549,7 @@ function onCardCmd(cmd, n) {
             <b class="text-xs">候选</b>
             <span class="timecode">{{ covCands.length }} 张</span>
             <div class="flex-1"></div>
-            <span class="timecode" style="font-size:10px">点图放大 · 点「用这张」替换现封面</span>
+            <span class="timecode" style="font-size:10px">点图对比(左旧右新) · 点「用这张」替换现封面</span>
           </div>
           <div class="flex-1 overflow-y-auto tree-scroll">
             <div v-if="!covCands.length" class="text-xs py-8 text-center" style="color:var(--mx-text3)">
@@ -533,7 +557,7 @@ function onCardCmd(cmd, n) {
             </div>
             <div class="cand-grid">
               <div v-for="(c, i) in covCands" :key="c.file" class="cand-item">
-                <img :src="candURL(c.file)" alt="" title="点击放大预览(可左右翻其它候选)" @click="viewCands(i)" />
+                <img :src="candURL(c.file)" alt="" title="点击与现封面并排对比(左旧右新)" @click="openCompare(i)" />
                 <div class="flex items-center gap-2 mt-1">
                   <span class="timecode" style="font-size:10px">seed {{ c.seed }}</span>
                   <div class="flex-1"></div>
@@ -701,8 +725,13 @@ function onCardCmd(cmd, n) {
       <div class="novel-dlg-grip" :class="{ on: resizing }" title="拖动调整弹窗大小" @mousedown="startResize"></div>
     </el-dialog>
 
-    <!-- 图片放大预览(封面重做候选 / 书卡封面共用):滚轮缩放、旋转、多张左右翻、Esc 关闭。
-         独立于弹窗挂载(teleported),所以候选图在封面重做弹窗里点开也不会被弹窗层级盖住。 -->
+    <!-- 封面对比:左旧右新(挑封面就是做 A/B 判断,见 CoverCompare.vue)。
+         关掉封面重做弹窗时一并收起,免得留下一个"对着空列表"的对比视图。 -->
+    <CoverCompare v-if="cmpOpen" :title="covNovel?.name" :old-url="oldCoverURL()"
+                  :items="cmpItems" :index="cmpIndex"
+                  @close="cmpOpen = false" @apply="onCompareApply" />
+
+    <!-- 图片放大预览(书卡封面):滚轮缩放、旋转、Esc 关闭 -->
     <el-image-viewer v-if="viewer" :url-list="viewer.list" :initial-index="viewer.index"
                      :z-index="4000" teleported hide-on-click-modal show-progress
                      @close="viewer = null" />
