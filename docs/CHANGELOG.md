@@ -10,6 +10,58 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## v0.38.1 项目包导入：技能端丢一个包进来，平台端直接入库（2026-09-26）
+
+**根因**：v0.38.0 只解决了「脚本长什么样」，没解决「脚本怎么进平台」。技能端 `emit` 能写出
+`data/projects/<书名>/<集名>/` 的目录结构，但 `Store` 只在启动时扫盘 —— 投放完还得重启应用；
+单集走 `import-plan` 又只能一集一个 HTTP 请求，40 集要发 40 次，且中途失败会留下半个系列。
+
+**修复**：
+
+- **整包入库**（`handlers_project.go::importPackages` + `POST /api/projects/import-package`）：
+  收**单集包**（内含 `manifest.json` + `plan/plan.json`）或**系列根**（含 `series.json`
+  或若干集包子目录），逐包校验后**整批入库，全有或全无** —— 任一项不过契约校验（或版本不符）
+  就一个字段都不落盘。半个系列混进 Store 比导入失败难查得多：作者分不清哪些集是新的。
+  `.mp4` 等体积产物一律不复制（技能端不产素材，`assets/` 仍由平台生成）。
+- **系列按 `series.json` 对账**：技能端在系列根声明"这本书有哪几集、各是哪个目录"，平台据此核数 ——
+  声明 N 集却只找到 M 个包（拷贝中断、只拷一半）**拒收并点名缺哪几集**，给的办法是"只想导一部分
+  就把 `series.json` 移开"。原先的实现只是扫子目录、**根本没读**这个文件（文档却写着读了）：
+  改了文档不如把文件真读上 —— 半套系列静默入库与"半导入状态"是同一类坑，只是发现得更晚。
+- **重扫盘**（`Store.Rescan` + `POST /api/projects/rescan`）：技能端直接写盘的包不必重启就能被发现，
+  **只新增、不删除** —— 平台绝不替用户删项目。
+- **列表读路径自带重扫**（`listProjects`）：界面从来没有"重扫"这个动作，只给端点等于把最后一环
+  留给用户 —— 他会去关掉应用再打开。现在 `GET /api/projects` 每次顺手 `Rescan()`（已装载的
+  项目直接跳过，成本几次 `readdir`），**看到列表的那一刻就是最新的**；外部新增只在操作日志里
+  报一行"发现 N 个外部新建的项目"。
+- **契约校验后的后处理收成一个函数**（`handlers_shot.go::planPostProcess`）：
+  `importPlan` 与批量导入走同一条路（台词时长预算 `FitDialogueDurations` + 中文 `<d>[Chinese]`
+  标记兜底 `EnsureChineseDialogue`），并把**逐镜调整明细与台词溢出警告如实回显** ——
+  静默改用户的方案等于撒谎，静默放过装不下的台词等于成片截断。
+- **阶段表的判断抽成纯函数并加门**（`pipeline/coordinator.go::pipelineStages`）：
+  v0.38.0 的核心承诺是"跳过 2–6 分钟的分镜阶段"，但那个判断原来内联在 `execute` 里、没有用例 ——
+  谁把 `PhaseScript` 加回去都不会有人发现，而且重新生成会改写每镜提示词 → **镜头指纹全变 →
+  已渲镜头全部作废**（技能端交上来的脚本被平台悄悄盖掉，再从零重渲）。现在：
+  全流程 + 已有有效方案 → 阶段表不含 `PhaseScript`；无方案 → 照旧全跑；**显式**指定 script
+  阶段（界面「生成分镜方案」，作者推翻方案的唯一入口）→ 一律听他的。
+
+**验证**：
+
+- `go build ./...` 0 error、`go vet ./internal/...` 0 issue、`go test ./internal/...` 全绿。
+- 新增用例 3 条（`internal/server/import_plan_test.go`）：**单集包导入落地**
+  （`TestImportPackagePullsSkillPackage`）、**契约版本不符拒收**（`TestImportPackageRejectsBadVersion`）、
+  **全有或全无回滚**（`TestImportPackageAllOrNothing`：系列里混一个坏包 → 好包也不许落盘）；
+  外加 **`TestListProjectsPicksUpExternalProject`**：外部落盘的项目**只拉一次列表**就该出现
+  （故意不调 rescan —— 界面本来就没有这个动作），且连拉两次不重复；
+  **`TestImportPackageSeriesDeclaredButIncomplete`**（声明 3 集只找到 2 个 → 400 且一个都不导）、
+  **`TestImportPackageSeriesComplete`**（齐了照常入库 / series.json 版本不符拒收 / 没有 series.json
+  的目录仍能逐包导入 —— 门不许乱拦）；
+  以及 `internal/pipeline/pipeline_stages_test.go` 三条：已有方案必跳过 `PhaseScript` /
+  无方案必照跑 / 显式阶段必听。
+- 真实技能产物（《拜我别后悔》40 集系列包）过 `project.ValidatePlan` **0 fail**。
+- **真产物端到端**（一次性在开发机跑，依赖临时目录，脚本不入库）：40 集系列包经
+  `import-package` 真实端点入库 → `imported=40` / `projects_total=40` / `warns=0`，
+  再逐集从 Store 读回方案复核 → **40 集 / 2041 镜 / fail 0**，台词镜的中文标记均已补齐。
+
 ## v0.38.0 渲染脚本契约（双侧共组）：技能端直接出脚本，平台端解析即渲染（2026-09-26）
 
 **根因**：平台的分镜阶段（`PhaseScript`）是「LLM 直出分镜」——单集一次深度推理，

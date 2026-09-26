@@ -323,6 +323,32 @@ func (c *Coordinator) emit(projectID, phase string, shotID int, level string, pr
 	})
 }
 
+// pipelineStages 决定一次「全流程」要跑哪些阶段。
+//
+// 抽成纯函数是为了**让它可被测试钉住**(2026-09-26):这里藏着双侧共组的核心承诺 ——
+// 技能端(ManJuNovel)已经把 `plan/plan.json` 交到盘上时,平台**不该再跑一次「LLM 直出分镜」**:
+//
+//	· 慢且贵:单集一次深度推理 2–6 分钟 + token;
+//	· 更糟的是**会毁活**:重新生成会改写每镜提示词 → 镜头指纹全变 → 已渲的镜头全部作废,
+//	  相当于"技能端出好的脚本被平台悄悄盖掉,然后从零重渲"。
+//
+// 所以只有**显式**指定 script 阶段(界面「生成分镜方案」)才重新创作;all 走断点续跑语义。
+func pipelineStages(phase string, hasPlan bool) []string {
+	if phase != PhaseAll {
+		return []string{phase} // 显式指定某一阶段 = 显式意图,不替他省
+	}
+	if hasPlan {
+		return []string{PhaseAssets, PhaseRender, PhaseQC, PhaseAssemble}
+	}
+	return []string{PhaseScript, PhaseAssets, PhaseRender, PhaseQC, PhaseAssemble}
+}
+
+// hasUsablePlan 盘上是否已有**可用**方案(有 shots 才算:空方案等于没有)。
+func hasUsablePlan(st *project.Store, projectID string) bool {
+	plan, err := st.LoadPlan(projectID)
+	return err == nil && plan != nil && len(plan.Shots) > 0
+}
+
 func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string, seedOverride int64) {
 	// 记录结束原因(completed/stopped/failed)供批量排队判断:中止或失败不得被当作"完成"而自动跳集
 	ended := ResultCompleted
@@ -334,14 +360,10 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		c.releaseVRAM(proj.ID, "管线结束")
 		c.finish(proj.ID)
 	}()
-	stages := []string{phase}
-	if phase == PhaseAll {
-		stages = []string{PhaseScript, PhaseAssets, PhaseRender, PhaseQC, PhaseAssemble}
-		// 断点续跑:已有有效方案则跳过「剧本分镜」重新生成 ——
-		// 重新生成会改变每镜提示词 → 指纹全变 → 已渲镜头全部作废(从头开跑的根因)。
-		// 想重新创作方案,请在剧本页点「生成分镜方案」(显式意图)。
-		if plan, err := c.store.LoadPlan(proj.ID); err == nil && len(plan.Shots) > 0 {
-			stages = stages[1:]
+	hasPlan := hasUsablePlan(c.store, proj.ID)
+	stages := pipelineStages(phase, hasPlan)
+	if phase == PhaseAll && hasPlan {
+		if plan, err := c.store.LoadPlan(proj.ID); err == nil {
 			c.emit(proj.ID, "pipeline", 0, "info", 0,
 				"⏩ 检测到已有分镜方案(%d 镜),跳过重新生成直接续跑(重新创作请到剧本页)", len(plan.Shots))
 		}

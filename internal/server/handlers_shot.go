@@ -121,6 +121,30 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
 
+// planPostProcess 导入路径上与分镜阶段**同等**的后处理:台词时长预算 + 中文台词标记兜底。
+//
+// 收成一个函数是为了让"导进来的包"和"平台自己生成的包"在渲染眼里完全等价 ——
+// 这是双侧共组能成立的前提(2026-09-26)。返回调整明细与溢出警告,调用方负责如实回显:
+// **静默改用户的方案 = 撒谎**,静默放过装不下的台词 = 成片截断。
+func (s *Server) planPostProcess(id string, plan *project.Plan) (details, overflow []string) {
+	_, details = director.FitDialogueDurations(plan)
+	for i := range plan.Shots {
+		plan.Shots[i].H3Prompt = pipeline.EnsureChineseDialogue(plan.Shots[i].H3Prompt)
+	}
+	for _, sh := range plan.Shots {
+		if msg := director.DialogueOverflow(sh); msg != "" {
+			overflow = append(overflow, msg)
+		}
+	}
+	if len(details) > 0 {
+		s.opLog("⏱ %s:台词时长预算调整 %d 镜(%s)", id, len(details), strings.Join(details, ";"))
+	}
+	for _, m := range overflow {
+		s.opLog("⚠ %s", m)
+	}
+	return details, overflow
+}
+
 // importPlan 导入既有分镜方案(JSON,新建项目时上传)。
 //
 // 2026-09-26 起这是**技能端 → 平台端的正式入口**(契约 manjux.plan v1):
@@ -160,28 +184,11 @@ func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	// ② 与 script 阶段同等的后处理:台词时长预算 + 中文台词标记兜底
-	//    这两个函数与 stages_script.go 用的是同一份实现(director / pipeline),
-	//    所以「导进来的包」和「平台自己生成的包」在渲染眼里完全等价。
-	adjusted, details := director.FitDialogueDurations(in.Plan)
-	for i := range in.Plan.Shots {
-		in.Plan.Shots[i].H3Prompt = pipeline.EnsureChineseDialogue(in.Plan.Shots[i].H3Prompt)
-	}
-	var overflow []string
-	for _, sh := range in.Plan.Shots {
-		if msg := director.DialogueOverflow(sh); msg != "" {
-			overflow = append(overflow, msg)
-		}
-	}
+	// ② 与 script 阶段同等的后处理
+	details, overflow := s.planPostProcess(id, in.Plan)
 	if err := s.store.SavePlan(id, in.Plan); err != nil {
 		writeErr(w, 500, err)
 		return
-	}
-	if adjusted > 0 {
-		s.opLog("⏱ 导入方案:台词时长预算调整 %d 镜(%s)", adjusted, strings.Join(details, ";"))
-	}
-	for _, m := range overflow {
-		s.opLog("⚠ %s", m)
 	}
 	if warns := warnsText(issues); len(warns) > 0 {
 		for _, wmsg := range warns {
@@ -193,8 +200,8 @@ func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "shots": len(in.Plan.Shots),
 		"characters": len(in.Plan.Characters), "scenes": len(in.Plan.Scenes),
-		"duration_adjusted": adjusted, "duration_details": details,
-		"dialogue_overflow": overflow, "warns": warnsText(issues),
+		"duration_details": details, "dialogue_overflow": overflow,
+		"warns":    warnsText(issues),
 		"contract": fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
 	})
 }

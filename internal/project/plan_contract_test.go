@@ -148,10 +148,10 @@ func TestNeededShotSeconds(t *testing.T) {
 		text string
 		want int
 	}{
-		{"", PlanMinShotSeconds},                       // 无台词 → 下限 4
-		{"我准了。", PlanMinShotSeconds},                  // 4 字 ≈ 1.2 秒 → 抬到下限
-		{strings.Repeat("字", 18), 5},                  // 18/4.5+0.3 = 4.3 → 5
-		{strings.Repeat("字", 40), 9},                  // 40/4.5+0.3 = 9.19 → 10? 见下断言
+		{"", PlanMinShotSeconds},     // 无台词 → 下限 4
+		{"我准了。", PlanMinShotSeconds}, // 4 字 ≈ 1.2 秒 → 抬到下限
+		{strings.Repeat("字", 18), 5}, // 18/4.5+0.3 = 4.3 → 5
+		{strings.Repeat("字", 40), 9}, // 40/4.5+0.3 = 9.19 → 10? 见下断言
 	}
 	for _, c := range cases {
 		sh := Shot{Dialogue: []Line{{Speaker: "x", Text: c.text}}}

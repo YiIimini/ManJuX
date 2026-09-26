@@ -208,6 +208,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/projects", s.listProjects)
 	m.HandleFunc("POST /api/projects", s.createProject)
 	m.HandleFunc("POST /api/projects/rescan", s.rescanProjects)
+	m.HandleFunc("POST /api/projects/import-package", s.importPackages)
 	m.HandleFunc("GET /api/projects/{id}", s.getProject)
 	m.HandleFunc("DELETE /api/projects/{id}", s.deleteProject)
 	m.HandleFunc("GET /api/projects/{id}/source", s.getSource)

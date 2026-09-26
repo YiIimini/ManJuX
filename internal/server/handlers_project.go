@@ -35,7 +35,322 @@ func (s *Server) rescanProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"ok": true, "added": added, "total": total})
 }
 
+// importPackages 从**技能端产出的项目包目录**导入(POST /api/projects/import-package {path})。
+//
+// 与 rescan 的分工:
+//
+//	· rescan  —— 技能端已经把包写进 data/projects/ 时,刷一下索引就能看见(轻,原地);
+//	· 本端点 —— 包还在任意位置(技能端的输出目录、别的盘、U 盘)时,**由平台主动拉进来**:
+//	  自己拷进 data/projects/<书名>/,自己注册。这样技能端不必知道平台的数据目录布局,
+//	  用户也不必先手动搬文件。
+//
+// 支持两种入参:
+//
+//	· 单集包(有 plan/plan.json)     → 导入一集;
+//	· 系列根(有 series.json + 子目录)→ **整本书一次导入**(逐集校验,逐集汇报)。
+//
+// 系列根会**按 series.json 对账**:技能端在 series.json 里声明了这本书有几集、
+// 每集是哪个目录。声明了 N 集却只找到 M 个包(M<N)= 包没拷全/拷到一半,一律拒收 ——
+// "半套系列静默入库"和"半导入状态"是同一类坑:用户以为整本书都进去了,渲染到第 20 集才发现缺。
+// 想只导一部分,把 series.json 移开(那时按子目录逐包导入)。
+//
+// 契约守门与 importPlan 完全一致(同一张规则表 + 同一套后处理):坏包拒收并说明在哪一条;
+// 好包导入后与平台自产包等价。**全部先校验再落盘** —— 半导入状态比不导入更难查。
+func (s *Server) importPackages(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Path string `json:"path"`
+	}
+	if err := readBody(r, &in); err != nil || strings.TrimSpace(in.Path) == "" {
+		writeErr(w, 400, fmt.Errorf("需要 path(项目包目录或系列根目录)"))
+		return
+	}
+	root := strings.TrimSpace(in.Path)
+	fi, err := os.Stat(root)
+	if err != nil || !fi.IsDir() {
+		writeErr(w, 400, fmt.Errorf("目录不存在:%s", root))
+		return
+	}
+	pkgs, err := collectPackages(root)
+	if err != nil || len(pkgs) == 0 {
+		writeErr(w, 400, fmt.Errorf("该目录下没有技能端项目包(需要 plan/plan.json):%s", root))
+		return
+	}
+	// 系列根:按 series.json 对账(声明几集就该有几个包)。见函数头注释。
+	if !hasPlan(root) {
+		if ser, serr := readSeries(root); serr != nil {
+			writeErr(w, 400, serr)
+			return
+		} else if ser != nil {
+			if missing := ser.missing(pkgs); len(missing) > 0 {
+				msg := fmt.Sprintf("系列「%s」声明 %d 集,只找到 %d 个包;缺:%s"+
+					"(包没拷全?只想导一部分就把 series.json 移开)",
+					orDefault(ser.Book, filepath.Base(root)), len(ser.Episodes), len(pkgs),
+					strings.Join(briefList(missing, 5), "、"))
+				s.opLog("⛔ %s", msg)
+				writeErr(w, 400, fmt.Errorf("%s", msg))
+				return
+			}
+		}
+	}
+
+	type result struct {
+		Package string   `json:"package"`
+		ID      string   `json:"id,omitempty"`
+		Shots   int      `json:"shots"`
+		Warns   []string `json:"warns,omitempty"`
+		Fails   []string `json:"fails,omitempty"`
+	}
+	results, fails := []result{}, 0
+
+	// ── 第一遍:全部校验(任何一个 fail 都不落盘) ──
+	type staged struct {
+		pkg     string
+		man     pkgManifest
+		plan    *project.Plan
+		issues  []project.Issue
+		refused bool
+	}
+	var stage []staged
+	for _, pkg := range pkgs {
+		res := result{Package: filepath.Base(pkg)}
+		man, plan, issues, err := readPackage(pkg)
+		if err != nil {
+			res.Fails = []string{err.Error()}
+			fails++
+			results = append(results, res)
+			continue
+		}
+		if f := project.PlanFails(issues); len(f) > 0 {
+			res.Fails = project.PlanIssuesText(f)
+			res.Warns = warnsText(issues)
+			res.Shots = len(plan.Shots)
+			fails++
+			results = append(results, res)
+			stage = append(stage, staged{pkg: pkg, man: man, plan: plan, issues: issues, refused: true})
+			continue
+		}
+		stage = append(stage, staged{pkg: pkg, man: man, plan: plan, issues: issues})
+	}
+	if fails > 0 {
+		s.opLog("⛔ 导入项目包:有 %d 个包未过契约校验,本次**全部不导入**(半导入状态更难查)", fails)
+		for _, r0 := range results {
+			for _, f := range r0.Fails {
+				s.opLog("    %s:%s", r0.Package, f)
+			}
+		}
+		writeJSON(w, 400, map[string]any{
+			"error":   fmt.Sprintf("%d/%d 个包未过契约校验,已全部拒绝导入", fails, len(pkgs)),
+			"results": results,
+			"hint":    "先跑技能端 manju_plan.py check --package <包> 看明细",
+		})
+		return
+	}
+
+	// ── 第二遍:落盘 + 注册 + 后处理 ──
+	for _, st := range stage {
+		dest := filepath.Join(s.store.Root(), st.man.Book,
+			fmt.Sprintf("%s·%s·%s", st.man.Book, st.man.Episode, orDefault(st.man.EpisodeTitle, "未命名")))
+		if err := copyPackage(st.pkg, dest); err != nil {
+			writeErr(w, 500, fmt.Errorf("拷贝 %s 失败:%w", filepath.Base(st.pkg), err))
+			return
+		}
+		// project.json 的 id 必须与目录名一致(Store 以目录名为 id)
+		m := map[string]any{}
+		if raw, err := os.ReadFile(filepath.Join(dest, "project.json")); err == nil {
+			_ = json.Unmarshal(raw, &m)
+		}
+		m["id"] = filepath.Base(dest)
+		m["name"] = filepath.Base(dest)
+		if raw, err := json.MarshalIndent(m, "", "  "); err == nil {
+			_ = os.WriteFile(filepath.Join(dest, "project.json"), raw, 0o644)
+		}
+		// 后处理:与分镜阶段同等(台词时长预算 + 中文台词标记),再存盘
+		id := filepath.Base(dest)
+		details, overflow := s.planPostProcess(id, st.plan)
+		if err := s.store.SavePlan(id, st.plan); err != nil {
+			writeErr(w, 500, err)
+			return
+		}
+		results = append(results, result{
+			Package: filepath.Base(st.pkg), ID: id, Shots: len(st.plan.Shots),
+			Warns: append(warnsText(st.issues), append(details, overflow...)...),
+		})
+		s.opLog("📥 已导入项目包(项目「%s」):%d 镜 / %d 角色 / %d 场景",
+			id, len(st.plan.Shots), len(st.plan.Characters), len(st.plan.Scenes))
+	}
+	added, total := s.store.Rescan() // 让新目录进索引(与 rescan 端点同一实现)
+	if len(added) > 0 {
+		s.opLog("🔄 重扫:新增 %d 个项目(技能端导入)", len(added))
+	}
+	writeJSON(w, 200, map[string]any{
+		"ok": true, "imported": len(results), "results": results,
+		"rescan_added": added, "projects_total": total,
+		"contract": fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
+	})
+}
+
+// pkgManifest 技能端项目包的 manifest(契约声明 + 归属信息)。
+type pkgManifest struct {
+	Contract     string `json:"contract"`
+	Version      int    `json:"version"`
+	Book         string `json:"book"`
+	Episode      string `json:"episode"`
+	EpisodeTitle string `json:"episode_title"`
+	ProducedBy   string `json:"produced_by"`
+}
+
+// collectPackages 找出目录下的项目包:自身是一个包,或(系列根)其一级子目录是包。
+func collectPackages(root string) ([]string, error) {
+	if hasPlan(root) {
+		return []string{root}, nil
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && hasPlan(filepath.Join(root, e.Name())) {
+			out = append(out, filepath.Join(root, e.Name()))
+		}
+	}
+	return out, nil
+}
+
+func hasPlan(dir string) bool {
+	_, err := os.Stat(filepath.Join(dir, "plan", "plan.json"))
+	return err == nil
+}
+
+// seriesManifest 是技能端写在系列根的 series.json(声明这本书有哪些集)。
+//
+// 平台**不拿它当数据源**(数据源永远是各集自己的 plan.json),只用它**对账**:
+// 声明了却找不到的包 = 拷贝不全,必须在入库前拦住。
+type seriesManifest struct {
+	Contract string `json:"contract"`
+	Version  int    `json:"version"`
+	Book     string `json:"book"`
+	Episodes []struct {
+		Episode string `json:"episode"`
+		Package string `json:"package"`
+	} `json:"episodes"`
+}
+
+// readSeries 读系列根的对账文件;没有该文件返回 (nil, nil) —— 那是"逐包导入"的正常用法。
+func readSeries(root string) (*seriesManifest, error) {
+	raw, err := os.ReadFile(filepath.Join(root, "series.json"))
+	if err != nil {
+		return nil, nil //nolint:nilerr // 缺失不是错误:没有 series.json 就按子目录逐包导入
+	}
+	var ser seriesManifest
+	if err := json.Unmarshal(raw, &ser); err != nil {
+		return nil, fmt.Errorf("series.json 不是合法 JSON:%w", err)
+	}
+	if ser.Version != 0 && ser.Version != project.PlanContractVersion {
+		return nil, fmt.Errorf("series.json 契约版本不符:%d(本侧支持 v%d)—— 两侧必须同版本",
+			ser.Version, project.PlanContractVersion)
+	}
+	return &ser, nil
+}
+
+// missing 返回**声明了却没找到**的集目录名(空的 = 齐了)。
+func (s *seriesManifest) missing(pkgs []string) []string {
+	have := map[string]bool{}
+	for _, p := range pkgs {
+		have[filepath.Base(p)] = true
+	}
+	var out []string
+	for _, e := range s.Episodes {
+		name := e.Package
+		if name == "" {
+			continue
+		}
+		if !have[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// readPackage 读一个包并跑契约校验(含 manifest 的契约名/版本对账)。
+func readPackage(pkg string) (pkgManifest, *project.Plan, []project.Issue, error) {
+	var man pkgManifest
+	rawMan, err := os.ReadFile(filepath.Join(pkg, "manifest.json"))
+	if err != nil {
+		return man, nil, nil, fmt.Errorf("缺 manifest.json(平台据此识别技能端产出)")
+	}
+	if err := json.Unmarshal(rawMan, &man); err != nil {
+		return man, nil, nil, fmt.Errorf("manifest.json 不是合法 JSON:%w", err)
+	}
+	if man.Contract != "" && man.Contract != "manjux.plan" {
+		return man, nil, nil, fmt.Errorf("契约名不符:%q(本平台支持 manjux.plan)", man.Contract)
+	}
+	if man.Version != 0 && man.Version != project.PlanContractVersion {
+		return man, nil, nil, fmt.Errorf("契约版本不符:包是 v%d、本平台是 v%d —— 两侧要一起改",
+			man.Version, project.PlanContractVersion)
+	}
+	if strings.TrimSpace(man.Book) == "" {
+		return man, nil, nil, fmt.Errorf("manifest 缺 book 字段(不知道该放进哪本书的目录)")
+	}
+	rawPlan, err := os.ReadFile(filepath.Join(pkg, "plan", "plan.json"))
+	if err != nil {
+		return man, nil, nil, fmt.Errorf("读不到 plan/plan.json:%w", err)
+	}
+	var plan project.Plan
+	if err := json.Unmarshal(rawPlan, &plan); err != nil {
+		return man, nil, nil, fmt.Errorf("plan.json 不是合法 JSON:%w", err)
+	}
+	return man, &plan, project.ValidatePlan(&plan), nil
+}
+
+// copyPackage 把包拷进项目目录(不含 assets/clips/output —— 那些是平台自己的产物)。
+func copyPackage(src, dest string) error {
+	for _, sub := range []string{"plan", "assets/characters", "assets/scenes", "assets/props", "clips", "output", "logs"} {
+		if err := os.MkdirAll(filepath.Join(dest, sub), 0o755); err != nil {
+			return err
+		}
+	}
+	for _, name := range []string{"manifest.json", "project.json", "source.txt"} {
+		if raw, err := os.ReadFile(filepath.Join(src, name)); err == nil {
+			if err := os.WriteFile(filepath.Join(dest, name), raw, 0o644); err != nil {
+				return err
+			}
+		}
+	}
+	raw, err := os.ReadFile(filepath.Join(src, "plan", "plan.json"))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dest, "plan", "plan.json"), raw, 0o644)
+}
+
+func orDefault(s, d string) string {
+	if strings.TrimSpace(s) == "" {
+		return d
+	}
+	return s
+}
+
+// briefList 只列前 n 项 + 省略号:日志里一条项目名就够定位,几十行会把操作日志刷没。
+func briefList(ids []string, n int) []string {
+	if len(ids) <= n {
+		return ids
+	}
+	return append(append([]string{}, ids[:n]...), fmt.Sprintf("等 %d 个", len(ids)))
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	// 拉列表时顺手重扫一次盘:**「列表」就是盘上的真相**。
+	//
+	// 为什么放在这里而不是等用户去点/去调 rescan(2026-09-26 · 双侧共组收尾):
+	// 技能端 emit 完就把包写进了 projects/,但界面从来没有"重扫"这个动作,
+	// 于是链路最后一环仍是「关掉应用再打开」。放在读路径上,用户看到列表的那一刻
+	// 就是最新的 —— 成本只是几次 readdir(已装载的项目直接跳过,不重读元信息),
+	// 语义仍是只新增不删除(见 project.Store.Rescan 的边界说明)。
+	if added, _ := s.store.Rescan(); len(added) > 0 {
+		s.opLog("📥 发现 %d 个外部新建的项目(技能端直接落盘):%s",
+			len(added), strings.Join(briefList(added, 3), "、"))
+	}
 	type item struct {
 		*project.Project
 		HasPlan bool   `json:"has_plan"`
