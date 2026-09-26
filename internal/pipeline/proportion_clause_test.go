@@ -80,18 +80,30 @@ func TestSkillProportionClauseSurvivesAssembly(t *testing.T) {
 	}
 	got := PortraitPromptForProject(proj, plan, ch)
 
-	// ① 技能侧比例句逐字保留(含它的特征短语,证明不是被剥剩下的残句)
+	// ① 技能侧比例句里的**脸部/上半身锚点逐字保留**(证明不是被剥剩下的残句)
 	for _, want := range []string{
 		"the eye line sits at the vertical middle of the head",
 		"the eyes are one eye-width apart",
 		"about one third of the face length",
 		"two thirds as wide as the cheekbones",
-		"seven and a half heads tall",
+		"the neck is slim and long",
+		"the shoulders are about two head-widths wide",
 		"Never distort these ratios",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("技能侧比例句被改动了,缺少「%s」:\n%s", want, got)
 		}
+	}
+	// ①b **整身**那一条是有意剥离的(2026-09-26 修正):这张卡自己写着 `upper-body framing`,
+	//     半身幅里"七头半"既不可验证又与取景打架,实测出图就是全身立绘 —— 64 镜里 61 镜
+	//     是近景/中景/特写,喂全身像必然漂。剥的是**取景一致性**,不是技能侧的脸部口径。
+	if strings.Contains(strings.ToLower(got), "seven and a half heads") {
+		t.Errorf("半身定妆照里不该留全身口径:\n%s", got)
+	}
+	// ①c 剥离不许留下**平台自造**的措辞:早期实现只删短语,把这一句剥成
+	//     `the figure is tall with a slim waist and long legs`,等于往技能侧口径里塞了个 `tall`。
+	if strings.Contains(got, "the figure is tall with") {
+		t.Errorf("剥离整身口径不许留下自造残迹:\n%s", got)
 	}
 	// ② 平台自己那套比例措辞不得同现
 	if strings.Contains(got, "cute chibi proportions") {

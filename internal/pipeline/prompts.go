@@ -35,14 +35,22 @@ import (
 // 物种与体量 —— 给一只铜雀写"脸型/五官/肤色/年龄感照抄参考图",模型当然给你画一个人。
 func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	var chars, scenes []anchorChar
+	// shotKinds 本镜出场角色的**类型**(与 chars 分开收):比例锚点的分发闸只看"镜头里是
+	// 谁",与平台手上有没有这个角色的描述无关 —— 而 chars 只收有描述的(没描述没得可锚)。
+	var shotKinds []EntityKind
 	for _, cid := range shot.Characters {
 		for _, ch := range plan.Characters {
-			if ch.ID == cid && strings.TrimSpace(ch.Description) != "" {
-				chars = append(chars, anchorChar{
-					name: ch.Name, desc: strings.TrimSpace(ch.Description),
-					voice: strings.TrimSpace(ch.Voice), kind: ResolveEntityKind(ch),
-				})
+			if ch.ID != cid {
+				continue
 			}
+			shotKinds = append(shotKinds, ResolveEntityKind(ch))
+			if strings.TrimSpace(ch.Description) == "" {
+				continue
+			}
+			chars = append(chars, anchorChar{
+				name: ch.Name, desc: strings.TrimSpace(ch.Description),
+				voice: strings.TrimSpace(ch.Voice), kind: ResolveEntityKind(ch),
+			})
 		}
 	}
 	for _, sc := range plan.Scenes {
@@ -50,11 +58,26 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			scenes = append(scenes, anchorChar{name: sc.Name, desc: strings.TrimSpace(sc.Description)})
 		}
 	}
+	// 【镜头比例锚点】(2026-09-26)按景别注入技能侧的人体比例口径 —— 定妆照那条链上一直
+	// 有它,镜头提示词里一个都没有(实测 64 个镜头 0 个),于是每一镜各按各的审美发挥比例,
+	// 跨镜还对不上。分发规则、口径来源与两道闸见 shot_proportion.go。
+	//
+	// **已有技能侧比例句时不注入**(判据复用 proportion_clause.go 的
+	// HumanProportionClausePresent,不在这里另写一套):同一段提示词里两套比例,模型只会
+	// 取中值 —— 技能侧那一段是它的定义权,平台只让位、不重写。这条判据同时就是幂等性:
+	// 注入的正文本身带着技能侧的特征短语,任何已带锚点的提示词再进这条路都会被认出来。
+	//
+	// 它先算出来而不是只在主分支里追加:这条闸只看"景别 + 镜头里是谁",与有没有场景、
+	// 角色有没有描述无关,所以下面的纯空镜早退分支也要带上(在册但没描述的角色同样是有人)。
+	proportion := ""
+	if !HumanProportionClausePresent(shot.H3Prompt) {
+		proportion = shotProportionBlock(shot.ShotSize, shotKinds)
+	}
 	if len(chars) == 0 && len(scenes) == 0 {
 		// 无角色也无场景(纯空镜):身份锚定没什么可锚的,但**风格段与介质覆盖仍必须带上**
 		// —— 空镜一样要服从全片画风。此前这条早退分支直接把风格与介质段丢了,
 		// 结果是"空镜写实、其余动画"的花片(实测真实项目第 1 镜正是无人物空镜)。
-		return styleAndMediumBlock(plan, facesOn) + shot.H3Prompt
+		return styleAndMediumBlock(plan, facesOn) + proportion + shot.H3Prompt
 	}
 	var sb strings.Builder
 	sb.WriteString("【身份锚定(全片统一,优先级最高)】\n")
@@ -166,6 +189,10 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 		}
 	}
 	sb.WriteString(styleAndMediumBlock(plan, facesOn))
+	// 比例锚点放在**最后**(紧贴 shot.H3Prompt)是有意的:它是"别让比例跑掉"的约束而不是
+	// 剧情内容,而它要防的正是紧随其后的画面 —— 动作一多,模型优先保动作、把形体当装饰丢掉
+	// (与【外貌不变项】记的那次漂移同一机理),所以取离画面最近的注意力位置。
+	sb.WriteString(proportion)
 	return sb.String() + "\n" + shot.H3Prompt
 }
 
@@ -417,6 +444,13 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	//   ① 剥掉微雕文字/极小铭文 —— 在半身幅里它们只会糊成灰渍(实测定妆照胸口与腕部的污渍);
 	//   ② 姿态纪律 —— 半身幅里复杂手势会变成连指手套(实测模型自作主张画了抱胸)。
 	prompt := StripMicroTextForImage(normalizeUniformWording(s.ImagePrompt))
+	// 定妆照取景与本片镜头的景别对齐(见 sheet_framing.go):**半身**。
+	// 卡里若同时写着取景 `upper-body framing` 与全身比例 `seven and a half heads`,模型会选
+	// "按比例画全身"(2026-09-26 实测出图就是全身立绘),而这张图要喂给近景/中景/特写
+	// (64 镜里 61 镜)——全身像被要求"裁"出特写,头肩比必然漂。**只剥全身口径**,脸部比例全留。
+	if kind == KindHuman {
+		prompt = StripFullBodyProportions(prompt)
+	}
 	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
 		return prompt // 已经是本类型的装配结果:不重复叠加
 	}
