@@ -164,6 +164,10 @@ func (s *Server) handleNovelProduceScript(w http.ResponseWriter, r *http.Request
 	if len(eps) == 0 {
 		return
 	}
+	// 启动前**先回收死批次** —— 产线是单例,失败/停下来的那批不会自己让位,不让位就永远起不来
+	// (2026-09-26:用户点脚本创作导入了 40 集,界面什么都不发生,根因就是这个)。这是本应用
+	// 自己的 bug,不该甩给用户去点「停止」。
+	s.reapStaleBatch()
 	if s.startBatch(prefix, eps) {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 			Message: fmt.Sprintf("📜 脚本创作:《%s》已导入 %d 集并启动批量产线(资产定妆→渲染→质检→成片)", prefix, len(eps))})

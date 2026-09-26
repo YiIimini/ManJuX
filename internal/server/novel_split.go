@@ -142,6 +142,9 @@ func (s *Server) handleNovelBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 启动前先收拾死批次:单例被"停下来的旧批次"占着时,新批次永远起不来
+	// (这是本应用自己的 bug,不该让用户去手动点「停止」)。
+	s.reapStaleBatch()
 	if !s.startBatch(prefix, eps) {
 		writeErr(w, 409, fmt.Errorf("批量产线已在运行(%s 第 %d/%d 集)", batch.prefix, batch.cur, len(batch.projects)))
 		return
@@ -173,6 +176,62 @@ func (s *Server) episodesOf(prefix string) []string {
 	}
 	sort.Slice(eps, func(i, j int) bool { return epNo(eps[i]) < epNo(eps[j]) })
 	return eps
+}
+
+// reapStaleBatch 回收"已经不干活、却还占着单例"的批次。
+//
+// 【为什么必须有它】批量产线是全局单例(一个 batch),而失败/被卡住的那批**不会自己让位**:
+// 它停在第 N 集,`batch.running` 仍是 true,于是之后任何一个入口来启动都拿不到产线 ——
+// 用户点了「脚本创作」导入 40 集,界面上什么都不发生(2026-09-26 实测:13:35 那批导入了
+// 40 集却没有任何 ▶ 启动行,根因就是 13:23 那批死批次赖着)。
+//
+// **这是本应用自己的 bug,不该甩给用户去点「停止」**:启动前先看当前集到底有没有在跑 ——
+// Coordinator 说没在跑,就把它请走,然后让新的批次正常开起来。
+//
+// 判据取"当前集是否真在跑"而不是看时间戳:批次可能正在两个集之间的间隙里,那种情况
+// Coordinator 也说没在跑,但它的循环还活着 —— 所以请求停止后要**等它自己让出 running**,
+// 等不到才强制复位(最后手段,并明确播报)。
+func (s *Server) reapStaleBatch() {
+	batch.mu.Lock()
+	if !batch.running {
+		batch.mu.Unlock()
+		return
+	}
+	prefix := batch.prefix
+	id := ""
+	if batch.cur >= 0 && batch.cur < len(batch.projects) {
+		id = batch.projects[batch.cur]
+	}
+	batch.mu.Unlock()
+
+	// 真在跑:绝不许抢(同一条产线共用一张显卡,并发只会互相拖死)
+	if id != "" && s.pipe != nil && s.pipe.Running(id) != nil {
+		return
+	}
+
+	batch.mu.Lock()
+	batch.stop = true
+	batch.mu.Unlock()
+	for i := 0; i < 50; i++ { // 最多等 5 秒让它收尾
+		time.Sleep(100 * time.Millisecond)
+		batch.mu.Lock()
+		running := batch.running
+		batch.mu.Unlock()
+		if !running {
+			break
+		}
+	}
+	batch.mu.Lock()
+	if batch.running { // 还赖着:强制复位(单例不许被死批次永久霸占)
+		batch.running, batch.projects, batch.cur, batch.stop, batch.prefix = false, nil, 0, false, ""
+		batch.mu.Unlock()
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 已回收一个停止后仍占着产线的旧批次(《%s》)—— 新批次可以开了", prefix)})
+		return
+	}
+	batch.mu.Unlock()
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+		Message: fmt.Sprintf("♻ 旧批次(《%s》)没有在跑,已让位给新的批次", prefix)})
 }
 
 func (s *Server) runNovelBatch(prefix string, eps []string) {
