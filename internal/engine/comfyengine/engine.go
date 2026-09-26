@@ -614,6 +614,35 @@ func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 	return turbo
 }
 
+// accelSteps 档位 → 实际采样步数。**唯一实现**:凡自带采样链的图都必须走它。
+//
+// 单独立出来的原因(2026-09-26 渲染管线审查抓到):步数钳制此前只写在 buildRenderGraph 里,
+// 而 maskgraph(局部重绘)是照抄的模型链 —— 加速 LoRA 那一半早就收口(两边都调 accelLoraFor),
+// 步数这一半没跟上:refine 档在局部重绘里会变成「8 步 + 不挂任何蒸馏 LoRA」= 白关蒸馏,
+// 修补过的那块与周围画面画质断层,而日志与界面都不提。这正是本项目记过一次的
+// "同一个语义两处实现"事故,当时的护栏只比了 LoRA 名、没比步数。
+func accelSteps(accel string, steps int) int {
+	switch accel {
+	case "refine":
+		// 精修档:不挂蒸馏 LoRA,步数按"完整采样"给足 —— 4 步蒸馏的锚定值在这里无意义。
+		if steps < 20 {
+			return 20
+		}
+	case "quality":
+		if steps < 8 {
+			return 8 // Acc-8Step 蒸馏锚定 8 步
+		}
+	case "express":
+		if steps > 4 {
+			return 4 // 极速预览
+		}
+	}
+	if steps <= 0 {
+		return 8
+	}
+	return steps
+}
+
 // isQuantizedBase 判断底模文件名是否属于低位量化权重 —— Acc-8Step LoRA 挂不上这类底模
 // (int8 实测 tensor 32 vs 1024,官方修复未合并主线)。w4a8/nvfp4/mxfp8 与 int8 同属
 // 低位量化,一并排除;`fp8_scaled` 是官方原厂发布的底模格式,保持原有行为不动。
@@ -699,26 +728,8 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	})
 	model := link("32", 0)
 
-	steps := job.Steps
-	switch job.Accel {
-	case "refine":
-		// 精修档:不挂蒸馏 LoRA,步数按"完整采样"给足 —— 4 步蒸馏的锚定值在这里无意义。
-		// 20 是保底(低于它等于白关蒸馏),用户可以把项目参数 steps 调到更高。
-		if steps < 20 {
-			steps = 20
-		}
-	case "quality":
-		if steps < 8 {
-			steps = 8 // Acc-8Step 蒸馏锚定 8 步
-		}
-	case "express":
-		if steps > 4 {
-			steps = 4 // 极速预览
-		}
-	}
-	if steps <= 0 {
-		steps = 8
-	}
+	// 步数:档位表只有一份实现(accelSteps),局部重绘等其它采样链也调它
+	steps := accelSteps(job.Accel, job.Steps)
 
 	// 镜间连续(MotionContext 接缝):加载上一镜 AV latent 钉入条件;
 	// 产物由 Trim 裁掉 pinned 头(音画同裁,match_tail 对齐时长)。

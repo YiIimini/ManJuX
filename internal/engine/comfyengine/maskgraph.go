@@ -176,11 +176,9 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 		"ref_images":     []any{link("15", 0)},
 	})
 
-	// ⑥ 采样(与整镜渲染同一套参数:官方 res_multistep + simple)
-	steps := job.Steps
-	if steps <= 0 {
-		steps = 8
-	}
+	// ⑥ 采样(与整镜渲染同一套参数:官方 res_multistep + simple,步数也走同一张档位表 ——
+	// 局部重绘不许自成一套:refine 档在这里少跑 12 步,修补过的那块就成了画质断层)
+	steps := accelSteps(job.Accel, job.Steps)
 	g["40"] = nd("RandomNoise", map[string]any{"noise_seed": job.Seed})
 	g["41"] = nd("KSamplerSelect", map[string]any{"sampler_name": "res_multistep"})
 	g["42"] = nd("BasicScheduler", map[string]any{
