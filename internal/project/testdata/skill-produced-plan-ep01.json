@@ -8,16 +8,30 @@
       "name": "陆青",
       "kind": "human",
       "description": "主角。现代实习律师，替人写诉状的三天前还是个活人。全书叙述一律\"陆青\"；",
-      "image_prompt": "陆青（主角。现代实习律师，替人写诉状的三天前还是个活人。全书叙述一律\"陆青\"；）. Semi-realistic 3D cinematic character: idealised clean facial planes with realistic skin, hair and cloth materials, matte finish with no oily highlights, plain neutral background, upper-body framing, front-facing, 16:9.",
-      "voice": ""
+      "image_prompt": "陆青（主角。现代实习律师，替人写诉状的三天前还是个活人。全书叙述一律\"陆青\"；）. Semi-realistic 3D cinematic character: idealised clean facial planes with realistic skin, hair and cloth materials, matte finish with no oily highlights, plain neutral background, upper-body framing, front-facing, 16:9. Must stay clearly distinguishable from every other character in the same series: 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征.",
+      "voice": "a young man’s voice, low and even, unhurried",
+      "distinguishing": "青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征",
+      "evidence": {
+        "sex": "男",
+        "age": "少年",
+        "wear": "青色布",
+        "mark": "簪"
+      },
+      "sid": "S1"
     },
     {
       "id": "char_02",
       "name": "钱阿婆",
       "kind": "human",
       "description": "捡破烂的老太太，全书唯一的\"真情锚\"，从不求东西。会描脸（第3章用捡来的半罐红漆给他描了半张脸，",
-      "image_prompt": "钱阿婆（捡破烂的老太太，全书唯一的\"真情锚\"，从不求东西。会描脸（第3章用捡来的半罐红漆给他描了半张脸，）. Semi-realistic 3D cinematic character: idealised clean facial planes with realistic skin, hair and cloth materials, matte finish with no oily highlights, plain neutral background, upper-body framing, front-facing, 16:9.",
-      "voice": ""
+      "image_prompt": "钱阿婆（捡破烂的老太太，全书唯一的\"真情锚\"，从不求东西。会描脸（第3章用捡来的半罐红漆给他描了半张脸，）. Semi-realistic 3D cinematic character: idealised clean facial planes with realistic skin, hair and cloth materials, matte finish with no oily highlights, plain neutral background, upper-body framing, front-facing, 16:9. Must stay clearly distinguishable from every other character in the same series: 老年、女 —— 以附图为准，不许与同镜其它角色互换特征.",
+      "voice": "an old woman’s voice, thin and dry, slow deliberate pace",
+      "distinguishing": "老年、女 —— 以附图为准，不许与同镜其它角色互换特征",
+      "evidence": {
+        "sex": "女",
+        "age": "老年"
+      },
+      "sid": "S2"
     }
   ],
   "scenes": [
@@ -26,904 +40,799 @@
       "name": "破庙",
       "description": "无名破庙（匾额已烂，庙名卷三再揭）。主场景，约占全书 60%。",
       "image_prompt": "破庙（无名破庙（匾额已烂，庙名卷三再揭）。主场景，约占全书 60%。）. Photorealistic 3D cinematic environment plate: consistent architecture, materials and props, natural light with a clear key direction and colour temperature, matte finish, no characters, no people, no hands, wide establishing framing, 16:9."
-    },
-    {
-      "id": "scene_02",
-      "name": "通宝局",
-      "description": "东街拐角，门口两盏白纸灯笼（一盏灭）。屋内七盏油灯，光只罩桌面三尺。",
-      "image_prompt": "通宝局（东街拐角，门口两盏白纸灯笼（一盏灭）。屋内七盏油灯，光只罩桌面三尺。）. Photorealistic 3D cinematic environment plate: consistent architecture, materials and props, natural light with a clear key direction and colour temperature, matte finish, no characters, no people, no hands, wide establishing framing, 16:9."
-    },
-    {
-      "id": "scene_03",
-      "name": "通宝局后巷",
-      "description": "墙根下一摊烂泥（何三挨打处）。",
-      "image_prompt": "通宝局后巷（墙根下一摊烂泥（何三挨打处）。）. Photorealistic 3D cinematic environment plate: consistent architecture, materials and props, natural light with a clear key direction and colour temperature, matte finish, no characters, no people, no hands, wide establishing framing, 16:9."
-    },
-    {
-      "id": "scene_04",
-      "name": "县衙",
-      "description": "未正面出场（第3章只出现\"衙门里管账的\"）。",
-      "image_prompt": "县衙（未正面出场（第3章只出现\"衙门里管账的\"）。）. Photorealistic 3D cinematic environment plate: consistent architecture, materials and props, natural light with a clear key direction and colour temperature, matte finish, no characters, no people, no hands, wide establishing framing, 16:9."
     }
   ],
   "shots": [
     {
+      "shot_size": "中景",
       "id": 1,
+      "dialogue": [],
+      "narration": "",
+      "characters": [],
       "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
       "action": "他动不了。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 他动不了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is the environment only (no characters in frame).\n\nintegrated_multimodal_description:\n[Shot 1] 他动不了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 2,
+      "dialogue": [],
+      "narration": "",
+      "characters": [],
       "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
       "action": "不是麻，不是僵，是根本没有能动的那个地方——他没有胳膊，没有腿，只有一身泥壳，和泥壳底下那副木骨。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 7,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 不是麻，不是僵，是根本没有能动的那个地方——他没有胳膊，没有腿，只有一身泥壳，和泥壳底下那副木骨。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is the environment only (no characters in frame).\n\nintegrated_multimodal_description:\n[Shot 1] 不是麻，不是僵，是根本没有能动的那个地方——他没有胳膊，没有腿，只有一身泥壳，和泥壳底下那副木骨。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 3,
+      "dialogue": [],
+      "narration": "",
+      "characters": [],
       "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
       "action": "雨从屋顶的破洞漏下来，砸在他肩上，冲下一道泥。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 雨从屋顶的破洞漏下来，砸在他肩上，冲下一道泥。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is the environment only (no characters in frame).\n\nintegrated_multimodal_description:\n[Shot 1] 雨从屋顶的破洞漏下来，砸在他肩上，冲下一道泥。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 4,
+      "dialogue": [],
+      "narration": "",
+      "characters": [],
       "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
       "action": "一个穿短打的汉子从门外进来，肩上搭绳，手里一把斧子。他踹了踹东边的柱子，抬头估了估梁。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 一个穿短打的汉子从门外进来，肩上搭绳，手里一把斧子。他踹了踹东边的柱子，抬头估了估梁。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is the environment only (no characters in frame).\n\nintegrated_multimodal_description:\n[Shot 1] 一个穿短打的汉子从门外进来，肩上搭绳，手里一把斧子。他踹了踹东边的柱子，抬头估了估梁。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "近景",
       "id": 5,
+      "dialogue": [],
+      "narration": "这梁还成。 拉走。",
+      "characters": [],
       "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
       "action": "他朝外头喊，",
-      "dialogue": [
-        {
-          "speaker": "旁白",
-          "text": "这梁还成。"
-        },
-        {
-          "speaker": "旁白",
-          "text": "拉走。"
-        }
-      ],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 他朝外头喊， <d>[Chinese] 这梁还成。</d>; <d>[Chinese] 拉走。</d> Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is the environment only (no characters in frame).\n\nintegrated_multimodal_description:\n[Shot 1] 他朝外头喊， Off-screen narration: the narrator says in an off-screen voiceover: <d>[Chinese]这梁还成。 拉走。</d> while the on-screen characters' lips remain completely closed. Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 6,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "他爬上供桌，一只脚踩在陆青肩上，踩得那半截木骨吱了一声。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 他爬上供桌，一只脚踩在陆青肩上，踩得那半截木骨吱了一声。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 他爬上供桌，一只脚踩在陆青肩上，踩得那半截木骨吱了一声。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "远景",
       "id": 7,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "远景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "庙门上贴着一张黄纸，边角被雨泡卷了。上头四个字他认得：拆庙令。底下一行小字——最后一日。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 7,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 庙门上贴着一张黄纸，边角被雨泡卷了。上头四个字他认得：拆庙令。底下一行小字——最后一日。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 庙门上贴着一张黄纸，边角被雨泡卷了。上头四个字他认得：拆庙令。底下一行小字——最后一日。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "远景",
       "id": 8,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "远景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "三天前他还是个人。替人写诉状的，一天三张，一张十五文。最后一笔活写了一半，纸还摊在桌上。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 7,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 三天前他还是个人。替人写诉状的，一天三张，一张十五文。最后一笔活写了一半，纸还摊在桌上。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 三天前他还是个人。替人写诉状的，一天三张，一张十五文。最后一笔活写了一半，纸还摊在桌上。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 9,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "现在他是一尊神像。一尊缺了半张脸的神像，右边那半张脸没了，缺口里露着两根草筋和一截发白的木骨，像谁拿勺子挖走了一块。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 9,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 现在他是一尊神像。一尊缺了半张脸的神像，右边那半张脸没了，缺口里露着两根草筋和一截发白的木骨，像谁拿勺子挖走了一块。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 现在他是一尊神像。一尊缺了半张脸的神像，右边那半张脸没了，缺口里露着两根草筋和一截发白的木骨，像谁拿勺子挖走了一块。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 10,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "一只野狗从门外进来，抖了抖毛，绕着供桌转了一圈。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 一只野狗从门外进来，抖了抖毛，绕着供桌转了一圈。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 一只野狗从门外进来，抖了抖毛，绕着供桌转了一圈。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 11,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "然后它抬起后腿，对着他撒了一泡尿。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 然后它抬起后腿，对着他撒了一泡尿。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 然后它抬起后腿，对着他撒了一泡尿。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 12,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "热腾腾的一股，从底座淌到他脚面的泥纹上，往下渗。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 热腾腾的一股，从底座淌到他脚面的泥纹上，往下渗。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 热腾腾的一股，从底座淌到他脚面的泥纹上，往下渗。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 13,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "陆青在心里骂了一句。骂得很脏。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 陆青在心里骂了一句。骂得很脏。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 陆青在心里骂了一句。骂得很脏。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "近景",
       "id": 14,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "野狗尿完，走了两步，回头看了他一眼。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 野狗尿完，走了两步，回头看了他一眼。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 野狗尿完，走了两步，回头看了他一眼。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "近景",
       "id": 15,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "那一眼里什么都没有。它不是在看一尊神，它是在看一堵墙。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 那一眼里什么都没有。它不是在看一尊神，它是在看一堵墙。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 那一眼里什么都没有。它不是在看一尊神，它是在看一堵墙。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 16,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
       "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
+      "id": 16,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_01"
+      ],
+      "scene": "scene_01",
       "action": "三个孩子跑进来躲雨。头一个捡了块石子，抬手就扔。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 三个孩子跑进来躲雨。头一个捡了块石子，抬手就扔。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 17,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
-      "action": "石子砸在他右颊的缺口边上，又崩下一块泥。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 石子砸在他右颊的缺口边上，又崩下一块泥。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 18,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
-      "action": "孩子笑了两声，又扔了一块。这一块落在肩膀上，弹到供桌，把那只裂了口的香炉震得响了一下。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 孩子笑了两声，又扔了一块。这一块落在肩膀上，弹到供桌，把那只裂了口的香炉震得响了一下。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 19,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "远景",
       "camera": "slow push-in, small amplitude",
-      "action": "香炉是空的。炉底一层黑灰，结成块，指甲一刮就是粉。那是很久以前烧过的香。门口的雨里，又进来一个人。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 7,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 香炉是空的。炉底一层黑灰，结成块，指甲一刮就是粉。那是很久以前烧过的香。门口的雨里，又进来一个人。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "duration": 4,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 三个孩子跑进来躲雨。头一个捡了块石子，抬手就扔。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 20,
-      "scene": "scene_01",
+      "shot_size": "中景",
+      "id": 17,
+      "dialogue": [],
+      "narration": "",
       "characters": [
-        "char_02"
+        "char_01"
       ],
-      "shot_size": "特写",
+      "scene": "scene_01",
+      "action": "石子砸在他右颊的缺口边上，又崩下一块泥。",
       "camera": "Static, no movement",
-      "action": "是个老太太——后来他才知道，这条街上的人都叫她钱阿婆。背驼，一只手提筐，筐里几片烂菜叶。她不是来躲雨的，是进来歇脚。她把筐搁在门槛里头，走到供桌前，看了看香炉。她说。",
+      "duration": 4,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 石子砸在他右颊的缺口边上，又崩下一块泥。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "中景",
+      "id": 18,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_01"
+      ],
+      "scene": "scene_01",
+      "action": "孩子笑了两声，又扔了一块。这一块落在肩膀上，弹到供桌，把那只裂了口的香炉震得响了一下。",
+      "camera": "Static, no movement",
+      "duration": 6,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 孩子笑了两声，又扔了一块。这一块落在肩膀上，弹到供桌，把那只裂了口的香炉震得响了一下。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "远景",
+      "id": 19,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_01"
+      ],
+      "scene": "scene_01",
+      "action": "香炉是空的。炉底一层黑灰，结成块，指甲一刮就是粉。那是很久以前烧过的香。门口的雨里，又进来一个人。",
+      "camera": "slow push-in, small amplitude",
+      "duration": 7,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 香炉是空的。炉底一层黑灰，结成块，指甲一刮就是粉。那是很久以前烧过的香。门口的雨里，又进来一个人。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "特写",
+      "id": 20,
       "dialogue": [
         {
           "speaker": "钱阿婆",
-          "text": "空的。"
+          "text": "空的。",
+          "os": false
         }
       ],
       "narration": "",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
+      "action": "是个老太太——后来他才知道，这条街上的人都叫她钱阿婆。背驼，一只手提筐，筐里几片烂菜叶。她不是来躲雨的，是进来歇脚。她把筐搁在门槛里头，走到供桌前，看了看香炉。她说。",
+      "camera": "Static, no movement",
       "duration": 10,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 是个老太太——后来他才知道，这条街上的人都叫她钱阿婆。背驼，一只手提筐，筐里几片烂菜叶。她不是来躲雨的，是进来歇脚。她把筐搁在门槛里头，走到供桌前，看了看香炉。她说。 <d>[Chinese] 空的。</d> Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 是个老太太——后来他才知道，这条街上的人都叫她钱阿婆。背驼，一只手提筐，筐里几片烂菜叶。她不是来躲雨的，是进来歇脚。她把筐搁在门槛里头，走到供桌前，看了看香炉。她说。 <Subject 1> 钱阿婆 (S2) says in an old woman’s voice, thin and dry, slow deliberate pace: <d>[Chinese]空的。</d>. Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 21,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
-        "char_01"
+        "char_02"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "她从怀里摸出个油纸包，一层一层打开，里头是半炷香——断过，断面不平。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 5,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她从怀里摸出个油纸包，一层一层打开，里头是半炷香——断过，断面不平。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她从怀里摸出个油纸包，一层一层打开，里头是半炷香——断过，断面不平。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 22,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
-        "char_01"
+        "char_02"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "她把香插进香炉，掏出火折子，吹了很久才吹着。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她把香插进香炉，掏出火折子，吹了很久才吹着。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她把香插进香炉，掏出火折子，吹了很久才吹着。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 23,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
       "shot_size": "中景",
-      "camera": "Static, no movement",
-      "action": "火苗立起来，只有一粒米那么大。",
+      "id": 23,
       "dialogue": [],
       "narration": "",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
+      "action": "火苗立起来，只有一粒米那么大。",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 火苗立起来，只有一粒米那么大。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 火苗立起来，只有一粒米那么大。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 24,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
       "shot_size": "特写",
-      "camera": "Static, no movement",
-      "action": "她说，陆青等着她往下说。",
+      "id": 24,
       "dialogue": [
         {
           "speaker": "陆青",
-          "text": "也没什么求你的。"
+          "text": "也没什么求你的。",
+          "os": false
         },
         {
           "speaker": "陆青",
-          "text": "这像缺了半张脸，怪可怜的。"
+          "text": "这像缺了半张脸，怪可怜的。",
+          "os": false
         }
       ],
       "narration": "",
+      "characters": [
+        "char_01"
+      ],
+      "scene": "scene_01",
+      "action": "她说，陆青等着她往下说。",
+      "camera": "Static, no movement",
       "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她说，陆青等着她往下说。 <d>[Chinese] 也没什么求你的。</d>; <d>[Chinese] 这像缺了半张脸，怪可怜的。</d> Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她说，陆青等着她往下说。 <Subject 1> 陆青 (S1) says in a young man’s voice, low and even, unhurried: <d>[Chinese]也没什么求你的。</d>; <Subject 1> 陆青 (S1) says in a young man’s voice, low and even, unhurried: <d>[Chinese]这像缺了半张脸，怪可怜的。</d>. Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 25,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "她没往下说。原来求人这件事，也可以什么都不求。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她没往下说。原来求人这件事，也可以什么都不求。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她没往下说。原来求人这件事，也可以什么都不求。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 26,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "香炉里头，那粒火苗一动不动地烧着。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 香炉里头，那粒火苗一动不动地烧着。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 香炉里头，那粒火苗一动不动地烧着。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 27,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "供桌上那汉子砍了一斧子。木屑飞下来，有一片落在火苗上。火苗晃了一下，却没灭。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 供桌上那汉子砍了一斧子。木屑飞下来，有一片落在火苗上。火苗晃了一下，却没灭。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 供桌上那汉子砍了一斧子。木屑飞下来，有一片落在火苗上。火苗晃了一下，却没灭。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "特写",
       "id": 28,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "特写",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "陆青感觉到了一样东西。像有人往他胸腔里塞进一口热气，热的，活的，堵在那儿。他试着朝门外了一眼。",
-      "dialogue": [
-        {
-          "speaker": "陆青",
-          "text": "看"
-        }
-      ],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 7,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 陆青感觉到了一样东西。像有人往他胸腔里塞进一口热气，热的，活的，堵在那儿。他试着朝门外了一眼。 <d>[Chinese] 看</d> Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 陆青感觉到了一样东西。像有人往他胸腔里塞进一口热气，热的，活的，堵在那儿。他试着朝门外了一眼。 Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 29,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "那只野狗正蹲在门槛外舔爪子。他心里想：绊一下。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 那只野狗正蹲在门槛外舔爪子。他心里想：绊一下。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 那只野狗正蹲在门槛外舔爪子。他心里想：绊一下。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 30,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "野狗站起来，前爪勾住门槛下一根草绳，整个翻了过去，脸栽进泥水坑里。它嗷了一声。陆青没忍住，心里笑出了声。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 8,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 野狗站起来，前爪勾住门槛下一根草绳，整个翻了过去，脸栽进泥水坑里。它嗷了一声。陆青没忍住，心里笑出了声。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 野狗站起来，前爪勾住门槛下一根草绳，整个翻了过去，脸栽进泥水坑里。它嗷了一声。陆青没忍住，心里笑出了声。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "近景",
       "id": 31,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "三天了，这是他头一回觉得这两个字还有点意思。",
-      "dialogue": [
-        {
-          "speaker": "旁白",
-          "text": "活着"
-        }
-      ],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 三天了，这是他头一回觉得这两个字还有点意思。 <d>[Chinese] 活着</d> Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 三天了，这是他头一回觉得这两个字还有点意思。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 32,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "梁上那汉子听见狗叫，扭头笑了一下。脚下一滑，竟然从供桌上摔了下去。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 5,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 梁上那汉子听见狗叫，扭头笑了一下。脚下一滑，竟然从供桌上摔了下去。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 梁上那汉子听见狗叫，扭头笑了一下。脚下一滑，竟然从供桌上摔了下去。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 33,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "摔得不重。可他手一撑，偏偏撑在自己刚砍下来的那半截梁上。那截梁滚了半圈，压住了他的脚。他叫了一声。门外没人进来。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 8,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 摔得不重。可他手一撑，偏偏撑在自己刚砍下来的那半截梁上。那截梁滚了半圈，压住了他的脚。他叫了一声。门外没人进来。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 摔得不重。可他手一撑，偏偏撑在自己刚砍下来的那半截梁上。那截梁滚了半圈，压住了他的脚。他叫了一声。门外没人进来。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 34,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_02"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "钱阿婆也没动。她只是看了看香炉。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 钱阿婆也没动。她只是看了看香炉。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 钱阿婆也没动。她只是看了看香炉。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 35,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_02"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "香炉里那粒火苗，比方才高了半寸。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 香炉里那粒火苗，比方才高了半寸。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 香炉里那粒火苗，比方才高了半寸。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 36,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_02"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "钱阿婆提起筐往外走。走到门口，她停住，回头看他。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 钱阿婆提起筐往外走。走到门口，她停住，回头看他。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 钱阿婆提起筐往外走。走到门口，她停住，回头看他。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 37,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
       "shot_size": "特写",
-      "camera": "Static, no movement",
+      "id": 37,
+      "dialogue": [],
+      "narration": "你这像，回头我给你描个脸。",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
       "action": "她说。",
-      "dialogue": [
-        {
-          "speaker": "旁白",
-          "text": "你这像，回头我给你描个脸。"
-        }
-      ],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她说。 <d>[Chinese] 你这像，回头我给你描个脸。</d> Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她说。 Off-screen narration: the narrator says in an off-screen voiceover: <d>[Chinese]你这像，回头我给你描个脸。</d> while the on-screen characters' lips remain completely closed. Camera: Static, no movement. Shot size: 特写.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 38,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "陆青在心里回了一句：行。你描。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 陆青在心里回了一句：行。你描。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 陆青在心里回了一句：行。你描。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 39,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "她转身跨门槛。就在那只脚落下去的时候，身后响了一声。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她转身跨门槛。就在那只脚落下去的时候，身后响了一声。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她转身跨门槛。就在那只脚落下去的时候，身后响了一声。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 40,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "供桌上的签筒晃了两下，往一边倒了。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 供桌上的签筒晃了两下，往一边倒了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 供桌上的签筒晃了两下，往一边倒了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 41,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "一根竹签从筒里滚出来，滚过桌面，掉在地上，滚到门槛前，停在她脚背上。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 5,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 一根竹签从筒里滚出来，滚过桌面，掉在地上，滚到门槛前，停在她脚背上。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 一根竹签从筒里滚出来，滚过桌面，掉在地上，滚到门槛前，停在她脚背上。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 42,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "她低下头，弯下腰，把签捡了起来。门外的雨光落进签身。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她低下头，弯下腰，把签捡了起来。门外的雨光落进签身。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她低下头，弯下腰，把签捡了起来。门外的雨光落进签身。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "近景",
       "id": 43,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "她捏着签的手，在半空里愣住了一瞬。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她捏着签的手，在半空里愣住了一瞬。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她捏着签的手，在半空里愣住了一瞬。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 44,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
       "shot_size": "近景",
-      "camera": "slow push-in, small amplitude",
+      "id": 44,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_01"
+      ],
+      "scene": "scene_01",
       "action": "然后她的脸，一点一点变了颜色。她抬起头，看了陆青一眼。那一眼里没有可怜了。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 然后她的脸，一点一点变了颜色。她抬起头，看了陆青一眼。那一眼里没有可怜了。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 然后她的脸，一点一点变了颜色。她抬起头，看了陆青一眼。那一眼里没有可怜了。 Camera: slow push-in, small amplitude. Shot size: 近景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 45,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "她把签塞进袖子，一句话没说，走了。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 她把签塞进袖子，一句话没说，走了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 她把签塞进袖子，一句话没说，走了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "远景",
       "id": 46,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "远景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "雨还在下，比方才小。梁上的水一滴一滴砸进空香炉里，砸在灰上，砸出很小的坑。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "slow push-in, small amplitude",
       "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 雨还在下，比方才小。梁上的水一滴一滴砸进空香炉里，砸在灰上，砸出很小的坑。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 雨还在下，比方才小。梁上的水一滴一滴砸进空香炉里，砸在灰上，砸出很小的坑。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 47,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "雨小下去的时候，天已经擦黑。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 雨小下去的时候，天已经擦黑。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 雨小下去的时候，天已经擦黑。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 48,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "那汉子早走了。梁横在供桌前，斧子忘在桌上。庙里只剩他一个。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 5,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 那汉子早走了。梁横在供桌前，斧子忘在桌上。庙里只剩他一个。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 那汉子早走了。梁横在供桌前，斧子忘在桌上。庙里只剩他一个。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 49,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "他不知道自己为什么会在这尊像里。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 他不知道自己为什么会在这尊像里。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 他不知道自己为什么会在这尊像里。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "中景",
       "id": 50,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
+      "scene": "scene_01",
       "action": "他也不知道那张写到一半的状子后来怎么样了。",
-      "dialogue": [],
-      "narration": "",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 他也不知道那张写到一半的状子后来怎么样了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 他也不知道那张写到一半的状子后来怎么样了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
+      "shot_size": "远景",
       "id": 51,
-      "scene": "scene_01",
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "远景",
-      "camera": "slow push-in, small amplitude",
+      "scene": "scene_01",
       "action": "签筒还倒着。散出来的签泡得发黑，长了霉，他看了三天，一根也不认得。只有刚才那根是新的。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 签筒还倒着。散出来的签泡得发黑，长了霉，他看了三天，一根也不认得。只有刚才那根是新的。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 52,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
-      "action": "签身发白，墨字是这一两天才落上去的，笔锋还带着毛。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 签身发白，墨字是这一两天才落上去的，笔锋还带着毛。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 53,
-      "scene": "scene_01",
-      "characters": [
-        "char_02"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
-      "action": "而那根签，现在在钱阿婆的袖子里。她走了。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 而那根签，现在在钱阿婆的袖子里。她走了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 54,
-      "scene": "scene_01",
-      "characters": [
-        "char_02"
-      ],
-      "shot_size": "中景",
-      "camera": "Static, no movement",
-      "action": "庙门上那张黄纸还贴着。最后一日，是今天。",
-      "dialogue": [],
-      "narration": "",
-      "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 庙门上那张黄纸还贴着。最后一日，是今天。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
-    },
-    {
-      "id": 55,
-      "scene": "scene_01",
-      "characters": [
-        "char_01"
-      ],
-      "shot_size": "远景",
       "camera": "slow push-in, small amplitude",
-      "action": "今天过完，这座庙就没了。他这尊像会被砸碎、垫路，或者当成一堆渣土倒进江里。",
-      "dialogue": [],
-      "narration": "",
       "duration": 6,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 今天过完，这座庙就没了。他这尊像会被砸碎、垫路，或者当成一堆渣土倒进江里。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 签筒还倒着。散出来的签泡得发黑，长了霉，他看了三天，一根也不认得。只有刚才那根是新的。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     },
     {
-      "id": 56,
-      "scene": "scene_01",
+      "shot_size": "中景",
+      "id": 52,
+      "dialogue": [],
+      "narration": "",
       "characters": [
         "char_01"
       ],
-      "shot_size": "中景",
+      "scene": "scene_01",
+      "action": "签身发白，墨字是这一两天才落上去的，笔锋还带着毛。",
       "camera": "Static, no movement",
-      "action": "他只有一粒火。一粒火，拦不住一把斧子。",
+      "duration": 4,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青（human）— 青年、男、青色布、标志：簪 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 签身发白，墨字是这一两天才落上去的，笔锋还带着毛。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "中景",
+      "id": 53,
       "dialogue": [],
       "narration": "",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
+      "action": "而那根签，现在在钱阿婆的袖子里。她走了。",
+      "camera": "Static, no movement",
       "duration": 4,
-      "mode": "ref2va",
-      "h3_prompt": "subject_definitions:\n<Subject 1> is 陆青 (identity and appearance are defined by the attached reference image; do not invent facial marks that the reference does not have).\n\nintegrated_multimodal_description:\n[Shot 1] 他只有一粒火。一粒火，拦不住一把斧子。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 而那根签，现在在钱阿婆的袖子里。她走了。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "中景",
+      "id": 54,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
+      "action": "庙门上那张黄纸还贴着。最后一日，是今天。",
+      "camera": "Static, no movement",
+      "duration": 4,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 庙门上那张黄纸还贴着。最后一日，是今天。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "远景",
+      "id": 55,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
+      "action": "今天过完，这座庙就没了。他这尊像会被砸碎、垫路，或者当成一堆渣土倒进江里。",
+      "camera": "slow push-in, small amplitude",
+      "duration": 6,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 今天过完，这座庙就没了。他这尊像会被砸碎、垫路，或者当成一堆渣土倒进江里。 Camera: slow push-in, small amplitude. Shot size: 远景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
+    },
+    {
+      "shot_size": "中景",
+      "id": 56,
+      "dialogue": [],
+      "narration": "",
+      "characters": [
+        "char_02"
+      ],
+      "scene": "scene_01",
+      "action": "他只有一粒火。一粒火，拦不住一把斧子。",
+      "camera": "Static, no movement",
+      "duration": 4,
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 钱阿婆（human）— 老年、女 —— 以附图为准，不许与同镜其它角色互换特征. Identity and appearance come from the attached reference image for THIS subject: do not invent marks the reference does not show, and never blend or swap features between subjects in this shot.\n\nintegrated_multimodal_description:\n[Shot 1] 他只有一粒火。一粒火，拦不住一把斧子。 Camera: Static, no movement. Shot size: 中景.\n\noverall_soundscape:\nquiet ambience matching the scene, no music\n\nnon_diegetic_music:\nN/A"
     }
   ]
 }

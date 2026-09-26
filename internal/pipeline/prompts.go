@@ -233,6 +233,29 @@ func EnsureChineseDialogue(prompt string) string {
 	return p
 }
 
+// EnsureVoiceoverClause 画外音镜次的"嘴唇闭合"兜底(幂等)。
+//
+// 依据:技能端产出的台词里 61% 是画外音(旁白/内心/系统音),而 v1 的提示词把它们
+// 与画内对白写得一模一样 —— H3 只看见一句 <d>[Chinese]…</d>,看不见"谁不许开口",
+// 于是让画面里的角色张嘴把旁白念了出来(用户报的「系统旁白,主角动嘴」)。
+//
+// 措辞照抄 internal/director 的官方式写法("...while the on-screen characters' lips
+// remain completely closed"),两侧同一句:技能端产出时写、平台这里兜底补,幂等可重复调用。
+// 判据是 project.VoiceoverClauseMarker,改文案必须保留那个串。
+func EnsureVoiceoverClause(sh *project.Shot) bool {
+	if sh == nil || !project.HasVoiceover(*sh) {
+		return false
+	}
+	if strings.Contains(sh.H3Prompt, project.VoiceoverClauseMarker) {
+		return false
+	}
+	sh.H3Prompt = strings.TrimRight(sh.H3Prompt, "\n") + "\n\n" +
+		"VOICEOVER (mandatory): every line flagged as voice-over in this shot is spoken off-screen — " +
+		"the on-screen characters' lips remain completely closed while that voice is heard; " +
+		"no on-screen character mouths those words, and the voice stays off-frame and disembodied."
+	return true
+}
+
 // LibraryPortraitPrompt 资产库侧(不持有项目上下文的路径:抽卡 / 自定义新建 / 重抽)
 // 的定妆照提示词:**按实体类型**补上取景、忠实度与画风块。
 //
@@ -261,6 +284,7 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 画面重新生成出油光,局部重绘会在脸上补一块写实皮肤。约束只写一处必然如此,
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
+	EnsureVoiceoverClause(shot) // 画外音镜次补"嘴唇闭合"(幂等,在装配点做一次)
 	return EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj))))
 }
 

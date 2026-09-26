@@ -108,9 +108,107 @@ func TestValidatePlanCatches(t *testing.T) {
 	}
 }
 
+// 语音层（契约 v2）：画外音与画内对白必须分得开。
+//
+// 用户报障原话：「系统旁白,主角动嘴?」—— 技能端 889 条台词里 543 条是旁白,
+// 却与画内对白写成同一个样子,模型只能找画面里的人来张嘴。下面这几条把这些
+// "可判的形态"钉死:光靠提示词措辞约束不住。
+func TestValidatePlanVoiceLayer(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(p *Plan)
+		level   string
+		wantSub string
+	}{
+		{
+			name: "旁白标签却没标 os",
+			mutate: func(p *Plan) {
+				p.Shots[0].Dialogue = []Line{{Speaker: "旁白", Text: "雨一直在下。"}}
+				p.Shots[0].Narration = ""
+			},
+			level: "fail", wantSub: "os=true",
+		},
+		{
+			name:    "系统音没标 os",
+			mutate:  func(p *Plan) { p.Shots[0].Dialogue = []Line{{Speaker: "系统", Text: "任务完成。"}} },
+			level:   "fail",
+			wantSub: "os=true",
+		},
+		{
+			name: "说话人不在本镜画面里",
+			mutate: func(p *Plan) {
+				p.Characters = append(p.Characters, Character{ID: "char_b", Name: "阿乙",
+					Kind: "human", Description: "另一个人", ImagePrompt: "p"})
+				p.Shots[0].Dialogue = []Line{{Speaker: "阿乙", Text: "我也不在画面里。"}}
+			},
+			level: "fail", wantSub: "不在本镜 characters",
+		},
+		{
+			name: "画外音镜提示词缺「嘴唇闭合」",
+			mutate: func(p *Plan) {
+				p.Shots[0].Dialogue = []Line{{Speaker: "旁白", Text: "雨一直在下。", OS: true}}
+				p.Shots[0].H3Prompt = "subject_definitions:\n<d>[Chinese]雨一直在下。</d>"
+			},
+			level: "warn", wantSub: "lips remain completely closed",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := samplePlan()
+			tc.mutate(p)
+			items := PlanIssuesText(ValidatePlan(p))
+			for _, it := range items {
+				if strings.Contains(it, tc.level) && strings.Contains(it, tc.wantSub) {
+					return
+				}
+			}
+			t.Fatalf("期望 %s 级命中 %q,实际:%v", tc.level, tc.wantSub, items)
+		})
+	}
+}
+
+// TestValidatePlanAcceptsProperVoiceover 合法的画外音不许被拦（门要证明它会拦，也要证明它不乱拦）。
+func TestValidatePlanAcceptsProperVoiceover(t *testing.T) {
+	p := samplePlan()
+	p.Shots[0].Dialogue = []Line{{Speaker: "旁白", Text: "雨一直在下。", OS: true}}
+	p.Shots[0].H3Prompt = "subject_definitions:\nOff-screen narration: the narrator says: " +
+		"<d>[Chinese]雨一直在下。</d> while the on-screen characters' lips remain completely closed"
+	issues := ValidatePlan(p)
+	for _, it := range issues {
+		if it.Level == "fail" {
+			t.Fatalf("合规画外音不该 fail：%s", it)
+		}
+	}
+	// 内心独白：人就在画面里，但那句话是心里说的 —— 合法，且不算"说话人不在画面"
+	p2 := samplePlan()
+	p2.Shots[0].Dialogue = []Line{{Speaker: "阿甲", Text: "行。", OS: true}}
+	for _, it := range PlanFails(ValidatePlan(p2)) {
+		t.Fatalf("内心独白不该 fail：%s", it)
+	}
+}
+
+// TestVoiceoverHelpers HasVoiceover / IsVoiceoverSpeaker 是两侧共用的判据。
+func TestVoiceoverHelpers(t *testing.T) {
+	if !IsVoiceoverSpeaker("旁白") || !IsVoiceoverSpeaker(" 系统 ") || IsVoiceoverSpeaker("阿甲") {
+		t.Fatal("画外音标签判据不对 —— 它会决定平台是否给镜头补「嘴唇闭合」")
+	}
+	sh := Shot{Dialogue: []Line{{Speaker: "阿甲", Text: "x", OS: true}}}
+	if !HasVoiceover(sh) {
+		t.Fatal("os=true 的镜次必须算画外音")
+	}
+	if HasVoiceover(Shot{Dialogue: []Line{{Speaker: "阿甲", Text: "x"}}}) {
+		t.Fatal("普通画内对白不该算画外音")
+	}
+	if !HasVoiceover(Shot{Narration: "旁白一句"}) {
+		t.Fatal("narration 非空即画外音")
+	}
+}
+
 // TestValidatePlanNotTooStrict 反向用例:几条"看起来可疑但其实合法"的写法不能被拦。
 //
 // 都是真实会出现的形态:纯空镜(无角色无台词)、t2va 纯文生镜、中文景别带修饰词。
+// 注意第 2 镜:它有旁白,所以提示词里**必须**有 <d> —— 否则那句旁白只是字幕,
+// H3 根本不会把它念出来(这正是 fail 规则要拦的,不是误拦)。
 func TestValidatePlanNotTooStrict(t *testing.T) {
 	p := samplePlan()
 	p.Shots = []Shot{
@@ -118,10 +216,26 @@ func TestValidatePlanNotTooStrict(t *testing.T) {
 			Action: "空庙的雨", Duration: 4, Mode: "t2va", H3Prompt: "empty temple in the rain"},
 		{ID: 2, Scene: "scene_room", Characters: []string{"char_a"}, ShotSize: "中近景",
 			Camera: "handheld", Action: "他抬头", Duration: 6, Mode: "ref2va",
-			Narration: "旁白一句。", H3Prompt: "subject_definitions: ..."},
+			Narration: "旁白一句。",
+			H3Prompt: "subject_definitions: ...\nOff-screen narration: the narrator says in an " +
+				"off-screen voiceover: <d>[Chinese]旁白一句。</d> while the on-screen characters' " +
+				"lips remain completely closed"},
 	}
 	if fails := PlanFails(ValidatePlan(p)); len(fails) != 0 {
 		t.Fatalf("合法的空镜/纯文生镜/t2va 不该被拒: %v", PlanIssuesText(fails))
+	}
+}
+
+// TestValidatePlanVoiceoverWithoutTag → fail:有旁白却没有任何 <d> 标记。
+//
+// 这是"配音丢了"的形态:平台后处理补不了(它不知道该往哪插 <d>),字幕有、声音没有。
+func TestValidatePlanVoiceoverWithoutTag(t *testing.T) {
+	p := samplePlan()
+	p.Shots[0].Dialogue = nil
+	p.Shots[0].Narration = "香炉是空的。"
+	p.Shots[0].H3Prompt = "subject_definitions:\n[Shot 1] the censer is empty."
+	if fails := PlanFails(ValidatePlan(p)); len(fails) == 0 {
+		t.Fatal("有旁白却没有任何 <d> 标记必须 fail —— 那句旁白不会被念出来")
 	}
 }
 

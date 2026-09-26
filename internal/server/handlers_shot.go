@@ -128,8 +128,17 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 // **静默改用户的方案 = 撒谎**,静默放过装不下的台词 = 成片截断。
 func (s *Server) planPostProcess(id string, plan *project.Plan) (details, overflow []string) {
 	_, details = director.FitDialogueDurations(plan)
+	voiceovers := 0
 	for i := range plan.Shots {
 		plan.Shots[i].H3Prompt = pipeline.EnsureChineseDialogue(plan.Shots[i].H3Prompt)
+		// 画外音镜次补"画面里的人嘴唇闭合"(v2 语音层)。技能端写对时这里是空转;
+		// 漏写时兜住 —— 否则模型会让画面里的角色张嘴把旁白念出来。
+		if pipeline.EnsureVoiceoverClause(&plan.Shots[i]) {
+			voiceovers++
+		}
+	}
+	if voiceovers > 0 {
+		s.opLog("🔈 %s:为 %d 个画外音镜次补上「嘴唇闭合」约束", id, voiceovers)
 	}
 	for _, sh := range plan.Shots {
 		if msg := director.DialogueOverflow(sh); msg != "" {

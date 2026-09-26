@@ -26,7 +26,17 @@ import (
 // 规则表只写"渲染会因此出错"的事 —— 品味问题不进契约(误拦的规则比没有规则更糟)。
 
 // PlanContractVersion 契约版本。技能端在 manifest.json 里写同名同值。
-const PlanContractVersion = 1
+//
+// v2(2026-09-26):语音层。v1 只有 dialogue[{speaker,text}],于是**画外音与画内对白
+// 在提示词里长得一模一样** —— 技能端把 61% 的台词判成"旁白"(889 条里 543 条),
+// 却仍然写成 <d>[Chinese]…</d> 塞在镜头描述里,模型只能找画面里的人来张嘴:
+// 用户报的「系统旁白,主角动嘴」就是这么来的。v2 给每句台词加一个语义位
+// (Line.OS:画外音,画面里的人不许张嘴),并把它写进规则表 —— 光靠提示词措辞
+// 约束不住,机器可判的必须在契约里。
+//
+// **改版本 = 两侧同改同提交**;旧包(v1)在入口被拒收并提示重建(技能端 0.2 秒),
+// 因为 v1 包的语音层本身就是错的,放进去等于把"主角替旁白动嘴"渲成成片。
+const PlanContractVersion = 2
 
 // 与 internal/director/dialogue.go 同源的常量。
 //
@@ -44,6 +54,34 @@ const (
 // PlanShotSizes 景别白名单(中文)。平台按 `strings.Contains` 判,未知景别按"保留其它角度"
 // 处理(见 pipeline.wantsAnglesStrip),所以未知只 warn 不 fail。
 var PlanShotSizes = []string{"远景", "全景", "中景", "中近景", "近景", "特写"}
+
+// VoiceoverSpeakers 画外音的"说话人"写法(无人称旁白、系统音、纯画外)。
+//
+// 与 internal/compose 的字幕逻辑同源:它把 speaker=="旁白" 的行按旁白排版(不写"旁白:")。
+// 这里扩到一组:系统提示音/画外音同样不是画面里的某个人在说话。
+var VoiceoverSpeakers = []string{"旁白", "系统", "画外音", "内心"}
+
+// IsVoiceoverSpeaker 说话人写的是"画外音标签"而不是某个角色名。
+func IsVoiceoverSpeaker(speaker string) bool {
+	s := strings.TrimSpace(speaker)
+	if s == "" {
+		return false
+	}
+	for _, v := range VoiceoverSpeakers {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// VoiceoverClauseMarker 画外音子句的幂等判据(改文案必须保留这个串,否则会重复叠加)。
+//
+// 措辞照抄 internal/director 的官方写法(它已按 MiniMax 官方 §4.4 校过):
+// 「The narrator (S1) says in an off-screen voiceover: <d>[Chinese]…</d> while the
+// on-screen characters' lips remain completely closed.」——两侧写同一句,
+// 免得"技能端说嘴唇闭合、平台说别的"。
+const VoiceoverClauseMarker = "lips remain completely closed"
 
 // Issue 一条契约问题。Level: "fail"(拒收) / "warn"(收但提示)。
 type Issue struct {
@@ -72,6 +110,16 @@ func PlanIssuesText(issues []Issue) []string {
 		out = append(out, it.String())
 	}
 	return out
+}
+
+// HasVoiceover 本镜是否有画外音(旁白标签 / os=true / narration 非空)。
+func HasVoiceover(sh Shot) bool {
+	for _, l := range sh.Dialogue {
+		if l.OS || IsVoiceoverSpeaker(l.Speaker) {
+			return true
+		}
+	}
+	return strings.TrimSpace(sh.Narration) != ""
 }
 
 // NeededShotSeconds 该镜把台词(含旁白)完整说清所需秒数(向上取整,带下限)。
@@ -191,13 +239,69 @@ func ValidatePlan(p *Plan) []Issue {
 					s, strings.Join(PlanShotSizes, "/"))
 			}
 		}
+		// ── 语音层(v2)────────────────────────────────────────────────────
+		//
+		// 这三条是"配音错"的可判形态。用户报的是「系统旁白,主角动嘴?」——
+		// 提示词措辞约束不住它(模型只看见一句 <d>),所以把机器判得出来的部分
+		// 写成 fail:嘴巴开在谁身上,由"这句话是谁说的、他在不在画面里"决定。
+		charInShot := map[string]bool{}
+		for _, cid := range sh.Characters {
+			charInShot[cid] = true
+		}
 		for j, l := range sh.Dialogue {
+			where := fmt.Sprintf("%s.dialogue[%d]", where, j)
 			if strings.TrimSpace(l.Text) == "" {
-				add("warn", fmt.Sprintf("%s.dialogue[%d]", where, j), "台词文本为空")
+				add("warn", where, "台词文本为空")
+				continue
 			}
-			if strings.TrimSpace(l.Speaker) == "" {
-				add("warn", fmt.Sprintf("%s.dialogue[%d]", where, j), "台词没有说话人")
+			name := strings.TrimSpace(l.Speaker)
+			if name == "" {
+				add("warn", where, "台词没有说话人")
+				continue
 			}
+			if IsVoiceoverSpeaker(name) {
+				// 画外音标签(旁白/系统/画外音/内心):必须是 os=true。
+				// 否则平台按画内台词处理 → 模型在画面里找个角色张嘴说旁白。
+				if !l.OS {
+					add("fail", where,
+						"说话人是画外音标签 %q 却没标 os=true —— 渲染会当画内台词处理,"+
+							"让画面里的人张嘴替旁白说话(用户报的「系统旁白,主角动嘴」)", name)
+				}
+				continue
+			}
+			// 说话人是具体角色:必须在画面里(os=false 时)。
+			if !l.OS {
+				found := false
+				for _, ch := range p.Characters {
+					if ch.ID == name || ch.Name == name {
+						found = true
+						if !charInShot[ch.ID] {
+							add("fail", where,
+								"说话人「%s」不在本镜 characters 里 —— 画面里没有他,"+
+									"模型会随便找个人动嘴(要么把他加进本镜,要么标 os=true 当画外音)", ch.Name)
+						}
+						break
+					}
+				}
+				if !found {
+					add("warn", where, "说话人 %q 不在角色表里(只有画外音标签可以这么写)", name)
+				}
+			}
+		}
+		// 有台词/旁白却连 <d> 都没有 → fail:平台后处理补不了(它不知道该往哪插 <d>),
+		// H3 会即兴挑语言,成片是听不懂的鸟语。
+		// 只是**缺 [Chinese] 标记**则归 warn —— 后处理 EnsureChineseDialogue 会把每个 <d>
+		// 都补成 <d>[Chinese],那是修复得了的事,不该拒收(误拦比漏拦更糟)。
+		if (len(sh.Dialogue) > 0 || strings.TrimSpace(sh.Narration) != "") &&
+			!strings.Contains(sh.H3Prompt, "<d>") {
+			add("fail", where,
+				"本镜有台词/旁白,h3_prompt 里却没有任何 <d> 标记 —— 成片会说成听不懂的话")
+		}
+		// 画外音镜:提示词里必须有"嘴唇闭合"子句(平台后处理会补,但产出侧就该写对)。
+		if HasVoiceover(sh) && !strings.Contains(sh.H3Prompt, VoiceoverClauseMarker) {
+			add("warn", where,
+				"本镜有画外音但 h3_prompt 没写「%s」—— 平台后处理会补齐,产出侧写对更稳",
+				VoiceoverClauseMarker)
 		}
 		// 台词装不下:平台侧会抬时长(最多到上限),但抬到顶仍不够时成片会**截断**,
 		// 这是"配音不完整"的老病根,所以在入口就如实报出来。
