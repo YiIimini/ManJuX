@@ -48,6 +48,20 @@ type scriptSceneView struct {
 	In   int    `json:"in"`
 }
 
+// scriptPropView 道具卡(用户 2026-09-26:「在小说库的弹窗里新增 道具 TAG」)。
+//
+// 技能侧的字段是逐步加的:老包只有 en(英文外观短语),新包会有 description 与
+// image_prompt —— 这里**都收、都原样带出去**,缺哪个就不显示哪个,不让前端为了
+// 一个还没吐出来的字段去猜。
+type scriptPropView struct {
+	ID     string `json:"id"`
+	Name   string `json:"name"`
+	EN     string `json:"en,omitempty"`
+	Desc   string `json:"desc,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	In     int    `json:"in"` // 出现在几集里
+}
+
 // handleNovelScript GET /api/novels/script?path=<书目录>[&episode=<包目录>]
 //
 // 小说库详情弹窗的「剧本脚本 / 角色 / 场景」数据源(2026-09-26 用户要求:
@@ -83,8 +97,10 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 	eps := make([]scriptEpView, 0, len(pkgs))
 	chars := map[string]*scriptCharView{}
 	scenes := map[string]*scriptSceneView{}
+	props := map[string]*scriptPropView{}
 	var order []string // 角色/场景的首次出现顺序(池子顺序是书里的设定顺序,别按字典排乱)
 	var scOrder []string
+	var prOrder []string
 
 	for _, pkg := range pkgs {
 		plan := loadPlanLenient(pkg)
@@ -113,10 +129,23 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 			scenes[key] = &scriptSceneView{ID: sc.ID, Name: sc.Name, Desc: sc.Description, In: 1}
 			scOrder = append(scOrder, key)
 		}
+		// 道具:按 ID 去重(与角色/场景同一套口径 —— 技能侧的池子是**全书共享**的
+		// _pool.json,id 跨集稳定,不会把两集的不同道具并成一条)
+		for _, p := range plan.Props {
+			key := orDefault(p.ID, p.Name)
+			if v, ok := props[key]; ok {
+				v.In++
+				continue
+			}
+			props[key] = &scriptPropView{ID: p.ID, Name: p.Name, EN: p.EN,
+				Desc: p.Description, Prompt: p.ImagePrompt, In: 1}
+			prOrder = append(prOrder, key)
+		}
 	}
 	out := map[string]any{
 		"found": true, "root": bs.Root, "kind": bs.Kind, "book": bs.Book, "version": bs.Version,
 		"episodes": eps, "characters": orderChars(chars, order), "scenes": orderScenes(scenes, scOrder),
+		"props": orderProps(props, prOrder),
 	}
 	// 按需取某一集的镜头明细
 	if want := strings.TrimSpace(r.URL.Query().Get("episode")); want != "" {
@@ -179,6 +208,16 @@ func orderChars(m map[string]*scriptCharView, order []string) []*scriptCharView 
 
 func orderScenes(m map[string]*scriptSceneView, order []string) []*scriptSceneView {
 	out := make([]*scriptSceneView, 0, len(m))
+	for _, k := range order {
+		if v, ok := m[k]; ok {
+			out = append(out, v)
+		}
+	}
+	return out
+}
+
+func orderProps(m map[string]*scriptPropView, order []string) []*scriptPropView {
+	out := make([]*scriptPropView, 0, len(m))
 	for _, k := range order {
 		if v, ok := m[k]; ok {
 			out = append(out, v)

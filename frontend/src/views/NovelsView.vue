@@ -710,6 +710,31 @@ function onCardCmd(cmd, n) {
               </div>
             </div>
           </el-tab-pane>
+
+          <!-- ⑤ 道具(用户 2026-09-26:「在小说库的弹窗里新增 道具 TAG」)。
+               技能侧的字段是逐步加的:老包只有 en(英文外观短语),新包才会有
+               description / image_prompt —— 有什么显示什么,不为了还没吐出来的字段留空壳。 -->
+          <el-tab-pane :label="`道具${script?.props ? '（' + script.props.length + '）' : ''}`" name="props">
+            <div class="overflow-y-auto" :style="{ height: dlgH - 150 + 'px' }">
+              <div v-if="!script?.props?.length" class="text-xs py-6 text-center" style="color:var(--mx-text3)">
+                这本书的脚本里没有道具卡(技能侧输出道具之前,这一栏是空的)
+              </div>
+              <div v-for="p in (script?.props || [])" :key="p.id || p.name" class="card-item">
+                <div class="flex items-center gap-2">
+                  <b class="text-sm">{{ p.name }}</b>
+                  <span class="timecode" style="font-size:10px">出现 {{ p.in }} 集</span>
+                  <span class="timecode" style="font-size:10px">{{ p.id }}</span>
+                </div>
+                <div v-if="p.desc" class="text-xs mt-1" style="white-space:pre-wrap;color:var(--mx-text2)">{{ p.desc }}</div>
+                <div v-else-if="p.en" class="text-xs mt-1" style="white-space:pre-wrap;color:var(--mx-text2)">{{ p.en }}</div>
+                <details v-if="p.prompt" class="mt-1">
+                  <summary class="text-xs" style="cursor:pointer;color:var(--mx-text3)">道具图提示词</summary>
+                  <div class="text-xs mt-1" style="white-space:pre-wrap;color:var(--mx-text3)">{{ p.prompt }}</div>
+                </details>
+                <div v-else class="text-xs mt-1" style="color:var(--mx-text3)">技能侧还没输出这件道具的提示词</div>
+              </div>
+            </div>
+          </el-tab-pane>
         </el-tabs>
       </template>
       <template #footer>

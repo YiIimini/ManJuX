@@ -98,6 +98,22 @@ type Scene struct {
 	ImagePrompt string `json:"image_prompt"`
 }
 
+// Prop 道具卡。
+//
+// 技能侧原来只给 {id, name, en}(英文外观短语),口径是"道具只走文字描述、不给参考图";
+// 用户 2026-09-26 定调改成**提示词也由技能侧直出**,所以这里预留 description /
+// image_prompt 两个字段 —— 技能侧还没吐出来的存量包照旧能读(en 是老的 look 短语)。
+//
+// ⚠ 之前 Plan 里**根本没有 props 字段**:技能侧写进 plan.json 的道具被平台静默丢弃,
+// 导入后若平台再重写这份 plan.json,道具信息就永久没了。字段收下来才算真读到了。
+type Prop struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	EN          string `json:"en,omitempty"`           // 英文外观短语(技能侧早期的 look)
+	Description string `json:"description,omitempty"`  // 中文外观/材质/配色描述
+	ImagePrompt string `json:"image_prompt,omitempty"` // 道具文生图提示词(英文)
+}
+
 // Plan LLM 直出的完整分镜方案。
 type Plan struct {
 	Title      string      `json:"title"`
@@ -105,6 +121,7 @@ type Plan struct {
 	Style      string      `json:"style"` // 视觉风格(英文,注入每镜提示词)
 	Characters []Character `json:"characters"`
 	Scenes     []Scene     `json:"scenes"`
+	Props      []Prop      `json:"props,omitempty"`
 	Shots      []Shot      `json:"shots"`
 }
 
