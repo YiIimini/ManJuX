@@ -481,6 +481,42 @@ func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.
 	return PortraitPromptForProject(proj, plan, ch)
 }
 
+// SceneImagePrompt **场景参考图的唯一装配点**(与角色侧的 PortraitPrompt 对称)。
+//
+// 【为什么必须收口(2026-09-26 乙1,本批唯一未修的高危)】场景图此前**四条路径各自
+// 把 LLM 的 image_prompt 原样丢给图像模型**:资产阶段的 check、渲染前的 backfillAssets、
+// 服务端上传入库、服务端视频截帧入库。后果是**一部剧里两套画风** —— 角色走
+// styleExpand(风格串 + 介质块 + 忠实度),场景走裸提示词:上游风格是国漫二维,
+// 人物的定妆照是赛璐璐平涂,而(空)景图可能被画成写实摄影或另一套介质。
+// 而场景图同样是 H3 的参考图之一,**参考图与成片不在同一个视觉世界**时,模型只能
+// 二选一地糊(2026-09-24「定妆照与成片不在同一个视觉世界」那条根因的图像版)。
+//
+// 与角色侧的对称关系(这就是它能复用同一套守卫的原因):
+//   - 同样注入**全片风格串**(plan.Style,经 styleExpand 具象化);
+//   - 同样复用 styleExpand 里的**写实守卫**:上游点名写实/3D 时不叠"二维/赛璐璐"
+//     介质块(同一段提示词里两个介质打架,模型只会二选一地糊);
+//   - 同样只有一个幂等判据(KindScene 的 SheetMarker,即 SCENE FIDELITY)。
+//
+// 与角色侧**不同**的只有两处:取景走环境图/空场(见 entity_prompts.go 的 KindScene),
+// 忠实度落在空间结构与材质而不是脸。
+//
+// 幂等:同一段提示词重复装配不会叠加(带过 SCENE FIDELITY 就直接返回),
+// 所以"资产阶段装配一次、渲染前补齐再装配一次"是安全的。
+func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scene) string {
+	prompt := sc.ImagePrompt
+	prof := EntityProfileOf(KindScene)
+	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
+		return prompt // 已经是本装配点的产物:不重复叠加
+	}
+	if prof.RewriteSheetFraming {
+		// 剥掉 LLM 从人像模板抄来的取景(plain background / upper-body framing /
+		// portrait …),换成"整块地方的空场环境图" —— 与其余非人类型同一套做法。
+		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
+	}
+	prompt += styleExpand(planStyle(plan), facesOnOf(proj), KindScene)
+	return prompt
+}
+
 // sheetFramingWords LLM 写在 image_prompt 尾部的人像取景短语。
 //
 // 为什么要逐个剥掉而不是"整句替换":这些短语散落在语句中(且大小写/连字符写法不一),
@@ -689,7 +725,16 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 	styleIsPhotoreal := photorealRequested(rawStyle)
 	switch {
 	case styleIsPhotoreal:
-		if has3D {
+		if kind == KindScene {
+			// 场景不能要"人像 + 真实皮肤质感":摄影机对着的是一块地方。
+			// 沿用同一条守卫语义(写实/3D 由上游说了算),只把落点从人物表面换成环境材质。
+			if has3D {
+				terms = append(terms, "next-generation 3D CG environment render, stylized sculpted forms, "+
+					"matte dull even finish across every surface")
+			} else {
+				terms = append(terms, "photorealistic cinematic environment and set, realistic materials and natural light")
+			}
+		} else if has3D {
 			terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
 				"matte powdery skin shading with a dull even finish, collectible virtual figure look")
 		} else {
@@ -710,7 +755,10 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 		// 2026-09-24:原措辞 "smooth poreless synthetic skin"(光滑无孔合成皮肤)正是
 		// 用户报的"人物油腻"的一半来源 —— 无孔 = 塑料 = 皮脂高光。改成哑光粉质;
 		// 同时**去掉皮肤/五官类词汇对非人类型的影响**:器物只有材质,没有皮肤。
-		if kind == KindHuman || kind == KindSpiritPet || kind == KindBeast || kind == KindChibi {
+		if kind == KindScene {
+			terms = append(terms, "next-generation 3D CG environment and set render, stylized sculpted forms, "+
+				"matte dull even finish across every surface")
+		} else if kind == KindHuman || kind == KindSpiritPet || kind == KindBeast || kind == KindChibi {
 			terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
 				"matte powdery skin shading with a dull even finish, collectible virtual figure look")
 		} else {
@@ -721,13 +769,21 @@ func styleExpand(rawStyle string, facesOn bool, kind EntityKind) string {
 			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
 		}
 	case hasAnime:
-		terms = append(terms, "Chinese donghua (animation) character design, anime-influenced stylized features, clean cel shading")
+		if kind == KindScene {
+			terms = append(terms, "Chinese donghua (animation) painted background art, anime-influenced stylized environment, clean cel shading")
+		} else {
+			terms = append(terms, "Chinese donghua (animation) character design, anime-influenced stylized features, clean cel shading")
+		}
 	case hasComic:
 		terms = append(terms, "American comic-book illustration, bold ink outlines, saturated flat colors, halftone dots")
 	case hasInk:
 		terms = append(terms, "Chinese ink-wash painting style, expressive brush outlines, negative space")
 	case hasReal:
-		terms = append(terms, "photorealistic cinematic portrait, realistic skin texture") // 真人剧是合法风格(需关掉角色动漫化)
+		if kind == KindScene {
+			terms = append(terms, "photorealistic cinematic environment and set, realistic materials and natural light")
+		} else {
+			terms = append(terms, "photorealistic cinematic portrait, realistic skin texture") // 真人剧是合法风格(需关掉角色动漫化)
+		}
 		stylized = false
 	default:
 		// 无已知风格关键词:不强行改写用户的风格描述,**但类型忠实度与画风块必须留下** ——

@@ -171,6 +171,8 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	if length <= 0 {
 		length = 124 // 17k+5 网格,约 5.2 秒
 	}
+	// 本次转身视频的画幅(甲2):与定妆照同尺寸,抽帧后才与主图同比例。
+	frameW, frameH := turnaroundFrameSize(o.MasterPath)
 	prof := EntityProfileOf(o.Kind)
 	kindLabel := EntityKindLabel(NormalizeEntityKind(string(o.Kind)))
 	if NormalizeEntityKind(string(o.Kind)) == "" {
@@ -207,7 +209,9 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 			Prompt:    prof.TurnaroundPrompt(o.Name, o.Prompt, TurnaroundMediumBlock(o.Kind, o.Realistic)),
 			Mode:      "ref2va",
 			RefImages: []engine.RefImage{{Kind: "character", Path: o.MasterPath}},
-			Width:     832, Height: 1248,
+			// 画幅 = 定妆照自身的像素(甲2):转身视频与定妆照同比例,抽帧才能直接拼
+			// (旧实现写死 832×1248,与 9:16 的定妆照不同比例,拼图只能靠裁切对齐)。
+			Width: frameW, Height: frameH,
 			Length:    length,
 			Seed:      seed,
 			Steps:     o.Steps,
@@ -464,12 +468,22 @@ var tidyTrailingJunk = map[string]bool{
 	"thick": true, "thin": true, "sharp": true, "round": true, "flat": true, "deep": true,
 }
 
-// hstackImages 横向拼接多张图(ffmpeg hstack):统一缩放到同一高度后并排,
+// hstackImages 横向拼接多张图(ffmpeg hstack):每格统一到**首图(定妆照)的像素**后并排,
 // 得到一张转台图。
+//
+// 【为什么必须"锁框"而不是只锁高度(甲2)】旧实现是 `scale=-1:1248`:只统一高度、
+// 宽度各按自己的比例算。于是**单格比例可以互不相同** —— 定妆照是 9:16(768×1344),
+// 而从 2:3 的转身视频抽出来的角度帧是 832×1248,两者并排进同一张拼图后:定妆照那格
+// 被缩成 713×1248、角度帧那格是 832×1248。模型看到的"同一张参考图里每格都不一样宽",
+// 拼合图的格间一致性(以及"左起第一格就是正面照"这条约定)就被稀释了。
+// 现在统一成"缩放到覆盖 + 居中裁切"(scale=…:force_original_aspect_ratio=increase,crop),
+// 既不改单格比例,也不拉伸 —— 每格恰好是定妆照的尺寸。
 func hstackImages(ctx context.Context, f *ff.FF, inputs []string, out string) error {
 	if len(inputs) < 2 {
 		return fmt.Errorf("至少需要两张图才能拼接")
 	}
+	// 首图 = 定妆照(两个调用点都把它放在第一格):它已是项目画幅,就是本拼图的框。
+	fw, fh := stripFrameBox(imagePixelSizeOrZero(inputs[0]))
 	args := []string{"-y", "-hide_banner", "-loglevel", "error"}
 	for _, in := range inputs {
 		args = append(args, "-i", in)
@@ -477,13 +491,44 @@ func hstackImages(ctx context.Context, f *ff.FF, inputs []string, out string) er
 	filters := make([]string, 0, len(inputs)+1)
 	refs := ""
 	for i := range inputs {
-		filters = append(filters, fmt.Sprintf("[%d:v]scale=-1:1248[v%d]", i, i))
+		filters = append(filters, fmt.Sprintf(
+			"[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d[v%d]",
+			i, fw, fh, fw, fh, i))
 		refs += fmt.Sprintf("[v%d]", i)
 	}
 	filters = append(filters, fmt.Sprintf("%shstack=inputs=%d[out]", refs, len(inputs)))
 	args = append(args, "-filter_complex", strings.Join(filters, ";"), "-map", "[out]", "-frames:v", "1", out)
 	_, err := f.Run(ctx, args...)
 	return err
+}
+
+// turnaroundFrameSize 转身视频的**渲出色度** = 定妆照自身的像素(定妆照现已等于成片画幅)。
+//
+// 旧实现写死 832×1248:定妆照一旦是 768×1344(9:16),转身视频仍按 2:3 出图,
+// 抽出来的角度帧与定妆照**不同比例**,拼图时只能靠裁切对齐(见 hstackImages)——
+// 而裁切 2:3 → 9:16 会切掉四分之一画面宽度,角色的手臂/道具可能被切出画面。
+// 读不到定妆照尺寸时回落到平台默认画幅(不猜)。
+func turnaroundFrameSize(masterPath string) (int, int) {
+	return stripFrameBox(imagePixelSizeOrZero(masterPath))
+}
+
+// stripFrameBox 视图条里**单格**的统一尺寸:取首图(定妆照)的像素;
+// 读不到(文件缺失/格式不认识)时用平台默认画幅 —— 宁可退化到出厂口径,
+// 也不要拿一个猜出来的框去裁用户的参考图。
+func stripFrameBox(w, h int) (int, int) {
+	if w > 0 && h > 0 {
+		return w, h
+	}
+	return DefaultAssetWidth, DefaultAssetHeight
+}
+
+// imagePixelSizeOrZero 读图片宽高,失败返回 (0,0)(调用方据此走默认口径)。
+func imagePixelSizeOrZero(path string) (int, int) {
+	w, h, err := imagePixelSize(path)
+	if err != nil {
+		return 0, 0
+	}
+	return w, h
 }
 
 // RelatedSuffixName 由关联图文件名推导「在项目侧应该叫什么」:把主名前缀换成

@@ -254,6 +254,10 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/projects/{id}/assets/{assetID}/frame-apply", s.handleAssetFrameApply)
 	m.HandleFunc("DELETE /api/projects/{id}/assets/{assetID}", s.deleteAsset)
 	m.HandleFunc("GET /api/projects/{id}/files/{path...}", s.serveProjectFile)
+	// 单镜云端 2K 产物:只导出(列出 + 按文件名取回)。它**不进镜头清单、不参与合成**,
+	// 成片里这一镜仍是 768p —— 见 handlers_outputs_2k.go 的说明(乙7 选项 A)。
+	m.HandleFunc("GET /api/projects/{id}/outputs/2k", s.listShot2KOutputs)
+	m.HandleFunc("GET /api/projects/{id}/outputs/2k/{name}", s.serveShot2KOutput)
 	m.HandleFunc("GET /api/events", s.events)
 	m.HandleFunc("POST /api/open", s.openInExplorer)
 	m.HandleFunc("POST /api/cleanup", s.handleCleanup)

@@ -34,7 +34,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", notice)
 	}
 
-	// Krea-2 自动生成缺失参考图(角色竖幅半身 832×1248;场景按项目画幅方向)
+	// 自动生成缺失参考图(定妆照/场景图 = 项目的成片画幅,见 assetImageSize:
+	// 参考图与成片同比例,是"构图漂移"的第一道闸)
 	var comfyGen engine.Engine
 	if p.Source == "krea2" {
 		eng, err := c.reg.Get("comfy")
@@ -179,7 +180,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt, "")
+		// 场景提示词走**唯一装配点**(注入全片风格串 + 环境空场取景):
+		// 直接把 sc.ImagePrompt 丢给图像模型 = 角色一套画风、场景另一套风格
+		// (2026-09-26 乙1,四条出图路径必须同源)。
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "")
 	}
 
 	// Q 版形象(chibi):主定妆照就绪的角色同步生成 Q 版,内心活动镜头的表达素材。
@@ -299,13 +303,40 @@ func kindLabel(kind string) string {
 
 // ---------- 阶段三:render ----------
 
-func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string) (string, error) {
-	w, h := 832, 1248 // 角色半身竖幅
-	if kind == "scenes" {
-		if proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
-			w, h = 1248, 832
-		}
+// 资产/定妆照的尺寸口径缺省值:与项目 render 的出厂画幅一致(9:16)。
+const (
+	DefaultAssetWidth  = 768
+	DefaultAssetHeight = 1344
+)
+
+// assetImageSize 资产图(定妆照 / 场景图 / 道具图)的生成尺寸 = **项目的成片画幅**。
+//
+// 【为什么要改(甲2)】旧实现写死 832×1248(约 2:3),而成片是 768×1344(9:16):
+// 参考图与成片**比例不一致**,H3 拿一张 2:3 的参考去渲 9:16 的画面,只能自行裁切或
+// 拉伸 —— 构图漂移(人脸被拉宽、头顶被切)从第一帧就埋下了,而界面上看不出任何异常。
+// 尺寸与成片对齐后,参考图与画面同比例,模型不需要猜。
+//
+// 【后果必须说清】尺寸一变,**已有的定妆照/场景图就作废了**(画面内容会变),
+// 这是预期行为(宁可贵一次,不要长期漂移):要拿到新比例的参考图,存量项目得重出资产
+// (资产详情里的「重新生成」或删掉重跑资产阶段)。资产表里的 Fingerprint 是**内容指纹**,
+// 重出后自动更新,不存在"旧图被判成新图"的窗口。
+//
+// 场景不再单独"按项目方向翻转":项目的 Width/Height 本身就是成片方向,直接使用即可
+// (旧实现给横向项目翻出 1248×832,那是与 2:3 主图配套的历史写法)。
+func assetImageSize(proj *project.Project) (int, int) {
+	if proj == nil {
+		return DefaultAssetWidth, DefaultAssetHeight
 	}
+	rp := proj.Config.Params.Render
+	if rp.Width <= 0 || rp.Height <= 0 {
+		// 老项目/技能端导入包可能没有 render 参数(读盘兜底见 project.ensureDefaultParams)
+		return DefaultAssetWidth, DefaultAssetHeight
+	}
+	return rp.Width, rp.Height
+}
+
+func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string) (string, error) {
+	w, h := assetImageSize(proj)
 	safe := director.SanitizeForCache(kind + "_" + id)
 	out := filepath.Join(c.store.Dir(proj.ID), "assets", kind, safe+".png")
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
@@ -705,7 +736,8 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		if !need.wantsScene(sc.ID) {
 			continue
 		}
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, sc.ImagePrompt, "")
+		// 与资产阶段同源:渲染前补齐也必须走场景装配唯一实现点(见 StageAssets 里的说明)。
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "")
 	}
 	if len(list) == 0 {
 		return true

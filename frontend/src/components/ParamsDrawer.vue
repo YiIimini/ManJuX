@@ -2,6 +2,7 @@
 import { G, api, refreshProject } from '../store'
 import { computed, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { GRADE_OPTIONS, gradeOf, seamResetOf, seamResetSummary, cloudSeedWarning } from '../renderHints'
 
 const visible = computed({
   get: () => !!G.paramsDrawer,
@@ -34,7 +35,23 @@ watch(stageId, () => {
   // 若不在这里兜底成 true,抽屉一开就会把用户亲手关掉(false)的开关也显示成开。
   form.script.stylized_faces = form.script.stylized_faces !== false
   form.assemble.denoise = form.assemble.denoise !== false
+  // 电影调色档(assemble.grade)与接缝重置间隔(render.seam_reset_every):
+  // 这两个键是后加的,存量项目快照里没有 —— 不在这里兜底,下拉会显示空白、
+  // 数字框会显示成空,而保存是**整份快照回写**,于是空值被写进项目参数,
+  // 界面上看着像坏了(后端还得再兜一次)。归一化规则见 renderHints.js。
+  form.assemble.grade = gradeOf(form)
+  form.render.seam_reset_every = seamResetOf(form)
 }, { immediate: true })
+
+// 调色档说明:跟着当前选项走(选了才知道这一档到底做什么)
+const gradeDesc = computed(() =>
+  GRADE_OPTIONS.find(g => g.key === form.assemble.grade)?.desc || '')
+
+// 接缝重置间隔的人话说明
+const seamSummary = computed(() => seamResetSummary(form.render.seam_reset_every))
+
+// 云端 + 固定 seed = 不可复现(乙9):条件与文案见 renderHints.cloudSeedWarning
+const cloudSeedNote = computed(() => cloudSeedWarning(form.render.engine, form.render.seed))
 
 const titles = {
   script: '剧本分镜 · 调优',
@@ -190,7 +207,11 @@ async function save() {
         </el-form-item>
         <el-form-item label="Seed(0=每镜随机;固定值=全片画风一致)">
           <el-input-number v-model="form.render.seed" :min="0" :max="2147483647" style="width:100%" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            本地 ComfyUI 下同一提示词 + 同一 seed 能复现同一镜;云端引擎不吃这个参数(见下)。
+          </div>
         </el-form-item>
+        <el-alert v-if="cloudSeedNote" type="warning" :closable="false" :title="cloudSeedNote" />
         <el-form-item label="加速档(质量档=Acc-8Step,人物质感/清晰度显著优于Turbo,慢约20%)">
           <el-select v-model="form.render.accel">
             <el-option value="" label="Turbo 均衡(默认,官方4步蒸馏)" />
@@ -203,6 +224,14 @@ async function save() {
         </el-form-item>
         <el-form-item label="镜间连续接缝(MotionContext 22帧;仅本地引擎;同场景镜头更连贯)">
           <el-switch v-model="form.render.seam" />
+        </el-form-item>
+        <el-form-item label="接缝重置间隔(0/1=每场重置;>1=每 N 镜重置)">
+          <el-input-number v-model="form.render.seam_reset_every" :min="0" :max="60" style="width:100%" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            换场 / 换人会自动断开接缝(钉进下一镜的那 22 帧本来就是上一镜的内容,接上去画面会串);
+            这里再给一条兜底:接缝是逐链累积误差的,链越长漂移越明显,填 N>1 就每 N 镜强制重置一次。
+          </div>
+          <div class="text-xs mt-1" style="color:var(--mx-amber-hi)">{{ seamSummary }}</div>
         </el-form-item>
       </el-form>
     </div>
@@ -261,6 +290,14 @@ async function save() {
           <el-switch v-model="form.assemble.denoise" />
           <div class="text-xs mt-1" style="color:var(--mx-text3)">
             默认开。成片响度按两遍法归一(先测量再线性增益),不会逐帧抽气;镜间音频切点会自动落在静音上,不再切掉台词尾巴。
+          </div>
+        </el-form-item>
+        <el-form-item label="电影调色档(终混调色:冷暖分离 + 颗粒 + 暗角)">
+          <el-select v-model="form.assemble.grade">
+            <el-option v-for="g in GRADE_OPTIONS" :key="g.key" :value="g.key" :label="g.name" />
+          </el-select>
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            {{ gradeDesc }}
           </div>
         </el-form-item>
         <el-form-item label="字幕字号(屏高 %)">

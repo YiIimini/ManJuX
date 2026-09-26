@@ -277,6 +277,37 @@ func seamRenderLength(jobLength int, seamActive bool) int {
 // context_length 一致;改一处必须改另一处,由测试钉住)。
 const seamHeadFrames = 22
 
+// producedFrames 本次提交**实际会产出**的帧数(成片时长口径)。
+//
+// 它不等于调用方给的 job.Length,有两个来源的差异,两者此前都只活在代码注释里:
+//
+//	① 网格量化:提交长度必须落在 17k+5 上,AlignLength 会把计划帧数改写(计划 96 → 107);
+//	② 接缝裁剪:接缝生效时提交长度里含 seamHeadFrames 帧的 pinned 头,Trim 节点会把它裁掉。
+//
+// 上层(镜头清单、时长对账、界面)此前只能拿计划帧数当实际值,于是"云端把 4 秒抬成 5 秒"
+// 这类改写对比不出来(乙6)。这里把它做成**唯一实现**,由 Render 回填 engine.Result。
+func producedFrames(jobLength int, seamActive bool) int {
+	n := seamRenderLength(jobLength, seamActive)
+	if seamActive {
+		n -= seamHeadFrames
+	}
+	return n
+}
+
+// localRenderResult 组装本地引擎的渲染结果。
+//
+// 抽成函数是为了让"实际帧数 / 时长是否被改写"有**运行期**可断言的面(Render 本身要一台
+// 真的 ComfyUI 才跑得起来;这条口径不该只靠源码断言看着)。
+func localRenderResult(dest, name string, jobLength int, seamActive bool) *engine.Result {
+	actual := producedFrames(jobLength, seamActive)
+	return &engine.Result{
+		VideoPath: dest, Engine: name,
+		ActualFrames: actual,
+		// 计划帧数与实际产出一致时不算"被改写"(网格量化与接缝裁剪都会让它为 true)
+		DurationAdjusted: actual != jobLength,
+	}
+}
+
 func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, error) {
 	touchBusy()
 	// 收尾也打一次点(2026-09-26 渲染管线审查):空闲看门狗只认「最近一次引擎调用」,
@@ -404,7 +435,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	// "渲染期间模型常驻、收尾才交还"(coordinator 的 releaseVRAM /
 	// ReleaseVRAMIfIdle),逐镜释放等于一集 N 镜多付 N 次加载,还把两阶段条件缓存
 	// 省下的时间吃掉;而它是本模块里唯一一处没有理由注释的显存动作。
-	return &engine.Result{VideoPath: dest, Engine: e.Name()}, nil
+	return localRenderResult(dest, e.Name(), job.Length, seamActive), nil
 }
 
 func (e *Engine) submitAndWait(ctx context.Context, graph map[string]any, timeout time.Duration, onProgress func(int, string)) (*HistoryEntry, error) {

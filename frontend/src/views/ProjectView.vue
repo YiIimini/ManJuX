@@ -199,6 +199,34 @@ async function upgrade2K() {
   } catch (e) { ElMessage.error(e.message) }
 }
 
+// ---------- 单镜云端 2K 产物:独立导出文件(乙7 选项 A:只导出) ----------
+//
+// 这些文件落在 <项目>/clips/2k/shot_NNN_2k.mp4,是"付了云额度却看不见"的那一批:
+// 合成只收 manifest.File,所以它们**不进镜头清单、不参与合成**,成片里这一镜仍是 768p。
+// 这里给它们一个列得出、看得见、拿得走的入口 —— 并且把上面那句话写在界面里,
+// 免得用户以为点了 2K 就等于成片变 2K。
+const exports2k = reactive({ open: false, busy: false, items: [] })
+async function openExports2k() {
+  exports2k.open = true
+  exports2k.busy = true
+  try {
+    exports2k.items = await api.outputs2k(pj.value.project.id)
+  } catch (e) { ElMessage.error('2K 产物读取失败:' + e.message) }
+  finally { exports2k.busy = false }
+}
+// 预览:与其余产物走同一个全屏预览器(可拖动播放,走 Range)
+function preview2k(it) {
+  G.viewer = {
+    index: 0,
+    items: [{
+      type: 'video', src: api.output2kURL(pj.value.project.id, it.name),
+      title: `镜头 ${it.shot} · 2K 导出`, meta: `${it.size_mb.toFixed(1)}MB · ${it.updated_at}`,
+      foot: '这是独立导出文件:不进镜头清单、不参与合成,成片这一镜仍为 768p。',
+      kindLabel: '2K',
+    }],
+  }
+}
+
 const totalShots = computed(() => plan.value?.shots?.length || 0)
 const doneShots = computed(() =>
   Object.values(manifest.value).filter(m => m.status === 'done').length)
@@ -415,6 +443,11 @@ const doneShots = computed(() =>
                       <el-icon class="mr-1"><MagicStick /></el-icon>升级 2K
                     </el-button>
                   </el-tooltip>
+                  <el-tooltip content="单镜云端 2K 产物(clips/2k):独立导出文件,可预览/下载;不进镜头清单、不参与合成" placement="top">
+                    <el-button plain @click="openExports2k">
+                      <el-icon class="mr-1"><Download /></el-icon>2K 导出
+                    </el-button>
+                  </el-tooltip>
                   <el-tooltip content="打包逐镜片段+成片+字幕 zip(剪映导入友好)到项目 output 目录" placement="top">
                     <el-button :disabled="!totalShots" :loading="exporting" @click="exportPack">
                       <el-icon class="mr-1"><Suitcase /></el-icon>导出剪辑素材包
@@ -485,6 +518,37 @@ const doneShots = computed(() =>
       <template #footer>
         <el-button @click="frameDlg.open = false">取消</el-button>
         <el-button type="primary" :disabled="frameDlg.pick < 0" :loading="frameDlg.busy" @click="applyFrame">替换定妆并入库</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 单镜云端 2K 产物 · 导出(不进成片,成片这一镜仍是 768p) -->
+    <el-dialog v-model="exports2k.open" title="单镜云端 2K 产物 · 导出" width="640px" append-to-body>
+      <el-alert type="warning" :closable="false" class="mb-4"
+        title="这是独立导出文件:不进镜头清单、不参与合成,成片这一镜仍为 768p。" />
+      <div class="text-xs mb-3" style="color:var(--mx-text2)">
+        在分镜卡或渲染详情里点「云端 2K 定稿(需先渲出)」才会生成这种文件,
+        落盘在项目的 clips/2k/ 目录下,按镜号命名(shot_NNN_2k.mp4)。
+        它只服务于"把某一镜单独拿去用"(剪辑/投稿/比对),不会改变成片里那一镜的分辨率。
+      </div>
+      <div v-loading="exports2k.busy" style="min-height:120px">
+        <div v-if="!exports2k.busy && !exports2k.items.length" class="text-xs py-8 text-center" style="color:var(--mx-text3)">
+          还没有 2K 产物。在分镜卡里对已渲染完成的镜头点「云端 2K 定稿」,完成后这里就会出现。
+        </div>
+        <div v-for="it in exports2k.items" :key="it.name" class="panel p-3 flex items-center gap-3 mb-2">
+          <el-icon :size="20" color="var(--mx-purple)"><MagicStick /></el-icon>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm">镜头 {{ it.shot }} <span class="timecode">{{ it.name }}</span></div>
+            <div class="timecode">{{ it.size_mb.toFixed(1) }}MB · {{ it.updated_at }}</div>
+          </div>
+          <el-button size="small" text @click="preview2k(it)"><el-icon><View /></el-icon></el-button>
+          <!-- 下载用 tag="a":直接交给浏览器的原生下载(带 Content-Disposition 语义的
+               download 属性),而不是在 JS 里造 Blob —— 产物可能上百 MB,不该先读进内存。 -->
+          <el-button size="small" text tag="a" :href="api.output2kURL(pj.project.id, it.name)"
+                     :download="it.name" title="下载该文件"><el-icon><Download /></el-icon></el-button>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="exports2k.open = false">关闭</el-button>
       </template>
     </el-dialog>
 </template>

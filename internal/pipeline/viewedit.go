@@ -190,6 +190,12 @@ func GenerateViewsEdit(ctx context.Context, ce engine.Engine, f *ff.FF, o Turnar
 				Seed:      baseSeed + int64(attempt-1)*7919 + int64(i)*104729,
 				Steps:     o.Steps,
 				UseTurbo:  true,
+				// 进度回调:补齐多视角是数分钟的等待,此前这条链一个百分比都没有,
+				// 用户在界面上只能看到"卡住了"。引擎侧(EditImage)已支持该字段,
+				// 这里必须真的传下去 —— 加了字段不接线就是又一个"能配、不生效"。
+				OnProgress: func(p int, note string) {
+					emit("多视角:「%s」%s 视角 生成中…(%d%%)", o.Name, a.Brief, p)
+				},
 				// UseAngles 默认**关**:Multiple-Angles LoRA 在实测里没有转动机位,
 				// 反而把训练集里的背景(星空+极光)带了进来(2026-09-24,另一处同类用途
 				// 的实测:改用基座模型 + 一句自然语言机位指令才真的转,4 步/20 步都成功)。

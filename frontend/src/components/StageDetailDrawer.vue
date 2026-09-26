@@ -3,6 +3,7 @@
 import { G, api, refreshProject, sourceLabel, sourceTone } from '../store'
 import { computed, reactive, watch, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { confirmGpuContention } from '../pipelineBusy'
 
 const visible = computed({
   get: () => !!G.stageDetail,
@@ -76,6 +77,9 @@ function viewAsset(a, kind, name) {
   G.viewer = { index: 0, items: [{ type: 'image', src: api.fileURL(pj.value.project.id, a.file), title: name, meta: sourceLabel(a?.source), kindLabel: 'ASSET' }] }
 }
 async function regen(assetId) {
+  // 单资产重生成走的是同一条出图链(SAM/ComfyUI),同样不参与管线互斥 ——
+  // 管线跑着时点它会抢 GPU,两边都变慢(乙5 的温和版:提示,不禁止)。
+  if (!(await confirmGpuContention('重新生成定妆资产'))) return
   busy.regen = assetId
   try {
     await api.regenAsset(pj.value.project.id, assetId)

@@ -75,7 +75,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", note)
 	}
 	if rp.Seam && caps.Seam {
-		c.emit(proj.ID, PhaseRender, 0, "info", 0, "镜间连续接缝已开启:每镜尾部 22 帧钉入下一镜(仅本地引擎;重渲某镜后建议后续镜头一并重渲保持链一致)")
+		c.emit(proj.ID, PhaseRender, 0, "info", 0,
+			"镜间连续接缝已开启(仅本地引擎):%s;换场/换人/到重置点时**自动断开并重建锚点**,断开原因逐镜写在日志里"+
+				"(重渲某镜后建议后续镜头一并重渲保持链一致)", seamResetLabel(rp.SeamResetEvery))
 	}
 
 	shots := plan.Shots
@@ -275,7 +277,23 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 接缝生效时这一镜还依赖**上游那一镜的 latent**:记下渲它时上游的指纹,
 		// 跳过前比一次(上游被重渲过 = 槽里的 latent 已经不是当初那份)。
 		// 上游不在本次范围内(单镜重渲)时,manifest 里的值就是它当前的版本。
-		seamHere := rp.Seam && caps.Seam && shot.ID > 1
+		//
+		// seamHere 现在要过**准入判据**(甲3):同场同人才接、换场/换人/每 N 镜一律断开,
+		// 见 seamBlockers。断开原因先攒着,只在**真的要渲这一镜**时播报 —— 断点续跑跳过的
+		// 镜头不该重复刷屏(那些镜头本次并没有重新决定什么)。
+		seamWant := rp.Seam && caps.Seam && shot.ID > 1
+		seamHere := false
+		seamNote := ""
+		if seamWant {
+			if prev, ok := shotByID(plan, shot.ID-1); ok {
+				seamHere = seamAllowed(plan, shot, prev, rp.SeamResetEvery)
+				seamNote = seamBlockNote(plan, shot, prev, rp.SeamResetEvery)
+			} else {
+				// 方案里找不到上一镜(被裁剪/手工改过镜号):没有可接的上游,同样如实说。
+				seamNote = fmt.Sprintf("镜头 %d 与前镜不接缝:方案里找不到上一镜(镜 %d)",
+					shot.ID, shot.ID-1)
+			}
+		}
 		wantSeamFrom := ""
 		if seamHere {
 			wantSeamFrom = manifest[strconv.Itoa(shot.ID-1)].InputFP
@@ -296,6 +314,11 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 每个角色应只占 1 张),二是出问题时能立刻判断是不是参考图少了。
 		c.emit(proj.ID, PhaseRender, shot.ID, "info", base, "镜头 %d/%d 渲染开始(%s,%ds,seed=%d,参考图 %d 张:%s)",
 			shot.ID, len(shots), mode, shot.Duration, seed, len(refs), refComposition(refs))
+		if seamNote != "" {
+			// 断开**必须如实播报**(甲3-④):不许静默降级 —— 用户要能从日志里看出
+			// "这一镜为什么没接",而不是只见"有的接了、有的没接"。
+			c.emit(proj.ID, PhaseRender, shot.ID, "info", base, "%s", seamNote)
+		}
 		c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotRendering, engName, "", inputFP, "")
 
 		var res *engine.Result
@@ -308,8 +331,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				Length: wantFrames, Seed: seed, Steps: rp.Steps,
 				Accel:     rp.Accel,
 				OutputDir: clipsDir, OutputName: outName,
-				Timeout:  shotTimeout,
-				Seam:     rp.Seam && caps.Seam,
+				Timeout: shotTimeout,
+				// Seam 用**准入判据的结果**(seamHere),不再是无条件 rp.Seam:
+				// 换场/换人/到重置点时不把上一镜的 22 帧钉进来(见 seamBlockers)。
+				Seam:     seamHere,
 				PrevShot: shot.ID - 1,
 				// 项目参数 render.cond_cache 必须真的说了算:交给引擎,未表态时由引擎
 				// 回退全局设置(见 engine.Job.CondCache 的说明)。
@@ -348,7 +373,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
-		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", wantFrames, wantModel)
+		// 乙6:引擎回传的**实际帧数**必须记账,不能只留计划值。
+		// 清单长度(length)与"计划 / 实际"记录分别取(口径见 shotFrameRecord 的说明)。
+		length, frameNote := shotFrameRecord(wantFrames, res)
+		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", length, wantModel)
 		if seamHere {
 			// 记下"渲这一镜时上游是谁":上游日后被重渲(指纹变)时,这一镜必须跟着重渲,
 			// 否则接缝处钉的还是旧 latent(画面跳变,而成片与阶段照常报成功)。
@@ -360,7 +388,11 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			manifest[strconv.Itoa(shot.ID)] = mergeTask(manifest[strconv.Itoa(shot.ID)], res.TaskID)
 		}
 		done++
-		c.emit(proj.ID, PhaseRender, shot.ID, "success", base+100/len(shots), "✔ 镜头 %d 完成(%s)", shot.ID, rel)
+		doneMsg := fmt.Sprintf("✔ 镜头 %d 完成(%s)", shot.ID, rel)
+		if frameNote != "" {
+			doneMsg += " —— " + frameNote
+		}
+		c.emit(proj.ID, PhaseRender, shot.ID, "success", base+100/len(shots), "%s", doneMsg)
 	}
 	if err := c.store.SaveManifest(proj.ID, manifest); err != nil {
 		return err
@@ -431,7 +463,14 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	}
 	// qualityTag:采样环境版本(v1=2026-09-10 撤下 fp16_accumulation/ck-attention
 	// 后的画质基线;画质敏感项再变更时递增,旧镜指纹失配自动重渲)。
-	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, "seam", rp.Seam, accelTag, "q1"), strings.Join(files, ","))
+	seamTag := fmt.Sprint("seam", rp.Seam)
+	if rp.SeamResetEvery > 0 {
+		// 接缝间隔改了 = 某一镜是不是"接着上一镜渲的"变了,产物必须重出。
+		// **只在显式设过(>0)时才进指纹**:默认 0 时指纹串与旧版逐字一致,
+		// 存量项目不会因为升级一版就被判全量失效(与 accelTag 同一口径)。
+		seamTag += fmt.Sprintf("reset%d", rp.SeamResetEvery)
+	}
+	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, seamTag, accelTag, "q1"), strings.Join(files, ","))
 }
 
 // shotFrames 镜头时长 → 帧数(H3 侧 24fps)。
@@ -439,6 +478,161 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 // 收成一个函数是因为它有两个消费者:提交给引擎的 Job.Length,以及"这个已有产物还能
 // 不能复用"的判据。以前只有前者,后者缺位 —— 于是"改了时长却跳过重渲"能一路走到成片。
 func shotFrames(shot project.Shot) int { return shot.Duration * 24 }
+
+// shotFrameRecord 本镜的**帧数记账**(乙6):写进清单的长度 + 给用户看的「计划 / 实际」记录。
+//
+// 【为什么这两个值要分开(而不是把实际值直接写进清单的 Length)】
+// 引擎会在自己的口径上改写提交时长,两条路各有各的改写:
+//   - 本地:提交长度必须对齐 17k+5 网格(计划 96 → 渲 107 帧),接缝生效还要扣掉被
+//     Trim 裁掉的 22 帧 pinned 头;
+//   - 云端:只吃整数秒且区间更窄,4 秒镜被**抬成 5 秒**(计划 96 → 120 帧)。
+//
+// 而清单的 Length 是**断点续跑判据**的一部分(shotArtifactValid 拿它跟
+// shot.Duration*24 比)。若把"实际值"写进 Length:云端那条 4 秒镜(计划 96 / 实际 120)
+// 每次续跑都会判"帧数对不上"→ 无限重渲;本地同理(96 → 107)。所以:
+//   - **Length 继续记「本次是按多少帧渲的」**(= 计划值),判据与存量清单口径不变;
+//   - **实际值**由引擎回传(engine.Result.ActualFrames / DurationAdjusted)带上来,
+//     逐镜写进镜头记录(本条 note)——
+//     用户必须看得见"你计划 4 秒、云端按 5 秒渲了",而不是让清单里的计划值冒充实际值。
+//
+// 注:要让**清单本身**也带上实际值,需要 project.ClipManifest 再开一列
+// (该文件不属本批改动范围)。在那之前先保证"用户看得见",而不是静默记假账。
+//
+// 返回值:length = 写进清单的帧数(0 = 调用方不关心,保留原值);note = 逐镜记录文案
+// (空 = 计划与实际一致,没什么要说)。
+func shotFrameRecord(planned int, res *engine.Result) (length int, note string) {
+	length = planned
+	if res == nil || res.ActualFrames <= 0 {
+		// 引擎没给实际帧数(旧引擎 / 异常路径):不编一个数字出来,清单照旧记计划值。
+		return length, ""
+	}
+	if length <= 0 {
+		// 调用方连计划帧数都没给:实际值是唯一的真话,记它。
+		return res.ActualFrames, ""
+	}
+	if res.ActualFrames == planned && !res.DurationAdjusted {
+		return length, "" // 计划与实际一致:不刷无意义的日志
+	}
+	note = fmt.Sprintf("计划 %d 帧(%.2fs)/ 实际 %d 帧(%.2fs)%s", planned, float64(planned)/24,
+		res.ActualFrames, float64(res.ActualFrames)/24, durationAdjustedWhy(res.DurationAdjusted))
+	return length, note
+}
+
+// durationAdjustedWhy 时长被改写时的说明尾注(未被改写则只做陈述)。
+func durationAdjustedWhy(adjusted bool) string {
+	if adjusted {
+		return " —— 时长被引擎按自己的口径改写(本地对齐 17k+5 网格 / 云端只吃整数秒),成片时长以实际值为准"
+	}
+	return ""
+}
+
+// ---------- 镜间连续接缝(MotionContext)的**准入判据** ----------
+//
+// 【为什么要按需断开(甲3,漂移放大器)】旧实现是 `Seam: rp.Seam && caps.Seam,
+// PrevShot: shot.ID-1` —— 只要上一镜的 latent 还在槽里就无条件接。而接缝做的事是
+// 把**上一镜尾部的 22 帧**钉进本镜的头部作为条件:
+//   - 换场时(上一镜在客栈、本镜在荒野),钉进去的 22 帧就是**另一个地方**的画面,
+//     模型为了自洽只能把新场景往旧场景上靠(景物错位、色调被拽走);
+//   - 换人/换角色组合时,钉进去的是别人的脸与服饰,本镜角色的身份被上一镜污染;
+//   - 而且误差是**逐链累积**的:每接一镜就多复制一次上一镜的偏差,十几镜之后
+//     人物/色调已经明显偏了,而每一处接缝单看都"很小"。
+// 所以接缝只在"**同一场戏、同一批人**"的连续镜头之间才成立(那才是它要解决的
+// "同场景相邻镜不连贯"),并且要能被"每 N 镜重建锚点"打断一次,把累积的漂移清零。
+//
+// 断开**不是降级**,是正确行为 —— 但它必须是**可见**的:日志里要写明"这一镜为什么
+// 不接",否则用户只会看到"有的镜头接了、有的没接",无法判断是设计还是故障。
+//
+// 判据与原因由同一个函数算出(seamBlockers):不做"判一次、再猜一次原因"的两份逻辑,
+// 否则改judge时文案会悄悄与事实脱节。
+
+// seamBlockers 本镜**不能**与上一镜接缝的全部原因(空 = 可以接缝)。
+//
+// plan 只用于把场景 id 翻成场景名(报错文案给人看);nil 时退化为 id,不影响判据。
+func seamBlockers(plan *project.Plan, shot, prev project.Shot, resetEvery int) []string {
+	var out []string
+	// ② 每 N 镜重建锚点(0/1 = 每场重置,由下面的同场景判据天然实现)。
+	if resetEvery > 1 && shot.ID > 1 && (shot.ID-1)%resetEvery == 0 {
+		out = append(out, fmt.Sprintf("每 %d 镜重建一次锚点(镜 %d 是新一轮首镜,累积漂移在此清零)",
+			resetEvery, shot.ID))
+	}
+	// ①-a 同场景:换场不接(钉进去的 22 帧是另一个地方)。
+	if shot.Scene != prev.Scene {
+		out = append(out, fmt.Sprintf("与前镜不同场景(%s → %s)",
+			sceneNameOf(plan, prev.Scene), sceneNameOf(plan, shot.Scene)))
+	}
+	// ①-b 角色集合有交集:换人不接(钉进去的是别人的脸与服饰)。
+	if !charactersIntersect(shot.Characters, prev.Characters) {
+		out = append(out, "与前镜没有共同出场角色")
+	}
+	return out
+}
+
+// seamAllowed 本镜能否与上一镜接缝(判据的**唯一出口**,纯函数便于穷举)。
+func seamAllowed(plan *project.Plan, shot, prev project.Shot, resetEvery int) bool {
+	return len(seamBlockers(plan, shot, prev, resetEvery)) == 0
+}
+
+// seamBlockNote 断开时的**播报文案**(空 = 允许接缝,不播报)。
+func seamBlockNote(plan *project.Plan, shot, prev project.Shot, resetEvery int) string {
+	reasons := seamBlockers(plan, shot, prev, resetEvery)
+	if len(reasons) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("镜头 %d 与前镜不接缝:%s —— 本镜按独立锚点重建(把上一镜的 22 帧钉进来会把误差逐链累积)",
+		shot.ID, strings.Join(reasons, ";"))
+}
+
+// seamResetLabel 接缝重置口径的人话(0/1 = 每场重置;>1 = 每 N 镜重置)。
+func seamResetLabel(every int) string {
+	if every > 1 {
+		return fmt.Sprintf("每 %d 镜重建一次锚点", every)
+	}
+	return "每场戏重建一次锚点"
+}
+
+// shotByID 按镜号取方案里的镜头(接缝判据要看上游那一镜的属性)。
+func shotByID(plan *project.Plan, id int) (project.Shot, bool) {
+	if plan == nil {
+		return project.Shot{}, false
+	}
+	for _, s := range plan.Shots {
+		if s.ID == id {
+			return s, true
+		}
+	}
+	return project.Shot{}, false
+}
+
+// sceneNameOf 场景 id → 人可读的名字(报错文案用;认不出就退回 id)。
+func sceneNameOf(plan *project.Plan, id string) string {
+	if plan != nil {
+		for _, sc := range plan.Scenes {
+			if sc.ID == id && strings.TrimSpace(sc.Name) != "" {
+				return sc.Name
+			}
+		}
+	}
+	if strings.TrimSpace(id) == "" {
+		return "未标注场景"
+	}
+	return id
+}
+
+// charactersIntersect 两个角色 id 集合是否有交集(空集合不算交集:
+// 两个空镜之间没有共同主体可锚,宁可断开重锚,也不要拿上一镜的景钉住下一镜)。
+func charactersIntersect(a, b []string) bool {
+	for _, x := range a {
+		if strings.TrimSpace(x) == "" {
+			continue
+		}
+		for _, y := range b {
+			if x == y {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // shotArtifactValid 判定**已有产物能否复用**(断点续跑的核心判据),抽成纯函数以便穷举。
 //

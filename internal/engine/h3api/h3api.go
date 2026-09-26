@@ -26,6 +26,13 @@ import (
 // defaultAPITimeout 云端任务轮询兜底上限(作业未指定 Timeout 时使用)。
 const defaultAPITimeout = 20 * time.Minute
 
+// cloudFramesPerSecond 云端时长(整数秒)换算成本地帧数口径用的帧率。
+//
+// 与提交侧同一个 24(见 Render 里的 wantSec := job.Length / 24,以及管线按"时长×24"
+// 组装 Job.Length):engine.Result.ActualFrames 要和本地引擎的帧数**同一把尺子**,
+// 否则"云端 5 秒 vs 本地 107 帧"这种对比又要人肉换算。
+const cloudFramesPerSecond = 24
+
 // Engine 云端 H3 引擎。
 type Engine struct {
 	cfg func() config.MiniMaxSettings
@@ -42,6 +49,14 @@ func New(cfg func() config.MiniMaxSettings) *Engine { return &Engine{cfg: cfg} }
 // ("网络抖动容忍"),401/403 也照吞 —— 一个无效 Key 会白等 20 分钟才以"超时"收场,
 // 而管线拿这个哨兵判定"显存挤压"、**再跑一轮**,于是重新 create 一个云端任务:
 // 一次鉴权失败 = 两个计费任务 + 约 40 分钟。
+//
+// 【云端一律不包装 engine.ErrRenderTimeout(乙8,2026-09-26 待决项)】
+// 那个哨兵的含义是"可原地重试",而管线对它的处置是"释放显存后重渲一次"
+// (pipeline/stages_render.go 的重试分支)。这条策略本地成立(本地算力,重试不花钱),
+// 在云端却等于**再提交一个计费任务**,而"释放显存"这个理由在云端根本不存在
+// (CapsOf("api") 是零值,caps.VRAM=false,重试前什么也没释放)。
+// 所以云端失败路径**一条都不包**该哨兵:失败即停、如实报错,把"要不要再花一次额度"
+// 的决定权交回用户(见 noAutoRetryNote)。
 type apiError struct {
 	Status int
 	Msg    string
@@ -83,7 +98,9 @@ func (e *Engine) awaitTask(ctx context.Context, c config.MiniMaxSettings, taskID
 		case <-ctx.Done():
 			return "", ctx.Err()
 		case <-timer.C:
-			return "", fmt.Errorf("%w(云端任务 %s 超过 %v;已请求取消,避免空跑计费)", engine.ErrRenderTimeout, taskID, timeout)
+			// 不包装 engine.ErrRenderTimeout(见 apiError 的说明):云端重试 = 再花一次额度。
+			return "", fmt.Errorf("云端任务 %s 超时(等待上限 %v;已请求取消远端任务,避免继续空跑计费);%s",
+				taskID, timeout, noAutoRetryNote)
 		case <-tick.C:
 		}
 		st, url, err := e.query(ctx, c, taskID)
@@ -117,6 +134,22 @@ func (e *Engine) awaitTask(ctx context.Context, c config.MiniMaxSettings, taskID
 				onProgress(40, "云端生成中("+st+")")
 			}
 		}
+	}
+}
+
+// noAutoRetryNote 云端失败的统一播报文案(同时进错误文本与进度事件)。
+//
+// 为什么必须写出来:用户看到一次云端失败,第一反应是"它是不是又偷偷花了一次额度"。
+// 这条链路里重试的代价是钱,所以"没有自动重试"和错误本身一样是需要告知的事实
+// (乙8 选项 A:不自动重提,失败即停、如实报错)。
+const noAutoRetryNote = "⚠ 云端失败**不会自动重提**(重提 = 再消耗一次额度):本次没有重新提交,请确认原因后手动重渲本镜"
+
+// noteNoAutoRetry 把"未自动重试"写进进度事件流(进 UI 的运行日志)。
+//
+// 百分比给 0:失败不是进度,这里只是借事件通道播报,别让 0 被读成"卡在起点"。
+func noteNoAutoRetry(onProgress func(int, string)) {
+	if onProgress != nil {
+		onProgress(0, noAutoRetryNote)
 	}
 }
 
@@ -231,6 +264,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 
 	taskID, err := e.create(ctx, c, body)
 	if err != nil {
+		noteNoAutoRetry(job.OnProgress)
 		return nil, err
 	}
 	if job.OnProgress != nil {
@@ -248,6 +282,7 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 
 	url, err := e.awaitTask(ctx, c, taskID, job.Timeout, job.OnProgress)
 	if err != nil {
+		noteNoAutoRetry(job.OnProgress)
 		return nil, err
 	}
 	if job.OnProgress != nil {
@@ -265,10 +300,18 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		}
 	}
 	if dlErr != nil {
+		noteNoAutoRetry(job.OnProgress)
 		return nil, fmt.Errorf("下载成片失败(已重试): %w", dlErr)
 	}
 	settled = true // 成片已落到本地,远端任务无需再取消
-	return &engine.Result{VideoPath: final, TaskID: taskID, Engine: e.Name()}, nil
+	return &engine.Result{
+		VideoPath: final, TaskID: taskID, Engine: e.Name(),
+		// 实际时长口径回传(乙6 选项 C:两条路产物长度不同但都如实):
+		// 云端按 sec 秒出片,换算成与本地同一把尺子(24fps)的帧数;
+		// DurationAdjusted 就是提交时算出的"时长被云端区间改写"。
+		ActualFrames:     sec * cloudFramesPerSecond,
+		DurationAdjusted: durationAdjusted,
+	}, nil
 }
 
 func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[string]any) (string, error) {

@@ -71,6 +71,19 @@ type Result struct {
 	TaskID    string // 云端任务 id(如有)
 	Engine    string
 	Cached    bool // 命中缓存/断点续跑
+
+	// ActualFrames 本次**实际产出**的帧数(24fps 口径),0 = 该引擎没给出。
+	//
+	// 与 Job.Length(计划帧数)不是一回事,两条路各有各的改写:
+	//   本地 —— 提交长度必须对齐 17k+5 网格(计划 96 → 107 帧),接缝生效时还要扣掉
+	//           被 Trim 裁掉的 22 帧 pinned 头(comfyengine.producedFrames);
+	//   云端 —— 只吃整数秒且区间更窄,4 秒镜会被抬成 5 秒(h3api.submitDuration)。
+	// 上层据此把"计划"与"实际"分开记账(乙6:云端 4 秒镜被抬成 5 秒),否则清单里
+	// 只有计划值,两条路的产物时长差异永远对不上账。
+	ActualFrames int
+	// DurationAdjusted 实际时长是否**被引擎改写**过(网格量化、接缝裁剪、云端秒数钳制)。
+	// true 不代表失败,只代表"实际 ≠ 计划",需要在界面上如实说明而不是装作一致。
+	DurationAdjusted bool
 }
 
 // UpscaleOptions 2× 放大后处理的参数。

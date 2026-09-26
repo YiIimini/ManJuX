@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -135,9 +136,13 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			} else if kind == "scenes" {
+				// 场景提示词走**唯一装配点**(乙1):入库的元数据必须是"这套画风下的
+				// 场景提示词",否则复用它的后续项目拿到的是裸提示词 —— 同一部剧里
+				// 角色一套画风、场景另一套。proj 允许为 nil(拿不到即按平台默认)。
+				proj, _ := s.store.Get(id)
 				for _, sc := range plan.Scenes {
 					if "scene:"+sc.ID == assetID {
-						desc, prompt = sc.Description, sc.ImagePrompt
+						desc, prompt = sc.Description, pipeline.SceneImagePrompt(proj, plan, sc)
 					}
 				}
 			}

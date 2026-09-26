@@ -54,6 +54,18 @@ type ImageEditOptions struct {
 	UseTurbo  bool          // 2511:Lightning 4 步 LoRA;2.1 无对应 LoRA,此标志被忽略
 	UseAngles bool          // 2511:Multiple-Angles LoRA;2.1 不需要(它自带参考图机制)
 	Timeout   time.Duration // <=0 时用**图像级**兜底 defaultImageTimeout(10 分钟),不是单镜的 45 分钟
+
+	// OnProgress 生成进度回调(percent 0-100 + 一句中文说明)。
+	//
+	// 补这个字段的原因(甲6,2026-09-26 渲染管线审查):多视角补齐是"每个角色 3 张、
+	// 逐角度串行"的链路,而 EditImage 此前把进度回调写死传 nil —— 用户从点下到出结果
+	// 既无日志也无百分比,只能靠"停止"判断是不是卡死。
+	//
+	// 百分比**只增不减**(见 EditImage 里的单调化):它会被界面当成进度条读数,
+	// 而 WaitForDone 的档位文案在"排队(2)→ 执行中(20)→ 渲染中 N%"之间切换,
+	// N 来自 ComfyUI 的 progress 事件,可能低于前一个档位值。回调的 note 里始终是
+	// 引擎的原始文案,信息不丢。
+	OnProgress func(percent int, note string)
 }
 
 // imageEditTimeout 编辑链路的实际超时。**唯一实现**,便于单测钉住"用的是图像级档位"。
@@ -68,6 +80,28 @@ func imageEditTimeout(opt ImageEditOptions) time.Duration {
 		return opt.Timeout
 	}
 	return defaultImageTimeout
+}
+
+// editProgress 把调用方的进度回调包成 submitAndWait 需要的形式,并做两件事:
+//
+//	① nil 安全:不接回调的调用方原样得到 nil,不制造一个空回调;
+//	② 百分比单调化:界面会把它当进度条读数,而 WaitForDone 的百分比在**换档**时可能回退
+//	   (排队 2 → 执行中 20 → 渲染中 N%,N 来自 ComfyUI 的 progress 事件)。这里只抬高、
+//	   不压低;note 始终是引擎原文,所以"现在到底在干什么"一点没丢。
+//
+// 回调由 WaitForDone 的轮询循环串行调用,last 不需要加锁。
+func editProgress(cb func(percent int, note string)) func(int, string) {
+	if cb == nil {
+		return nil
+	}
+	last := -1
+	return func(pct int, note string) {
+		if pct < last {
+			pct = last
+		}
+		last = pct
+		cb(pct, note)
+	}
 }
 
 // EditImage 用 Qwen-Image-Edit 生成一张"同主体、不同视角"的图,返回本地路径。
@@ -92,7 +126,7 @@ func (e *Engine) EditImage(ctx context.Context, opt ImageEditOptions, outPath st
 		upNames = append(upNames, n)
 	}
 	graph := buildEditGraph(c, opt, upNames)
-	hist, err := e.submitAndWait(ctx, graph, imageEditTimeout(opt), nil)
+	hist, err := e.submitAndWait(ctx, graph, imageEditTimeout(opt), editProgress(opt.OnProgress))
 	if err != nil {
 		return "", err
 	}

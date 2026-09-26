@@ -38,6 +38,15 @@ const (
 	KindBeast       EntityKind = "beast"       // 妖兽
 	KindIncorporeal EntityKind = "incorporeal" // 无实体:鬼魂/灵体/意识/声音/投影
 	KindChibi       EntityKind = "chibi"       // Q 版
+	// KindScene 场景参考图(环境图)。**不是角色卡类型**:角色卡的 kind 永远解析不出它,
+	// 它也不进 EntityKinds(UI 清单)与 NormalizeEntityKind(角色卡 kind 的容错解析)。
+	//
+	// 为什么还要给它一个类型(2026-09-26 乙1):场景图此前四条出图路径各自把 LLM 的
+	// image_prompt 原样丢给图像模型 —— 角色走 styleExpand 装配、场景走裸提示词,
+	// 一部剧里于是有两套画风。而风格装配链(取景重写 / styleExpand / 幂等判据)是按
+	// EntityKind 取渲染方法的,给场景一个类型,四条路径才能共用**同一份**实现,
+	// 而不是各自再抄一遍"注入风格串"(那正是审计 P1-2 收口前的老毛病)。
+	KindScene EntityKind = "scene"
 )
 
 // EntityKinds 全部类型(顺序即 UI 展示顺序)。
@@ -56,6 +65,8 @@ func EntityKindLabel(k EntityKind) string {
 		return "无实体"
 	case KindChibi:
 		return "Q版"
+	case KindScene:
+		return "场景"
 	default:
 		return "人"
 	}
@@ -180,6 +191,12 @@ func ResolveEntityKind(ch project.Character) EntityKind {
 
 // EntityProfileOf 取该类型的渲染方法集合。
 func EntityProfileOf(k EntityKind) entityProfile {
+	// 先按**原值**查:KindScene 这类不由角色卡输入的类型不会被 NormalizeEntityKind 认出来
+	// (那个函数是给角色卡的 kind 字段做容错解析的,把 "scene" 也认成一种角色类型,
+	// 会让"某张角色卡被当成场景"这种错配悄悄成立)。原值查不到再走归一化。
+	if p, ok := entityProfiles[k]; ok {
+		return p
+	}
 	if p, ok := entityProfiles[NormalizeEntityKind(string(k))]; ok {
 		return p
 	}

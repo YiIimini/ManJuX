@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -157,9 +158,12 @@ func (s *Server) handleAssetFrameApply(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			} else if kind == "scenes" {
+				// 场景提示词走**唯一装配点**(乙1):截帧定妆的元数据要与产线同源,
+				// 否则复用它的后续项目拿到裸提示词,场景画风又跑偏。
+				proj, _ := s.store.Get(id)
 				for _, sc := range plan.Scenes {
 					if "scene:"+sc.ID == assetID {
-						desc, prompt = sc.Description, sc.ImagePrompt
+						desc, prompt = sc.Description, pipeline.SceneImagePrompt(proj, plan, sc)
 					}
 				}
 			}

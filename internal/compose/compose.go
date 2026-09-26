@@ -48,6 +48,9 @@ type Params struct {
 	Peak float64
 	// Denoise 音频净化:高通去隆隆声 + 频谱降噪去嘶声/底噪(默认开)。
 	Denoise bool
+	// Grade 调色档:off / soft / film / heavy,空串与不认识的值都按 film(默认开,
+	// 见 GradeFilter/NormalizeGrade)。档位在终混统一应用,且排在字幕之前。
+	Grade string
 }
 
 // defaultPeakLinear peak 参数的默认值(0.92 线性 ≈ -0.72 dBTP)。
@@ -102,6 +105,16 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	if onProgress != nil {
 		onProgress(5, "镜头规范化(重编码)")
 	}
+	// 色彩口径(乙3):先把全片的色彩元数据量一遍,再决定逐镜怎么写标记 ——
+	// 必须在规范化之前,标记是跟着这次重编码一起写进 part 的(见 color.go)。
+	colorInfos := probeColors(ctx, f, clips)
+	colorDec := planColor(colorInfos)
+	colorArgs := colorDec.masterArgs()
+	for _, note := range colorDec.notes {
+		if onProgress != nil {
+			onProgress(3, note)
+		}
+	}
 	parts := make([]string, 0, len(clips))
 	durations := make([]float64, 0, len(clips))
 	for i, clip := range clips {
@@ -126,12 +139,15 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 		// apad + -shortest:音轨补齐到与画面等长。H3 产物偶有音轨略短于视频,
 		// 不补的话后面按"画面时长"裁音频会越界(表现为末尾静音或整轨前移)。
-		if _, err := f.Run(ctx, "-y", "-i", clip,
+		normArgs := []string{"-y", "-i", clip,
 			"-vf", vf,
 			"-af", "aresample=48000,apad",
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-			"-c:a", "aac", "-b:a", "192k", "-ac", "2",
-			"-shortest", part); err != nil {
+			"-c:a", "aac", "-b:a", "192k", "-ac", "2"}
+		// 色彩标记:只是把"这段像素本来是什么口径"写进输出,不做任何色彩转换。
+		normArgs = append(normArgs, shotColorArgs(colorInfos[i])...)
+		normArgs = append(normArgs, "-shortest", part)
+		if _, err := f.Run(ctx, normArgs...); err != nil {
 			return nil, fmt.Errorf("镜头 %d 规范化失败: %w", i+1, err)
 		}
 		info, err := f.Probe(part)
@@ -172,6 +188,17 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 	}
 
+	// ---- 逐镜人声包络 ----
+	// 接缝"切在静音上"与字幕"落在真实发声段落"吃的是同一份包络,这里只解一次。
+	// 硬切 + 全片没有一句字幕时才跳过(那时没有任何地方用它,不必白解一遍全片音轨)。
+	var envs []*audio.Envelope
+	if trans == transFade || hasCueText(plan) {
+		envs = decodeEnvelopes(ctx, f, parts)
+	}
+	// heads/tails:该镜在成片里**实际可听**的音频区间(硬切即整镜;叠化由接缝让出量扣)。
+	// 字幕按可听区间排 —— 被接缝切掉的那段在成片里是没有声音的。
+	heads, tails := fullAudioWindows(durations)
+
 	// ---- 步骤二:拼接 ----
 	var master string
 	switch trans {
@@ -179,7 +206,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		// dissolve(xfade 像素溶解,颗粒噪点观感)按用户 2026-09-10 定调不再使用,
 		// 存量项目参数里的 dissolve 一律按 fade(平滑交叉叠化)执行,不迁移数据
 		// (归一化在 effectiveTransition 里)。
-		master, err = stitchWithTransitions(ctx, f, parts, durations, starts, fades, work, trans, res, onProgress)
+		master, heads, tails, err = stitchWithTransitions(ctx, f, parts, durations, starts, fades, envs, colorArgs, work, trans, res, onProgress)
 		if err != nil {
 			return nil, err
 		}
@@ -190,16 +217,36 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 	}
 
-	// ---- 步骤三:字幕 + 响度 + faststart 终混 ----
+	// ---- 步骤三:字幕 + 调色 + 响度 + faststart 终混 ----
 	if onProgress != nil {
 		onProgress(85, "字幕与响度终混")
 	}
-	srtPath := filepath.Join(outDir, "final.srt")
-	if plan != nil {
-		_ = os.WriteFile(srtPath, []byte(BuildSRT(plan, starts, durations)), 0o644)
-	}
 	// 成片总长:各镜累加 − 各接缝重叠(与画面链、字幕起点同源)。
 	total := filmDuration(durations, fades)
+
+	// 字幕落点(乙4):按每镜的真实人声排;对不上就回退镜头级窗口并如实记 note。
+	// note 进 AudioNotes —— 它本来就是"音频实况"的如实回显通道(管线逐条播报),
+	// 而字幕落点这两个分支恰恰都是拿音频包络判出来的。
+	var cues *cuePlan
+	if hasCueText(plan) {
+		tracks := make([]speechTrack, len(durations))
+		for i := range tracks {
+			if i < len(heads) && i < len(tails) {
+				tracks[i] = speechTrack{From: heads[i], To: tails[i]}
+			}
+			if i < len(envs) {
+				tracks[i].Env = envs[i]
+			}
+		}
+		cp := planCues(plan, starts, durations, tracks)
+		cues = &cp
+		res.AudioNotes = append(res.AudioNotes, cp.notes...)
+	}
+
+	srtPath := filepath.Join(outDir, "final.srt")
+	if plan != nil {
+		_ = os.WriteFile(srtPath, []byte(buildSRT(plan, starts, durations, cues)), 0o644)
+	}
 	res.SRTPath = srtPath
 
 	chain, _, note := prepareAudio(ctx, f, master, p)
@@ -208,32 +255,50 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		onProgress(88, note)
 	}
 
+	// 调色档(甲1):统一在终混这一步应用,且**必须排在字幕之前** ——
+	// 颗粒(noise)、暗角(vignette)与锐化若作用在字幕上,字会被压糊(见 finalVideoFilters)。
+	burnt := p.BurnSubtitles && plan != nil
+	vf, needEncode := finalVideoFilters(p.Grade, burnt)
+	if g := GradeFilter(p.Grade); g != "" && onProgress != nil {
+		onProgress(86, fmt.Sprintf("🎨 调色档 %s 已应用(在字幕之前:颗粒与暗角不作用在字幕上)", NormalizeGrade(p.Grade)))
+	}
+
 	finalPath := filepath.Join(outDir, "final.mp4")
 	args := []string{"-y", "-i", master, "-af", chain}
-	if p.BurnSubtitles && plan != nil {
+	if needEncode {
+		args = append(args, "-vf", vf)
+	}
+	if burnt {
 		ass := filepath.Join(outDir, "final.ass")
-		if err := os.WriteFile(ass, []byte(BuildASS(plan, starts, durations, p.SubtitleSize, p.Width, p.Height)), 0o644); err != nil {
+		if err := os.WriteFile(ass, []byte(buildASS(plan, starts, durations, p.SubtitleSize, p.Width, p.Height, cues)), 0o644); err != nil {
 			return nil, err
 		}
-		// 相对文件名 + 工作目录,规避 Windows 盘符转义;libass 不接受带引号的文件名
-		if err := runIn(ctx, f.Ffmpeg, outDir, append(args,
-			"-vf", "subtitles=filename=final.ass",
+	}
+	// 色彩标记透传:全片口径统一时把那份标记写到成品上(不写等于让播放器继续猜)。
+	args = append(args, colorArgs...)
+	if needEncode {
+		args = append(args,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-			"-movflags", "+faststart", finalPath)...); err != nil {
-			return nil, fmt.Errorf("终混失败: %w", err)
-		}
+			"-movflags", "+faststart", finalPath)
 	} else {
-		// 不烧字幕这一路**视频零滤镜**:master 已经是同规格 x264(硬切路 -c:v copy、
-		// 叠化路 xfade 后 crf18 重编),这里再解一遍码、再压一遍等于白付一次整集
-		// medium 编码(分钟级),并把每一镜又推一代 x264 代次损失(审计 M35)——
-		// 与该文件自己的音频纪律("中间轨一律无损")自相矛盾。mkv→mp4 允许视频流复制。
-		if _, err := f.Run(ctx, append(args,
+		// 一个视频滤镜都没有(未烧字幕且未开调色)这一路**视频零滤镜**:master 已经是
+		// 同规格 x264(硬切路 -c:v copy、叠化路 xfade 后 crf18 重编),这里再解一遍码、
+		// 再压一遍等于白付一次整集 medium 编码(分钟级),并把每一镜又推一代 x264 代次
+		// 损失(审计 M35)—— 与该文件自己的音频纪律("中间轨一律无损")自相矛盾。
+		// mkv→mp4 允许视频流复制。
+		args = append(args,
 			"-c:v", "copy",
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-			"-movflags", "+faststart", finalPath)...); err != nil {
+			"-movflags", "+faststart", finalPath)
+	}
+	// 烧字幕这一路必须在 outDir 里跑:libass 只接受相对文件名(规避 Windows 盘符转义)。
+	if burnt {
+		if err := runIn(ctx, f.Ffmpeg, outDir, args...); err != nil {
 			return nil, fmt.Errorf("终混失败: %w", err)
 		}
+	} else if _, err := f.Run(ctx, args...); err != nil {
+		return nil, fmt.Errorf("终混失败: %w", err)
 	}
 	if onProgress != nil {
 		onProgress(100, "合成完成")
@@ -429,6 +494,36 @@ func seamAudioWindows(durations, fades, cuts []float64) (heads, tails []float64)
 
 // ---------- 音频链 ----------
 
+// decodeEnvelopes 逐镜解码人声包络。接缝的"切在静音上"与字幕的"落在真实发声段落上"
+// 共用同一份:同一段音轨解两遍纯属白烧时间(一次解码 ≈ 全片每镜一遍 16kHz 单声道)。
+//
+// 解不出来的镜留在切片里当 nil,由各自的调用方回退(接缝退回中点切、字幕退回镜头级窗口)
+// —— 不在这里抛错:音轨解不出来不该让整片合成失败。
+func decodeEnvelopes(ctx context.Context, f *ff.FF, parts []string) []*audio.Envelope {
+	envs := make([]*audio.Envelope, len(parts))
+	for i, part := range parts {
+		if ctx.Err() != nil {
+			return envs
+		}
+		e, err := audio.Decode(ctx, f, part)
+		if err != nil {
+			continue // 按"无包络"处理
+		}
+		envs[i] = e
+	}
+	return envs
+}
+
+// fullAudioWindows 硬切时的可听区间:每镜整段都在(没有接缝让出音频)。
+func fullAudioWindows(durations []float64) (heads, tails []float64) {
+	heads = make([]float64, len(durations))
+	tails = make([]float64, len(durations))
+	for i, d := range durations {
+		tails[i] = d
+	}
+	return heads, tails
+}
+
 // denoiseChain 净化链:高通砍掉隆隆声/直流,afftdn 压嘶声与宽带底噪。
 //
 // 参数刻意保守(nr=12dB、噪声基准 -30dBFS):频谱降噪开大了会让语音发闷发"水",
@@ -568,7 +663,11 @@ func stitchCut(ctx context.Context, f *ff.FF, parts []string, work string, onPro
 // 地方;两镜都可裁区间内人人声时,自然退回中点(与旧行为一致,不留新问题)。
 //
 // starts/fades 由调用方(Compose)统一推导后传入,本函数不自行再算一遍。
-func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations, starts, fades []float64, work, trans string, res *Result, onProgress func(int, string)) (string, error) {
+// envs 同样由调用方传入(与字幕落点对齐共用一份,见 decodeEnvelopes),长度须与 parts 等长,
+// 元素为 nil 表示那一镜的音轨解不出来(该接缝回退中点切)。
+// colorArgs 是中间轨重编码要写入的色彩标记(全片口径统一时非空,见 colorDecision.masterArgs)。
+// 返回值 heads/tails 为该镜在成片里实际可听的音频区间 —— 调用方拿它排字幕落点。
+func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations, starts, fades []float64, envs []*audio.Envelope, colorArgs []string, work, trans string, res *Result, onProgress func(int, string)) (string, []float64, []float64, error) {
 	if onProgress != nil {
 		onProgress(60, "拼接(转场 "+trans+")")
 	}
@@ -592,22 +691,14 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 	}
 
 	// ---- 音频链:逐接缝求解切点 ----
-	envs := make([]*audio.Envelope, n)
 	// undecoded 包络解不出来的镜号:这些接缝会退回"中点切"(每镜头尾各砍一半),
 	// 正是用户报过的「配音不完整」旧行为 —— 必须让用户看见是**哪几镜**没评估到,
 	// 而不是留一句"人声损失已最小化"(审计 M37)。
 	var undecoded []int
-	for i, part := range parts {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		e, err := audio.Decode(ctx, f, part)
-		if err != nil {
-			envs[i] = nil // 解不出来就按"无包络"处理(该接缝回退中点切)
+	for i := 0; i < n; i++ {
+		if i >= len(envs) || envs[i] == nil {
 			undecoded = append(undecoded, i+1)
-			continue
 		}
-		envs[i] = e
 	}
 	// 逐接缝切点(相对后一镜头部,∈ [0, fades[i]])。让出多少音频由 seamAudioWindows
 	// 统一结算 —— 那边保证"让出的音频 == 画面让出的重叠"这条不变式。
@@ -679,12 +770,15 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 		"-filter_complex", strings.Join(filters, ";"),
 		"-map", "[vout]", "-map", lastA,
 		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-		"-c:a", "flac",
-		out)
+		"-c:a", "flac")
+	// 中间轨也写色彩标记:硬切路走 -c:v copy,成品的色标继承自 part;这一路是重编码,
+	// 不写就把逐镜写好的标记丢在中间轨上了(全片口径统一时才有值)。
+	args = append(args, colorArgs...)
+	args = append(args, out)
 	if _, err := f.Run(ctx, args...); err != nil {
-		return "", err
+		return "", nil, nil, err
 	}
-	return out, nil
+	return out, heads, tails, nil
 }
 
 // ShotSpeechBudget 该镜"应该有"的人声秒数(台词 + 旁白)。
@@ -723,12 +817,15 @@ func sum(d []float64) float64 {
 	return s
 }
 
-// subtitleWindow 该镜字幕可用的时间窗(相对镜头起点),返回 [start, end] 偏移。
+// subtitleWindow 该镜字幕**兜底**时间窗(相对镜头起点),返回 [start, end] 偏移。
 //
 // SRT(外发)与 ASS(烧录)必须用**同一个**窗口:此前一个用 8%~88%、另一个用
 // 10%~90%,同一句话在两份字幕里落在两个时间点上,作者拿导出的 SRT 去平台对轨
-// 会发现对不齐(审计 M36)。窗口本身仍按"镜头时长均分",与真实人声落点对齐
-// 那半边属于产品/设计决策(要动 Envelope 到字幕链的传递),不在本次范围内。
+// 会发现对不齐(审计 M36)。
+//
+// 这个窗口现在只作**兜底**:正常情况下每句字幕由 subtitle.go 的 alignCues 钉在
+// 真实人声段落上;包络缺失或段落数与句数不符时才回退到这里(并如实播报)。
+// 兜底口径与旧实现逐字一致 —— 退化时行为不变,不引入新问题。
 func subtitleWindow(d float64) (start, end float64) {
 	const inset = 0.1
 	return d * inset, d * (1 - inset)
@@ -771,7 +868,15 @@ func seamFeedback(silent, evaluated, seams int, undecoded []int) []string {
 // ---------- 字幕生成 ----------
 
 // BuildSRT 依据镜头实际起始/时长生成 SRT 时间轴(starts 为转场扣除后的镜起始)。
+//
+// 保持原签名:走镜头级窗口(等价于"没有可用的人声落点计划")。
+// 合成内部走 buildSRT —— 那里带着按真实人声排好的落点。
 func BuildSRT(plan *project.Plan, starts, durations []float64) string {
+	return buildSRT(plan, starts, durations, nil)
+}
+
+// buildSRT BuildSRT 的内部实现。cues 为按真实人声排好的落点计划(可为 nil = 全走镜头级窗口)。
+func buildSRT(plan *project.Plan, starts, durations []float64, cues *cuePlan) string {
 	var sb strings.Builder
 	idx := 1
 	for i, shot := range plan.Shots {
@@ -787,15 +892,12 @@ func BuildSRT(plan *project.Plan, starts, durations []float64) string {
 		if strings.TrimSpace(text) == "" {
 			continue
 		}
-		// 台词区约 8%-88%,多行均分 —— 与 ASS 共用同一个窗口(见 subtitleWindow)
+		// 每句的落点:优先真实人声(见 subtitle.go),对不上则镜头级窗口兜底
 		lines := strings.Split(text, "\n")
-		start, end := subtitleWindow(d)
-		start += t
-		end += t
-		seg := (end - start) / float64(len(lines))
+		spans := cues.shotSpans(i, t, d, len(lines))
 		for j, ln := range lines {
-			ls := start + seg*float64(j) + 0.05
-			le := start + seg*float64(j+1) - 0.05
+			ls := spans[j].Start + 0.05
+			le := spans[j].End - 0.05
 			if le-ls < 0.5 {
 				le = ls + 0.5
 			}
@@ -820,7 +922,14 @@ func srtTime(sec float64) string {
 // BuildASS 生成 ASS 字幕(中文字体+描边;台词金色/旁白白色)。
 // playW/playH 为成片画幅,字幕网格与字号随画幅缩放;
 // 超宽台词自动断行(中文无空格,ASS 智能换行不生效,单行超出即出界截断)。
+//
+// 保持原签名:走镜头级窗口;合成内部走 buildASS(带真实人声落点)。
 func BuildASS(plan *project.Plan, starts, durations []float64, sizePct, playW, playH int) string {
+	return buildASS(plan, starts, durations, sizePct, playW, playH, nil)
+}
+
+// buildASS BuildASS 的内部实现。cues 为按真实人声排好的落点计划(可为 nil = 全走镜头级窗口)。
+func buildASS(plan *project.Plan, starts, durations []float64, sizePct, playW, playH int, cues *cuePlan) string {
 	if sizePct <= 0 {
 		sizePct = 4
 	}
@@ -871,12 +980,10 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 		if strings.TrimSpace(shot.Narration) != "" && len(shot.Dialogue) == 0 {
 			style = "Narration"
 		}
-		// 窗口与 SRT 同源(审计 M36):subtitleWindow 是唯一出处,此处不再自己写 0.1/0.8。
-		ws, we := subtitleWindow(d)
-		span := we - ws                   // 镜头头尾各留 10%
-		seg := span / float64(len(parts)) // 每条均分
-		start := t + ws
-		for _, p := range parts {
+		// 落点与 SRT 同源(审计 M36):cues 给真实人声落点,对不上则由 shotSpans 回退
+		// 到 subtitleWindow 的镜头级窗口(唯一出处,此处不再自己写 0.1/0.8)。
+		spans := cues.shotSpans(i, t, d, len(parts))
+		for j, p := range parts {
 			p = strings.TrimSpace(p)
 			if p == "" {
 				continue
@@ -884,8 +991,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 			// 超宽行按画面宽度断行(标点处优先,避免生切;多行共用一个时间窗)
 			p = wrapAssText(strings.ReplaceAll(p, "\n", `\N`), maxRunes)
 			fmt.Fprintf(&sb, "Dialogue: 0,%s,%s,%s,,0,0,0,,%s\n",
-				assTime(start), assTime(start+seg), style, p)
-			start += seg
+				assTime(spans[j].Start), assTime(spans[j].End), style, p)
 		}
 	}
 	return sb.String()

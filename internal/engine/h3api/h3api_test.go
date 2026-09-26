@@ -125,6 +125,12 @@ func TestRenderFailsFastOnAuthError(t *testing.T) {
 }
 
 // TestRenderTimeoutCancelsRemote 超时必须取消远端任务,否则云端继续跑并计费。
+//
+// **超时错误不再包装 engine.ErrRenderTimeout**(乙8,2026-09-26 待决项):那个哨兵的
+// 含义是"可原地重试",而管线对它的处置是"释放显存后重渲一次" —— 在云端这就是**再提交
+// 一个计费任务**,而"释放显存"的理由在云端根本不存在(CapsOf("api") 为零值)。
+// 所以这里断言的是**反面**:错误必须不带该哨兵,管线才会"失败即停"。
+// 详见 h3api_contract_test.go 的 TestCloudFailureNeverSignalsRetry。
 func TestRenderTimeoutCancelsRemote(t *testing.T) {
 	f := &fakeAPI{} // 永远 running
 	e := newTestEngine(t, f, 5*time.Millisecond)
@@ -132,8 +138,14 @@ func TestRenderTimeoutCancelsRemote(t *testing.T) {
 	job := testJob(t)
 	job.Timeout = 60 * time.Millisecond
 	_, err := e.Render(context.Background(), job)
-	if err == nil || !errors.Is(err, engine.ErrRenderTimeout) {
-		t.Fatalf("应返回超时错误,实际 %v", err)
+	if err == nil {
+		t.Fatal("应返回超时错误")
+	}
+	if !strings.Contains(err.Error(), "超时") {
+		t.Errorf("错误文案必须说清是超时,实际 %v", err)
+	}
+	if errors.Is(err, engine.ErrRenderTimeout) {
+		t.Fatal("云端超时绝不能包装 ErrRenderTimeout —— 管线会据此再提交一个计费任务(重提 = 再花一次额度)")
 	}
 	waitFor(t, &f.deletes, 1)
 	if n := atomic.LoadInt32(&f.creates); n != 1 {

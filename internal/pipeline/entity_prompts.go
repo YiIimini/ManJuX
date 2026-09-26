@@ -373,6 +373,33 @@ var entityProfiles = map[EntityKind]entityProfile{
 		JudgePoints: "the same chibi CHARACTER DESIGN: head-to-body ratio, face design, hairstyle and hair colour, costume and colour scheme, " +
 			"signature marks",
 	},
+
+	// ---------- 场景(环境参考图;不是角色卡类型,见 entity.go 的 KindScene) ----------
+	//
+	// 场景与角色共用**同一套装配链**(取景重写 + styleExpand 的三道守卫),但取景与
+	// 忠实度的落点完全不同:
+	//   - 取景:场景要的是**环境图**——整块地方、建筑/地面/天光,画面里躺着一个空场;
+	//     此前场景走裸提示词,LLM 没写取景时模型就自由发挥(有时塞人进画面,而那个
+	//     人不是本剧任何角色的脸,反而成了 H3 的干扰参考)。
+	//   - 忠实度:场景要抄的是**空间结构与材质**,不是脸。给它写"脸型/五官照抄"就是
+	//     在逼模型画人(与 2026-09-24「铜雀被渲染成人物」同一条教训)。
+	KindScene: {
+		Label: "场景",
+		Hint:  "地点/环境:整块地方的空场环境图(无人物),渲染方法为环境插图 + 场景忠实度",
+		SheetFraming: "a wide establishing view of the whole location — the environment itself is the subject: " +
+			"its architecture, ground plane, sky, light and props; the place stands completely deserted and unpeopled, " +
+			"an empty stage waiting for the cast",
+		SheetIdentity: "\n\nSCENE FIDELITY (mandatory): the place must match the written brief EXACTLY — the same spatial layout, " +
+			"the same architecture and building materials, the same ground, vegetation and props, the same time of day, weather and " +
+			"light direction. Art style changes the RENDERING SURFACE only (material, sheen, shading); it must NEVER change the layout " +
+			"or the identity of the place. Every design stays ORIGINAL: never reproduce a real, identifiable location or landmark.",
+		SheetMarker: "SCENE FIDELITY",
+		SheetLook:   animatedMediumImageBlock(),
+		// 与器物/灵宠/妖兽/无实体/Q 版同一条理由:LLM 写的 image_prompt 常常带着人像取景
+		// (plain background / upper-body framing / portrait),场景必须重写取景尾巴,
+		// 否则同一段提示词里同时要求"整块地方"和"半身正面"。
+		RewriteSheetFraming: true,
+	},
 }
 
 // TurnaroundPrompt 组装该类型的转身/转台视频提示词(六段式,与 director 的 sysH3Format 同构)。

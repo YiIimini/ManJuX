@@ -165,7 +165,9 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	}
 	for _, sc := range plan.Scenes {
 		if "scene:"+sc.ID == assetID {
-			kind, name, desc, prompt = "scenes", sc.Name, sc.Description, sc.ImagePrompt
+			// 场景的 image_prompt **不在这里取原值**:它必须过场景装配唯一实现点
+			// (见下面的 SceneImagePrompt 分支)—— 原样取用正是乙1 要修的那个洞。
+			kind, name, desc = "scenes", sc.Name, sc.Description
 		}
 	}
 	if kind == "" {
@@ -196,6 +198,16 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 			Kind: ek, Name: name, Description: desc, ImagePrompt: prompt,
 			FacesOn: proj.Config.Params.Script.FacesOn(),
 		}, plan)
+	} else if kind == "scenes" {
+		// 场景同理走**场景装配唯一实现点**(SceneImagePrompt,乙1):这条"单个资产重新生成"
+		// 是第五条会出像素的路径,漏掉它 = 用户点一次「重新生成」就把场景图打回裸提示词,
+		// 又变回"角色一套画风、场景另一套"。提示词按 sc 重新装配,不用上面循环里那份原文。
+		for _, sc := range plan.Scenes {
+			if "scene:"+sc.ID == assetID {
+				prompt = SceneImagePrompt(proj, plan, sc)
+				break
+			}
+		}
 	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
@@ -205,12 +217,13 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if err := eng.Available(ctx); err != nil {
 		return fmt.Errorf("单资产重生成需要本地 ComfyUI: %w", err)
 	}
-	c.emit(projectID, PhaseAssets, 0, "info", 0, "重新生成:%s「%s」(%s)…", kindLabel(kind), name, EntityKindLabel(ek))
-	w, h := 832, 1248
+	c.emit(projectID, PhaseAssets, 0, "info", 0, "重新生成:%s「%s」%s…", kindLabel(kind), name, entityKindSuffix(kind, ek))
+	// 尺寸口径与产线一致:资产图 = 项目的成片画幅(见 stages_assets.go 的 assetImageSize)。
+	// 旧实现在这里也是写死的 832×1248 + 场景按方向翻转 —— "重新生成的那张"与产线那张
+	// 比例不同,同一个角色在参考图里就已经是两种构图。
+	w, h := assetImageSize(proj)
 	if isChibi {
-		w, h = 1024, 1024
-	} else if kind == "scenes" && proj.Config.Params.Render.Width >= proj.Config.Params.Render.Height {
-		w, h = 1248, 832
+		w, h = 1024, 1024 // Q 版是方幅(与产线 Q 版同一口径)
 	}
 	out := filepath.Join(c.store.Dir(projectID), "assets", kind, director.SanitizeForCache(kind+"_"+strings.TrimPrefix(assetID, kind+":"))+".png")
 	seed := RandomSeed() // 重新生成 = 就是要换一张(随机种子只允许出现在这类显式动作里)

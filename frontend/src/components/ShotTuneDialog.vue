@@ -3,6 +3,7 @@
 import { G, api, refreshProject } from '../store'
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { cloudSeedWarning } from '../renderHints'
 
 const visible = computed({
   get: () => !!G.tuneShot,
@@ -31,6 +32,12 @@ const dirty = computed(() =>
   form.h3_prompt !== (shot.value?.h3_prompt || '') ||
   form.duration !== (shot.value?.duration || 7) ||
   form.mode !== (shot.value?.mode || 'ref2va'))
+
+// 云端 + 固定 seed = 不可复现(乙9)。这个弹窗的全部意义就是「同参数反复微调对比」,
+// 而云端请求体里没有 seed 字段 —— 不看这条提示,用户会以为自己在做受控对比,
+// 实际每次都是新样本,排查方向从一开始就是错的。
+// 条件与文案与项目参数抽屉共用同一份实现(renderHints.cloudSeedWarning)。
+const cloudSeedNote = computed(() => cloudSeedWarning(form.engine, form.seed))
 
 async function save() {
   saving.value = true
@@ -109,6 +116,7 @@ async function render() {
               <el-button size="small" @click="form.seed = seedRandom">随机 {{ seedRandom }}</el-button>
             </div>
           </el-form-item>
+          <el-alert v-if="cloudSeedNote" type="warning" :closable="false" :title="cloudSeedNote" class="mb-3" />
           <el-form-item label="H3 提示词(六段式;修改后该镜自动按新指纹重渲)">
             <el-input v-model="form.h3_prompt" type="textarea" :rows="10" style="font-family:var(--mx-mono);font-size:11.5px" />
           </el-form-item>

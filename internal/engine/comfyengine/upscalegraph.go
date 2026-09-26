@@ -68,6 +68,43 @@ func upscaleDownScale(modelName string) (float64, bool) {
 	return 2.0 / float64(s), true
 }
 
+// upscaleTargetFactor 放大链路对用户的承诺倍数(2×)。图里的收敛节点就是为了兑现它。
+const upscaleTargetFactor = 2
+
+// UpscaleExpectedScale 放大产物的**预期尺寸比**(产物宽高 ÷ 源片宽高),以及这个预期是否可信。
+//
+//	(2, true)  可信:ltx 隐空间放大器本身是固定 ×2 的空间模型;esrgan 权重名里能读出原生
+//	           倍数(含 2× 这种"本来就对、不需要收敛节点"的情形),图会精确收敛到 2×。
+//	(2, false) 只是**假定**:权重名里没有倍数(BSRGAN / remacri / NMKD-Superscale 这类
+//	           真实存在),引擎按历史行为当 4× 并想收敛到 2× —— 权重真身若不是 4×,
+//	           产物尺寸就不对。
+//
+// 为什么给调用方这个判断(甲4,2026-09-26 渲染管线审查/待决项):引擎侧拿不到 ffprobe,
+// 真正的兜底必须是**下载后的尺寸断言**(server 侧持有 ffprobe,见 server.checkUpscale2x);
+// 这里只是把"这次承诺建立在假定之上"提前说出来,让日志在跑之前就有痕迹 ——
+// 否则用户拿到与源片同尺寸的文件时,事后无从判断是哪一步出的问题。
+func UpscaleExpectedScale(opt UpscaleOptions) (float64, bool) {
+	if opt.Type != "ltx" && esrganScale(opt.ModelName) <= 0 {
+		return upscaleTargetFactor, false
+	}
+	return upscaleTargetFactor, true
+}
+
+// UpscaleScaleAdvice 提交放大之前的倍率自检建议:第二个返回值为 true 时才需要播报。
+//
+// 文案里**必须**带上"产物尺寸会被断言"这件事:它是用户下一次排障时唯一的线索,
+// 也解释了为什么这条告警只是提醒、不是拒绝服务(认不出的权重仍然照跑,与历史行为一致)。
+func UpscaleScaleAdvice(opt UpscaleOptions) (string, bool) {
+	if _, confident := UpscaleExpectedScale(opt); confident {
+		return "", false
+	}
+	return fmt.Sprintf(
+		"⚠ 无法从超分权重名「%s」判定它原生的放大倍数:本次按 %d× 假定并收敛到 %d×。"+
+			"若假定不成立(产物不是源片的 %d×),下载后会被尺寸断言拦下并如实报错(不会静默交付);"+
+			"要消除这条告警请改用带倍数的权重名(如 4x-UltraSharp / RealESRGAN_x2plus)",
+		opt.ModelName, defaultESRGANScale, upscaleTargetFactor, upscaleTargetFactor), true
+}
+
 // buildUpscaleGraph 构造"放大后处理"工作流:在已完成的镜头上追加 2× 放大分支。
 //
 // 两条分支都**保留原音轨** —— 放大只提升画面分辨率,声音必须原样复用,

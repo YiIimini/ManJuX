@@ -165,6 +165,14 @@ export const api = {
   deleteAsset: (id, assetId) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/assets/${encodeURIComponent(assetId)}`),
   openExplorer: (path, project) => req('POST', '/api/open', { path, project }),
   fileURL: (id, rel) => `/api/projects/${encodeURIComponent(id)}/files/${rel}`,
+  // 单镜云端 2K 产物(乙7):**独立导出文件** —— 不进镜头清单、不参与合成,
+  // 成片里这一镜仍是 768p。落盘在 <项目>/clips/2k/shot_NNN_2k.mp4,由后端列出、
+  // 按文件名取回(取回的名字后端用白名单校验,前端只负责拼 URL)。
+  // 为什么不用通配的 fileURL:那条路由面向"项目内任意文件",而这里是**允许被
+  // 用户点开/下载**的一类文件,形状由后端钉死才安全。
+  outputs2k: (id) => req('GET', `/api/projects/${encodeURIComponent(id)}/outputs/2k`),
+  output2kURL: (id, name) =>
+    `/api/projects/${encodeURIComponent(id)}/outputs/2k/${encodeURIComponent(name)}`,
   sysmon: () => req('GET', '/api/sysmon'),
   window: (action) => req('POST', `/api/window/${encodeURIComponent(action)}`),
   quit: () => req('POST', '/api/quit'),

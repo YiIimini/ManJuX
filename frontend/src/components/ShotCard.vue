@@ -2,6 +2,7 @@
 import { G, api, refreshProject } from '../store'
 import { computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { confirmGpuContention } from '../pipelineBusy'
 
 const props = defineProps({ shot: Object, manifestItem: Object })
 
@@ -33,6 +34,9 @@ async function maskFix() {
     target = (r.value || '').trim()
   } catch { return }
   if (!target) { ElMessage.warning('未填写要重绘的目标'); return }
+  // 管线闲不闲与"重绘什么"无关,所以排在问完目标之后、提交之前 ——
+  // 用户已经想清楚要改哪儿了,这时告知代价才有意义(而不是先拦一道再问)。
+  if (!(await confirmGpuContention(`局部重绘 · 镜头 ${props.shot.id}`))) return
   enhanceBusy.value = true
   try {
     const d = await api.maskFix(pj.value.project.id, props.shot.id, target)
@@ -72,6 +76,7 @@ async function audioDrive() {
     input = (r.value || '').trim()
   } catch { return }
   if (!input) { ElMessage.warning('未填写配音路径'); return }
+  if (!(await confirmGpuContention(`音频驱动 · 镜头 ${props.shot.id}`))) return
   enhanceBusy.value = true
   try {
     const d = await api.audioDrive(pj.value.project.id, props.shot.id, input)

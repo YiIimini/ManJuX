@@ -293,8 +293,10 @@ func TestComposeAnnouncesAspectMismatch(t *testing.T) {
 // 这是一条**源码级**契约断言(而非行为断言):`-c:v copy` 的效果是"最终视频流与
 // master 逐帧一致",而 master 落在 Compose 内部临时目录、成功即清理,测试无法取到
 // 它去比 framemd5;在测试里复刻一遍规范化命令又会让断言跟着实现漂。
-// 所以这里钉住判据本身:烧字幕那条路(带 subtitles= 滤镜)之后**不准**再出现
-// libx264,视频只能 copy —— 想改回重编码就得先改这条断言。
+// 判据(2026-09-26 甲1 调色档落地后更新):终混只有**一条**"零滤镜"路 ——
+// 既没烧字幕、又没开调色(needEncode=false)时才允许 -c:v copy。调色与字幕都是
+// 视频滤镜,任一存在就必须重编码;而"要不要重编码"只由 needEncode 一处判定。
+// 所以这里钉住判据本身:零滤镜那一路的视频只能 copy —— 想改回无脑重编码就得先改这条断言。
 func TestFinalMuxCopiesVideoWhenNotBurningSubtitles(t *testing.T) {
 	raw, err := os.ReadFile("compose.go")
 	if err != nil {
@@ -309,14 +311,17 @@ func TestFinalMuxCopiesVideoWhenNotBurningSubtitles(t *testing.T) {
 	if j := strings.Index(region, "res.FinalPath = finalPath"); j > 0 {
 		region = region[:j]
 	}
+	if !strings.Contains(region, "if needEncode {") {
+		t.Error("重编码与流复制必须由 needEncode(有没有视频滤镜)统一判定,不能各写各的判据")
+	}
 	copied := strings.Index(region, `"-c:v", "copy"`)
 	if copied < 0 {
-		t.Error("不烧字幕的终混必须流复制视频(-c:v copy):否则每一镜又白推一代 x264 代次损失")
+		t.Error("零滤镜(未烧字幕且未开调色)的终混必须流复制视频(-c:v copy):否则每一镜又白推一代 x264 代次损失")
 	}
-	// 烧字幕那一支本来就要重编码(它有 subtitles= 滤镜),所以只要求:
-	// 重编码出现在流复制**之前**(= 只在烧字幕分支里),不烧字幕的分支不得再出现。
+	// 烧字幕/调色那一支本来就要重编码(它有滤镜),所以只要求:
+	// 重编码出现在流复制**之前**(= 只在需要滤镜的分支里),copy 的分支不得再出现。
 	if lx := strings.LastIndex(region, `"-c:v", "libx264"`); lx > copied {
-		t.Error("不烧字幕的终混不该再重编码视频(视频在这一步没有任何滤镜)")
+		t.Error("零滤镜的终混不该再重编码视频(那一步没有任何滤镜)")
 	}
 }
 
@@ -380,5 +385,80 @@ func TestShotSpeechBudget(t *testing.T) {
 	// (5+3)/4.5 + 2×0.3 = 2.38
 	if got := ShotSpeechBudget(sh); math.Abs(got-2.38) > 0.02 {
 		t.Errorf("应有口播时长约 2.38 秒,实际 %.2f", got)
+	}
+}
+
+// TestComposeAlignsSubtitleToRealSpeech 乙4 的端到端判据:镜头很长(6 秒)但人声只在
+// 第 3~4 秒,字幕就必须落在那里 —— 而不是镜头级窗口(6 秒镜头按 10% 内缩,从 0.6 秒起)。
+//
+// 为什么值得真跑一遍:这条链路跨了四个环节(规范化后的 part → 解码包络 →
+// 由拼接函数交出的可听区间 → 字幕落点),任何一处接错都会静默退回镜头级窗口
+// (代码里到处是"对不上就回退"),而回退不报错、成片照样出 —— 只有真跑能钉住。
+func TestComposeAlignsSubtitleToRealSpeech(t *testing.T) {
+	f, err := ff.New("", "")
+	if err != nil {
+		t.Skipf("本机无 ffmpeg,跳过字幕落点端到端测试: %v", err)
+	}
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	// 6 秒画面 + 只在第 3 秒起的 1 秒人声(其余静音)
+	clip := filepath.Join(dir, "clip.mp4")
+	if _, err := f.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc=size=320x192:rate=24:duration=6",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=1",
+		"-filter_complex", "[1:a]adelay=3000|3000,apad[a]",
+		"-map", "0:v", "-map", "[a]", "-t", "6",
+		"-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-b:a", "128k", "-ac", "2", clip); err != nil {
+		t.Fatalf("造测试镜头失败: %v", err)
+	}
+
+	outDir := filepath.Join(dir, "out")
+	_ = os.MkdirAll(outDir, 0o755)
+	plan := &project.Plan{Shots: []project.Shot{
+		{ID: 1, Duration: 6, Dialogue: []project.Line{{Speaker: "甲", Text: "这一句在第三秒"}}},
+	}}
+	res, err := Compose(ctx, f, []string{clip}, plan, outDir, Params{
+		Width: 320, Height: 192, Transition: "cut", BurnSubtitles: true,
+		SubtitleSize: 4, Loudness: -16, Grade: GradeOff,
+	}, nil)
+	if err != nil {
+		t.Fatalf("合成失败: %v", err)
+	}
+	notes := strings.Join(res.AudioNotes, "|")
+	if !strings.Contains(notes, "1/1 镜按真实人声对齐") {
+		t.Errorf("应如实回显「按真实人声对齐」,实际播报:%q", notes)
+	}
+
+	raw, err := os.ReadFile(res.SRTPath)
+	if err != nil {
+		t.Fatalf("读 SRT 失败: %v", err)
+	}
+
+	// 色彩口径(乙3)端到端:源片未标记 → 成品必须被**真的**标成 bt709
+	// (只在参数里写、落不到成品 colr/VUI 上,等于没写 —— 播放器照旧猜)
+	cs, err := probeClipColor(ctx, f, res.FinalPath)
+	if err != nil {
+		t.Fatalf("探测成片色彩失败: %v", err)
+	}
+	if cs.Space != "bt709" || cs.Transfer != "bt709" || cs.Primaries != "bt709" {
+		t.Errorf("未标记的源片应被标成 bt709 并落到成品上,实际 %+v", cs)
+	}
+
+	cue, err := srtWindow(t, string(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 人声段 [3.0, 4.0] ± 前后余量(0.08 / 0.15),SRT 再各收 50ms
+	if cue[0] < 2.5 || cue[0] > 3.5 {
+		t.Errorf("字幕起点应贴在第 3 秒的人声上,实际 %.2f(镜头级窗口是 0.6)", cue[0])
+	}
+	if cue[1] < 3.8 || cue[1] > 5.0 {
+		t.Errorf("字幕终点应贴在人声收尾附近(约 4.1),实际 %.2f", cue[1])
+	}
+	// 反证:老窗口是 [0.6, 5.4],起点差着 2 秒多
+	if math.Abs(cue[0]-0.6) < 0.3 {
+		t.Error("落点仍停在镜头级窗口上 —— 真实人声没有接进字幕链")
 	}
 }

@@ -23,6 +23,66 @@ import (
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
+// upscale2xTolerancePx 2× 尺寸比对的像素容差。
+//
+// 为什么是 1px 而不是 0:宽高各翻一倍之后,部分编码器在奇数尺寸上会做 ±1 的取整
+// (源片 1079×607 → 期望 2158×1214,产物可能是 2158×1213)。容差再放大就不行了 ——
+// 最危险的那类失败(权重没真正放大)差的是**整整一倍**,1px 的窗口装不下它。
+const upscale2xTolerancePx = 1
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+// checkUpscale2x 放大产物必须**恰好是源片的 2×**(容差 1px),返回可读错误(nil = 通过)。
+//
+// 为什么断言放在 server 而不是引擎里(甲4,2026-09-26 渲染管线审查):引擎侧拿不到
+// ffprobe,它只能按权重名推倍数(comfyengine.UpscaleExpectedScale);而"到底放大了没有"
+// 只有拿到**产物本身**才能回答。这条断言是整条链路的最后一道闸门 ——
+// 没有它,用户会拿到一个和源片一样大的文件,而界面/日志都写着"2× 放大完成"。
+//
+// 抽成纯函数:源尺寸 + 产物尺寸 → 通过/报错,四种边界(精确、容差内、未放大、尺寸离谱)
+// 全部可在单测里穷举,不必真跑一次放大。
+func checkUpscale2x(srcW, srcH, outW, outH int) error {
+	if srcW <= 0 || srcH <= 0 || outW <= 0 || outH <= 0 {
+		return fmt.Errorf("无法核对放大结果尺寸(源片 %d×%d、产物 %d×%d):探测不到有效宽高",
+			srcW, srcH, outW, outH)
+	}
+	wantW, wantH := srcW*2, srcH*2
+	if absInt(outW-wantW) <= upscale2xTolerancePx && absInt(outH-wantH) <= upscale2xTolerancePx {
+		return nil
+	}
+	// 与源片**一样大**是最典型的坏结果(换 2× 权重时旧实现 2×→×0.5 就是这个),
+	// 单独说清,免得用户对着一串数字自己算。
+	if absInt(outW-srcW) <= upscale2xTolerancePx && absInt(outH-srcH) <= upscale2xTolerancePx {
+		return fmt.Errorf("放大产物与源片**尺寸相同**(源片 %d×%d,产物 %d×%d):画面并没有被放大,只是原样重编码了一遍",
+			srcW, srcH, outW, outH)
+	}
+	return fmt.Errorf("放大产物尺寸不是源片的 2×:源片 %d×%d,期望 %d×%d(容差 %dpx),实际 %d×%d",
+		srcW, srcH, wantW, wantH, upscale2xTolerancePx, outW, outH)
+}
+
+// missingRefWarning 参考图缺失的告警文案(空字符串 = 一张都不缺,保持安静)。
+//
+// 为什么必须说出来(甲5,2026-09-26 渲染管线审查):pipeline.RefPlan 在角色没有定妆照、
+// 场景没有场景图时会**少给**参考图,而少一张会让后续 <Picture> 编号整体前移 ——
+// LLM 写的 subject_definitions 是按 shot.Characters 顺序来的,画面内容与描述因此对不上,
+// 表现就是"这角色不像 / 脸和服装漂移了"。静默少传参考图让用户事后完全无从判断。
+//
+// missing 里是缺失定妆照的**角色/场景 ID**(char_xxx / 场景名),直接点名即可。
+func missingRefWarning(missing []string) string {
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("⚠ 参考图缺失 %d 项(%s):这些角色/场景没有可用参考图,本次会少传——"+
+		"<Picture> 编号整体前移,画面与提示词里的主体定义对不上,极易出现身份漂移(脸/服装/器物不像),"+
+		"且产物本身看不出异常。建议先补齐这些资产的图再重试",
+		len(missing), strings.Join(missing, "、"))
+}
+
 // shotEnhanceCtx 两个端点共用的取数:定位镜头、校验产物、准备源视频与参考图。
 type shotEnhanceCtx struct {
 	proj     *project.Project
@@ -231,8 +291,13 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
 	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
-	refs, roles, _ := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
+	refs, roles, missing := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
+	// 参考图**变少**必须说出来(甲5):RefPlan 缺图时不会报错,只会少给几张,而少一张
+	// 就足以让 <Picture> 编号整体前移、身份漂移。此前这里把 missing 直接丢进 _(静默降级)。
+	if warn := missingRefWarning(missing); warn != "" {
+		s.opLog("%s", warn)
+	}
 	// 参考图权威清单(与主渲染同一份):编号错位会让拼合图被当成场景图
 	// —— 2026-09-25 角色漂移根因,见 pipeline/refmanifest.go。
 	prompt = pipeline.EnsureRefManifest(prompt, *ctx.shot, roles)
@@ -353,6 +418,12 @@ func (s *Server) handleShotUpscale(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, fmt.Errorf("读取源镜头信息失败:%w", err))
 		return
 	}
+	// 提交前的倍率自检(甲4 的另一半):权重名里认不出原生倍数时,引擎是按 4× 假定的
+	// (与历史行为一致),这份假定一旦不成立,产物就不会是 2×。跑之前先说清楚,
+	// 跑完再由下面的尺寸断言兜底 —— 两道都不省。
+	if advice, warn := comfyengine.UpscaleScaleAdvice(opt); warn {
+		s.opLog("%s", advice)
+	}
 	fps := info.FPS
 	if fps <= 0 {
 		fps = 24 // 极少数容器不报帧率,按 H3 的产出口径兜底
@@ -371,8 +442,33 @@ func (s *Server) handleShotUpscale(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// 落盘前断言"**恰好** 2×"(甲4,2026-09-26 渲染管线审查):引擎交给我们的只是一个
+	// 文件,它有没有真的放大只有产物自己知道 —— 而"没放大却报成功"正是这条链路踩过的坑
+	// (旧实现把缩放写死 0.5,换 2× 权重时 2×→×0.5 = 原分辨率,用户拿到与源片同尺寸的
+	// 文件,界面报「2× 放大完成」)。这里比对源片与产物的实测宽高,不符即报错。
+	//
+	// **产物一律保留**:它正是排查的物证(到底放大了多少倍、是不是换错了权重),
+	// 所以在错误里把路径给出来,而不是删掉重来。
+	outInfo, err := s.ff.Probe(ctx.outPath)
+	if err != nil {
+		s.opLog("✕ 2× 放大产物无法核对(探测失败):%v", err)
+		writeErr(w, 500, fmt.Errorf(
+			"放大产物已生成但读不到媒体信息,无法核对它是否真的是 2×:%w;产物保留在 %s,请手工核对",
+			err, s.relFile(ctx.proj.ID, ctx.outPath)))
+		return
+	}
+	if err := checkUpscale2x(info.Width, info.Height, outInfo.Width, outInfo.Height); err != nil {
+		s.opLog("✕ 2× 放大产物尺寸不符:%v", err)
+		writeErr(w, 500, fmt.Errorf(
+			"%w;产物已保留在 %s —— 多半是放大权重与目标倍数不匹配(请按权重名换成 2x/4x 的权重,或改用隐空间放大)",
+			err, s.relFile(ctx.proj.ID, ctx.outPath)))
+		return
+	}
+
 	rel := s.relFile(ctx.proj.ID, ctx.outPath)
-	s.opLog("✔ 2× 放大完成:%s 镜 %d → %s", ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath))
+	s.opLog("✔ 2× 放大完成:%s 镜 %d → %s(%d×%d → %d×%d)",
+		ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath),
+		info.Width, info.Height, outInfo.Width, outInfo.Height)
 	s.pipe.ReleaseVRAMIfIdle("2× 放大完成")
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "file": rel,
@@ -416,8 +512,12 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
 	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
 	assets, _ := s.store.LoadAssets(ctx.proj.ID)
-	refs, roles, _ := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
+	refs, roles, missing := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
+	// 参考图**变少**必须说出来(甲5),理由见上一处调用点。
+	if warn := missingRefWarning(missing); warn != "" {
+		s.opLog("%s", warn)
+	}
 	// 参考图权威清单(与主渲染同一份),理由见上一个调用点。
 	prompt = pipeline.EnsureRefManifest(prompt, *ctx.shot, roles)
 

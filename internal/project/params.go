@@ -99,6 +99,12 @@ type RenderParams struct {
 	Turbo     bool   `json:"turbo"`      // 是否挂加速 LoRA(全局 Comfy 设置提供文件名)
 	CondCache *bool  `json:"cond_cache"` // 两阶段渲染(条件缓存);nil = 未表态,回退全局设置
 	Seam      bool   `json:"seam"`       // 镜间连续接缝(MotionContext;仅本地 ComfyUI;相邻镜同分辨率)
+	// SeamResetEvery 接缝重置间隔(镜):接缝把上一镜尾部的 22 帧钉进本镜头部,
+	// 而换场/换人时钉进去的就是**另一个地方/另一个人**的画面,误差还会逐链累积。
+	//   0 或 1 = 每场戏重置一次(默认:同场景+同角色才接,见 pipeline.seamBlockers);
+	//   N > 1  = 每 N 镜强制重建一次锚点(同场同人也断,把累积漂移清零)。
+	// 缺键(老项目)= 0,与默认行为一致;非零值会进渲染指纹(改了就重出,不会静默沿用)。
+	SeamResetEvery int `json:"seam_reset_every"`
 }
 
 // CondCacheOn 条件缓存是否生效:未表态(nil)按开处理。
@@ -139,6 +145,12 @@ type AssembleParams struct {
 	// 带来的嘶声与爆音。前者压不掉(那是提示词写的音景),后者这一链能压。
 	// 默认开;追求"原声一点不动"的项目可显式关。
 	Denoise *bool `json:"denoise"`
+	// Grade 调色档(甲1):off 不调色 / soft 轻调 / film 电影感(默认) / heavy 重调。
+	//
+	// 空串 = 未表态 → **默认 film**(调色默认开):老项目 json 里没有这个键,
+	// 解成空串,归一化后按 film 处理 —— 与 compose.GradeFilter 同一口径
+	// (那边是装载之后的最后一道;两处是刻意保留的同口径双写,改一处必须改另一处)。
+	Grade string `json:"grade"`
 }
 
 // DenoiseOn 是否启用音频净化(未表态 = 开,与 ViewsOn/FacesOn 同一套语义)。
@@ -166,6 +178,10 @@ func DefaultStageParams() StageParams {
 			// 配合音频中点切与叠化,整片观感丝滑;上一镜无存档自动降级普通
 			// 渲染,云端/混合链安全(2026-09-09 用户定调直接升级)。
 			Steps: 8, Seed: 0, Turbo: true, CondCache: Bool(true), Seam: true,
+			// SeamResetEvery 默认 0 = 每场戏重置(同场景 + 有共同出场角色才接缝,
+			// 见 pipeline.seamBlockers):接缝只在"同一场戏的连续镜头"之间才有意义,
+			// 换场/换人时钉进去的 22 帧是另一处画面,误差还会逐链累积。
+			SeamResetEvery: 0,
 		},
 		QC: QCParams{
 			Enabled: true, DarkRatioFail: 0.60, DarkRatioWarn: 0.45,
@@ -177,6 +193,9 @@ func DefaultStageParams() StageParams {
 			Transition: "fade", BurnSubtitles: true,
 			Loudness: -16, Peak: 0.92, SubtitleSize: 4,
 			Upgrade2K: false, Denoise: Bool(true),
+			// 电影调色默认开(H3 直出的平淡数码味是用户反复提的观感问题;
+			// 要"一点不动"的项目显式选 off)
+			Grade: "film",
 		},
 	}
 }
@@ -240,5 +259,17 @@ func (p *StageParams) Sanitize() {
 	}
 	if p.Assemble.SubtitleSize <= 0 {
 		p.Assemble.SubtitleSize = 4
+	}
+	// 调色档归一:空串(老项目缺键)与任何不认识的值一律按 film(默认开)。
+	// 大小写/空白不敏感 —— 与 compose.NormalizeGrade 的宽容度对齐,否则
+	// "OFF" 在这里被改成 film(调色照开)、在 compose 里却被认成 off,同一份配置两处口径。
+	// 取值集合(四个规范值)必须与 compose.NormalizeGrade 一致;那边额外容忍
+	// none/light/strong 这类别名(手改 JSON 时的兜底),这里只管界面会写出来的规范值。
+	// project 不能反向依赖 compose,所以是刻意保留的同口径双写,改一处必须改另一处。
+	switch strings.ToLower(strings.TrimSpace(p.Assemble.Grade)) {
+	case "off", "soft", "film", "heavy":
+		p.Assemble.Grade = strings.ToLower(strings.TrimSpace(p.Assemble.Grade))
+	default:
+		p.Assemble.Grade = "film"
 	}
 }

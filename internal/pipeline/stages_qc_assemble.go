@@ -259,6 +259,9 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		// loudnorm TP 写死 -1.5(审计 P1-1)。
 		Peak:    p.Peak,
 		Denoise: p.DenoiseOn(),
+		// 调色档(甲1):不接这一行的后果与 P1-1 那批假开关完全一样 ——
+		// assemble.grade 有界面、能保存、Sanitize 也在归一,而成片里毫无变化。
+		Grade: p.Grade,
 	}, func(pct int, note string) {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", pct, "%s", note)
 	})

@@ -34,6 +34,29 @@ func TestUnsupportedParamNote(t *testing.T) {
 	}
 }
 
+// 云端不支持 seed:项目设了固定 seed 时必须在**能力清单**里说清"不可复现",
+// 而不是只靠逐镜日志(用户需要在一个地方看清哪些参数本次根本不生效)。
+func TestUnsupportedParamNoteFixedSeedOnCloud(t *testing.T) {
+	// 云端 + 固定 seed → 必须提示,且要点明"不可复现"与"要复现请切本地"
+	note := unsupportedParamNote(engine.CapsOf("api"), project.RenderParams{Seed: 12345})
+	if note == "" {
+		t.Fatal("云端 + 固定 seed 必须提示:云端请求体没有 seed 字段,产物不可复现")
+	}
+	for _, want := range []string{"seed", "不可复现", "本地 ComfyUI"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("提示里应包含 %q,实际 %q", want, note)
+		}
+	}
+	// 云端 + 没设固定 seed(0 = 每镜随机)→ 无提示(否则每个项目都刷一条噪声)
+	if n := unsupportedParamNote(engine.CapsOf("api"), project.RenderParams{Seed: 0}); n != "" {
+		t.Errorf("seed=0(每镜随机)在云端没有'失效'可言,不该提示,实际 %q", n)
+	}
+	// 本地引擎支持 seed → 无提示
+	if n := unsupportedParamNote(engine.CapsOf("comfy"), project.RenderParams{Seed: 12345}); n != "" {
+		t.Errorf("本地引擎支持 seed,不该报「不支持」,实际 %q", n)
+	}
+}
+
 // TestPipelineDoesNotBranchOnEngineName 源码级判据:管线里不得再用引擎名做能力判断。
 func TestPipelineDoesNotBranchOnEngineName(t *testing.T) {
 	files, err := os.ReadDir(".")

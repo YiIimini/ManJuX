@@ -28,6 +28,19 @@ func unsupportedParamNote(caps engine.Caps, rp project.RenderParams) string {
 	if rp.CondCache != nil && *rp.CondCache && !caps.Local {
 		miss = append(miss, "两阶段条件缓存")
 	}
+	// 云端引擎**不支持 seed**:H3 的 /v2/video_generation 请求体只有
+	// model/content/duration/resolution/ratio(官方 API reference;社区整理的
+	// awesome-minimax-h3 亦写明 "There is no seed parameter. Generations are not
+	// reproducible")。项目里设了固定 seed(render.seed != 0)时,引擎会在提交每一镜时
+	// 逐镜告警(见 h3api.Render),但"这次渲染整体做不到某个参数"属于**能力清单**的职责 ——
+	// 用户需要在一个地方看清"哪些参数本次根本不生效",而不是从几十条逐镜日志里拼出来。
+	//
+	// 判据用 !caps.Local(与条件缓存同一条):云端引擎没有"本地"这一概念,
+	// 而 seed 是本地采样器的入参。将来若有支持 seed 的云端引擎,应在 engine.Caps 里
+	// 补一个显式能力位,而不是在这里加引擎名判断(见 caps.go 的说明)。
+	if rp.Seed != 0 && !caps.Local {
+		miss = append(miss, "固定种子 seed(云端请求体没有该字段,产物**不可复现**)")
+	}
 	if len(miss) == 0 {
 		return ""
 	}

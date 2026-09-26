@@ -2,6 +2,7 @@
 import { G, api, fileToB64, sourceLabel, sourceTone} from '../store'
 import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { confirmGpuContention } from '../pipelineBusy'
 
 // 分类与后端 library.Kinds 一致(characters / scenes / props)。
 // props(道具)是 2026-09-26 用户要求新增的:「资产库 新增一个 道具 管理页面」。
@@ -162,6 +163,9 @@ const regenBusy = ref(false)
 async function regenDetail() {
   const d = detail.value
   if (!d) return
+  // 重抽与管线共用同一张显卡,且不被管线的运行锁覆盖 —— 管线跑着时点它,
+  // 两条链互相拖慢(乙5 的温和版:告知代价,不禁止)。
+  if (!(await confirmGpuContention(`资产库 · 重新抽卡「${d.name}」`))) return
   regenBusy.value = true
   try {
     const j = await api.libraryRegen(d.kind, d.name)

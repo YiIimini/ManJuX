@@ -413,6 +413,12 @@ const defaultShotTimeout = 45 * time.Minute
 // 变量而非常量:回归测试要把阈值压到 1,否则这条用例得白等 18 秒。
 var maxProbeFails = 6
 
+// waitTick WaitForDone 的轮询心跳间隔(生产固定 3 秒)。
+//
+// **变量而非常量**与 maxProbeFails 同一理由:一条"进度回调有没有被转发"的回归用例
+// 否则要白等两个 3 秒心跳;把它压到毫秒级,用例才留得住。生产路径不改动。
+var waitTick = 3 * time.Second
+
 // defaultImageTimeout 定妆图生成的兜底上限。图像生成没有单镜作业可依,
 // 取一个明显短于整镜渲染的值,避免 Krea-2 卡死时白等 45 分钟。
 const defaultImageTimeout = 10 * time.Minute
@@ -432,7 +438,7 @@ func (c *Client) WaitForDone(ctx context.Context, promptID string, timeout time.
 	if timeout <= 0 {
 		timeout = defaultShotTimeout
 	}
-	ticker := time.NewTicker(3 * time.Second)
+	ticker := time.NewTicker(waitTick)
 	defer ticker.Stop()
 	submitted := time.Now() // 提交时刻(仅用于排队计时与展示)
 	var execStart time.Time // 首次观察到"正在执行"的时刻
