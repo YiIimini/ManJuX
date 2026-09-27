@@ -693,21 +693,18 @@ func addConditionNode(g map[string]any, job engine.Job, uploaded []string, audio
 		// 官方指南:max 保留最高 2048 短边编码,identity fidelity 更强
 		// (match 会把定妆照缩到生成分辨率再编码,人脸细节折损;2026-09-08 返正)
 		inputs["ref_image_size"] = "max"
-		// autogrow 输入的 API 提交格式:聚合键 ref_images = [节点引用…](不是 ref_image_N)
-		refs := make([]any, 0, len(uploaded))
+		// autogrow 输入的 API 提交键是「聚合键.模板名」(如 ref_images.ref_image_0)——
+		// 写成聚合数组 ref_images=[节点引用…] 会被 ComfyUI 静默丢成空 dict。见 autogrow.go。
 		for i, name := range uploaded {
-			refs = append(refs, link(loadImageNode(g, i, name), 0))
+			inputs[autogrowKey("ref_images", "ref_image_", i)] = link(loadImageNode(g, i, name), 0)
 		}
-		inputs["ref_images"] = refs
 		// 音频参考(音频驱动 Audio Drive):H3 Ref2V 原生支持音频条件 —— 喂入定稿
 		// 配音后,人物的口型与动作节奏会跟随音频。这是"精确台词"路线的入口:
 		// 先把配音做成确定资产,再用它驱动画面,而不是让模型自由发挥台词。
 		if len(audios) > 0 {
-			auds := make([]any, 0, len(audios))
 			for i, name := range audios {
-				auds = append(auds, link(loadAudioNode(g, i, name), 0))
+				inputs[autogrowKey("ref_audios", "ref_audio_", i)] = link(loadAudioNode(g, i, name), 0)
 			}
-			inputs["ref_audios"] = auds
 		}
 		g["20"] = nd(classRef2V, inputs)
 		return "20", "20"

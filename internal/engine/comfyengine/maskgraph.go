@@ -186,7 +186,8 @@ func buildMaskGraph(job engine.Job, c config.ComfySettings, opt MaskOptions, w, 
 		"height":         h,
 		"length":         length,
 		"ref_image_size": "max",
-		"ref_images":     []any{link("15", 0)},
+		// 参考图槽位要用点号键(聚合键.模板名),聚合数组会被 ComfyUI 静默丢成空 dict —— 见 autogrow.go
+		autogrowKey("ref_images", "ref_image_", 0): link("15", 0),
 	})
 
 	// ⑥ 采样(与整镜渲染同一套参数:官方 res_multistep + simple,步数也走同一张档位表 ——

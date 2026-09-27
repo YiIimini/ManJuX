@@ -22,8 +22,8 @@ func TestRenderGraphAudioDrive(t *testing.T) {
 	if inputs == nil {
 		t.Fatal("ref2va 模式必须使用 MiniMaxH3ReferenceToVideo")
 	}
-	if _, ok := inputs["ref_audios"]; !ok {
-		t.Error("带音频参考时必须给出 ref_audios 聚合键(音频驱动的入口)")
+	if !hasAutogrowSlot(inputs, "ref_audios", "ref_audio_", 0) {
+		t.Error("带音频参考时必须给出 ref_audios.ref_audio_0(音频驱动的入口;聚合数组会被 ComfyUI 静默丢弃)")
 	}
 	if id, _ := findNode(t, graph, "LoadAudio"); id == "" {
 		t.Error("缺少 LoadAudio 节点:音频没有被真正接入图")
@@ -36,8 +36,8 @@ func TestRenderGraphAudioDrive(t *testing.T) {
 	if in2 == nil {
 		t.Fatal("纯音频驱动也必须走 Ref2V(否则音频条件无处安放)")
 	}
-	if _, ok := in2["ref_audios"]; !ok {
-		t.Error("纯音频驱动应带 ref_audios")
+	if !hasAutogrowSlot(in2, "ref_audios", "ref_audio_", 0) {
+		t.Error("纯音频驱动应带 ref_audios.ref_audio_0")
 	}
 
 	// ③ 无音频时不得出现该键(避免给普通镜头平白增加一个空输入)
@@ -45,8 +45,8 @@ func TestRenderGraphAudioDrive(t *testing.T) {
 	_, in3 := findNode(t, graph, "MiniMaxH3ReferenceToVideo")
 	_ = in3
 	_, inPlain := findNode(t, g3, "MiniMaxH3ReferenceToVideo")
-	if _, ok := inPlain["ref_audios"]; ok {
-		t.Error("没有音频参考时不应出现 ref_audios")
+	if autogrowSlotCount(inPlain, "ref_audios") != 0 {
+		t.Error("没有音频参考时不应出现 ref_audios.* 槽位")
 	}
 }
 
@@ -76,12 +76,12 @@ func TestMaskGraphContract(t *testing.T) {
 	// 重绘的参考图必须来自裁剪结果(否则重绘的是全画面,等于整镜重渲)
 	cropID, _ := findNode(t, graph, "MVEx_SubjectCrop")
 	_, condInputs := findNode(t, graph, "MiniMaxH3ReferenceToVideo")
-	refs, _ := condInputs["ref_images"].([]any)
-	if len(refs) != 1 {
-		t.Fatalf("重绘应恰好带 1 张参考图(裁剪出的主体),实际 %d", len(refs))
+	if n := autogrowSlotCount(condInputs, "ref_images"); n != 1 {
+		t.Fatalf("重绘应恰好带 1 张参考图(裁剪出的主体),实际 %d", n)
 	}
-	if link0, ok := refs[0].([]any); !ok || len(link0) != 2 || link0[0] != cropID {
-		t.Errorf("参考图应来自 SubjectCrop(%s),实际 %v", cropID, refs[0])
+	refs := condInputs[autogrowKey("ref_images", "ref_image_", 0)]
+	if link0, ok := refs.([]any); !ok || len(link0) != 2 || link0[0] != cropID {
+		t.Errorf("参考图应来自 SubjectCrop(%s),实际 %v", cropID, refs)
 	}
 
 	// 回贴必须同时拿到"重绘结果"与"原画面",否则贴不回原位

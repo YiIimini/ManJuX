@@ -10,6 +10,41 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## 参考图从未生效：根因是 autogrow 提交键写错（2026-09-27）
+
+**根因**（真机实测 + ComfyUI 0.37.4 源码）：H3 Ref2V 的参考图**一张都没进过条件** ——
+提交键的形态不对。ComfyUI 的 autogrow（动态槽位）输入在 API prompt 里只认**「聚合键.模板名」**这种点号键：
+`comfy_api/latest/_io.py:1199` 把期望的输入名算成 `finalize_prefix(["ref_images"], "ref_image_0")
+== "ref_images.ref_image_0"`，槽位名**必须出现在节点输入里**才会被登记成真实输入，再由
+`build_nested_inputs` 按 `.` 还原成 `{ref_images: {ref_image_0: tensor}}` 交给节点。
+我们一直提交的是**聚合数组** `ref_images = [节点引用…]`：`_expand_schema_for_dynamic` 找不到任何
+expanded 槽位，于是走「所有 optional 都没值」分支（`dynamic_paths_default_value = empty_dict`），
+`ref_images` 被填成 `{}` —— 节点拿到空 dict，**既不报错也不生效**。
+
+**实测证据**（同一提示词、同种子，只换参考图）：
+- 聚合数组写法：节点收到空 dict，`ref_items=0 / ref_blocks=0`，conditioning 里没有 `minimax_refs`，
+  两张截然不同的参考图（年轻男子 / 老妇）产出**逐帧完全一致**（22 帧帧指纹相同）—— 用户报的
+  「镜头里的人跟定妆照不像 / 画风跟定妆照不一致 / 改定妆照也没用」就是这个；
+- 点号键写法：`ref_items=1 / ref_blocks=1`，conditioning 带 `minimax_refs`、`cross_attn` 随参考图改变，
+  packed 序列里出现 1008 行参考段（视频行 RoPE 时间坐标整体后移），帧指纹**完全不同**，
+  画面里的人与服装确实跟着参考图走。
+
+**修复**：新增 `internal/engine/comfyengine/autogrow.go` 的 `autogrowKey(聚合键, 模板名, i)`
+（注释里写明依据与失效机理），`engine.go`（`ref_images` / `ref_audios`）与 `maskgraph.go`
+（局部重绘喂裁剪主体）一律改走它；新增契约测试 `autogrow_contract_test.go` 锁住「必须是点号键、
+不得出现聚合键本身、槽位必须指向图里真实节点」，`mask_audio_contract_test.go` 断言同步改。
+
+**顺带推翻两条旧判断**（别再做无用功）：① 本机四个「剪枝 + int8」H3 底模**无罪** ——
+同一套权重在点号键下立刻生效，不需要再下 20–40GB 未剪枝权重；② ComfyUI 版本无关 ——
+`v0.36.0→v0.37.4` 之间没有任何 H3 ref 路径改动，换版本治不了这个病。
+旧文档《参考图未生效-实测》把根因归到「剪枝权重把参考分支削掉」是**错的**，该文档已按实测重写。
+
+**验证**：`go test ./internal/engine/comfyengine/` 全过（新增两条 autogrow 契约测试）；
+`scripts/check.ps1` 其余五门通过（前端门在本机经管道捕获子进程输出时会以 `0xC000013A` 收尾，
+直接跑 `pnpm run build` 退出码 0、产物哈希不变，属调用环境问题）；
+真机端到端对照与复现步骤见 `docs/参考图未生效-实测.md`，探针脚本
+`D:\Ai\ComfyUI\_maintenance\mjx-refs-probe.ps1`。
+
 ## 定妆照朝向：测出来 + 换种子重出（2026-09-27）
 
 **根因**（真机重出资产后实证）：上一轮把定妆照的正面约束写强了（`fc12ba7`），**但没生效** ——
