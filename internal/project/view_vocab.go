@@ -88,6 +88,22 @@ func ViewRequiredForShot(shots []Shot, i int) bool {
 	return false
 }
 
+// PlanUnboundFaceMarker 技能侧对"这一镜的人**故意不绑卡、且不露脸**"的显式写法。
+//
+// 来源（`docs/技能侧回复-平台侧整改单-明细可渲染化-2026-09-27.md` §6）：全书只剩 1 镜
+// （`第40集 S3` 近景 / 浮桥摊主）是"脸上特写却没有角色卡"，他们的处置是**不建卡**，
+// 改为在提示词里显式写清"这个人只给背影/局部/人群，不给脸" —— 原文：
+//
+//	[Shot 1] medium close-up, … a figure carrying the action is kept off-face and unbound
+//	(no reference sheet): seen from behind, in part, or inside a crowd.
+//
+// 于是平台那道 `IsCloseUpShot && characters==[]` 的门会**永远挂着一条假告警** —— 门要认这个标记。
+//
+// 【这是桥，不是终点】按 prose 匹配是脆的（改个词就失效）。已请技能侧在明细里给一个
+// **机器可读字段**（如 `unbound_reason`）；字段到位后本常量与判据退为兜底。
+// 认它的收益是实打实的：把"刻意不露脸"和"忘了绑卡"分开，后者才是每次换一张脸的那种缺陷。
+const PlanUnboundFaceMarker = "kept off-face and unbound"
+
 // PlanFaceCloseSizes "脸上特写"那一档的景别（2026-09-27 技能侧追补单 N1）。//
 // 判据用途：**这一档画面里几乎只有一张脸**，而参考图集合是从 `shots[].characters` 派生的
 // （pipeline.RefPlan）—— 所以「特写/近景 + characters 为空」= 有人脸却没参考图 = 每次换一张新脸。

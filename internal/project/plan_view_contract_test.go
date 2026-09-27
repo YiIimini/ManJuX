@@ -319,6 +319,30 @@ func TestValidatePlanCloseUpWithoutCard(t *testing.T) {
 			t.Errorf("景别 %q 不该算脸上特写：%v", size, PlanIssuesText(ValidatePlan(p)))
 		}
 	}
+
+	// 技能侧**显式写清**"刻意不绑卡、不露脸"时不报（2026-09-27 回复 §6 的那一镜）。
+	// 这是"刻意不露脸"与"忘了绑卡"的分界：后者才是每次换一张脸的缺陷。
+	p = viewShotPlan(2, true)
+	p.Shots[0].ShotSize = "近景"
+	p.Shots[0].Characters = nil
+	p.Shots[0].H3Prompt += " " + PlanUnboundFaceMarker + " (no reference sheet): seen from behind, in part, or inside a crowd."
+	if hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
+		t.Errorf("显式写明未绑卡/不露脸时不该报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 但**不许**让它变成静默例外：门要在别的镜命中时说明"另外 N 镜已排除"
+	p2 := viewShotPlan(4, true)
+	p2.Shots[0].ShotSize = "近景"
+	p2.Shots[0].Characters = nil
+	p2.Shots[0].H3Prompt += " " + PlanUnboundFaceMarker + "."
+	p2.Shots[1].ShotSize = "特写"
+	p2.Shots[1].Characters = nil // 这一镜是"忘了绑卡"
+	issues = ValidatePlan(p2)
+	if !hasIssue(issues, "warn", "却没有出场角色") {
+		t.Fatalf("真有没绑卡的镜时必须报：%v", PlanIssuesText(issues))
+	}
+	if !hasIssue(issues, "warn", "已排除") {
+		t.Errorf("报的时候要说明另有 N 镜是刻意不露脸、已排除（别让人以为门漏判）：%v", PlanIssuesText(issues))
+	}
 }
 
 func TestValidatePlanHookDensity(t *testing.T) {

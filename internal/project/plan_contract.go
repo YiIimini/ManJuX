@@ -532,21 +532,36 @@ func ValidatePlan(p *Plan) []Issue {
 		// 与上面「建立镜头不许特写」形状一致（同样聚合报一条），但两者**不是一回事**：
 		// 那条管"小景别当建立镜头"，这条管"有人脸却没卡"。
 		var closeNoChar []string
+		unbound := 0
 		for _, sh := range p.Shots {
 			if !IsCloseUpShot(sh.ShotSize) {
 				continue
 			}
 			if len(sh.Characters) == 0 {
+				// 技能侧**显式**写了"这个人故意不绑卡、只给背影/局部/人群"时不报 ——
+				// 那种镜是"刻意不露脸"，与"忘了绑卡"是两回事，后者才是每次换一张脸的缺陷。
+				// 判据见 PlanUnboundFaceMarker 的说明（含"这是桥、已请他们给机器可读字段"）。
+				if strings.Contains(sh.H3Prompt, PlanUnboundFaceMarker) {
+					unbound++
+					continue
+				}
 				closeNoChar = append(closeNoChar,
 					fmt.Sprintf("#%d「%s」%s", sh.ID, strings.TrimSpace(sh.ShotSize), firstRunes(sh.Action, 18)))
 			}
 		}
 		if len(closeNoChar) > 0 {
+			extra := ""
+			if unbound > 0 {
+				// 别让例外静默：明确说出"另外 N 镜是刻意写清不绑卡/不露脸的，已排除"，
+				// 否则读日志的人会以为门漏判了。
+				extra = fmt.Sprintf("（另有 %d 镜在提示词里显式写了「%s」，属刻意不露脸，已排除）",
+					unbound, PlanUnboundFaceMarker)
+			}
 			add("warn", "plan.shots",
 				"%d 镜是特写/近景却没有出场角色（%s）—— 这一档画面里几乎只有一张脸，而没有角色就没有参考图，"+
 					"**每次生成都是一张新脸**；要么给这些镜绑上角色卡，要么把景别改到不露脸（背影/局部/群演）"+
-					"并把正文里的脸删掉（画面里有人时也不许写 `empty frame, no people` 这种自相矛盾的锚点）",
-				len(closeNoChar), strings.Join(firstN(closeNoChar, 4), "、"))
+					"并把正文里的脸删掉（画面里有人时也不许写 `empty frame, no people` 这种自相矛盾的锚点）%s",
+				len(closeNoChar), strings.Join(firstN(closeNoChar, 4), "、"), extra)
 		}
 
 		// 尾帧状态：只对"后面还有同一场景的镜头"的那些镜判 —— 跨场景本来就不要求动作连贯
