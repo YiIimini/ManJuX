@@ -320,20 +320,30 @@ func TestValidatePlanCloseUpWithoutCard(t *testing.T) {
 		}
 	}
 
-	// 技能侧**显式写清**"刻意不绑卡、不露脸"时不报（2026-09-27 回复 §6 的那一镜）。
+	// 技能侧**显式写清**"刻意不绑卡、不露脸"时不报（2026-09-27 回复 §6/§9 的那一镜）。
 	// 这是"刻意不露脸"与"忘了绑卡"的分界：后者才是每次换一张脸的缺陷。
+	// 判据优先用**字段**（unbound / unbound_reason），prose 只作兜底。
+	p = viewShotPlan(2, true)
+	p.Shots[0].ShotSize = "近景"
+	p.Shots[0].Characters = nil
+	p.Shots[0].Unbound = true
+	p.Shots[0].UnboundReason = "no_card"
+	if hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
+		t.Errorf("带 unbound 字段时不该报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 旧的 prose 写法仍认（兜底：技能侧早先只在提示词里写）
 	p = viewShotPlan(2, true)
 	p.Shots[0].ShotSize = "近景"
 	p.Shots[0].Characters = nil
 	p.Shots[0].H3Prompt += " " + PlanUnboundFaceMarker + " (no reference sheet): seen from behind, in part, or inside a crowd."
 	if hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
-		t.Errorf("显式写明未绑卡/不露脸时不该报：%v", PlanIssuesText(ValidatePlan(p)))
+		t.Errorf("prose 兜底也该认：%v", PlanIssuesText(ValidatePlan(p)))
 	}
 	// 但**不许**让它变成静默例外：门要在别的镜命中时说明"另外 N 镜已排除"
 	p2 := viewShotPlan(4, true)
 	p2.Shots[0].ShotSize = "近景"
 	p2.Shots[0].Characters = nil
-	p2.Shots[0].H3Prompt += " " + PlanUnboundFaceMarker + "."
+	p2.Shots[0].Unbound = true
 	p2.Shots[1].ShotSize = "特写"
 	p2.Shots[1].Characters = nil // 这一镜是"忘了绑卡"
 	issues = ValidatePlan(p2)

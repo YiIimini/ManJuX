@@ -90,13 +90,24 @@ type Shot struct {
 	// (改用渐隐渐显 + 转场字幕),所以空值对"每段场景的首镜"是允许的。
 	EndState string `json:"end_state,omitempty"`
 
-	// HookType 本镜的**钩子类型**（受控词表，见 shot_table.go）。
-	//
+	// HookType 本镜的**钩子类型**（受控词表，见 shot_table.go）。	//
 	// 来自官方「标准镜头信息表」六列之一（`skills/3d-animation-short-generator` STEP 5），
 	// 用途是**每集钩子分布自检**（STEP 5.5 检查 1）：每镜一个，每连续三镜至少一个
 	// reveal/reversal/callback，开篇与收尾必须是强钩子。没有它，"节奏"就只能靠感觉说，
 	// 有它之后"这一集是不是平"是可机检的。空值合法（存量包）：契约按 warn 提示。
 	HookType string `json:"hook_type,omitempty"`
+
+	// Unbound / UnboundReason 本镜的画面里有人，但**刻意不绑卡、也不给脸**。
+	//
+	// 为什么要有这一位（2026-09-27 技能侧回复 §6/§9）：`特写/近景却没有出场角色` 是一条门
+	// （脸上特写没参考图 = 每次换一张脸），但有一类镜是**故意**这样的 —— 群演、一次性角色、
+	// 只给背影/局部/人群的人。把"刻意不露脸"与"忘了绑卡"分开，门才不会永远挂着假告警。
+	//
+	// 取值（技能侧的 `unbound_reason`）：`no_card`（画面里的人不在本集角色表）/
+	// `faceless_by_design`（有意不给脸）。**旧写法**是他们早先在提示词里写的
+	// `kept off-face and unbound`（prose），平台仍认它作兜底（见 PlanUnboundFaceMarker）。
+	Unbound       bool   `json:"unbound,omitempty"`
+	UnboundReason string `json:"unbound_reason,omitempty"`
 
 	// KeyframePrompt 本镜**首帧 T2I 静帧**提示词(技能侧 manju_plan.py 的
 	// build_keyframe_prompt 产出)。

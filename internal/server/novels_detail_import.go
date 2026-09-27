@@ -161,6 +161,7 @@ func buildEpisodePlan(d *novelDetailFile, no int, title string, epShots []script
 			ID: s.ID, ShotSize: s.ShotSize, Camera: s.Camera, Action: s.Action,
 			Narration: s.Narration, Duration: s.Duration, H3Prompt: s.H3Prompt,
 			View: s.View, HookType: s.HookType, EndState: s.EndState,
+			Unbound: s.Unbound, UnboundReason: s.UnboundReason,
 		}
 		sh.Scene = strings.TrimSpace(s.SceneID)
 		if sh.Scene == "" {

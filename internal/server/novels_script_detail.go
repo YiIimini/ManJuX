@@ -284,14 +284,19 @@ type scriptDetailShot struct {
 	View         string   `json:"view"`      // 官方 9 条之一，**可空**（裁定 A：小景别留空是对的）
 	ViewNote     string   `json:"view_note"` // view 为什么留空（技能侧写的说明）
 	AngleZH      string   `json:"angle_zh"`  // 机位角度中文短标签（平视/仰拍/俯拍/鸟瞰）——不是契约字段
-	Camera       string   `json:"camera"`
-	HookType     string   `json:"hook_type"`
-	EndState     string   `json:"end_state"`
-	Action       string   `json:"action"`
-	ActionEN     string   `json:"action_en"`
-	Emotion      string   `json:"emotion"`
-	Sound        string   `json:"sound"`
-	Dialogue     []struct {
+	// Unbound / UnboundReason 画面里有人但**刻意不绑卡、不给脸**（技能侧 09-27 §9 的机器可读字段；
+	// 早先只有提示词里的 prose 写法，平台仍认它作兜底）。见 project.Shot.Unbound。
+	Unbound       bool   `json:"unbound"`
+	UnboundReason string `json:"unbound_reason"`
+	UnboundHint   string `json:"unbound_hint"`
+	Camera        string `json:"camera"`
+	HookType      string `json:"hook_type"`
+	EndState      string `json:"end_state"`
+	Action        string `json:"action"`
+	ActionEN      string `json:"action_en"`
+	Emotion       string `json:"emotion"`
+	Sound         string `json:"sound"`
+	Dialogue      []struct {
 		Speaker string `json:"speaker"`
 		Text    string `json:"text"`
 		OS      bool   `json:"os"`

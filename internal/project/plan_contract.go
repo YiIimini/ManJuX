@@ -540,8 +540,9 @@ func ValidatePlan(p *Plan) []Issue {
 			if len(sh.Characters) == 0 {
 				// 技能侧**显式**写了"这个人故意不绑卡、只给背影/局部/人群"时不报 ——
 				// 那种镜是"刻意不露脸"，与"忘了绑卡"是两回事，后者才是每次换一张脸的缺陷。
-				// 判据见 PlanUnboundFaceMarker 的说明（含"这是桥、已请他们给机器可读字段"）。
-				if strings.Contains(sh.H3Prompt, PlanUnboundFaceMarker) {
+				// 判据优先用**字段**（`unbound` + `unbound_reason`，技能侧 09-27 §9 给的），
+				// 再退回早先的 prose 写法（PlanUnboundFaceMarker）—— 字段是稳的，prose 会随措辞漂。
+				if sh.Unbound || strings.Contains(sh.H3Prompt, PlanUnboundFaceMarker) {
 					unbound++
 					continue
 				}
