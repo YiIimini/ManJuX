@@ -59,7 +59,21 @@ var proportionSpecs = []proportionSpec{
 	{"neck", "颈", "the neck is slim and long(颈细长)"},
 	{"shoulder_width", "肩宽", "the shoulders are about two head-widths wide(肩宽约两个头宽)"},
 	{"body_height", "头身比", "the figure is seven and a half heads tall with a slim waist and long legs(身高七个半头、腰细腿长)"},
+	// 朝向是**构图项**,不是比例项 —— 但它和比例项放在同一次自检里,因为两者的判据
+	// 是同一张图、同一次视觉调用(多分一次调用只为问一句"是不是正脸"不划算)。
+	//
+	// 为什么它必须可测(2026-09-27 真机实测):定妆照是**全片身份的权威参考图**,
+	// 而提示词里那句 `shot STRAIGHT-ON from the front…` 压不住模型 —— 同一段提示词、
+	// 只换采样种子,4 个样本里 3 个正面、1 个四分之三侧(见 docs/定妆照朝向-实测与处置.md)。
+	// 更麻烦的是定妆照的种子是**按名字锚定**的(nameSeed):同一个角色名每次重跑都出
+	// 同一张图,所以一旦那次采样偏成侧脸,这个角色就会**一直是侧脸**,直到种子或提示词变。
+	// 只靠措辞是治不了的(前置强调做过 A/B:结果一模一样),得靠"测出来 + 换种子重出"。
+	{"face_direction", "朝向", "the portrait is shot STRAIGHT-ON from the front: the face looks directly into the " +
+		"camera, both eyes visible at the same size and level, nose and chin pointing at the camera(正面胸像)"},
 }
+
+// KeyFaceDirection 朝向项的键(调用方据此从报告里取这一项)。
+const KeyFaceDirection = "face_direction"
 
 // proportionSpecOf 按键取项(取不到返回 false)。
 func proportionSpecOf(key string) (proportionSpec, bool) {
@@ -301,6 +315,42 @@ func buildProportionReport(items []ProportionItem, note string, anchor bool) *Pr
 	return r
 }
 
+// FacingOf 取报告里**朝向项**的偏离档位。
+//
+// 返回 "" 表示这一项没被量到(可见=false 或整份报告没做/失败)—— 与 "none" 严格区分:
+// 前者是"不知道",后者是"量了,是正面"。把两者混成一个空值,就会让"没验过"看起来像"合格"。
+func FacingOf(r *ProportionReport) string {
+	if r == nil || !r.Checked {
+		return ""
+	}
+	for _, it := range r.Clear {
+		if it.Key == KeyFaceDirection {
+			return DeviationClear
+		}
+	}
+	for _, it := range r.Slight {
+		if it.Key == KeyFaceDirection {
+			return DeviationSlight
+		}
+	}
+	for _, name := range r.Invisible {
+		if name == "朝向" {
+			return ""
+		}
+	}
+	// 既不在 clear/slight 里、也没被记成"看不见" → 它是 none(量了且合格)
+	return DeviationNone
+}
+
+// FacingNeedsRegen 朝向是否明显偏离到"值得换种子重出"。
+//
+// 只有 **clear** 才算:这条判据会花掉一次真实出图(约 20-30 秒 GPU),而视觉模型判朝向
+// 也有误差 —— 把 slight 也算进来,等于"模型犹豫一下就重渲一遍"。slight 仍然走原有的
+// 告警通道(用户自己决定要不要重出那张卡)。
+func FacingNeedsRegen(r *ProportionReport) bool {
+	return FacingOf(r) == DeviationClear
+}
+
 // ProportionWarnText 告警文案(空串 = 不告警,调用方据此决定是否发出事件)。
 //
 // **只有"明显偏离"(clear)才告警**,并且必须点出是**哪一项**、期望多少、量到多少 ——
@@ -334,6 +384,7 @@ Rules:
 - Judge ONLY what is visibly rendered in this image. Never infer from the character's description, and never invent measurements you cannot see.
 - If an item is not visible or not measurable at this framing (a half-body portrait cannot show total body height, leg length or full shoulder width), answer "visible": false for that item and leave your reading empty. A guess is worse than "not visible".
 - Use the STATED ratios as the standard. Do not substitute your own taste, a generic beauty ideal, or any other proportion system.
+- One item is about COMPOSITION rather than anatomy (face_direction): for it, judge whether the head is shot straight-on and frontal as stated. Mark it "clear" when the head is visibly turned (three-quarter or profile: the nose points off to one side and only one eye is fully visible), and "none" when both eyes are visible at the same size and the nose points at the camera. "visible" is true whenever the face can be seen at all.
 - "deviation" is one of: "none" (matches the stated ratio), "slight" (a small deviation), "clear" (an obvious deviation a viewer would notice).
 - Answer EVERY item in the list, individually.
 Return STRICT JSON ONLY:

@@ -123,3 +123,34 @@ func TestProportionCheckParamIsThreeState(t *testing.T) {
 		t.Error("出厂默认必须是开(不默认开就又要靠肉眼盯「丑不丑」)")
 	}
 }
+
+// 朝向的接线闸门:定妆照出成四分之三侧脸 → **换种子重出**(2026-09-27 真机实测的处置)。
+//
+// 为什么必须源码级钉住:这条链要真 ComfyUI + 真视觉模型才能跑,而它防的是一个**静默**
+// 的坑 —— 定妆照的种子按资产名锚定("同名必同图"),所以一次采样偏成侧脸,那个角色
+// 就**一直是侧脸**,重跑资产阶段也不会自愈;而框住朝向的提示词压不住模型(前置强调
+// 做过 A/B,结果完全一样)。任何一处被删掉,这条就红。
+func TestFacingRegenIsWired(t *testing.T) {
+	src := assetsStageSource(t)
+	for _, want := range []string{
+		"qc.FacingNeedsRegen(",                                // 判据只有一处实现(在 qc 侧)
+		"c.regenerateOnBadFacing(",                            // 出图后按朝向下处置
+		"rep := checkProportion(ek, imagePrompt, name, path)", // 自检结果必须被接住(丢掉就等于没测)
+		"maxFacingRegen",                                      // 次数有上限(不然就是无限烧 GPU)
+		"nameSeed(kind, name) + int64(attempt)*101",           // 重出必须**换种子**:同种子重出 = 同一张图
+		"a.Fingerprint = project.FingerprintFile(next)",       // 重出写同一路径 → 指纹必须刷新
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("资产阶段缺少朝向重出接线 %q —— 侧脸定妆照会一直存在且没人知道", want)
+		}
+	}
+	// 「重新生成」那条路**不自动重出**(那是用户手动换一张,连抽两三次会把一次点击
+	// 变成不知在等什么),但必须如实告警
+	coord := readSource(t, "coordinator.go")
+	if !strings.Contains(coord, "qc.FacingNeedsRegen(rep)") {
+		t.Error("单资产重新生成后必须如实告知「这张不是正面」——否则用户按了重新生成,却不知道有没有好")
+	}
+	if strings.Contains(coord, "regenerateOnBadFacing") {
+		t.Error("单资产重新生成不该自动重出:它本来就是用户手动换一张(随机种子),再自动连抽会让一次点击变成静默等待")
+	}
+}

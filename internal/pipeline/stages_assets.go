@@ -49,8 +49,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		comfyGen = eng
 	}
 
-	genAsset := func(kind, id, name, imagePrompt string, ek EntityKind) (string, error) {
-		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt, assets, ek)
+	genAsset := func(kind, id, name, imagePrompt string, ek EntityKind, attempt int) (string, error) {
+		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt, assets, ek, attempt)
 	}
 
 	// ---------- 定妆照比例自检(技能侧清单 §5.1)----------
@@ -67,11 +67,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 记账放在调用方(而不是共享实现里):"一次运行只提醒一次"是**本次运行**的性质,
 	// 而共享实现也被「单资产重新生成」那条路用(那次是一次用户动作,每次都该提醒)。
 	propNoCapWarned := false
-	checkProportion := func(ek EntityKind, imagePrompt, name, path string) {
-		if c.checkPortraitProportion(ctx, proj, ek, imagePrompt, name, path) == proportionNoCapability && !propNoCapWarned {
+	checkProportion := func(ek EntityKind, imagePrompt, name, path string) *qc.ProportionReport {
+		rep, outcome := c.checkPortraitProportion(ctx, proj, ek, imagePrompt, name, path)
+		if outcome == proportionNoCapability && !propNoCapWarned {
 			propNoCapWarned = true
 			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.ProportionSkipNoCapability)
 		}
+		return rep
 	}
 
 	missing := 0
@@ -162,7 +164,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 		// ② Krea-2 生成缺失参考图;成功后自动入库供后续项目复用
 		if comfyGen != nil && strings.TrimSpace(imagePrompt) != "" {
-			if path, err := genAsset(kind, id, name, imagePrompt, ek); err == nil {
+			if path, err := genAsset(kind, id, name, imagePrompt, ek, 0); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
 				assets[id] = project.Asset{
 					ID: id, Kind: kind, Name: name,
@@ -173,8 +175,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					kindLabel(kind), name, entityKindSuffix(kind, ek))
 				// 定妆照出图后立刻做一次比例自检(见 checkProportion 的说明):
 				// 早发现早重出,别等到成片里才看出"脸被拉长/眼距失衡"。
+				// 同一份自检里也量**朝向**(构图项):定妆照是全片身份的权威参考图,
+				// 出了四分之三侧脸会让 H3 拿侧脸当身份锚 —— 而种子是按名字锚定的
+				// ("同名必同图"),不换种子它就会一直是那张侧脸(见 regenerateOnBadFacing)。
 				if kind == "characters" {
-					checkProportion(ek, imagePrompt, name, path)
+					if rep := checkProportion(ek, imagePrompt, name, path); rep != nil {
+						path = c.regenerateOnBadFacing(ctx, proj, assets, kind, id, name, imagePrompt, ek, path, rep, genAsset)
+					}
 				}
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
 				if kind == "characters" && p.ViewsOn() {
@@ -371,7 +378,11 @@ const (
 //
 // 它自己负责:读图 → 调视觉模型 → 明显偏离时发 warn(文案点名哪一项、期望多少、量到多少)。
 // 它**不**负责:没有可用能力时的留痕(那是调用方的记账,见 proportionCheckOutcome 的说明)。
-func (c *Coordinator) checkPortraitProportion(ctx context.Context, proj *project.Project, ek EntityKind, imagePrompt, name, path string) proportionCheckOutcome {
+//
+// 返回的 *qc.ProportionReport 供调用方做进一步处置(当前只有一处:**朝向明显偏离时换种子
+// 重出**,见 regenerateOnBadFacing);没跑/失败/无能力时返回 nil —— nil 表示"没量到",
+// 任何"据此重出"的判断都必须把 nil 当作**不重出**(不能拿"没验过"当"不合格")。
+func (c *Coordinator) checkPortraitProportion(ctx context.Context, proj *project.Project, ek EntityKind, imagePrompt, name, path string) (*qc.ProportionReport, proportionCheckOutcome) {
 	// 质检总开关关掉时不做(用户明确表示不要质检);细粒度由比例自检自己那条三态开关管。
 	enabled := proj.Config.Params.QC.Enabled && proj.Config.Params.QC.ProportionCheckOn()
 	applicable := PortraitProportionCheckable(ek, imagePrompt)
@@ -379,25 +390,82 @@ func (c *Coordinator) checkPortraitProportion(ctx context.Context, proj *project
 	client := TurnaroundVerifier(c.cfg.Get().VLM)
 	if plan := planProportionCheck(enabled, client != nil, applicable); !plan.Run {
 		if plan.Skipped != "" {
-			return proportionNoCapability
+			return nil, proportionNoCapability
 		}
-		return proportionNotApplicable
+		return nil, proportionNotApplicable
 	}
 	if strings.TrimSpace(path) == "" {
-		return proportionNotApplicable
+		return nil, proportionNotApplicable
 	}
 	rep, err := qc.DetectPortraitProportion(ctx, client, path, HumanProportionClausePresent(imagePrompt))
 	if err != nil {
 		// 读图/调用/解析失败 = "没验过",如实说出来,不当作通过(与画面文字检测同一口径)。
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
 			"⚠ 定妆照「%s」比例自检失败(未判定,不当作通过):%v", name, err)
-		return proportionChecked
+		return nil, proportionChecked
 	}
 	// 明显偏离才出声;比例正常或只有轻微偏差 → 静默,不刷屏。
 	if w := qc.ProportionWarnText(rep); w != "" {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ 定妆照「%s」%s", name, w)
 	}
-	return proportionChecked
+	return rep, proportionChecked
+}
+
+// maxFacingRegen 朝向偏离时最多**换种子重出**几次(不含首次)。
+//
+// 为什么是 2:实测(见 docs/定妆照朝向-实测与处置.md)同一段提示词换种子出图,
+// 4 个样本里 3 个正面 —— 单次失手约 1/4,连失三次约 1/64。再往上加只是拿 GPU 时间
+// 换一个已经很小的概率,而每次重出都要多跑一次视觉调用;两次之后仍不过就如实告警收手,
+// 让用户决定(资产详情里还有「重新生成」那条随机种子的路)。
+const maxFacingRegen = 2
+
+// regenerateOnBadFacing 朝向明显偏离时换种子重出,并返回最终可用的图路径。
+//
+// 背景(2026-09-27 真机实测):定妆照的种子是**按资产名锚定**的(nameSeed("characters", name)),
+// 也就是"同名必同图" —— 这是跨集一致性的保险。代价是:一旦某次采样把脸偏成了四分之三侧,
+// 那个角色**每次重跑都是同一张侧脸**,不会自愈。而框住朝向的提示词压不住模型
+// (前置强调做过 A/B,结果一模一样),所以唯一有效的办法是换种子重出。
+//
+// 纪律:
+//   - 只在**量到** clear 时才重出(rep==nil 表示没量到,绝不拿"没验过"当"不合格"去烧 GPU);
+//   - 每次重出都独立播报,用户能看见"重出了几次、为什么";
+//   - 用完次数仍不过 → 保留最后一张 + 如实告警,不静默接受。
+func (c *Coordinator) regenerateOnBadFacing(ctx context.Context, proj *project.Project, assets map[string]project.Asset,
+	kind, id, name, imagePrompt string, ek EntityKind, path string, rep *qc.ProportionReport,
+	gen func(kind, id, name, imagePrompt string, ek EntityKind, attempt int) (string, error)) string {
+	if !qc.FacingNeedsRegen(rep) {
+		return path
+	}
+	for attempt := 1; attempt <= maxFacingRegen; attempt++ {
+		if ctx.Err() != nil {
+			return path
+		}
+		c.emit(proj.ID, PhaseAssets, 0, "info", 0,
+			"↻ 定妆照「%s」朝向自检未过(不是正面):换种子重出第 %d/%d 次…", name, attempt, maxFacingRegen)
+		next, err := gen(kind, id, name, imagePrompt, ek, attempt)
+		if err != nil {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ 定妆照「%s」朝向重出失败(保留上一张):%v", name, err)
+			return path
+		}
+		// 重出写的是**同一个文件**(路径由资产 id 派生),所以要刷新内容指纹 ——
+		// 否则资产表里留着上一张的指纹,后续"文件变了没有"的判据会读错。
+		if a, ok := assets[id]; ok {
+			a.Fingerprint = project.FingerprintFile(next)
+			assets[id] = a
+		}
+		path = next
+		rep, _ = c.checkPortraitProportion(ctx, proj, ek, imagePrompt, name, path)
+		if !qc.FacingNeedsRegen(rep) {
+			if qc.FacingOf(rep) == qc.DeviationNone {
+				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 定妆照「%s」朝向已修正(第 %d 次重出为正面)", name, attempt)
+			}
+			return path
+		}
+	}
+	c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+		"⚠ 定妆照「%s」换种子重出 %d 次仍不是正面:已保留最后一张,可在「资产定妆」里对该卡手动「重新生成」(另一颗种子)",
+		name, maxFacingRegen)
+	return path
 }
 
 func kindLabel(kind string) string {
@@ -451,11 +519,15 @@ func assetImageSize(proj *project.Project) (int, int) {
 // 「怎么出图」全部收在 genSheetImage 里(变体卡从主卡派生,见 sheetderive.go):
 // 这一层只负责"资产阶段的日志口径",不参与任何路线判断 —— 三条出图路径各写一份
 // "要不要派生/怎么降级"正是"同一个角色几张脸"复发的老毛病。
-func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string, assets map[string]project.Asset, ek EntityKind) (string, error) {
+//
+// attempt > 0 表示这是**朝向自检未过后的换种子重出**(见 regenerateOnBadFacing):
+// 种子在名字锚定的基准上加 attempt×101,于是"同名必同图"在重出这一路被有意打破 ——
+// 重出要的正是"换一颗种子再抽一次"。同一颗种子重出等于画出同一张图,白烧一次 GPU。
+func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string, assets map[string]project.Asset, ek EntityKind, attempt int) (string, error) {
 	w, h := assetImageSize(proj)
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
-	seed := nameSeed(kind, name)
+	seed := nameSeed(kind, name) + int64(attempt)*101
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "%s 生成:%s「%s」(%d×%d)…", c.imageSourceLabel(), kindLabel(kind), name, w, h)
 	return c.genSheetImage(ctx, ce, sheetJob{
 		proj: proj, assets: assets, kind: kind, id: id, name: name,
@@ -938,7 +1010,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	}
 	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(todo), c.imageSourceLabel())
 	for _, m := range todo {
-		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt, assets, m.ek)
+		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt, assets, m.ek, 0)
 		if err != nil {
 			c.emit(proj.ID, PhaseRender, 0, "warn", 0, "补齐失败:%s「%s」:%v(该镜降级 t2va)", kindLabel(m.kind), m.name, err)
 			continue

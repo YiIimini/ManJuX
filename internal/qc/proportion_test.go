@@ -287,3 +287,86 @@ func TestProportionSpecsAreWellFormed(t *testing.T) {
 		t.Error("平台不另定比例标准:黄金分割不是技能侧口径里的项")
 	}
 }
+
+// 朝向项(face_direction):定妆照是**全片身份的权威参考图**,出了四分之三侧脸会让
+// H3 拿侧脸当身份锚 —— 而种子按资产名锚定("同名必同图"),不换种子它就一直偏着。
+//
+// 三条判据缺一不可(2026-09-27 真机实测见 docs/定妆照朝向-实测与处置.md):
+//
+//	① 这一项必须真的在检查表里、且在给模型的提示词里逐条列出 —— 不然模型永远不会回答它;
+//	② "没量到"与"量到且是正面"必须分得开(否则"没验过"看起来像"合格");
+//	③ **只有 clear 才触发重出**:重出一张要真花 20-30 秒 GPU + 一次视觉调用。
+func TestProportionFacingItemIsMeasured(t *testing.T) {
+	spec, ok := proportionSpecOf(KeyFaceDirection)
+	if !ok {
+		t.Fatal("检查表缺朝向项:朝向是定妆照的唯一构图硬约束,测不到就只能靠肉眼")
+	}
+	if spec.Label != "朝向" {
+		t.Errorf("朝向项的中文名应为「朝向」(告警文案直接用它),实际 %q", spec.Label)
+	}
+	// 提示词必须逐条列出(模型按这个清单回答;漏列 = 这项永远回到 Invisible)
+	prompt := proportionUserPrompt()
+	if !strings.Contains(prompt, KeyFaceDirection) || !strings.Contains(prompt, spec.Expected) {
+		t.Error("给视觉模型的检查清单里没有朝向项(或没有给出期望口径)—— 这项会被答成「看不见」")
+	}
+	// 系统提示词要把"什么算偏离"说清:四分之三侧/侧脸 = clear
+	if !strings.Contains(proportionSystem, "three-quarter") {
+		t.Error("系统提示词必须写明「四分之三侧/侧脸算明显偏离」,否则模型会拿自己的审美判朝向")
+	}
+
+	// ② 三态分流:没量到 ≠ 合格
+	none := &ProportionReport{Checked: true, Measured: 1,
+		Slight: []ProportionItem{{Key: "eye_line", Item: "眼线位置"}}}
+	if got := FacingOf(none); got != DeviationNone {
+		t.Errorf("朝向项既不在 clear/slight、也不在「看不见」里 = 量到且合格,应为 none,实际 %q", got)
+	}
+	inv := &ProportionReport{Checked: true, Invisible: []string{"朝向"}}
+	if got := FacingOf(inv); got != "" {
+		t.Errorf("朝向项看不见时是「没量到」(空档位),不许当成合格,实际 %q", got)
+	}
+	if got := FacingOf(&ProportionReport{}); got != "" {
+		t.Errorf("没做自检(Checked=false)时是「没量到」,实际 %q", got)
+	}
+	if got := FacingOf(nil); got != "" {
+		t.Errorf("nil 报告是「没量到」,实际 %q", got)
+	}
+
+	// ③ 只有 clear 才重出
+	for _, tc := range []struct {
+		name string
+		rep  *ProportionReport
+		want bool
+	}{
+		{"四分之三侧 → 重出", &ProportionReport{Checked: true, Clear: []ProportionItem{{Key: KeyFaceDirection, Item: "朝向"}}}, true},
+		{"轻微偏差 → 不重出(模型犹豫一下就重渲是浪费)", &ProportionReport{Checked: true, Slight: []ProportionItem{{Key: KeyFaceDirection, Item: "朝向"}}}, false},
+		{"正面 → 不重出", &ProportionReport{Checked: true, Slight: []ProportionItem{{Key: "eye_line", Item: "眼线位置"}}}, false},
+		{"没量到 → 不重出(不能拿「没验过」当「不合格」去烧 GPU)", nil, false},
+	} {
+		if got := FacingNeedsRegen(tc.rep); got != tc.want {
+			t.Errorf("%s: FacingNeedsRegen = %v,期望 %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// 朝向偏离走的是**同一次视觉调用**(不额外多调一次模型),且解析路径与比例项一致。
+func TestProportionParsesFacingItem(t *testing.T) {
+	out := propJSON(map[string][3]string{
+		"face_direction": {"true", DeviationClear, "鼻尖偏向画面右侧,只看得全左眼(四分之三侧)"},
+		"eye_line":       {"true", DeviationNone, "眼线约在头部中线"},
+	}, "整体比例正常,但朝向偏了")
+	fv := &fakeVision{outs: []string{out}}
+	rep, err := judgePortraitProportion(context.Background(), fv, "data:image/png;base64,AAA", false)
+	if err != nil {
+		t.Fatalf("判定失败: %v", err)
+	}
+	if got := FacingOf(rep); got != DeviationClear {
+		t.Fatalf("朝向应解析成 clear,实际 %q(%+v)", got, rep.Clear)
+	}
+	if !FacingNeedsRegen(rep) {
+		t.Error("四分之三侧必须触发「换种子重出」")
+	}
+	// 告警文案同样要能点名它(用户看到的是"朝向(期望:正面胸像;实测:…)")
+	if w := ProportionWarnText(rep); !strings.Contains(w, "朝向") {
+		t.Errorf("告警必须点名朝向,实际 %q", w)
+	}
+}

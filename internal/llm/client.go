@@ -237,6 +237,12 @@ type VisionContent struct {
 }
 
 // ChatVision 多模态对话(OpenAI 兼容 image_url 协议)。
+//
+// max_tokens 从 2048 提到 8192(2026-09-27 实测):GLM 一类**思考型**视觉模型的推理 token
+// 也计入 completion,2048 会被思考吃干净、正文一个字没出来就报
+// 「VLM 返回空内容(finish=length)」—— 而定妆照自检正好是"逐项回答九项 + 中文读数"的长输出。
+// 症状是**静默降级**:那次自检被判成"未判定",于是"朝向偏离就换种子重出"根本不触发,
+// 而事件流里只有一句无从下手的自检失败。上限给足之后,失败才真的是失败,不是被截断。
 func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionContent, jsonMode bool) (string, error) {
 	if !c.Configured() {
 		return "", fmt.Errorf("视觉模型未配置:请在设置中填写 VLM BaseURL / API Key / Model")
@@ -260,7 +266,7 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 	body := map[string]any{
 		"model":       c.model,
 		"messages":    msgs,
-		"max_tokens":  2048,
+		"max_tokens":  8192,
 		"temperature": 0.2,
 	}
 	if jsonMode {

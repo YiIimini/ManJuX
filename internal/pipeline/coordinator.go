@@ -273,8 +273,17 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	// 只有配上"重出后再量一遍"才闭环 —— 否则用户按建议重出了,却没有任何反馈说好没好。
 	// 这里每次都提醒(未配置视觉模型时),因为这是一次用户动作,不是一次批量循环。
 	if kind == "characters" {
-		if c.checkPortraitProportion(ctx, proj, ek, prompt, name, path) == proportionNoCapability {
+		rep, outcome := c.checkPortraitProportion(ctx, proj, ek, prompt, name, path)
+		if outcome == proportionNoCapability {
 			c.emit(projectID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.ProportionSkipNoCapability)
+		}
+		// 朝向未过时**不再自动重出**了(资产阶段那条路会自动重出,这里不):
+		// 「重新生成」本来就是用户手动要换一张,而它用的是随机种子 —— 每次点都是新样本。
+		// 自动连抽两三次会把一次点击变成"不知道在等什么"的静默等待;如实告诉他
+		// "这张不是正面,再点一次通常就好"更省事,也更符合"钱/时间的事让用户拍板"(乙8 同一取向)。
+		if qc.FacingNeedsRegen(rep) {
+			c.emit(projectID, PhaseAssets, 0, "warn", 0,
+				"⚠ 定妆照「%s」不是正面(四分之三侧):定妆照是全片身份参考图,建议再点一次「重新生成」换一颗种子(实测约四次里有三次是正面)", name)
 		}
 	}
 	return nil
