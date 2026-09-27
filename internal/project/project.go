@@ -90,6 +90,14 @@ type Shot struct {
 	// (改用渐隐渐显 + 转场字幕),所以空值对"每段场景的首镜"是允许的。
 	EndState string `json:"end_state,omitempty"`
 
+	// HookType 本镜的**钩子类型**（受控词表，见 shot_table.go）。
+	//
+	// 来自官方「标准镜头信息表」六列之一（`skills/3d-animation-short-generator` STEP 5），
+	// 用途是**每集钩子分布自检**（STEP 5.5 检查 1）：每镜一个，每连续三镜至少一个
+	// reveal/reversal/callback，开篇与收尾必须是强钩子。没有它，"节奏"就只能靠感觉说，
+	// 有它之后"这一集是不是平"是可机检的。空值合法（存量包）：契约按 warn 提示。
+	HookType string `json:"hook_type,omitempty"`
+
 	// KeyframePrompt 本镜**首帧 T2I 静帧**提示词(技能侧 manju_plan.py 的
 	// build_keyframe_prompt 产出)。
 	//

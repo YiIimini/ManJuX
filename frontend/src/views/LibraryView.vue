@@ -182,6 +182,7 @@ function cardHasViews(e) {
 function labelOf(file) {
   const b = String(file).split('/').pop() || ''
   if (b.includes('_turnaround')) return '转台图'
+  if (b.includes('_board')) return '三视图板'
   if (b.includes('_view_threequarter')) return '四分之三'
   if (b.includes('_view_side')) return '侧面'
   if (b.includes('_view_back')) return '背面'

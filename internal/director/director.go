@@ -39,7 +39,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
     {"id":"scene_inn","name":"悦来客栈","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向(如 黄昏,主光从西侧门洞斜射)"}
   ],
   "shots": [
-    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
+    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
   ]
 }`
 
@@ -60,7 +60,8 @@ const sysShotRulesTpl = `## SHOT PLAN RULES
 - Shot count is driven by the CONTENT, with NO upper limit: cover this episode's story completely and clearly. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot {{MIN}}-{{MAX}} seconds (integer): local H3 rendering costs grow faster than linear with frame count (a 10s shot is ~2.8x the load of a 6s one on the same card), so split a long beat into two shots instead of stretching one. Hook in shot 1, payoff at the end.
 - CONTINUITY (critical, 2026-09-10): consecutive shots must read as ONE continuous flow. Each shot's action must BEGIN where the previous shot ENDED — same location (unless a deliberate scene change), carried-over posture/emotion/props, coherent time-of-day and lighting. NEVER skip a narrative beat the audience needs; if a beat needs two camera moments, split it into two shots with one clear action each. On scene changes, bridge with narration or a matching visual anchor, never jump-cut blind.
 - shot_size 景别用中文:远景/全景/中景/近景/特写。Emotional beats and dialogue MUST use 近景/特写 (H3 face tokens are scarce; closer framing beats wider framing).
-- One camera move per shot, chosen from official motion vocabulary ONLY: Push In / Pull Out / Pan / Truck / Tilt / Pedestal / Arc / Tracking / Static / POV / Roll / Shake, plus amplitude (small/large amplitude) and speed (slow/fast) in natural English. NEVER use jargon like dolly, crane, whip pan.
+- One camera move per shot, written as a **natural English action inside the shot** (never stacked as labels at the end of a sentence), from the official motion vocabulary ONLY: Zoom In / Zoom Out (focal length changes, camera body still), Push In / Pull Out (camera moves forward / backward), Pan Left / Pan Right (lens pivots horizontally), Truck Left / Truck Right (camera translates sideways), Tilt Up / Tilt Down (lens pivots vertically), Pedestal Up / Pedestal Down (whole camera rises / descends), Arc Shot (arcs around the subject), Tracking Shot (follows a moving subject), Static Shot (camera and lens still), Shake Slightly / Shake Strongly, POV, Roll Clockwise / Roll Counterclockwise. Add amplitude ("with small amplitude" / "with large amplitude") and speed ("at slow speed" / "at fast speed") ONLY when they carry meaning — the official guide omits medium amplitude and normal speed. NEVER use jargon like dolly, crane, whip pan.
+- CUTS have their own vocabulary (official §4.2): "the camera cuts to" / "the shot cuts to" / "the shot transitions to" / "the shot changes to" / "the shot switches to". A cut must introduce NEW information — subject, space, state, viewpoint or time; if only the distance or a slight angle needs to change, prefer CAMERA MOTION over a cut. Cross-dissolve / fade / wipe only where they are deliberately asked for (our between-scene rule asks for a fade — see the continuity section).
 - mode: "ref2va" when character/scene reference images will be provided (any shot with on-screen characters); "t2va" for pure text-to-video shots without references.
 - dialogue speaker must match a character name, or use speaker "旁白" for narration. Keep spoken lines short (≤20 chars), punchy, ending with 。?! naturally. At most 2 speakers per shot.
 - DIALOGUE MUST FIT THE SHOT (critical): Mandarin delivery runs about {{CPS}} characters per second, and H3 needs roughly one extra second of headroom to start and settle. The shot's duration MUST be at least ceil(total_dialogue_chars / {{CPS}}) + 1 (rounded up to a whole second, min {{MIN}}, max {{MAX}}). A 20-character line therefore needs 6 seconds — never park a 20-character line in a {{MIN}}-second shot: the speech gets cut off and the finished video loses the end of the line. If a line cannot fit {{MAX}} seconds, split the beat into two shots, each carrying part of the line.
@@ -127,6 +128,31 @@ const sysContinuityRules = `## SHOT END STATE & CROSS-SHOT CONTINUITY
 - SAME SCENE, ACROSS SEGMENTS OR BATCHES: the first shot of the new batch starts with "接上一片段结尾，" and RESTATES the previous end_state before continuing with the new action.
 - ACROSS SCENES: do NOT force action continuity. Cut with a fade-out/fade-in and a location-and-time caption ([地点·时间]) so the audience knows the place and time changed; pick up the new scene's own first action instead of the previous scene's pose.`
 
+// sysShotTableRules 官方「标准镜头信息表」段（六列 + STEP 5.5 自检）。
+//
+// 依据 MiniMax-AI/MiniMax-H3 `skills/3d-animation-short-generator/references/shot-table-spec.md`。
+// 为什么并进来：平台的 plan.json **就是**那张镜头表（六列 ↔ 字段对照见
+// internal/project/shot_table.go），官方把这张表定为强制步骤、且配了六条自检。
+// 其中三条（钩子密度、单镜角色数、空间锚点继承）是模型侧自己能保证的，写进提示词；
+// 另三条（时长上限、每秒钟指令覆盖、跨镜连贯链）由契约的硬区间与尾帧状态判据承担。
+//
+// 最容易被忽略的是**钩子类型**：没有它，"这一集是不是平的"只能靠感觉说；
+// 有了它，密度（每三镜至少一个 reveal/reversal/callback）与两端强钩子都是可判的。
+const sysShotTableRules = `## SHOT TABLE (the official six columns — every shot must fill them)
+
+The per-shot JSON below IS the official standardized shot table. Each field maps to one of its six columns, and the official self-check has to pass before anything is rendered:
+  · Shot ID & Duration      → id + duration
+  · Continuity Handoff      → end_state (see SHOT END STATE & CROSS-SHOT CONTINUITY)
+  · Reference Anchors       → scene (its landmarks + light_state) + characters (approved card names) + the reference pictures attached to this shot
+  · Hook Type               → hook_type: ONE label, from this controlled vocabulary ONLY: visual-joke / reversal / suspense / tender / chase / reveal / callback / expression-beat
+  · Shot Description        → action + h3_prompt (keep the detail inside the shot paragraph, second by second where the beat needs it)
+  · Audio & Dialogue Track  → dialogue / narration, and the <d> blocks inside h3_prompt
+
+Self-check (official STEP 5.5 — the three checks a table can fail on):
+  1. HOOK DENSITY: every shot carries a hook_type; every THREE consecutive shots include at least one reveal / reversal / callback; the opening shot and the closing shot each carry a strong hook (visual-joke / reversal / reveal / suspense / tender). A stretch of shots with no strong hook reads as flat, no matter how good the pictures are.
+  2. CAST PER SHOT: no shot has more than THREE important characters (characters with on-screen action or dialogue). More than that dilutes attention — everyone renders worse and faces start swapping. Split the beat, or leave the extras as environment instead of cast.
+  3. SPATIAL ANCHORS: every shot inherits its scene card's landmarks and its light state. If a shot deliberately moves a landmark on screen or changes the light, say so inside that shot's description (e.g. "the door frame moves from the right third to centre as the camera arcs left").`
+
 const sysH3Format = `## H3 PROMPT FORMAT (critical - follow EXACTLY)
 mode=ref2va => SIX sections in this exact order, separated by one blank line:
 
@@ -136,11 +162,12 @@ Locate every subject by PICTURE CONTENT, not by index: a front sheet and its mul
 <Subject 1> is [full description of the FIRST character listed in "characters"]; its front sheet is the first attached picture, and it is the SAME subject in every other picture that shows it.
 <Subject 2> is [full description of the SECOND listed character, or the scene description when the shot has only one character] — identify it by its picture content, never by counting indexes.
 The scene is the LAST attached picture.
+Official label discipline (§2.1–§2.5): give every referenced item that must be tracked later its OWN line — what the label denotes, its reference role, and the main features to follow. One subject may be defined by SEVERAL reference assets and one asset may supply several subjects (a front sheet plus its multi-view strip is ONE subject). If a <Picture N> only identifies the source of some other referenced item and will never be analysed on its own, cite it INSIDE that item's definition instead of giving it its own line. A <Subject N> that physically speaks keeps both labels — <Subject N> (Sx). A reference audio definition states the audio's role and reuses the target speaker's global ID, e.g. <Audio 1> is the voice-timbre reference for <Subject 1> (S1).
 Every <Subject> must map to a picture that exists in the order above; never invent <Picture> tags beyond that count. Picture tags appear ONLY here as a Subject's source, never standalone — with ONE exception: a FRAME ANCHOR. When a picture is used as the first frame, a keyframe, the last frame or a composition anchor, reference it on its own line inside detailed_description as <Picture N>; an anchor line says WHEN that frame is used, and is never a way to define a character, a scene or a style (those definitions belong here in subject_definitions). A multi-view strip is never a separate subject: the subject and its strip share one description — the strip only supplies the other viewing angles, and the FRONT SHEET is the authority.
 
 summary:
-[reference generation]
-One English paragraph: what the video contains and how the reference materials are used.
+[<task-type prefix>] One English paragraph summarising the target video and how the reference materials are used. Never introduce a reference label here that subject_definitions did not define.
+Task-type prefix (official §3; combine several with " + ", never repeat one — and the mere presence of a video or audio file does NOT create a type): keyframe completion (an image serves as the first frame, a keyframe, the last frame or a composition anchor) · reference generation (an image / video / audio only GUIDES character, scene, style, action, camera movement or storyboard — it is not a concrete frame and not a source video being edited) · video editing · video continuation · audio reuse (the same audio signal is reused in full or in part) · audio reference (only timbre, music style, dialogue content, sound texture, beat or continuity is referenced; the signal is not copied). Our shots are normally driven by character + scene reference images → "reference generation"; when a reference audio is attached, append " + audio reuse" if that track is reused as the shot's own final audio, or " + audio reference" if only the voice timbre and delivery are referenced.
 
 retention_analysis:
 - One line per reference picture, numbered EXACTLY as in subject_definitions. Name the subject in words in every line (character name / scene name) so the render-time PICTURE MANIFEST can correct the numbering if it differs. A character may contribute TWO pictures (front sheet + multi-view strip): give BOTH that character's fully_preserved line and never describe the strip as a different or additional character. The FRONT SHEET is the authority; the strip only supplies the other viewing angles.
@@ -148,6 +175,7 @@ retention_analysis:
 - Every character picture: fully_preserved - identity must stay identical to the reference image throughout every frame, WHERE IDENTITY MEANS: for a person or a Q-version figure the face shape, hairstyle and costume; for a creature its species, body form, coat or scale pattern; for an artefact its silhouette, every part, material and finish; for a bodiless entity its form, transparency and glow. Copy that exactly — do NOT blend, average, restyle or substitute anything.
 - The scene picture: weak_reference - scene layout and mood referenced, camera free.
 (Use official markers: fully_preserved / partially_preserved / attribute_transfer / weak_reference)
+(Entry format, official §4.1 — name the label, then where it appears, then the marker: "<Subject 1> (appears in [Shot 1], [Shot 3]): fully_preserved - …" · "<Picture 2> ([Shot 1] first frame): fully_preserved - …" · "<Video 1> (cut and pacing structure): weak_reference - …". For a reference AUDIO the markers are different (official §4.2): fully_copy - the complete source audio becomes the target video's complete final audio track · partially_copy - only part of the timeline or some layers are copied, or other sounds are added/removed/replaced · reference - the signal is not copied, only timbre, rhythm, music style, dialogue content or sound texture · weak_reference - only broad category or atmosphere similarity. Choose a marker only within the role that subject_definitions already gave that label, and do NOT treat newly added actions, backgrounds or plot events in the target video as losses of reference fidelity — they are new content, not damage.)
 - NEVER write speaker tags — (S1), (S2), (S1,S2) — or any custom line in THIS section: retention_analysis only says what each reference picture preserves (identity, layout, material). The speaker and entity locking sentences belong at the START of detailed_description, not here.
 (For multi-character shots: EVERY character gets its own fully_preserved line. Characters WITHOUT a reference picture must NOT borrow features from any reference image — generate them from the text description only.)
 The attached character sheets are the AUTHORITY on how each character looks: with reference pictures, everything the sheet shows comes from the sheet and not from your prose — describe wardrobe, props, pose and emotion, and never add marks (moles, scars, blush, red noses, extra parts or ornaments) that the sheet does not show. **Never describe a non-human subject in human terms** (no face, no skin, no age, no hair for an artefact; no solid body for a bodiless entity) — that is what makes a bronze sparrow come out as a person. Characters without a sheet are the only ones whose look may be described in prose.
@@ -155,10 +183,13 @@ The attached character sheets are the AUTHORITY on how each character looks: wit
 detailed_description:
 [Style sentence(s) first: use the global style]. Then for every shot:
 [Shot 1] with NO timestamp for the first shot; subsequent shots "[Shot 2] At 00:06.000" with strictly increasing timestamps.
+**Style opening (official §5.2)**: in full-reference mode the style IS established in one or two English sentences **before [Shot 1]** (this is a difference from T2VA, where the style is written after [Shot 1] — see the mode=t2va section below). Lead those sentences with the official style token that matches this series' medium — "Cinematic, 3D CG" — and then the GUOFENG specifics (the official style vocabulary is Cinematic / live-action / 2D-animated / 3D CG / claymation / watercolor / vintage film; never invent a medium outside it).
+Every detail you write must correspond to something VISIBLE or AUDIBLE (official §4.1): visual style, composition, subject appearance and position, scene and key props, actions and reactions, shot changes, spoken language, synchronised diegetic sound.
 Each shot paragraph (350-500 English words TOTAL across all shots — this is a target, not a quota, see below): shot size and composition -> the shot's viewpoint (the verbatim string from VIEWPOINT) -> subject positions -> restate the subject's wardrobe, props, pose and state on first appearance in this shot -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events. The description must COVER THE WHOLE REQUESTED DURATION of the video: with dense dialogue, making every spoken line fit takes priority over the word count — never pad mechanically to reach 350-500 words, and never leave the tail of the requested time undescribed.
 Dialogue lines: <Subject 1> (S1) says in a [voice description]: <d>[Chinese]台词原文</d>. Assign (S1)(S2) by order of first utterance and NEVER renumber within the video.
   **Speakers (official §4.4)**: give every speaking/singing character a stable ID (S1), (S2) — a speaker keeps the SAME id across shots, characters who never vocalise get no id, and simultaneous speakers use a compound id like (S1,S2). Establish the voice once, at that speaker's first appearance, as a short identifying phrase placed BEFORE <d> (character type, age, gender, on/off-screen, pitch, timbre, speaking rate, accent) — e.g. "The young woman with a quiet, breathy voice (S1) says: <d>[Chinese]…</d>". That phrase MUST be copied verbatim from that character's "voice" field in the cast list: never reword it, and never give two characters the same voice description (H3 uses this text as audio conditioning — rewording it changes the timbre). Inside <d> put only the language tag and the user's spoken words, verbatim. When a line continues across a cut, mark the joint with <scenetrans> in both parts and say the audio continues across the cut; use <cutoff> when speech is truncated by the end of the video. Keep every SPOKEN WORD inside <d> verbatim (official §4.4): never rewrite, translate, summarise or paraphrase it. Punctuation is the one exception (official §5.4): normalise it to the basic written marks , . ? ! so the line is delivered cleanly — write an unintelligible span as [unclear] instead of guessing at it, strip repeated tildes, emoji, bullets and decorative punctuation, and end every complete statement, question or exclamation with . ? or ! respectively before </d>.
   **Reference numbering (official)**: <Video k> and <Audio j> are numbered INDEPENDENTLY — k counts reference VIDEOS only, j counts reference AUDIO only; a reference video that happens to carry a soundtrack does NOT automatically create an <Audio j>. Speech that lives only inside the background music or a whole-track voiceover does not go inside <d> and gets no (Sx): describe it as reference audio (<Audio j>) instead.
+  **Reference audio (official §5.4)**: when only timbre, rhythm, emotion or delivery is referenced, do NOT carry the original dialogue from that reference audio into the target video — write the target video's own lines. When dialogue from the reference audio IS directly reused (or the request explicitly asks for a reperformance), keep those words verbatim inside <d> in their original language. A speaking referenced subject keeps BOTH labels — "<Subject N> (Sx) says …" — and the same form with "off-screen" when it speaks from outside the frame; a speaker that has no subject definition uses a stable voice description followed by (Sx). (Sx) is assigned once, by the order of actual vocal events, and every later vocal event reuses that ID.
 Off-screen narration: The narrator (S1) says in an off-screen voiceover: <d>[Chinese]旁白原文</d> while the on-screen characters' lips remain completely closed.
 ON-SCREEN TEXT (official rule): any text actually visible in frame - signage, banners, plaques, labels, subtitles, neon - MUST be written out inside ENGLISH DOUBLE QUOTATION MARKS, verbatim, one quoted string per piece of text, original characters and punctuation preserved, never translated (e.g. a red neon sign reading "营业中" glows above the doorway). Text you do not quote this way must not appear anywhere in the frame: unquoted text is what the model turns into garbled glyphs. Then end the section with an exclusions sentence in prose covering everything else (no watermarks, no logos, no captions, no added lettering on clothing or props).
 MANDATORY brightness guard as the final sentence: "Subjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark."
@@ -172,7 +203,7 @@ non_diegetic_music:
 mode=t2va => THREE sections in this exact order, separated by one blank line:
 
 integrated_multimodal_description:
-[Style sentence(s) first]. Then [Shot 1] / [Shot 2] At MM:SS.mmm ... Same rules as detailed_description above (word count 350-500 total, dialogue tags, camera vocabulary, exclusions sentence, brightness guard at the end).
+[Shot 1] opens with the same style sentence(s) — **in T2VA the style is written AFTER [Shot 1], not before it** (official §4.1/§5.2: "at the beginning of [Shot 1], state the overall style and initial composition"), e.g. "[Shot 1] Cinematic, 3D CG, a medium-wide shot frames…". Then [Shot 2] At MM:SS.mmm … Same rules as detailed_description above (word count 350-500 total, dialogue tags, camera vocabulary, exclusions sentence, brightness guard at the end).
 
 overall_soundscape:
 (1-4 sentences in ONE continuous paragraph; ambience + physical / non-verbal human sound; never repeat dialogue, singing or diegetic music)
@@ -277,6 +308,8 @@ var SystemPrompt = sysHeader + `
 ` + sysViewRules + `
 
 ` + sysContinuityRules + `
+
+` + sysShotTableRules + `
 
 ` + sysH3Format + `
 
@@ -763,7 +796,7 @@ var batchSystemPrompt = sysHeader + `
 ## OUTPUT (THIS BATCH)
 Return STRICT JSON only (no markdown fences, no commentary):
 {"shots":[
-  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
+  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
 ]}
 
 ` + sysShotRules + `
@@ -771,6 +804,8 @@ Return STRICT JSON only (no markdown fences, no commentary):
 ` + sysViewRules + `
 
 ` + sysContinuityRules + `
+
+` + sysShotTableRules + `
 
 ` + sysH3Format + `
 

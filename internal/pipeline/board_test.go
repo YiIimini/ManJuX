@@ -1,0 +1,205 @@
+package pipeline
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/project"
+)
+
+// board_test.go 角色**三视图细节板**的契约
+// （官方 3d-animation-short-generator STEP 3 + 技能侧整改单 §2.2）。
+//
+// 三件必须钉死的事：
+//  1. 版面与取景：板子提示词必须带版面清单、且**原来的人像取景已被换掉**（不换就是
+//     "半身胸像"与"多视图板"打架，模型二选一糊）；幂等（装配点可能被调两次）。
+//  2. 归属：只给人形角色出板子；板子**不是** H3 的参考图（refs 只认主图与转台图）。
+//  3. 时效：定妆照重出过（朝向自检换种子）后，旧板必须判为过期并重出 —— 否则留着
+//     一个"另一个人的脸"的板子骗人审。
+
+func boardPortraitPrompt() string {
+	return "young man, narrow face, low ponytail to the shoulder, combed back forehead clear, " +
+		"grey linen robe, plain background, upper-body framing, front-facing, 9:16, " +
+		"MATTE CINEMATIC RENDER: a cinematic photoreal 3D render with real materials."
+}
+
+func TestBoardPromptReplacesPortraitFraming(t *testing.T) {
+	got := BoardImagePrompt(boardPortraitPrompt())
+
+	if !strings.Contains(got, BoardMarker) || !strings.Contains(got, "PRODUCTION REFERENCE SHEET") {
+		t.Fatalf("板子提示词缺少版面标记(幂等判据):\n%s", got)
+	}
+	for _, want := range []string{"FRONT, SIDE and BACK", "six head studies", "six close-up detail insets", "plain light neutral"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("版面清单缺 %q:\n%s", want, got)
+		}
+	}
+	// 人像取景必须被换掉：同一段提示词里既要求"半身胸像"又要求"多视图板"= 二选一地糊
+	low := strings.ToLower(got)
+	for _, bad := range []string{"upper-body framing", "upper body", "front-facing", "plain background"} {
+		if strings.Contains(low, bad) {
+			t.Errorf("板子提示词里残留人像取景 %q:\n%s", bad, got)
+		}
+	}
+	// 身份与风格必须**逐字保留**（板子是派生物，不是重新描述一遍）
+	if !strings.Contains(got, "low ponytail to the shoulder") {
+		t.Error("板子必须保留定妆提示词里的身份特征(发型三要素)")
+	}
+	if !strings.Contains(got, "MATTE CINEMATIC RENDER") {
+		t.Error("板子必须继承全片风格块(与定妆照同一套介质)")
+	}
+	// 幂等
+	if again := BoardImagePrompt(got); again != got {
+		t.Fatalf("二次装配改变了结果:\n一次:%s\n二次:%s", got, again)
+	}
+}
+
+func TestBoardSizeIsLandscapeOnGrid(t *testing.T) {
+	// 竖版项目(默认 768×1344) → 板子必须转成横版，长边不变、短边按 16:9 折算并对齐 32
+	w, h := BoardSize(768, 1344)
+	if w <= h {
+		t.Fatalf("板子必须是横版(官方 16:9 reference sheet)，实际 %d×%d", w, h)
+	}
+	if w != 1344 {
+		t.Errorf("长边应与项目长边同源(1344)，实际 %d", w)
+	}
+	if h%32 != 0 || w%32 != 0 {
+		t.Errorf("画幅必须落在 32 的网格上，实际 %d×%d", w, h)
+	}
+	if ratio := float64(w) / float64(h); ratio < 1.7 || ratio > 1.9 {
+		t.Errorf("画幅应接近 16:9，实际比例 %.2f(%d×%d)", ratio, w, h)
+	}
+	// 横版项目原样返回横版
+	if w2, h2 := BoardSize(1344, 768); w2 <= h2 {
+		t.Errorf("横版项目也该得到横版板子，实际 %d×%d", w2, h2)
+	}
+}
+
+func TestBoardPathAndSuffix(t *testing.T) {
+	master := filepath.Join("dir", "characters_char_shenyan.png")
+	if got, want := BoardOutPath(master), filepath.Join("dir", "characters_char_shenyan"+BoardSuffix+".png"); got != want {
+		t.Fatalf("板子路径 = %q，期望 %q", got, want)
+	}
+	// 库 → 项目改名：库里叫 characters_char_张三_board.png，落进项目必须按主图主名拼
+	got := RelatedSuffixName("myproject_portrait", "/lib/characters_char_张三_board.png")
+	if got != "myproject_portrait"+BoardSuffix+".png" {
+		t.Fatalf("关联图改名 = %q，期望 %q（不改名 → 项目里有板子却永远匹配不上）", got, "myproject_portrait"+BoardSuffix+".png")
+	}
+}
+
+func TestHumanoidBoardKind(t *testing.T) {
+	for _, ek := range []EntityKind{KindHuman, KindChibi} {
+		if !HumanoidBoardKind(ek) {
+			t.Errorf("%s 应该出三视图板", ek)
+		}
+	}
+	for _, ek := range []EntityKind{KindObject, KindSpiritPet, KindBeast, KindIncorporeal, KindScene} {
+		if HumanoidBoardKind(ek) {
+			t.Errorf("%s 不该出三视图板(非人形没有\"3 全身 + 6 个头\"这回事)", ek)
+		}
+	}
+}
+
+func TestBoardStaleFollowsMaster(t *testing.T) {
+	dir := t.TempDir()
+	master := filepath.Join(dir, "m.png")
+	board := BoardOutPath(master)
+	if err := os.WriteFile(master, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !boardStale(master, board) {
+		t.Fatal("板子还不存在时必须判为需要出")
+	}
+	if err := os.WriteFile(board, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if boardStale(master, board) {
+		t.Fatal("板子比定妆照新时不该重出(续跑/重进项目不烧重复 GPU)")
+	}
+	// 定妆照因朝向自检换种子重出 → 板子过期
+	future := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(master, future, future); err != nil {
+		t.Fatal(err)
+	}
+	if !boardStale(master, board) {
+		t.Fatal("定妆照重出后旧板必须判为过期(它已经是另一张脸)")
+	}
+	// 定妆照不在 → 不折腾（调用方本就拿不到身份源）
+	if boardStale(filepath.Join(dir, "missing.png"), board) {
+		t.Error("读不到定妆照时不该判「需要出」")
+	}
+}
+
+// TestAssembleShotRefsNeverUsesBoard 板子**不是** H3 的参考图：它带着 3 个全身 + 12 个小图，
+// 喂进 Ref2V 会与"身份照抄定妆照"打架（refs 只认主图与 <base>_turnaround.png）。
+func TestAssembleShotRefsNeverUsesBoard(t *testing.T) {
+	dir := t.TempDir()
+	base := "characters_char_a"
+	master := filepath.Join(dir, base+".png")
+	turn := filepath.Join(dir, base+"_turnaround.png")
+	board := filepath.Join(dir, base+BoardSuffix+".png")
+	for _, f := range []string{master, turn, board} {
+		if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// 中景以上才带转台图（特写/近景画面里几乎只有一张脸，其余角度是身份信号的稀释源）
+	shot := project.Shot{ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, ShotSize: "中景", Mode: "ref2va"}
+	assets := map[string]project.Asset{"char:char_a": {ID: "char:char_a", Kind: "characters", Name: "阿甲", File: base + ".png"}}
+
+	refs, _, _ := RefPlan(dir, shot, assets, false)
+	for _, r := range refs {
+		if strings.Contains(r.Path, BoardSuffix) {
+			t.Fatalf("板子被当成镜头参考图了:%v", r.Path)
+		}
+	}
+	// 反向控制：转台图在同景别下确实会被带上（否则本用例是空的）
+	found := false
+	for _, r := range refs {
+		if strings.Contains(r.Path, "_turnaround") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("用例无效：近景镜本该带上转台图，实际没带 —— refs 的判据变了")
+	}
+}
+
+// TestGenerateBoardRefusesWithoutEditPath 拿不到图像编辑链路（非本地 ComfyUI）时**如实报错**，
+// 不悄悄退回文生图 —— 退回文生图等于再画一张脸，而板子的价值全在"是同一个人的多视图"。
+func TestGenerateBoardRefusesWithoutEditPath(t *testing.T) {
+	dir := t.TempDir()
+	master := filepath.Join(dir, "m.png")
+	if err := os.WriteFile(master, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := GenerateBoard(context.Background(), stubBoardEngine{}, BoardOptions{Master: master, Prompt: boardPortraitPrompt()})
+	if err == nil || !strings.Contains(err.Error(), "图像编辑") {
+		t.Fatalf("非 ComfyUI 引擎必须报「需要图像编辑能力」，实际 err=%v", err)
+	}
+	// 缺身份源也要拦
+	if _, err := GenerateBoard(context.Background(), stubBoardEngine{}, BoardOptions{Prompt: "x"}); err == nil {
+		t.Fatal("没有定妆照时必须报错（板子是派生物，没有身份源就没有板子）")
+	}
+}
+
+// stubBoardEngine 只为"能力不足时报错"这一条路径存在的假引擎。
+type stubBoardEngine struct{}
+
+func (stubBoardEngine) Name() string                                               { return "stub" }
+func (stubBoardEngine) Available(context.Context) error                            { return nil }
+func (stubBoardEngine) Render(context.Context, engine.Job) (*engine.Result, error) { return nil, nil }
+func (stubBoardEngine) ClearQueue(context.Context)                                 {}
+func (stubBoardEngine) Interrupt(context.Context)                                  {}
+func (stubBoardEngine) FreeVRAM(context.Context) error                             { return nil }
+func (stubBoardEngine) GenerateImage(context.Context, string, string, int64, int, int, string) (string, error) {
+	return "", nil
+}
+func (stubBoardEngine) Upscale(context.Context, string, engine.UpscaleOptions, int, float64, string, string, time.Duration) (string, error) {
+	return "", nil
+}

@@ -613,6 +613,22 @@ func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.
 //
 // 幂等:同一段提示词重复装配不会叠加(带过 SCENE FIDELITY 就直接返回),
 // 所以"资产阶段装配一次、渲染前补齐再装配一次"是安全的。
+// BoardImagePrompt 角色**三视图细节板**的装配点（数据在 board.go，装配在这里）。
+//
+// 为什么它是**第三个**合法装配点：板子由已通过的定妆照派生，风格块必须原样继承
+// （所以不能重新走 PortraitPrompt 那一套 —— 那会按实体类型重算取景与风格），
+// 但**取景必须换**：定妆照的尾巴是"半身胸像、整个头在画面内"，与"一张含 3 个全身 +
+// 6 个头 + 6 个细节的多视图板"直接打架，模型只会二选一地糊。
+// 于是这里只做一件事：把取景重写成板子的取景，其余（身份、风格、材质）逐字保留。
+//
+// 幂等：已含 BoardMarker 原样返回（装配点可能被调用两次）。
+func BoardImagePrompt(masterPrompt string) string {
+	if strings.Contains(masterPrompt, BoardMarker) {
+		return masterPrompt
+	}
+	return BoardMarker + " — " + BoardLayoutClause + "\n\n" + rewriteSheetFraming(masterPrompt, BoardFraming)
+}
+
 func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scene) string {
 	prof := EntityProfileOf(KindScene)
 	// 幂等判据按**卡片原文**判：本函数可能被调用两次（资产阶段装配一次、渲染前补齐再一次），

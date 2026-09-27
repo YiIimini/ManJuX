@@ -529,10 +529,20 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
 	seed := nameSeed(kind, name) + int64(attempt)*101
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "%s 生成:%s「%s」(%d×%d)…", c.imageSourceLabel(), kindLabel(kind), name, w, h)
-	return c.genSheetImage(ctx, ce, sheetJob{
+	path, err := c.genSheetImage(ctx, ce, sheetJob{
 		proj: proj, assets: assets, kind: kind, id: id, name: name,
 		prompt: imagePrompt, ek: ek, w: w, h: h, seed: seed,
 	})
+	if err != nil {
+		return path, err
+	}
+	// 角色卡的**三视图细节板**（官方 production reference sheet，见 board.go）：
+	// 从刚出的定妆照派生，供人审一致性与建模向参考。它不是 H3 的参考图
+	// （refs.go 只认 <base>.png / <base>_turnaround.png），失败只告警。
+	if kind == "characters" {
+		c.genCharacterBoard(ctx, proj, ce, name, imagePrompt, path, ek)
+	}
+	return path, nil
 }
 
 // orderCharsMasterFirst 把一批角色卡按"同族主卡在前"重排,供资产阶段按序生成。

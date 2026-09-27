@@ -38,9 +38,14 @@ func TestViewVocabularyReachesBothSides(t *testing.T) {
 		if !strings.Contains(sp, project.PlanEstablishingExtra) {
 			t.Errorf("%s 缺建立镜头串 %q", name, project.PlanEstablishingExtra)
 		}
-		for _, want := range []string{"end_state", "尾帧状态", "view"} {
+		for _, want := range []string{"end_state", "尾帧状态", "view", "hook_type", "HOOK DENSITY"} {
 			if !strings.Contains(sp, want) {
 				t.Errorf("%s 缺 %q —— 产出侧不写这个字段,契约门就永远在报同一件事", name, want)
+			}
+		}
+		for _, h := range project.PlanHookTypes {
+			if !strings.Contains(sp, h) {
+				t.Errorf("%s 缺官方钩子词表项 %q", name, h)
 			}
 		}
 	}

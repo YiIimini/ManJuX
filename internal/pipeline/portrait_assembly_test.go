@@ -60,6 +60,10 @@ var assemblyOwners = map[string][]string{
 	"styleExpand":      {"styleExpandFor("},
 	"PortraitPrompt":   {"styleExpandFor(", "castContrastBlock(", "rewriteSheetFraming("},
 	"SceneImagePrompt": {"styleExpand(", "rewriteSheetFraming("},
+	// 第三个装配点(2026-09-27 加三视图细节板):板子继承定妆照的风格块(所以不重走
+	// styleExpand/castContrastBlock —— 那会按实体类型重算一套),但必须把取景从
+	// "半身胸像"换成"多视图板"。它**只**被允许调一次 rewriteSheetFraming。
+	"BoardImagePrompt": {"rewriteSheetFraming("},
 }
 
 // goTopLevelFuncs 把源码里的**顶层函数**切成 函数名 → 函数体行。

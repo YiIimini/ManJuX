@@ -45,6 +45,14 @@ const PlanContractVersion = 2
 // 断言两者相等 —— 谁把其中一边改了就红。
 const (
 	PlanMinShotSeconds = 4
+	// PlanMaxShotSeconds 单镜上限 **10 秒**。
+	//
+	// 官方 `skills/h3-prompt-writing` 支持 **4–15 秒**（并要求"描述覆盖的总时长 == 请求时长"），
+	// 技能侧整改单 §2.1 建议实测 12/15 秒后再定上限。**2026-09-27 用户拍板：维持 10 秒**，
+	// 不做那轮实测 —— 依据是负载而不是时长本身：本地 H3 的单镜成本随帧数**超线性**增长
+	// （同一张卡上 10 秒 ≈ 6 秒的 2.8 倍），而上限放宽只对"台词确实排不开"的少数镜有用，
+	// 那类镜头现在的正确处置是**拆镜**（见 NeededShotSeconds 的 warn）。
+	// 这条注释就是"已经定过、别再问"的凭据：要改它必须先有 12/15 秒的实测结论。
 	PlanMaxShotSeconds = 10
 	PlanCharsPerSecond = 4.5
 	// PlanSpeechPadSeconds 每段口播的收尾余量,免得"刚好卡在最后一个字"。
@@ -539,6 +547,104 @@ func ValidatePlan(p *Plan) []Issue {
 			add("warn", "plan.shots",
 				"%d 镜的 h3_prompt 不符合官方格式（写错了不报错，只是成片变差）：%s",
 				badShots, strings.Join(fmtHits, "；"))
+		}
+
+		// ── 官方「标准镜头信息表」STEP 5.5 的三条可机检自检（2026-09-27）──────────────
+		// 依据：`skills/3d-animation-short-generator/references/shot-table-spec.md`。
+		// 平台 plan.json 就是那张表（六列 ↔ 我们的字段见 shot_table.go 的对照），
+		// 所以官方的强制自检可以直接落在契约上 —— "这一集是不是平/有没有一镜塞太多人"
+		// 从"靠感觉说"变成可判。
+		//
+		// 检查 1：钩子密度。每镜都要有 hook_type；每连续三镜至少一个 reveal/reversal/callback；
+		// 开篇镜与收尾镜必须是强钩子。
+		var noHook, badHook []string
+		for _, sh := range p.Shots {
+			h := hookTypeOf(sh)
+			if h == "" {
+				noHook = append(noHook, fmt.Sprintf("#%d", sh.ID))
+			} else if !IsKnownHookType(h) {
+				badHook = append(badHook, fmt.Sprintf("#%d=%s", sh.ID, h))
+			}
+		}
+		if len(noHook) > 0 {
+			add("warn", "plan.shots",
+				"%d/%d 镜没有 hook_type —— 官方镜头表要求每镜一个钩子类型（词表：%s；缺钩子的镜：%s）",
+				len(noHook), len(p.Shots), strings.Join(PlanHookTypes, "/"), strings.Join(firstN(noHook, 6), " "))
+		}
+		if len(badHook) > 0 {
+			add("warn", "plan.shots", "hook_type 不在官方受控词表里（%s）：%s",
+				strings.Join(PlanHookTypes, "/"), strings.Join(badHook, " "))
+		}
+		if len(p.Shots) >= PlanHookDensityWindow {
+			var flat []string
+			for i := 0; i+PlanHookDensityWindow <= len(p.Shots); i++ {
+				hit := false
+				for _, sh := range p.Shots[i : i+PlanHookDensityWindow] {
+					if InList(hookTypeOf(sh), PlanHookDensityTypes) {
+						hit = true
+						break
+					}
+				}
+				if !hit {
+					flat = append(flat, fmt.Sprintf("#%d–#%d", p.Shots[i].ID, p.Shots[i+PlanHookDensityWindow-1].ID))
+				}
+			}
+			if len(flat) > 0 {
+				add("warn", "plan.shots",
+					"%d 个「连续三镜」里一个 %s 都没有 —— 官方密度自检要求每三镜至少一个，否则这一段是平的（%s）",
+					len(flat), strings.Join(PlanHookDensityTypes, "/"), strings.Join(firstN(flat, 5), "、"))
+			}
+		}
+		first, last := p.Shots[0], p.Shots[len(p.Shots)-1]
+		for _, edge := range []struct {
+			label string
+			sh    Shot
+		}{{"开篇镜", first}, {"收尾镜", last}} {
+			h := hookTypeOf(edge.sh)
+			if h != "" && !InList(h, PlanHookStrongTypes) {
+				add("warn", "plan.shots",
+					"%s #%d 的钩子是 %q —— 官方要求开篇与收尾都落在强钩子上（%s）",
+					edge.label, edge.sh.ID, h, strings.Join(PlanHookStrongTypes, "/"))
+			}
+		}
+
+		// 检查 3：单镜主要角色数 ≤3（有画面动作或说台词的角色）。
+		// 超了注意力会被摊薄，每个人都画不好，也更容易互相换脸。
+		var crowded []string
+		for _, sh := range p.Shots {
+			if n := len(sh.Characters); n > PlanMaxImportantCharacters {
+				crowded = append(crowded, fmt.Sprintf("#%d(%d 人)", sh.ID, n))
+			}
+		}
+		if len(crowded) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的主要角色超过 %d 个（官方自检：一个镜头里带动作或台词的角色不超过 3 个）—— %s；"+
+					"人多的场面请拆镜，或把不参与动作的人留成环境描述",
+				len(crowded), PlanMaxImportantCharacters, strings.Join(crowded, " "))
+		}
+	}
+
+	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
+	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
+	if len(p.Scenes) > 0 {
+		var missing []string
+		for _, s := range p.Scenes {
+			var lack []string
+			if strings.TrimSpace(s.Landmarks) == "" {
+				lack = append(lack, "landmarks")
+			}
+			if strings.TrimSpace(s.LightState) == "" {
+				lack = append(lack, "light_state")
+			}
+			if len(lack) > 0 {
+				missing = append(missing, fmt.Sprintf("%s(%s)", s.Name, strings.Join(lack, "+")))
+			}
+		}
+		if len(missing) > 0 {
+			add("warn", "plan.scenes",
+				"%d/%d 个场景卡缺「连续性地标 landmarks」或「光态 light_state」—— 官方场景卡规范要求两项都写；"+
+					"它们是跨镜空间与时间一致的锚点（%s）",
+				len(missing), len(p.Scenes), strings.Join(firstN(missing, 5), "、"))
 		}
 	}
 

@@ -105,6 +105,9 @@ func TestPutCollectsRelatedImagesAndClearRelated(t *testing.T) {
 		filepath.Join(src, "characters_char_c1_view_side.png"),
 		filepath.Join(src, "characters_char_c1_view_back.png"),
 		filepath.Join(src, "characters_char_c1_turnaround.png"),
+		// 三视图细节板（pipeline/board.go）：与其它关联图同一条契约 —— 同目录同主名，
+		// 收得进库、换图时也清得掉。加新后缀若漏改 relatedGlobs，这里立刻红。
+		filepath.Join(src, "characters_char_c1_board.png"),
 	} {
 		if err := os.WriteFile(f, []byte("png:"+filepath.Base(f)), 0o644); err != nil {
 			t.Fatal(err)
@@ -130,10 +133,11 @@ func TestPutCollectsRelatedImagesAndClearRelated(t *testing.T) {
 		t.Fatalf("Put 失败: %v", err)
 	}
 
-	// 期望:主图 + 3 张多视角原图 + 转台图,一张都不能少(子目录帧不计入)。
+	// 期望:主图 + 3 张多视角原图 + 转台图 + 三视图细节板,一张都不能少(子目录帧不计入)。
 	// 主图在库内统一叫 portrait.png,关联图保留生成时的基名(前端 labelOf 靠
-	// 基名里的 _view_<tag>/_turnaround 判用途,所以基名必须原样保留)。
+	// 基名里的 _view_<tag>/_turnaround/_board 判用途,所以基名必须原样保留)。
 	wantSorted := []string{
+		"characters/契约角色/characters_char_c1_board.png",
 		"characters/契约角色/characters_char_c1_turnaround.png",
 		"characters/契约角色/characters_char_c1_view_back.png",
 		"characters/契约角色/characters_char_c1_view_side.png",
@@ -192,8 +196,9 @@ func TestPutCollectsRelatedImagesAndClearRelated(t *testing.T) {
 			t.Errorf("ClearRelated 未清掉 %s", rel)
 		}
 	}
-	if cleared != 4 {
-		t.Errorf("应清掉 4 张关联图,实际 %d 张", cleared)
+	// 3 张多视角原图 + 转台图 + 三视图板 = 5 张（换脸后这些全是过期图，必须一起清；主图不动）
+	if cleared != 5 {
+		t.Errorf("应清掉 5 张关联图(3 多视角 + 转台 + 三视图板),实际 %d 张", cleared)
 	}
 	if _, err := os.Stat(filepath.Join(root, "characters", "契约角色", "asset.json")); err != nil {
 		t.Errorf("ClearRelated 误删了 asset.json: %v", err)

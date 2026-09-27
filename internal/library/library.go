@@ -129,9 +129,20 @@ func descSimilar(a, b string) float64 {
 	return float64(inter) / float64(union)
 }
 
-// relatedImages 找出主图同目录的关联图:多视角原图(<base>_view_*.png)与
-// 转台图(<base>_turnaround.png)。资产阶段生成时它们与定妆照**同目录同主名**
-// (见 pipeline.genCharacterViews,抽帧刻意不落在 _views/ 子目录里)。
+// relatedGlobs 关联图的文件名模式 —— **三个后缀的唯一真源**：
+//
+//	*_view_*.png     多视角原图（渲染脚本契约 §2.1 的三视图/四分之三视图）
+//	*_turnaround.png 转台图（pipeline/turnaround.go，H3 转身视频抽帧拼条）
+//	*_board.png      三视图细节板（pipeline/board.go，官方 production reference sheet）
+//
+// 为什么集中成一处（2026-09-27 加板子时顺手还的债）：入库收集、换图清理、库→项目改名
+// 三处原本各写一份字面量列表，加一个新后缀就要记得改三处 —— 漏一处的后果分别是
+// "生成了却看不见"与"换了脸还留着旧图"，两种都不会报错。现在只有这一处。
+var relatedGlobs = []string{"*_view_*.png", "*_turnaround.png", "*_board.png"}
+
+// relatedImages 找出主图同目录的关联图:多视角原图(<base>_view_*.png)、
+// 转台图(<base>_turnaround.png)与三视图细节板(<base>_board.png)。资产阶段生成时它们与定妆照
+// **同目录同主名**(见 pipeline.genCharacterViews / pipeline.genCharacterBoard)。
 //
 // 注意这里的 glob **不递归**:资产阶段若把抽帧写进子目录,本函数与 ClearRelated
 // 都会静默失手 —— 库收不进多视角原图,换了定妆照也清不掉旧角度图。改动产物路径
@@ -143,9 +154,11 @@ func relatedImages(masterPath string) []string {
 	if m, err := filepath.Glob(filepath.Join(dir, base+"_view_*.png")); err == nil {
 		outs = append(outs, m...)
 	}
-	turn := filepath.Join(dir, base+"_turnaround.png")
-	if _, err := os.Stat(turn); err == nil {
-		outs = append(outs, turn)
+	for _, suffix := range []string{"_turnaround", "_board"} {
+		p := filepath.Join(dir, base+suffix+".png")
+		if _, err := os.Stat(p); err == nil {
+			outs = append(outs, p)
+		}
 	}
 	sort.Strings(outs)
 	return outs
@@ -158,7 +171,7 @@ func relatedImages(masterPath string) []string {
 // 重新入库(Put)时必须靠它把既有角度图保住,否则 Images 会退化成只剩主图。
 func entryRelatedImages(dir string) []string {
 	outs := []string{}
-	for _, pat := range []string{"*_view_*.png", "*_turnaround.png"} {
+	for _, pat := range relatedGlobs {
 		if m, err := filepath.Glob(filepath.Join(dir, pat)); err == nil {
 			outs = append(outs, m...)
 		}
@@ -287,7 +300,7 @@ func (l *Library) ClearRelated(kind, name string) {
 	if err != nil {
 		return
 	}
-	for _, pat := range []string{"*_view_*.png", "*_turnaround.png"} {
+	for _, pat := range relatedGlobs {
 		matches, gerr := filepath.Glob(filepath.Join(dir, pat))
 		if gerr != nil {
 			continue

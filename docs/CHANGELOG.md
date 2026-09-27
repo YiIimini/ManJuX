@@ -10,6 +10,65 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## 按官方 H3 技能重新对齐提示词 + 三视图细节板（2026-09-27）
+
+**根因**（用户指示"平台端的 LLM 分析解析脚本要按仓库 H3 官方提示词技能来，官方已更新"）：
+平台内嵌的 H3 规则是从技能侧的**中文转述**里长出来的，与官方一手原文有系统性偏差。逐条核对
+`skills/h3-prompt-writing/references/base-en.txt`（T2VA/I2VA/FL2VA/L2VA）与 `ref-en.txt`
+（Ref2VA 六段式）后发现：
+
+- **相机词表被压缩**：官方是 12 类动作 ×（方向对）＋ 幅度 ＋ 速度三维，且要求"写成镜头内的
+  自然英语动作、**不要**堆在句尾当标签"，并明确"中等幅度/常速通常省略"；平台只列了 12 个词根。
+- **切镜措辞与判据缺失**：官方给了 5 种切镜写法，并规定"一次切镜必须带来新信息（主体/空间/
+  状态/视角/时间），只改距离或轻微角度时**优先用运镜**"。
+- **`summary` 的任务类型前缀写死**：官方是六种（keyframe completion / reference generation /
+  video editing / video continuation / audio reuse / audio reference）＋ ` + ` 组合规则，
+  且"有音视频文件不等于就有对应类型"。
+- **`retention_analysis` 的条目格式与音频标记表缺失**：官方格式是
+  `<Subject 1> (appears in [Shot 1], [Shot 3]): fully_preserved - …`，音频另有一套标记
+  （fully_copy / partially_copy / reference / weak_reference），并要求"新增的动作/背景/剧情
+  **不算**参考保真度损失"。
+- **T2VA 的风格句位置写反了**：官方 §5.2 对照表写明 —— Ref2VA 的风格句写在 `[Shot 1]`
+  **之前**，T2VA 写在 `[Shot 1]` **之内**；平台两条都写成"之前"。
+- **参考音频缺一条关键纪律**：官方 §5.4"只参考音色/节奏/情绪时，**不许**把参考音频里的原台词
+  搬进目标视频"—— 直接关系到音频驱动那条链。
+- **官方"标准镜头信息表"六列与 STEP 5.5 强制自检**（`skills/3d-animation-short-generator`）
+  完全没进平台：六列 ↔ 我们的字段一一对应，而其中三条自检是可机检的。
+
+**修复**：
+- **产出侧**（`internal/director/director.go`）：相机词表按官方三维写法重写 + 切镜措辞与
+  "优先运镜" + `summary` 六种任务类型（含我们何时该用 audio reuse / audio reference）+
+  `retention_analysis` 官方条目格式与音频标记 + 风格句位置按模式分开 + 参考音频纪律 +
+  `subject_definitions` 的官方标签纪律（一行一项、来源引在定义内、`<Subject N> (Sx)`、
+  `<Audio 1> is the voice-timbre reference for <Subject 1> (S1).`）。
+- **新增 `## SHOT TABLE` 规则段**：把官方六列 ↔ 我们的字段对照写进提示词，并落三条自检
+  （钩子密度 / 单镜主要角色 ≤3 / 空间锚点继承）。
+- **字段与守门**（`internal/project/shot_table.go`）：新增 `shots[].hook_type`（官方受控词表
+  8 项）＋ 契约 4 条 warn：每镜必须有钩子、每连续三镜至少一个 reveal/reversal/callback、
+  开篇与收尾必须是强钩子、单镜主要角色不超过 3；场景卡补 `landmarks`/`light_state` **必填检查**
+  （官方 STEP 4）。
+- **三视图细节板**（`internal/pipeline/board.go` + `prompts.go` 的 `BoardImagePrompt`）：
+  按官方 STEP 3 的 production reference sheet 规格（3/4 视图 + 正/侧/背全身 + 6 头角度 +
+  6 局部细节）与技能侧 §2.2 的版面要求，**由已通过的定妆照经图像编辑派生**（身份按像素保住，
+  绝不重新文生图），产物 `<base>_board.png` 与主图同目录。三条硬约束：身份源不换、
+  **不参与镜头参考**（refs 只认主图与转台图）、板上不画字（我们的 T2I 画文字必成乱码字形）。
+  触发：人形角色（human/chibi）＋ 板缺失或**比定妆照旧**（定妆照因朝向自检重出过）。
+  库关联图后缀集中成 `library.relatedGlobs` 一处（原来三处各写一份，加新后缀必漏一处）。
+- **单镜上限维持 10 秒**（用户 2026-09-27 拍板，不做 12/15 秒实测）：依据是负载而非时长 ——
+  本地 H3 单镜成本随帧数超线性增长（10 秒 ≈ 6 秒的 2.8 倍）；已写进
+  `plan_contract.go` 的 `PlanMaxShotSeconds` 注释，作为"已经定过、别再问"的凭据。
+
+**顺带修掉的两个真实缺口**（"双侧同源"守卫当场抓到）：① 规划轮（真正写 `scenes[]` 的路径）
+漏了 `sysSceneRules`；② 同一条路径的 scenes schema 缺 `landmarks`/`light_state`。
+另：`portrait_assembly_test.go` 的"装配唯一实现点"守卫拦下了我在 board.go 里手拼取景 ——
+板子的装配因此落在 `prompts.go`，并作为**第三个合法装配点**登记（数据与装配分离）。
+
+**验证**：`internal/project/`（视角/尾帧/钩子/连续同景别/场景卡汉字/H3 格式，每条正反双向）、
+`internal/pipeline/board_test.go`（版面与取景替换、幂等、横版画幅、归属判据、板子不进 refs、
+非 ComfyUI 引擎如实报错、定妆照重出后板子判过期）、`internal/library` 的关联图收集/清理契约
+（新增 `_board`）、`internal/director` 与 `plan_contract_ext_test.go` 的双侧同源守卫。
+`go test ./...` 14 包全过。
+
 ## 技能侧整改单落地：镜头语言层（视角 / 尾帧状态 / 场景卡 / H3 格式）（2026-09-27）
 
 **根因**（依据技能侧 `docs/技能侧交付-平台侧整改单-2026-09-27.md` §1.1–§1.5）：平台直出的分镜在

@@ -40,6 +40,9 @@ func viewShotPlan(n int, withView bool) *Plan {
 		sh := Shot{
 			ID: i, Scene: "scene_room", Characters: []string{"char_a"},
 			ShotSize: "中景", Camera: "slow push-in", Action: "他往前走",
+			// 钩子类型给满：本文件测的是镜头语言与尾帧状态，钩子自有其用例
+			// （TestValidatePlanHookDensity），别让无关规则混进来搅浑判据。
+			HookType: "reveal",
 			Dialogue: []Line{{Speaker: "阿甲", Text: "我准了。"}},
 			Duration: 5, Mode: "ref2va",
 			EndState: "他站在门槛前，右手扶门框，视线朝院中",
@@ -164,7 +167,7 @@ func TestValidatePlanEndState(t *testing.T) {
 
 // TestValidatePlanConsecutiveShotSize 连续同景别上限（整改单 §1.1 验收：≤6 镜）。
 func TestValidatePlanConsecutiveShotSize(t *testing.T) {
-	if hasIssue(ValidatePlan(viewShotPlan(6, true)), "warn", "连续") {
+	if hasIssue(ValidatePlan(viewShotPlan(6, true)), "warn", "同一个景别") {
 		t.Fatal("连续 6 镜同景别正好在上限内，不该报")
 	}
 	issues := ValidatePlan(viewShotPlan(7, true))
@@ -174,8 +177,54 @@ func TestValidatePlanConsecutiveShotSize(t *testing.T) {
 	// 中间断开就不算连续
 	p := viewShotPlan(7, true)
 	p.Shots[3].ShotSize = "近景"
-	if hasIssue(ValidatePlan(p), "warn", "连续") {
+	if hasIssue(ValidatePlan(p), "warn", "同一个景别") {
 		t.Fatalf("中间断开后不该再报连续：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+}
+
+// TestValidatePlanHookDensity 官方镜头表自检 1：钩子密度与两端强钩子。
+func TestValidatePlanHookDensity(t *testing.T) {
+	// 反向：每镜 reveal（强钩子）→ 不报
+	if issues := ValidatePlan(viewShotPlan(3, true)); hasIssue(issues, "warn", "hook_type") {
+		t.Fatalf("钩子给满时不该报：%v", PlanIssuesText(issues))
+	}
+	// 正向：缺 hook_type
+	p := viewShotPlan(3, true)
+	for i := range p.Shots {
+		p.Shots[i].HookType = ""
+	}
+	if !hasIssue(ValidatePlan(p), "warn", "没有 hook_type") {
+		t.Fatalf("缺钩子必须报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 正向：自造钩子名不在受控词表里
+	p = viewShotPlan(3, true)
+	p.Shots[0].HookType = "cool-moment"
+	if !hasIssue(ValidatePlan(p), "warn", "不在官方受控词表") {
+		t.Fatalf("自造钩子名必须报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 正向：连续三镜全是弱钩子（expression-beat）→ 密度不合格
+	p = viewShotPlan(6, true)
+	for i := range p.Shots {
+		p.Shots[i].HookType = "expression-beat"
+	}
+	if !hasIssue(ValidatePlan(p), "warn", "连续三镜") {
+		t.Fatalf("连续三镜无强钩子必须报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 正向：开篇/收尾不是强钩子
+	p = viewShotPlan(3, true)
+	p.Shots[0].HookType = "chase" // 不在开篇/收尾强钩子表里
+	if !hasIssue(ValidatePlan(p), "warn", "开篇镜") {
+		t.Fatalf("开篇镜用 chase 必须报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 正向：单镜角色过多（官方检查 3）
+	p = viewShotPlan(3, true)
+	p.Shots[1].Characters = []string{"char_a", "char_b", "char_c", "char_d"}
+	for _, id := range p.Shots[1].Characters[1:] {
+		p.Characters = append(p.Characters, Character{ID: id, Name: "配角" + id, ImagePrompt: "x", Voice: "v"})
+	}
+	issues := ValidatePlan(p)
+	if !hasIssue(issues, "warn", "主要角色超过") {
+		t.Fatalf("4 个角色的镜头必须报：%v", PlanIssuesText(issues))
 	}
 }
 

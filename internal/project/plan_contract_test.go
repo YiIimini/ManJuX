@@ -32,6 +32,7 @@ func samplePlan() *Plan {
 			ShotSize: "中景", Camera: "slow push-in", Action: "他站起来",
 			View:     ViewAerial45,
 			EndState: "他站在供桌前，右手抬起指向门外，视线朝左前方，地面水渍未干",
+			HookType: "reveal",
 			Dialogue: []Line{{Speaker: "阿甲", Text: "我准了。"}},
 			Duration: 5, Mode: "ref2va",
 			H3Prompt: compliantH3("subject_definitions:\n<Subject 1> is 阿甲 ...\n\ndetailed_description:\n" +

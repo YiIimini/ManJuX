@@ -545,6 +545,9 @@ func RelatedSuffixName(base, related string) string {
 	if strings.HasSuffix(stem, "_turnaround") {
 		return base + "_turnaround" + ext
 	}
+	if strings.HasSuffix(stem, BoardSuffix) {
+		return base + BoardSuffix + ext
+	}
 	if i := strings.LastIndex(stem, "_view_"); i >= 0 {
 		return base + "_view_" + stem[i+len("_view_"):] + ext
 	}
