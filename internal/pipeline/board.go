@@ -87,21 +87,24 @@ func BoardPrompt(portraitPrompt string) string { return BoardImagePrompt(portrai
 // 项目画幅通常是竖版（768×1344），板子必须转成横版 —— 否则 3 个全身并排 + 两行小图
 // 在竖幅里只能挤成邮票。长边取项目长边（保持同一像素预算），短边按 16:9 折算并对齐到 32 的倍数
 // （扩散模型的分块约束，与渲染侧同一套网格）。
-func BoardSize(w, h int) (int, int) {
-	long, _ := w, h
-	if h > w {
-		long = h
-	}
-	short := long * 9 / 16
-	if short < 320 {
-		short = 320
-	}
-	short = short / 32 * 32
-	if short <= 0 {
-		short = 704
-	}
-	return long / 32 * 32, short
-}
+// 三视图细节板的画幅：**固定 16:9 · 2K**。
+//
+// 为什么不再跟随项目画幅（2026-09-27 用户定调：「三视图做成 16:9 比例，2K」）：
+//
+//	① 板子不是"一帧画面"而是**一张规格书**（3 个全身 + 6 个头部细节横排），
+//	   横版是它的天然形状；项目画幅是竖的（9:16），跟随它只会把板子挤成竖条。
+//	② 2K 是为了**细节**：板子从这天起还要顶替转台图当角度参考（见 refs.go 的
+//	   character_angles 兜底），喂给 H3 时整张会被缩到入口分辨率 —— 2048 宽下每个
+//	   全身仍摊到约 680px，与定妆照自己那张（768 宽）同一量级；照原来按项目长边算
+//	   （1344 宽）每个全身只剩约 448px，头部细节更糊，"看板子认发丝走向"这件事就废了。
+const (
+	// BoardWidth / BoardHeight 2048×1152 = 16:9，两边都是 32 的倍数（采样器友好）。
+	BoardWidth  = 2048
+	BoardHeight = 1152
+)
+
+// BoardSize 板子尺寸（保留 (w,h) 入参只为兼容调用点：板子**不再**跟随项目画幅，理由见上）。
+func BoardSize(_, _ int) (int, int) { return BoardWidth, BoardHeight }
 
 // BoardOutPath 由定妆照路径推导板子路径（同目录同主名 + `_board`）。
 func BoardOutPath(masterPath string) string {
@@ -200,7 +203,7 @@ func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Proje
 	w, h := assetImageSize(proj, "characters")
 	bw, bh := BoardSize(w, h)
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0,
-		"生成:「%s」三视图细节板（人审一致性 / 建模向参考，%d×%d 横版）…", name, bw, bh)
+		"生成:「%s」三视图细节板（角度参考 / 人审一致性 / 建模向，%d×%d 16:9·2K）…", name, bw, bh)
 	p, err := GenerateBoard(ctx, ce, BoardOptions{
 		Master: masterPath, Prompt: imagePrompt, Out: out, Seed: nameSeed("board", name),
 		OnProgress: func(pct int, note string) {

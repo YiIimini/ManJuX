@@ -59,24 +59,33 @@ func TestBoardPromptReplacesPortraitFraming(t *testing.T) {
 	}
 }
 
-func TestBoardSizeIsLandscapeOnGrid(t *testing.T) {
-	// 竖版项目(默认 768×1344) → 板子必须转成横版，长边不变、短边按 16:9 折算并对齐 32
-	w, h := BoardSize(768, 1344)
-	if w <= h {
-		t.Fatalf("板子必须是横版(官方 16:9 reference sheet)，实际 %d×%d", w, h)
+// TestBoardSizeIsFixed2K16x9 板子画幅 = **固定 16:9 · 2K**（2026-09-27 用户定调）。
+//
+// 这条口径**故意不跟随项目画幅**（与资产图那条相反）：板子是"一张规格书"而不是"一帧画面"，
+// 横版是它的天然形状；而项目画幅是竖的（9:16），跟随它只会把板子挤成竖条。
+// 2K 也不是为了好看：板子顶替转台图当角度参考（见 RefPlan），喂给 H3 时整张都会被缩到
+// 入口分辨率 —— 2048 宽下每个全身约 680px（与定妆照 768 同量级），1344 宽下只剩约 448px。
+func TestBoardSizeIsFixed2K16x9(t *testing.T) {
+	// 不同项目画幅都得到同一张板子的画幅（竖版/横版/方形一视同仁）
+	for _, tc := range []struct{ w, h int }{{768, 1344}, {1344, 768}, {1024, 1024}} {
+		w, h := BoardSize(tc.w, tc.h)
+		if w != BoardWidth || h != BoardHeight {
+			t.Fatalf("板子画幅应固定 %d×%d，实际 %d×%d（项目 %d×%d）",
+				BoardWidth, BoardHeight, w, h, tc.w, tc.h)
+		}
 	}
-	if w != 1344 {
-		t.Errorf("长边应与项目长边同源(1344)，实际 %d", w)
+	if BoardWidth <= BoardHeight {
+		t.Fatalf("板子必须是横版（官方 reference sheet 是 16:9），实际 %d×%d", BoardWidth, BoardHeight)
 	}
-	if h%32 != 0 || w%32 != 0 {
-		t.Errorf("画幅必须落在 32 的网格上，实际 %d×%d", w, h)
+	if BoardWidth%32 != 0 || BoardHeight%32 != 0 {
+		t.Errorf("画幅必须落在 32 的网格上，实际 %d×%d", BoardWidth, BoardHeight)
 	}
-	if ratio := float64(w) / float64(h); ratio < 1.7 || ratio > 1.9 {
-		t.Errorf("画幅应接近 16:9，实际比例 %.2f(%d×%d)", ratio, w, h)
+	if ratio := float64(BoardWidth) / float64(BoardHeight); ratio < 1.7 || ratio > 1.9 {
+		t.Errorf("画幅应接近 16:9，实际比例 %.2f", ratio)
 	}
-	// 横版项目原样返回横版
-	if w2, h2 := BoardSize(1344, 768); w2 <= h2 {
-		t.Errorf("横版项目也该得到横版板子，实际 %d×%d", w2, h2)
+	// 2K：短边不许回到"按项目长边折算"的老数值（1344×756 那种）
+	if BoardWidth < 2000 {
+		t.Errorf("板子宽度应到 2K 档（≥2000），实际 %d —— 否则每个全身只剩 ~448px，头部细节会糊", BoardWidth)
 	}
 }
 

@@ -80,21 +80,25 @@ func TestGenerateTurnaroundValidatesMaster(t *testing.T) {
 	}
 }
 
-// TestAssetViewsDefaultOn 多视角补齐全开关的语义:老项目 json 里没有这个键
-// (nil)必须按**开**处理 —— 存量项目里角色只有正面照正是用户报的问题,
-// 默认关掉等于新能力对存量项目完全不可见。
-func TestAssetViewsDefaultOn(t *testing.T) {
+// TestAssetViewsDefaultOff 多视角开关的语义**变了**（2026-09-27 用户定调：
+// 「有了三视图，就不需要转台图、背面、侧面、四分之三了」）。
+//
+// 旧口径是"未表态 = 开"（理由：存量项目里角色只有正面照是用户报的问题）。
+// 新口径是"未表态 = **关**"——三视图细节板接手了角度参考（RefPlan 的 character_angles 兜底），
+// 而转台图那条要跑一次 H3 转身视频 + 抽帧 + 横向拼图，是资产阶段最贵的一步。
+// 显式 `views: true` 仍然照做（要对比两条路、或某本书的板子出不来时的后门）。
+func TestAssetViewsDefaultOff(t *testing.T) {
 	var a project.AssetsParams
-	if !a.ViewsOn() {
-		t.Error("未表态(nil)应视为开启多视角补齐")
-	}
-	off := false
-	a.Views = &off
 	if a.ViewsOn() {
-		t.Error("显式关闭时应视为关闭")
+		t.Error("未表态(nil)现在应视为**关闭**多视角（板子已接手角度参考）")
 	}
-	if !project.DefaultStageParams().Assets.ViewsOn() {
-		t.Error("新建项目默认应开启多视角补齐")
+	on := true
+	a.Views = &on
+	if !a.ViewsOn() {
+		t.Error("显式开启时仍应生成（后门要留着）")
+	}
+	if project.DefaultStageParams().Assets.ViewsOn() {
+		t.Error("新建项目默认应关闭多视角")
 	}
 }
 

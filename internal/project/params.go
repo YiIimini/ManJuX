@@ -40,13 +40,13 @@ func (s ScriptParams) FacesOn() bool { return s.StylizedFaces == nil || *s.Styli
 // AssetsParams 资产阶段(assets)参数。
 type AssetsParams struct {
 	Source string `json:"source"` // upload(手动上传)/ krea2(Krea-2 自动生成)/ skip(纯文生 t2va)
-	// Views 角色多视角转台图:定妆照 → H3 原地转身 → 抽帧拼转台图,渲染时作该角色
+	// Views 角色多视角转台图（**默认关**，2026-09-27 起：三视图板接手角度参考）：定妆照 → H3 原地转身 → 抽帧拼转台图,渲染时作该角色
 	// 的第二张参考。缺了就补,是"角色只有一张正面照"的直接解法。
 	// 代价是每个角色一次单镜渲染(数分钟,仅首次;补完写回资产库,全局摊一次)。
 	//
 	// 用 *bool 而不是 bool:老项目 json 里根本没有这个键,解成 false 会让新能力
 	// 在存量项目上默认关闭(用户报的正是存量项目里角色只有正面照)。nil 语义 =
-	// 「未表态」→ 按默认开处理,见 ViewsOn()。
+	// 「未表态」（老项目 json 没这个键）→ 按**默认关**处理，见 ViewsOn()。
 	Views *bool `json:"views"`
 	// CompactRefs 参考图去冗余:只喂转台图、不喂单独那张定妆照(省一张参考图)。
 	//
@@ -85,8 +85,14 @@ func (a AssetsParams) ViewsSourceOf() string {
 // CompactRefsOn 参考图是否去冗余(未表态 = **关**,见 CompactRefs 的实测说明)。
 func (a AssetsParams) CompactRefsOn() bool { return a.CompactRefs != nil && *a.CompactRefs }
 
-// ViewsOn 多视角补齐是否开启(未表态 = 开)。
-func (a AssetsParams) ViewsOn() bool { return a.Views == nil || *a.Views }
+// ViewsOn 多视角（转台图 / 背面·侧面·四分之三）是否生成。**默认关**。
+//
+// 2026-09-27 用户定调：「有了三视图，就不需要转台图、背面、侧面、四分之三了」——
+// 三视图细节板接手了角度参考（见 pipeline/refs.go 的 character_angles 兜底），
+// 而转台图那条要跑一次 H3 **转身视频** + 抽帧 + 横向拼图，是资产阶段最贵的一步；
+// 背面/侧面/四分之三那几张是逐张编辑，同样是为"没有板子时"准备的。
+// 显式写 `views: true` 仍会生成（要对比两条路、或某本书的板子出不来时留的后门）。
+func (a AssetsParams) ViewsOn() bool { return a.Views != nil && *a.Views }
 
 // Bool 返回可比较的布尔值(供需要显式 true/false 的调用方使用)。
 func Bool(v bool) *bool { return &v }
@@ -351,7 +357,7 @@ func DefaultStageParams() StageParams {
 		// "krea2" 是**资产获取方式**的历史取值(含义:本地模型自动定妆),
 		// 与实际用哪个图像模型无关 —— 模型由 settings.comfy.image_family 决定
 		// (见 comfyengine/imagefamily.go)。资产文件上记录的 Source 才是"谁生成的"。
-		Assets: AssetsParams{Source: "krea2", Views: Bool(true)},
+		Assets: AssetsParams{Source: "krea2", Views: Bool(false)},
 		Render: RenderParams{
 			Engine: "auto", Width: 768, Height: 1344,
 			// Seam 默认开:镜间连续(MotionContext)让相邻镜头运镜/画面延续,

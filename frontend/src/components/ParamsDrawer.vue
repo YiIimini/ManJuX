@@ -24,7 +24,8 @@ watch(stageId, () => {
   for (const k of Object.keys(form)) {
     form[k] = Object.assign({}, form[k] || {}, copy[k] || {})
   }
-  // 多视角 / 参考图去冗余:缺省 = 开(与后端 ViewsOn()/CompactRefsOn() 的「未表态即开」同一语义)
+  // 多视角:缺省 = **关**（2026-09-27 起三视图细节板接手角度参考；转台图那条要跑一次 H3 转身视频，
+// 是资产阶段最贵的一步）。参考图去冗余:缺省 = 关(与后端 ViewsOn()/CompactRefsOn() 同一语义)
   form.assets.views = form.assets.views !== false
   form.assets.compact_refs = form.assets.compact_refs === true // 默认关(只喂转台图会让锁脸变弱)
   // 多视角生成方式:缺省 = auto(与后端 ViewsSourceOf() 的「认不出就当 auto」同一语义)。
@@ -175,7 +176,7 @@ async function save() {
             <el-option value="skip" label="跳过(全部镜头纯文生 t2va)" />
           </el-select>
         </el-form-item>
-        <el-form-item label="角色多视角转台图(渲染时作该角色第二张参考;缺了渲染前自动补)">
+        <el-form-item label="角色多视角转台图(默认关:角度参考已由三视图板接手;开了才生成)">
           <el-switch v-model="form.assets.views" />
         </el-form-item>
         <el-form-item label="多视角生成方式">
@@ -194,9 +195,9 @@ async function save() {
         </el-form-item>
       </el-form>
       <el-alert type="info" :closable="false"
-        title="本地模型自动生成:角色半身竖幅 832×1248 / 场景按项目画幅;已有资产自动复用,可上传替换。用的是设置里配置的图像模型(默认 Qwen-Image-2.1)。" />
+        title="本地模型自动生成:角色半身（按项目画幅，出厂 768×1344）/ 场景按项目画幅 / 道具 1:1 白底单件 / 人形角色另出三视图细节板 16:9·2K;已有资产自动复用,可上传替换。用的是设置里配置的图像模型(默认 Qwen-Image-2.1)。" />
       <el-alert type="warning" :closable="false"
-        title="多视角:角色只有单张正面照时,渲染前会自动补一次(编辑路径每张数秒;退回 H3 转身则每个角色数分钟,仅首次;补完写回资产库,后续项目直接复用)。不想要这个耗时可以关掉。" />
+        title="多视角转台图**默认关**(2026-09-27)：角度参考已由三视图细节板接手(正/侧/背三个全身 + 6 个头部细节，16:9·2K)。打开它会给每个角色多跑一次 H3 转身视频(每个数分钟)或逐张编辑。" />
     </div>
 
     <div v-else-if="stageId === 'render'" class="flex flex-col gap-4">

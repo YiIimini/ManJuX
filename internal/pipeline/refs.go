@@ -66,6 +66,18 @@ func wantsAnglesStrip(shotSize string) bool {
 	return true
 }
 
+// boardImagePath 由角色定妆照的相对路径推导**三视图细节板**；文件不存在返回空串。
+//
+// 板子从 2026-09-27 起顶替转台图当**角度参考**（见 RefPlan 里的说明），
+// 所以这条推导与 turnaroundPath 同一形态：同目录、主图主名 + `_board`。
+func boardImagePath(dir, rel string) string {
+	p := BoardOutPath(filepath.Join(dir, rel))
+	if _, err := os.Stat(p); err != nil {
+		return ""
+	}
+	return p
+}
+
 // RefPlan 是 AssembleShotRefs 的完整形态:除参考图本身,还给出每张图的身份归属
 // (roles),供 RefManifest 写出**渲染期权威清单**。
 //
@@ -85,8 +97,19 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		}
 		master := filepath.Join(dir, a.File)
 		turn := turnaroundPath(dir, a.File)
+		// 角度参考有**两个来源**（2026-09-27 用户定调：「有了三视图，就不需要转台图、
+		// 背面、侧面、四分之三了」）：
+		//   ① 显式开了多视角的项目 → 转台图（老路，留着）；
+		//   ② 否则 → **三视图细节板**（它现在顶替转台图当角度参考）。
+		// 顶替的只是"那张图"，角色名（character_angles）与参考图顺序**都没变**，
+		// 所以 RefManifest 与 director 的 REFERENCE ORDER 契约不用动。
+		// 板子比转台图更该当角度参考：同一张 2K 板上有正/侧/背三个全身 + 6 个头部细节，
+		// 而转台图是 4 格横向拼图（每格只剩 1/4 像素，脸被摊薄 —— 见下面 compact 的教训）。
+		if turn == "" && withAngles {
+			turn = boardImagePath(dir, a.File)
+		}
 		if turn != "" && !withAngles {
-			turn = "" // 近景/特写:拼合图只用得上 1/4 像素的脸,不附
+			turn = "" // 近景/特写:角度参考只用得上 1/4 像素的脸,不附
 		}
 		switch {
 		case turn != "" && compact:

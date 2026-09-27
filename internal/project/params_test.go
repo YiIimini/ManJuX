@@ -101,12 +101,21 @@ func TestViewsSourceOfNormalizes(t *testing.T) {
 	}
 }
 
-// TestViewsOnDefault 多视角默认开(*bool 语义:老项目 json 里没有这个键,
-// 解成 false 会让新能力在存量项目上默认关闭 —— 而那些项目恰恰是用户在用的)。
+// TestViewsOnDefault 多视角默认**关**（2026-09-27 用户定调：「有了三视图，就不需要转台图、
+// 背面、侧面、四分之三了」）。
+//
+// *bool 语义没变（nil = 未表态，显式值优先），变的只是"未表态"落到哪一边：
+// 旧口径落在**开**（怕存量项目里角色只有正面照），新口径落在**关**
+// —— 因为三视图细节板接手了角度参考（pipeline/refs.go 的 character_angles 兜底），
+// 而转台图是资产阶段最贵的一步（一次 H3 转身视频 + 抽帧 + 拼图）。
 func TestViewsOnDefault(t *testing.T) {
 	var a AssetsParams
+	if a.ViewsOn() {
+		t.Error("未表态时多视角应为关（板子已接手角度参考）")
+	}
+	a.Views = Bool(true)
 	if !a.ViewsOn() {
-		t.Error("未表态时多视角应为开")
+		t.Error("显式 true 时仍应生成（后门）")
 	}
 	a.Views = Bool(false)
 	if a.ViewsOn() {
