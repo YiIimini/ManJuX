@@ -50,12 +50,17 @@ func (c *Coordinator) applyCardPrompts(proj *project.Project, plan *project.Plan
 	if len(cards) == 0 {
 		return 0
 	}
+	boards := project.ParseCharacterCardBoards(string(raw))
 	applied := 0
 	for i := range plan.Characters {
 		ch := &plan.Characters[i]
 		p, ok := project.MatchCardPrompt(ch.Name, cards)
 		if !ok || strings.TrimSpace(p) == "" {
 			continue
+		}
+		// 板串（② 三视图细节板）同样按卡片覆盖一次 —— 板子的 15 格内容是技能侧口径。
+		if bp, okb := project.MatchCardPrompt(ch.Name, boards); okb && strings.TrimSpace(bp) != "" {
+			ch.BoardPrompt = bp
 		}
 		if strings.TrimSpace(ch.ImagePrompt) == p {
 			continue // 已经是它了（重复调用不该重复计数）

@@ -41,8 +41,22 @@ var (
 	cardSectionRe = regexp.MustCompile(`(?m)^###[ \t]+(.+?)\r?[ \t]*$`)
 	// cardPortraitRe 小节里的「① 定妆」抬头（后面紧跟一个 ```text 块）
 	cardPortraitRe = regexp.MustCompile("(?m)^\\*\\*①[^\\n]*\\*\\*\\r?[ \t]*$")
-	// cardFenceRe fenced 代码块（```text … ```）
-	cardFenceRe = regexp.MustCompile("(?s)```(?:text)?[ \t]*\r?\n(.*?)```")
+	// cardBoardRe 小节里的「② 三视图细节板」抬头（后面紧跟一个 ```text 块）。
+	//
+	// 【2026-09-27 为什么开始读它】技能侧《平台侧生成规范》§3.4/§3.5 定死了三视图板的 15 格内容
+	// 与字段名（`board_prompt`），而平台此前只读「① 定妆」—— 于是**出板用的是平台自己那份列表**，
+	// 与规范的 15 格内容并不一致（头角度与局部细节两项对不上）。两份口径同时存在迟早会走散，
+	// 现在以技能侧卡片的 `board_prompt` 为准，平台那份只作**兜底**（卡里没有板串的老方案）。
+	cardBoardRe = regexp.MustCompile("(?m)^\\*\\*②[^\\n]*\\*\\*\\r?[ \t]*$")
+	// cardBoardLabelsRe 板串里要求"画标签/文字说明"的那一行。
+	//
+	// 技能侧板串里写着 `LABELS (for the design sheet): the character name, role tag, …`，
+	// 而**同一条规范 §3.4 明说**板上"不出现文字说明、不出现 LOGO/水印/UI 元素"，串末自己也写着
+	// `no text, no letters, no watermark` —— 自相矛盾（与规范 §1.3 记的"外库文件二自己塞了
+	// no humans"是同一种毛病）。按 §3.4 与平台"画面文字禁止"的口径，装配时**掐掉这一行**，
+	// 并把这条不一致回报技能侧（他们该自己删）。
+	cardBoardLabelsRe = regexp.MustCompile(`(?im)^[ \t]*LABELS[^\n]*\n?`)
+	cardFenceRe       = regexp.MustCompile("(?s)```(?:text)?[ \t]*\r?\n(.*?)```")
 )
 
 // CardCharacterName 从卡片小节标题里取角色名：`沈砚（主角 · 灾星）` → `沈砚`。
@@ -100,6 +114,40 @@ func ParseCharacterCards(md string) map[string]string {
 		}
 	}
 	return out
+}
+
+// ParseCharacterCardBoards 解析 `素材/角色卡.md` → 角色名 → **三视图板串**（已剥风格句与 LABELS 行）。
+func ParseCharacterCardBoards(md string) map[string]string {
+	out := map[string]string{}
+	sections := cardSectionRe.FindAllStringSubmatchIndex(md, -1)
+	for si, m := range sections {
+		name := CardCharacterName(md[m[2]:m[3]])
+		if name == "" {
+			continue
+		}
+		end := len(md)
+		if si+1 < len(sections) {
+			end = sections[si+1][0]
+		}
+		body := md[m[1]:end]
+		bm := cardBoardRe.FindStringIndex(body)
+		if bm == nil {
+			continue
+		}
+		fence := cardFenceRe.FindStringSubmatch(body[bm[1]:])
+		if fence == nil {
+			continue
+		}
+		if p := StripBoardLabels(StripCardStyleClause(fence[1])); p != "" {
+			out[name] = p
+		}
+	}
+	return out
+}
+
+// StripBoardLabels 掐掉板串里"要求在图上画标签/文字"的那一行（理由见 cardBoardLabelsRe）。
+func StripBoardLabels(prompt string) string {
+	return strings.TrimSpace(cardBoardLabelsRe.ReplaceAllString(prompt, ""))
 }
 
 // MatchCardPrompt 按角色名找卡片定妆串。名字可能带**造型档后缀**（`沈砚·一品` 是同一角色的

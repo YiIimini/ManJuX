@@ -77,7 +77,7 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 // "一次运行只提醒一次"是本次运行的性质，而 Coordinator 是进程级单例）。
 func (c *Coordinator) checkCastDistinctness(ctx context.Context, proj *project.Project, assets map[string]project.Asset,
 	kind, id, name, imagePrompt string, ek EntityKind, path string,
-	gen func(kind, id, name, imagePrompt string, ek EntityKind, attempt int) (string, error)) (string, bool) {
+	gen assetGenerator) (string, bool) {
 	if kind != "characters" || ctx.Err() != nil || strings.TrimSpace(path) == "" {
 		return path, false
 	}
@@ -103,7 +103,7 @@ func (c *Coordinator) checkCastDistinctness(ctx context.Context, proj *project.P
 	c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.SamePersonWarnText(name, other, &qc.SamePersonVerdict{Same: true, Note: note}))
 	// 带**分离指令**换种子重出一次（只给一次，与朝向自检同一政策）
 	sep := imagePrompt + CastSeparationClause(other)
-	next, err := gen(kind, id, name, sep, ek, 1)
+	next, err := gen(kind, id, name, sep, "", ek, 1)
 	if err != nil || strings.TrimSpace(next) == "" {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
 			"↻ 撞脸重出失败(%v)，保留原图「%s」——可在资产详情里点「重新生成」再抽一次", err, name)

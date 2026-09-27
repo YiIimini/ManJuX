@@ -56,13 +56,16 @@ const BoardMarker = "PRODUCTION REFERENCE SHEET"
 //
 // 逐条对应官方 STEP 3 的清单（3/4 视图 + 正侧背 + 表情/头角度 + 材质服装道具细节 + 身份锁），
 // 以及技能侧 §2.2 的三段式数量（3 全身 + 6 头角度 + 6 局部细节）。
-const BoardLayoutClause = "one single production reference sheet of this ONE character on a plain light neutral " +
-	"background under flat, even studio lighting — no scene, no other characters, no props other than this " +
-	"character's own: a three-quarter view first, then FRONT, SIDE and BACK full-body views of the same person " +
-	"at the same scale in the same standing pose, then a row of six head studies (front, three-quarter, profile, " +
-	"three-quarter back, slightly low angle, slightly high angle) showing the same face and the same hairstyle, " +
-	"then six close-up detail insets (hair strand direction, costume structure and stitching, collar and sleeve " +
-	"construction, sash and belt knots, footwear, hands and the character's signature prop). " +
+const BoardLayoutClause = "one single production reference sheet of this ONE character on a plain pure white " +
+	"seamless background under flat, even studio lighting — no scene, no other characters, no extra props other " +
+	"than this character's own signature prop, no text, no letters, no watermark, generous margins: " +
+	"LEFT (main area): three full-body standing views — FRONT, LEFT PROFILE and BACK of the same character " +
+	"(identical face, hair, costume, build and height proportions), arms hanging naturally, eye-level, no " +
+	"occlusion, no exaggerated perspective, hair parting and strand direction clearly readable; " +
+	"UPPER RIGHT: six head angles of the same character — front face, top-down view of the crown, back of the " +
+	"head, left silhouette, near-profile comparison, 3/4 face; " +
+	"LOWER RIGHT: six detail tiles — upper-garment fabric, lower-garment front, waist-and-hip tailoring, leg or " +
+	"skin detail, eye and facial detail, footwear as a single item; every tile must match the main costume exactly. " +
 	"Every identity feature must stay exactly as in the reference image: same face shape, same hair (tie, length " +
 	"and forehead state), same costume, same colours, same signature marker."
 
@@ -154,7 +157,10 @@ func boardStale(master, board string) bool {
 
 // BoardOptions 一次三视图板生成。
 type BoardOptions struct {
-	Master string // 已通过的定妆照绝对路径（身份源）
+	// CardBoard 技能侧卡片的 oard_prompt（三视图板串）。有它就用它 —— 板子的 15 格内容是
+	// 技能侧口径（《平台侧生成规范》§3.4/§3.5），平台自己那份只作兜底。见 BoardPromptWithCard。
+	CardBoard string
+	Master    string // 已通过的定妆照绝对路径（身份源）
 	// Canvas 可选：已备好的 **16:9 白底画布**（定妆照等比居中放进去）。
 	//
 	// 为什么需要它（2026-09-27）：Qwen-Image-2.1 的编辑链路**按第一张参考图的画幅决定
@@ -224,7 +230,7 @@ func GenerateBoard(ctx context.Context, ce engine.Engine, o BoardOptions) (strin
 	}
 	return ee.EditImage(ctx, comfyengine.ImageEditOptions{
 		RefImages:  []string{ref},
-		Prompt:     BoardPrompt(o.Prompt),
+		Prompt:     BoardPromptWithCard(o.Prompt, o.CardBoard),
 		Negative:   imageNegative,
 		Seed:       o.Seed,
 		UseTurbo:   true, // 只对旧家族(2511)有效；2.1 无对应 LoRA，引擎会忽略
@@ -232,12 +238,38 @@ func GenerateBoard(ctx context.Context, ce engine.Engine, o BoardOptions) (strin
 	}, out)
 }
 
+// assetGenerator 生成一张资产图的回调（资产阶段把它传给朝向自检、撞脸自检等"换种子重出"的路径）。
+//
+// 为什么立成命名类型：这套参数已经长到 7 个，两处各写一遍完整签名，加一个参数就要改两处；
+// 更重要的是**cardBoard 必须一路带到出板那一步**（技能侧卡片的三视图板串，见 BoardPromptWithCard）。
+type assetGenerator func(kind, id, name, imagePrompt, cardBoard string, ek EntityKind, attempt int) (string, error)
+
+// BoardPromptWithCard 板提示词：**优先用技能侧卡片的三视图板串**（《平台侧生成规范》§3.4/§3.5），
+// 卡里没有（老方案 / 平台自己生成的卡）才退回平台那份兜底布局串。
+//
+// 【为什么以卡片为准】板子的 15 格内容（3 全身 ＋ 6 头角度 ＋ 6 局部细节）是技能侧定死的口径，
+// 而平台兜底那份的"头角度"与"局部细节"两项与它并不一致 —— 两份同时在场迟早走散。
+//
+// 【卡片板串里的一句被掐掉】技能侧板串写着 `LABELS (for the design sheet): the character name, …`，
+// 而**同一条规范 §3.4 明说**板上"不出现文字说明、不出现 LOGO/水印/UI 元素"，串末自己也写着
+// `no text, no letters, no watermark` —— 自相矛盾。按 §3.4 与平台"画面文字禁止"的口径，
+// 装配时掐掉那一行（见 project.StripBoardLabels），并回报技能侧让他们自己删。
+func BoardPromptWithCard(masterPrompt, cardBoard string) string {
+	if strings.Contains(masterPrompt, BoardMarker) {
+		return masterPrompt // 幂等：装配点可能被调用两次
+	}
+	if cb := strings.TrimSpace(cardBoard); cb != "" {
+		return BoardMarker + " — " + cb
+	}
+	return BoardImagePrompt(masterPrompt)
+}
+
 // genCharacterBoard 三视图板的**项目侧调用点**（资产阶段与渲染前补齐共用）。
 //
 // 增强项语义：失败只告警，绝不阻断资产阶段（与多视角转台图同一条政策 —— 定妆照才是必需的）。
 // 触发条件：人形角色，且「板不存在」或「板比定妆照旧」（定妆照因朝向自检换种子重出过，
 // 旧板已经是另一个人的脸）。已经是最新的板不重出，这条让"续跑/重进项目"不烧重复 GPU。
-func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Project, ce engine.Engine, name, imagePrompt, masterPath string, ek EntityKind) {
+func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Project, ce engine.Engine, name, imagePrompt, masterPath, cardBoard string, ek EntityKind) {
 	if ctx.Err() != nil || !HumanoidBoardKind(ek) || strings.TrimSpace(masterPath) == "" {
 		return
 	}
@@ -267,7 +299,7 @@ func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Proje
 		}
 	}
 	p, err := GenerateBoard(ctx, ce, BoardOptions{
-		Master: masterPath, Canvas: canvas, Prompt: imagePrompt, Out: out, Seed: nameSeed("board", name),
+		Master: masterPath, Canvas: canvas, Prompt: imagePrompt, CardBoard: cardBoard, Out: out, Seed: nameSeed("board", name),
 		OnProgress: func(pct int, note string) {
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "三视图板「%s」:%s(%d%%)", name, note, pct)
 		},

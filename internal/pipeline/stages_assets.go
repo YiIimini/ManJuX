@@ -54,9 +54,9 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		comfyGen = eng
 	}
 
-	genAsset := func(kind, id, name, imagePrompt string, ek EntityKind, attempt int) (string, error) {
-		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt, assets, ek, attempt)
-	}
+	genAsset := assetGenerator(func(kind, id, name, imagePrompt, cardBoard string, ek EntityKind, attempt int) (string, error) {
+		return c.genAssetImage(ctx, proj, comfyGen, kind, id, name, imagePrompt, cardBoard, assets, ek, attempt)
+	})
 
 	// ---------- 定妆照比例自检(技能侧清单 §5.1)----------
 	//
@@ -103,7 +103,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		kind                                  EntityKind
 	}
 	var pendingViews []pendingView
-	check := func(kind, id, name, description, imagePrompt string, ek EntityKind) {
+	check := func(kind, id, name, description, imagePrompt, cardBoard string, ek EntityKind) {
 		if len(onlySet) > 0 && !onlySet[id] {
 			return
 		}
@@ -172,7 +172,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 		// ② Krea-2 生成缺失参考图;成功后自动入库供后续项目复用
 		if comfyGen != nil && strings.TrimSpace(imagePrompt) != "" {
-			if path, err := genAsset(kind, id, name, imagePrompt, ek, 0); err == nil {
+			if path, err := genAsset(kind, id, name, imagePrompt, "", ek, 0); err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
 				assets[id] = project.Asset{
 					ID: id, Kind: kind, Name: name,
@@ -232,13 +232,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 主卡还没出图时本集就只剩"退回文生图"这一条路(而各自文生图正是同一角色几张脸会漂的原因)。
 	// 分组只调整**生成顺序**,不改任何判据(计划里的其它语义都不依赖角色顺序)。
 	for _, ch := range orderCharsMasterFirst(plan.Characters) {
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ch.BoardPrompt, ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
 		// 场景提示词走**唯一装配点**(注入全片风格串 + 环境空场取景):
 		// 直接把 sc.ImagePrompt 丢给图像模型 = 角色一套画风、场景另一套风格
 		// (2026-09-26 乙1,四条出图路径必须同源)。
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "")
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "", "")
 	}
 	// 道具图（2026-09-27 补）：技能侧的三类卡里，道具此前**只被读进来、从没出过图**
 	// —— 库里 `props` 类目、上传的"道具图"、`assetImageSize` 注释里那句"道具图"都在，
@@ -246,7 +246,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// **不进 H3 的参考图集合**（官方：Props never get a picture；refs.go 只带角色与场景）。
 	// 跨集复用靠资产库按名字命中（同书 40 集只生成一次），所以导入时把道具全带上不浪费。
 	for _, pr := range plan.Props {
-		check("props", "prop:"+pr.ID, pr.Name, pr.Description, PropImagePrompt(proj, plan, pr), KindObject)
+		check("props", "prop:"+pr.ID, pr.Name, pr.Description, PropImagePrompt(proj, plan, pr), "", KindObject)
 	}
 
 	// Q 版形象(chibi):主定妆照就绪的角色同步生成 Q 版,内心活动镜头的表达素材。
@@ -469,7 +469,7 @@ const maxFacingRegen = 2
 //   - 用完次数仍不过 → 保留最后一张 + 如实告警,不静默接受。
 func (c *Coordinator) regenerateOnBadFacing(ctx context.Context, proj *project.Project, assets map[string]project.Asset,
 	kind, id, name, imagePrompt string, ek EntityKind, path string, rep *qc.ProportionReport,
-	gen func(kind, id, name, imagePrompt string, ek EntityKind, attempt int) (string, error)) string {
+	gen assetGenerator) string {
 	if !qc.FacingNeedsRegen(rep) {
 		return path
 	}
@@ -479,7 +479,7 @@ func (c *Coordinator) regenerateOnBadFacing(ctx context.Context, proj *project.P
 		}
 		c.emit(proj.ID, PhaseAssets, 0, "info", 0,
 			"↻ 定妆照「%s」朝向自检未过(不是正面):换种子重出第 %d/%d 次…", name, attempt, maxFacingRegen)
-		next, err := gen(kind, id, name, imagePrompt, ek, attempt)
+		next, err := gen(kind, id, name, imagePrompt, "", ek, attempt)
 		if err != nil {
 			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ 定妆照「%s」朝向重出失败(保留上一张):%v", name, err)
 			return path
@@ -579,7 +579,7 @@ func assetImageSize(proj *project.Project, kind string) (int, int) {
 // attempt > 0 表示这是**朝向自检未过后的换种子重出**(见 regenerateOnBadFacing):
 // 种子在名字锚定的基准上加 attempt×101,于是"同名必同图"在重出这一路被有意打破 ——
 // 重出要的正是"换一颗种子再抽一次"。同一颗种子重出等于画出同一张图,白烧一次 GPU。
-func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string, assets map[string]project.Asset, ek EntityKind, attempt int) (string, error) {
+func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt, cardBoard string, assets map[string]project.Asset, ek EntityKind, attempt int) (string, error) {
 	w, h := assetImageSize(proj, kind)
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
@@ -596,7 +596,7 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	// 从刚出的定妆照派生，供人审一致性与建模向参考。它不是 H3 的参考图
 	// （refs.go 只认 <base>.png / <base>_turnaround.png），失败只告警。
 	if kind == "characters" {
-		c.genCharacterBoard(ctx, proj, ce, name, imagePrompt, path, ek)
+		c.genCharacterBoard(ctx, proj, ce, name, imagePrompt, path, cardBoard, ek)
 	}
 	return path, nil
 }
@@ -999,10 +999,11 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	}
 	type miss struct {
 		kind, id, name, desc, prompt string
+		cardBoard                    string // 技能侧卡片的三视图板串（见 board.go 的 BoardPromptWithCard）
 		ek                           EntityKind
 	}
 	var list []miss
-	check := func(kind, id, name, desc, prompt string, ek EntityKind) {
+	check := func(kind, id, name, desc, prompt, cardBoard string, ek EntityKind) {
 		if strings.TrimSpace(prompt) == "" {
 			return
 		}
@@ -1011,7 +1012,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 				return
 			}
 		}
-		list = append(list, miss{kind, id, name, desc, prompt, ek})
+		list = append(list, miss{kind: kind, id: id, name: name, desc: desc, prompt: prompt, cardBoard: cardBoard, ek: ek})
 	}
 	for _, ch := range orderCharsMasterFirst(plan.Characters) {
 		// 范围:单镜重渲时只补这一镜会用到的角色(否则会顺手生成全片资产,
@@ -1019,14 +1020,14 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		if !need.wantsChar(ch.ID) {
 			continue
 		}
-		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ResolveEntityKind(ch))
+		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ch.BoardPrompt, ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {
 		if !need.wantsScene(sc.ID) {
 			continue
 		}
 		// 与资产阶段同源:渲染前补齐也必须走场景装配唯一实现点(见 StageAssets 里的说明)。
-		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "")
+		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "", "")
 	}
 	// 道具图（与 runAssets 同一个装配点 PropImagePrompt）：两条路径都要遍历，
 	// 否则会出现"初出有道具图、补缺却没有"。范围同角色/场景 —— 按本次取镜范围要（need）。
@@ -1034,7 +1035,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		if !need.wantsProp(pr.ID) {
 			continue
 		}
-		check("props", "prop:"+pr.ID, pr.Name, pr.Description, PropImagePrompt(proj, plan, pr), KindObject)
+		check("props", "prop:"+pr.ID, pr.Name, pr.Description, PropImagePrompt(proj, plan, pr), "", KindObject)
 	}
 	if len(list) == 0 {
 		return true
@@ -1086,7 +1087,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	}
 	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(todo), c.imageSourceLabel())
 	for _, m := range todo {
-		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt, assets, m.ek, 0)
+		path, err := c.genAssetImage(ctx, proj, eng, m.kind, m.id, m.name, m.prompt, m.cardBoard, assets, m.ek, 0)
 		if err != nil {
 			c.emit(proj.ID, PhaseRender, 0, "warn", 0, "补齐失败:%s「%s」:%v(该镜降级 t2va)", kindLabel(m.kind), m.name, err)
 			continue

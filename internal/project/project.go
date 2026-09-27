@@ -161,7 +161,13 @@ type Character struct {
 	Kind        string `json:"kind,omitempty"` // human / object / spirit_pet / beast / incorporeal / chibi
 	Description string `json:"description"`    // 外貌/服装/气质(供一致性)
 	ImagePrompt string `json:"image_prompt"`   // 定妆照文生图提示词(英文)
-	Voice       string `json:"voice"`          // 声线描述(英文,进 H3 提示词)
+	// BoardPrompt 三视图板串（技能侧卡片的 `board_prompt`，见《平台侧生成规范》§3.4/§3.5）。
+	//
+	// 为什么平台要读它：板子的 15 格内容（3 全身 ＋ 6 头角度 ＋ 6 局部细节）是技能侧定死的口径，
+	// 而平台自己那份列表与它并不一致（头角度与局部细节两项对不上）。以卡片为准、平台那份只作**兜底**，
+	// 才不会有"两套板子口径"。装配时会走与定妆串同一套清洗（剥风格句、掐掉要求画标签的那一行）。
+	BoardPrompt string `json:"board_prompt,omitempty"`
+	Voice       string `json:"voice"` // 声线描述(英文,进 H3 提示词)
 }
 
 // Scene 场景卡。

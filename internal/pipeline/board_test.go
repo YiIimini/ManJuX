@@ -34,7 +34,13 @@ func TestBoardPromptReplacesPortraitFraming(t *testing.T) {
 	if !strings.Contains(got, BoardMarker) || !strings.Contains(got, "PRODUCTION REFERENCE SHEET") {
 		t.Fatalf("板子提示词缺少版面标记(幂等判据):\n%s", got)
 	}
-	for _, want := range []string{"FRONT, SIDE and BACK", "six head studies", "six close-up detail insets", "plain light neutral"} {
+	// 版面清单按**技能侧《平台侧生成规范》§3.4** 的 15 格（3 全身 ＋ 6 头角度 ＋ 6 局部细节）：
+	// 平台兜底清单此前与它不一致（头角度与局部细节两项不同），已对齐 —— 有卡片的 `board_prompt` 时
+	// 以卡片为准（见 BoardPromptWithCard），这段是卡里没有板串时的兜底。
+	for _, want := range []string{
+		"FRONT, LEFT PROFILE and BACK", "six head angles", "six detail tiles",
+		"plain pure white seamless background", "no text, no letters, no watermark",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("版面清单缺 %q:\n%s", want, got)
 		}
