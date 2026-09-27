@@ -116,7 +116,7 @@ func TestSkillProportionClauseSurvivesAssembly(t *testing.T) {
 		// 取景(2026-09-27 起由平台**按画幅**算:竖幅 → 胸像 + 头顶留白;
 		// 卡里那句写死的 `upper-body framing` 会被剥掉,见 PortraitFramingClause)
 		"chest-up portrait",
-		"faces the camera",
+		"front-facing",
 		"plain pure white seamless background",
 		"HAIR EXACTLY AS BRIEFED", // 发型纪律
 	} {

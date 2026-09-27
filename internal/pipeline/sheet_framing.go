@@ -282,12 +282,16 @@ func PortraitFramingClause(kind EntityKind, width, height int) string {
 		return ""
 	}
 	if height > width {
-		return " FRAMING (mandatory): a chest-up portrait in a vertical frame — the WHOLE head is inside the picture " +
-			"with clear empty space above the hair, the shoulders fully inside the frame, and the area below the chest " +
-			"stays plain background. The subject is centred and faces the camera."
+		return " FRAMING (mandatory): a front-facing chest-up portrait, shot STRAIGHT-ON from the front — the face " +
+			"looks directly into the camera, both eyes are visible at the same size and symmetric, the head is upright " +
+			"and squared to the lens with the nose and chin pointing at the camera, the WHOLE head is inside the " +
+			"picture with clear empty space above the hair, the shoulders fully inside the frame, and the area below " +
+			"the chest stays plain background."
 	}
-	return " FRAMING (mandatory): a head-and-shoulders portrait — the WHOLE head is inside the picture with clear " +
-		"empty space above the hair, and the shoulders are fully inside the frame. The subject is centred and faces the camera."
+	return " FRAMING (mandatory): a front-facing head-and-shoulders portrait, shot STRAIGHT-ON from the front — the " +
+		"face looks directly into the camera, both eyes are visible at the same size and symmetric, the head is " +
+		"upright and squared to the lens with the nose and chin pointing at the camera, the WHOLE head is inside the " +
+		"picture with clear empty space above the hair, and the shoulders are fully inside the frame."
 }
 
 // sceneCrowdItemPhrases 命中即**整项删除**的人群短语 —— 场景板必须是空场。
