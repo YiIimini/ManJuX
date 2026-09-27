@@ -59,8 +59,36 @@ const PlanEstablishingExtra = "ultra-wide angle, grand scale, epic wide shot, va
 // PlanEstablishingBannedSizes 不许当建立镜头的景别（微距/特写类）。
 var PlanEstablishingBannedSizes = []string{"特写"}
 
-// PlanFaceCloseSizes "脸上特写"那一档的景别（2026-09-27 技能侧追补单 N1）。
+// planViewVarietyMinShots 判"视角单调"所需的最少带视角镜数（裁定 A 之后大量小景别合法留空，
+// 样本太薄就不该判单调）。
+const planViewVarietyMinShots = 10
+
+// ViewRequiredForShot 这一镜**必须**写官方视角串吗（裁定 A：只看"官方 9 条语义站得住"的那些镜）。
 //
+// 判据两条，都是"交代空间"的镜：
+//   - **建立镜头**（某场景的首镜）—— 观众第一次看见一个地点，机位视角就是地点交代本身；
+//   - **远景 / 全景**（含极远景）—— 大景别的价值全在纵深与空间关系，官方表里对应
+//     `compressed distant depth` / `ultra-wide …`。
+//
+// 其余（中景/近景/特写/平视中近景）**允许留空**：官方 9 条是"大视角/机位表"，里面没有
+// "平视中近景"也没有"俯拍"，硬填就是写错词 —— 写错词比留空更糟（把特写写成"超广角斜 45° 鸟瞰"）。
+func ViewRequiredForShot(shots []Shot, i int) bool {
+	if i < 0 || i >= len(shots) {
+		return false
+	}
+	if IsEstablishingShot(shots, i) {
+		return true
+	}
+	size := strings.TrimSpace(shots[i].ShotSize)
+	for _, wide := range []string{"远景", "全景"} {
+		if strings.Contains(size, wide) {
+			return true
+		}
+	}
+	return false
+}
+
+// PlanFaceCloseSizes "脸上特写"那一档的景别（2026-09-27 技能侧追补单 N1）。//
 // 判据用途：**这一档画面里几乎只有一张脸**，而参考图集合是从 `shots[].characters` 派生的
 // （pipeline.RefPlan）—— 所以「特写/近景 + characters 为空」= 有人脸却没参考图 = 每次换一张新脸。
 // 含 `中近景` 是**有意**的：它同样以脸为主（判据用 Contains，见 IsCloseUpShot）。

@@ -451,25 +451,43 @@ func ValidatePlan(p *Plan) []Issue {
 	// （本包的老规矩：误拦/刷屏的规则比没有规则更糟，因为报告没人看）。
 	// 每条都带上"命中几镜 / 共几镜"与示例镜号，够定位也不吵。
 	if len(p.Shots) > 0 {
+		// 2026-09-27 晚**裁定 A**（技能侧追补单订正版 N5，平台侧为裁定方）：
+		// **允许留空**，只对"官方 9 条语义站得住"的镜要求必须有 —— 建立镜头与远景/全景。
+		//
+		// 为什么不再"每镜必填"：官方那 9 条是**大视角/机位表**（鸟瞰、平视深远、纵深压缩、
+		// 条件性的仰视/窥视/强透视/长焦），里面**没有**"平视中近景"，也没有"俯拍"。
+		// 一条"平视中景"或"俯拍特写"在表里找不到对应项 —— 硬填就是写错词（把特写写成
+		// "超广角斜 45° 鸟瞰"），而**写错词比留空更糟**（留空只是少一句镜头语言，写错是把画面带偏）。
+		// 技能侧的实测口径：2462 镜里 1693 镜有官方视角串、769 镜留空（都带 `view_note` 说明原因）。
 		var noView []string
 		viewSet := map[string]bool{}
-		for _, sh := range p.Shots {
+		viewShots, optional := 0, 0
+		for i, sh := range p.Shots {
 			if v, ok := PlanViewIn(sh.H3Prompt); ok {
 				viewSet[v] = true
-			} else if strings.TrimSpace(sh.H3Prompt) != "" {
+				viewShots++
+				continue
+			}
+			if strings.TrimSpace(sh.H3Prompt) == "" {
+				continue
+			}
+			if ViewRequiredForShot(p.Shots, i) {
 				noView = append(noView, fmt.Sprintf("#%d", sh.ID))
+			} else {
+				optional++
 			}
 		}
 		if len(noView) > 0 {
 			add("warn", "plan.shots",
-				"%d/%d 镜的 h3_prompt 里找不到机位视角串 —— 镜头语言只剩景别+运镜，"+
-					"整集会像用同一台机器拍完（%s；缺视角的镜：%s）",
-				len(noView), len(p.Shots), PlanViewHint(), strings.Join(firstN(noView, 6), " "))
+				"%d 镜**该有**机位视角却没写（建立镜头与远景/全景必须写；共 %d 镜留空属正常）—— "+
+					"这些镜是交代空间的主力，缺了整集会像用同一台机器拍完（%s；%s）",
+				len(noView), optional, PlanViewHint(), strings.Join(firstN(noView, 6), " "))
 		}
 		// 视角单调：只有一两种视角同样是"同一台机器"的另一种形态。
-		// 阈值取 6：整改单的验收是"camera 取值从 2 个涨到 ≥6 个"，且只对 ≥10 镜的方案判
-		// （短方案本来就装不下 6 种角度，硬判就是误拦）。
-		if len(p.Shots) >= 10 && len(viewSet) < 6 {
+		// 阈值取 6：整改单的验收是"camera 取值从 2 个涨到 ≥6 个"。
+		// **只在"带视角的镜够多"时才判**（裁定 A 之后大量小景别合法留空，样本太薄就不该判单调 ——
+		// 否则一条 60 镜里只有 5 镜带视角的方案也会被要求"铺开到 6 种"，那是无理要求）。
+		if len(viewSet) < 6 && viewShots >= planViewVarietyMinShots {
 			add("warn", "plan.shots",
 				"整集只用了 %d 种机位视角（%s）—— 官方词表有 9 条，建议至少铺开到 6 种，"+
 					"否则景别变化也救不回「镜头感」", len(viewSet), strings.Join(viewKeys(viewSet), " / "))

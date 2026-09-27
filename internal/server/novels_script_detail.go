@@ -26,7 +26,13 @@ type scriptShotView struct {
 
 	// 下面这几个来自**结构化明细**（`分镜/分镜明细.json`，技能侧 2026-09-27 新交）：
 	// 渲染包里没有它们（plan.json 是停用前的旧形态）。只有明细这条路会填。
-	View      string `json:"view,omitempty"`       // 主视角（技能侧用中文短标签：平视/仰拍/俯拍/鸟瞰）
+	//
+	// 口径（技能侧 09-27 订正版 + 平台裁定 A）：`view` 是**官方 9 条之一、可以留空**
+	// （小景别在官方表里没有对应项，硬填错词比留空更糟）；中文机位角度另走 `angle_zh`，
+	// **不是契约字段**、不回写 plan；留空的原因在 `view_note` 里。
+	View      string `json:"view,omitempty"`       // 官方主视角（可能是空字符串）
+	ViewNote  string `json:"view_note,omitempty"`  // 留空原因
+	AngleZH   string `json:"angle_zh,omitempty"`   // 中文机位角度（平视/仰拍/俯拍/鸟瞰）
 	HookType  string `json:"hook_type,omitempty"`  // 官方受控 10 个之一
 	EndState  string `json:"end_state,omitempty"`  // 尾帧状态
 	Landmarks string `json:"landmarks,omitempty"`  // 场景地标（连续性锚点）
@@ -196,7 +202,9 @@ type scriptDetailShot struct {
 	Scene      string   `json:"scene"`
 	Characters []string `json:"characters"`
 	Mode       string   `json:"mode"`
-	View       string   `json:"view"`
+	View       string   `json:"view"`      // 官方 9 条之一，**可空**（裁定 A：小景别留空是对的）
+	ViewNote   string   `json:"view_note"` // view 为什么留空（技能侧写的说明）
+	AngleZH    string   `json:"angle_zh"`  // 机位角度中文短标签（平视/仰拍/俯拍/鸟瞰）——不是契约字段
 	Camera     string   `json:"camera"`
 	HookType   string   `json:"hook_type"`
 	EndState   string   `json:"end_state"`
@@ -315,7 +323,8 @@ func detailShotViews(shots []scriptDetailShot, want string) []scriptShotView {
 		v := scriptShotView{
 			ID: s.ID, Size: s.ShotSize, Duration: s.Duration, Mode: s.Mode,
 			Action: s.Action, Narration: s.Narration, Chars: s.Characters,
-			View: s.View, HookType: s.HookType, EndState: s.EndState,
+			View: s.View, ViewNote: s.ViewNote, AngleZH: s.AngleZH,
+			HookType: s.HookType, EndState: s.EndState,
 			Landmarks: landmarksText(s.SceneLandmarks), Light: s.Light, SceneName: s.Scene,
 		}
 		if v.Mode == "" {

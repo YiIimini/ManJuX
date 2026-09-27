@@ -152,12 +152,12 @@ func TestNovelScriptPrefersStructuredDetail(t *testing.T) {
 	}
 	detail := `{"generated":"2026-09-27","engine":"h3","note":"机械派生","shots":[
 	  {"episode":1,"id":1,"duration":5,"shot_size":"特写","scene":"临水城","characters":["Shen Yan"],
-	   "mode":"ref2va","view":"平视","camera":"Static, no movement","hook_type":"reveal",
+	   "mode":"ref2va","view":"telephoto compression","view_note":"","angle_zh":"平视","camera":"Static, no movement","hook_type":"reveal",
 	   "end_state":"he stands at the threshold","action":"他站在门槛前","action_en":"he stands",
 	   "emotion":"calm","sound":"wind","dialogue":[{"speaker":"沈砚","text":"我准了","os":false}],
 	   "narration":"","scene_landmarks":["gate tower","stone arch bridge"],"light":"3000K warm side-backlight"},
 	  {"episode":2,"id":1,"duration":6,"shot_size":"中景","scene":"城隍庙","characters":[],
-	   "mode":"t2va","view":"俯拍","camera":"static","hook_type":"setup",
+	   "mode":"t2va","view":"","view_note":"景别 中景 无对应视角","angle_zh":"俯拍","camera":"static","hook_type":"setup",
 	   "end_state":"empty hall","action":"空镜","action_en":"empty hall",
 	   "emotion":"","sound":"","dialogue":[],"narration":"三年了。",
 	   "scene_landmarks":["altar","incense burner"],"light":"7000K moon"}]}`
@@ -203,7 +203,7 @@ func TestNovelScriptPrefersStructuredDetail(t *testing.T) {
 	}
 	s0, _ := shots[0].(map[string]any)
 	for k, want := range map[string]string{
-		"view": "平视", "hook_type": "reveal", "end_state": "he stands at the threshold",
+		"view": "telephoto compression", "angle_zh": "平视", "hook_type": "reveal", "end_state": "he stands at the threshold",
 		"landmarks": "gate tower · stone arch bridge", "light": "3000K warm side-backlight",
 	} {
 		if got, _ := s0[k].(string); got != want {

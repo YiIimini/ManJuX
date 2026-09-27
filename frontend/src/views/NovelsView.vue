@@ -727,7 +727,11 @@ function onCardCmd(cmd, n) {
                       <el-tag size="small" effect="plain">{{ s.size || '—' }}</el-tag>
                       <span class="timecode">{{ s.duration }}s</span>
                       <el-tag size="small" :type="s.mode === 'ref2va' ? 'warning' : 'info'" effect="plain">{{ s.mode }}</el-tag>
-                      <el-tag v-if="s.view" size="small" type="info" effect="plain" title="主视角">{{ s.view }}</el-tag>
+                      <el-tag v-if="s.angle_zh" size="small" type="info" effect="plain"
+                              title="机位角度（中文短标签；**不是**契约字段，不回写 plan）">{{ s.angle_zh }}</el-tag>
+                      <el-tag v-if="s.view" size="small" type="info" effect="dark"
+                              :title="'官方主视角（逐字）：' + s.view">官方视角</el-tag>
+                      <el-tag v-else-if="s.view_note" size="small" effect="plain" :title="s.view_note">视角留空</el-tag>
                       <el-tag v-if="s.hook_type" size="small" type="success" effect="plain" title="官方受控钩子类型">{{ s.hook_type }}</el-tag>
                       <el-tag v-if="s.characters?.length" size="small" effect="plain" title="出场角色（决定参考图）">{{ s.characters.join('、') }}</el-tag>
                       <el-tag v-if="s.size && !s.characters?.length && (s.size.includes('特写') || s.size.includes('近景'))"
@@ -739,6 +743,7 @@ function onCardCmd(cmd, n) {
                     <div v-for="(d, i) in (s.dialogue || [])" :key="i" class="text-xs mt-1" style="color:var(--mx-amber)">💬 {{ d }}</div>
                     <div v-if="s.narration" class="text-xs mt-1" style="color:var(--mx-text3)">🎙 旁白:{{ s.narration }}</div>
                     <div v-if="s.end_state" class="text-xs mt-1" style="color:var(--mx-text3)">⏭ 尾帧:{{ s.end_state }}</div>
+                    <div v-if="s.view" class="text-xs mt-1" style="color:var(--mx-text3)">🎥 {{ s.view }}</div>
                     <div v-if="s.landmarks || s.light" class="text-xs mt-1" style="color:var(--mx-text3)">
                       <span v-if="s.landmarks">📍 {{ s.landmarks }}</span>
                       <span v-if="s.light"> · 💡 {{ s.light }}</span>

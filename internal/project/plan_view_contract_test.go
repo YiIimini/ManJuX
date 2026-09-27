@@ -56,19 +56,77 @@ func viewShotPlan(n int, withView bool) *Plan {
 	return p
 }
 
-// TestValidatePlanCatchesMissingViewpoint 每镜的提示词里必须有官方 9 视角词表里的串。
+// TestValidatePlanCatchesMissingViewpoint 主视角**该有时必须有**（2026-09-27 裁定 A）。
+//
+// 裁定 A 的由来（技能侧追补单订正版 N5）：官方那 9 条是**大视角/机位表**，里面没有
+// "平视中近景"也没有"俯拍" —— 一条"平视中景"硬填就是写错词，而**写错词比留空更糟**。
+// 所以只对"交代空间"的镜（建立镜头 + 远景/全景）要求必须有，其余允许留空。
 func TestValidatePlanCatchesMissingViewpoint(t *testing.T) {
 	// 反向：合规（每镜都有视角串）→ 不该报
-	if issues := ValidatePlan(viewShotPlan(3, true)); hasIssue(issues, "warn", "找不到机位视角串") {
+	if issues := ValidatePlan(viewShotPlan(3, true)); hasIssue(issues, "warn", "该有") {
 		t.Fatalf("每镜都有视角串时不该报缺视角：%v", PlanIssuesText(issues))
 	}
-	// 正向：全都没有 → 一条聚合 warn，且带镜号与词表提示
+	// 正向：全都没有 → 一条聚合 warn（建立镜头那一条必须报），且带镜号与词表提示
 	issues := ValidatePlan(viewShotPlan(3, false))
-	if !hasIssue(issues, "warn", "找不到机位视角串") {
-		t.Fatalf("三镜都没有视角串必须报，实际：%v", PlanIssuesText(issues))
+	if !hasIssue(issues, "warn", "该有") {
+		t.Fatalf("建立镜头没有视角串必须报，实际：%v", PlanIssuesText(issues))
 	}
 	if !hasIssue(issues, "warn", ViewAerial45) {
 		t.Error("报错文案里必须贴出官方词表（否则用户不知道该写什么）")
+	}
+
+	// 裁定 A 的关键：**小景别留空不报**。
+	// 注意构造：同场景的**首镜天然是建立镜头**（必须有视角），所以留空的是第 2/3 镜。
+	quiet := viewShotPlan(3, true)
+	for i := range quiet.Shots {
+		quiet.Shots[i].ShotSize = "中景"
+	}
+	for i := 1; i < len(quiet.Shots); i++ { // 只把非首镜的视角串摘掉
+		quiet.Shots[i].H3Prompt = strings.Replace(quiet.Shots[i].H3Prompt, ViewAerial45, "", 1)
+	}
+	if hasIssue(ValidatePlan(quiet), "warn", "该有") {
+		t.Errorf("中景（非建立镜头）留空不该报 —— 硬填错词比留空更糟：%v", PlanIssuesText(ValidatePlan(quiet)))
+	}
+	// 远景留空 → 必须报
+	wide := viewShotPlan(3, true)
+	for i := 1; i < len(wide.Shots); i++ {
+		wide.Shots[i].ShotSize = "远景"
+		wide.Shots[i].H3Prompt = strings.Replace(wide.Shots[i].H3Prompt, ViewAerial45, "", 1)
+	}
+	if !hasIssue(ValidatePlan(wide), "warn", "该有") {
+		t.Errorf("远景留空必须报：%v", PlanIssuesText(ValidatePlan(wide)))
+	}
+}
+
+// TestViewRequiredForShot 判据本身（裁定 A 只认两类镜）。
+func TestViewRequiredForShot(t *testing.T) {
+	mk := func(sizes ...string) []Shot {
+		out := make([]Shot, 0, len(sizes))
+		for i, s := range sizes {
+			scene := "scene_a"
+			if i > 0 {
+				scene = "scene_a"
+			}
+			out = append(out, Shot{ID: i + 1, Scene: scene, ShotSize: s})
+		}
+		return out
+	}
+	shots := mk("特写", "中景", "远景", "全景")
+	if !ViewRequiredForShot(shots, 0) {
+		t.Error("第 1 镜是场景首镜（建立镜头）→ 必须有")
+	}
+	for _, i := range []int{1} {
+		if ViewRequiredForShot(shots, i) {
+			t.Errorf("第 %d 镜是平视中景 → 允许留空", i+1)
+		}
+	}
+	for _, i := range []int{2, 3} {
+		if !ViewRequiredForShot(shots, i) {
+			t.Errorf("第 %d 镜是远景/全景 → 必须有", i+1)
+		}
+	}
+	if ViewRequiredForShot(shots, 99) {
+		t.Error("越界不该崩也不该判必须有")
 	}
 }
 
