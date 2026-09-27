@@ -501,6 +501,36 @@ func ValidatePlan(p *Plan) []Issue {
 				strings.Join(establishingClose, "、"))
 		}
 
+		// ── 特写/近景却"没有参考卡的人"（2026-09-27 技能侧追补单 N1）──────────────
+		//
+		// 判据：`shot_size ∈ {特写, 近景}` 且 `characters` 为空。为什么要一条门：
+		// 这类镜里**画面几乎只有一张脸**，而参考图集合是从 `characters` 派生的
+		// （见 pipeline.RefPlan）—— 没有人就没有参考图，每次生成**换一张新脸**。
+		// 这不是理论风险：技能侧全书 2462 镜里就有 3 镜这样，其中**第一条是全书第一镜、主角的脸**
+		// （`第01集 S1 特写 :: 一筐烂菜叶砸在他脸上`，同镜锚点还写着 `empty frame, no people`，
+		// 与正文"人群里一张脸被打"自相矛盾）。技能侧提这条时的原话很准：
+		// **根因不是笔误，而是这类缺陷没有门** —— 谁写分镜都可能犯，LLM 直出更可能（它每集现写）。
+		//
+		// 与上面「建立镜头不许特写」形状一致（同样聚合报一条），但两者**不是一回事**：
+		// 那条管"小景别当建立镜头"，这条管"有人脸却没卡"。
+		var closeNoChar []string
+		for _, sh := range p.Shots {
+			if !IsCloseUpShot(sh.ShotSize) {
+				continue
+			}
+			if len(sh.Characters) == 0 {
+				closeNoChar = append(closeNoChar,
+					fmt.Sprintf("#%d「%s」%s", sh.ID, strings.TrimSpace(sh.ShotSize), firstRunes(sh.Action, 18)))
+			}
+		}
+		if len(closeNoChar) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜是特写/近景却没有出场角色（%s）—— 这一档画面里几乎只有一张脸，而没有角色就没有参考图，"+
+					"**每次生成都是一张新脸**；要么给这些镜绑上角色卡，要么把景别改到不露脸（背影/局部/群演）"+
+					"并把正文里的脸删掉（画面里有人时也不许写 `empty frame, no people` 这种自相矛盾的锚点）",
+				len(closeNoChar), strings.Join(firstN(closeNoChar, 4), "、"))
+		}
+
 		// 尾帧状态：只对"后面还有同一场景的镜头"的那些镜判 —— 跨场景本来就不要求动作连贯
 		// （改用渐隐渐显 + 转场字幕），每段场景的末镜与全片末镜不写尾帧状态是对的。
 		var noEnd []string

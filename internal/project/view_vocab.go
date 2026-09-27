@@ -59,6 +59,24 @@ const PlanEstablishingExtra = "ultra-wide angle, grand scale, epic wide shot, va
 // PlanEstablishingBannedSizes 不许当建立镜头的景别（微距/特写类）。
 var PlanEstablishingBannedSizes = []string{"特写"}
 
+// PlanFaceCloseSizes "脸上特写"那一档的景别（2026-09-27 技能侧追补单 N1）。
+//
+// 判据用途：**这一档画面里几乎只有一张脸**，而参考图集合是从 `shots[].characters` 派生的
+// （pipeline.RefPlan）—— 所以「特写/近景 + characters 为空」= 有人脸却没参考图 = 每次换一张新脸。
+// 含 `中近景` 是**有意**的：它同样以脸为主（判据用 Contains，见 IsCloseUpShot）。
+var PlanFaceCloseSizes = []string{"特写", "近景"}
+
+// IsCloseUpShot 这一镜是否属于"脸上特写"那一档（含中近景，它同样以脸为主）。
+func IsCloseUpShot(shotSize string) bool {
+	s := strings.TrimSpace(shotSize)
+	for _, k := range PlanFaceCloseSizes {
+		if strings.Contains(s, k) {
+			return true
+		}
+	}
+	return false
+}
+
 // PlanScenePreEventClause 场景卡的**事件隔离**串（逐字拼进场景图提示词，见 §1.3）。
 //
 // 场景板是 T2I 出的**环境参考图**，会被 H3 当成"这个地方本来就长这样"带进每一镜。
@@ -140,6 +158,16 @@ func EndStateBannedIn(s string) []string {
 		}
 	}
 	return hit
+}
+
+// firstRunes 取前 n 个字符（报错文案里贴动作摘要用；**按 rune 切**，别把中文切坏）。
+func firstRunes(s string, n int) string {
+	s = strings.TrimSpace(s)
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
 }
 
 // PlanViewHint 自检提示用的一行词表（报错文案里贴出来，便于照着改）。

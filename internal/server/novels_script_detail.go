@@ -23,6 +23,15 @@ type scriptShotView struct {
 	Narration string   `json:"narration,omitempty"`
 	Chars     []string `json:"characters,omitempty"`
 	Prompt    string   `json:"prompt,omitempty"` // h3_prompt(按需返回)
+
+	// 下面这几个来自**结构化明细**（`分镜/分镜明细.json`，技能侧 2026-09-27 新交）：
+	// 渲染包里没有它们（plan.json 是停用前的旧形态）。只有明细这条路会填。
+	View      string `json:"view,omitempty"`       // 主视角（技能侧用中文短标签：平视/仰拍/俯拍/鸟瞰）
+	HookType  string `json:"hook_type,omitempty"`  // 官方受控 10 个之一
+	EndState  string `json:"end_state,omitempty"`  // 尾帧状态
+	Landmarks string `json:"landmarks,omitempty"`  // 场景地标（连续性锚点）
+	Light     string `json:"light,omitempty"`      // 光态
+	SceneName string `json:"scene_name,omitempty"` // 场景名（明细里是中文名）
 }
 
 type scriptEpView struct {
@@ -101,8 +110,16 @@ func collectNovelDeliverables(book string) (assets, storyboard []scriptDeliverab
 		}
 		out := make([]scriptDeliverableView, 0, len(ents))
 		for _, e := range ents {
-			if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
-				continue // 只收 markdown：_llm/*.json 是缓存，图片另有页签
+			if e.IsDir() {
+				continue // `_llm/` 之类是缓存目录，不是交付物
+			}
+			// 只收 markdown，外加**结构化明细**那一个 JSON（技能侧 2026-09-27 新交的
+			// `分镜明细.json`：按 N3 的请求让它在这里可见、可读；其它 json 不收 —— 免得
+			// 把缓存、中间产物当交付物列出来）。
+			name := e.Name()
+			lower := strings.ToLower(name)
+			if !strings.HasSuffix(lower, ".md") && name != novelShotDetailJSON {
+				continue
 			}
 			full := filepath.Join(dir, e.Name())
 			fi, err := os.Stat(full)
@@ -155,6 +172,147 @@ func epNumOf(name string) int {
 	return n
 }
 
+// novelShotDetailJSON 技能侧新交的**结构化分镜明细**文件名（`分镜/分镜明细.json`）。
+//
+// 为什么要读它（2026-09-27 技能侧追补单 N3）：渲染包里的 `plan.json` 是停用前的旧形态
+// （没有 `view` / `hook_type` / `end_state`，也没有 `scene_landmarks` / `light`），而这份 JSON
+// 的**字段名直接用平台契约的字段名**、引擎无关（2462 镜 / 40 集），页签要展示"新规则下的分镜"
+// 就得读它。**只读展示，不当作渲染输入** —— 渲染仍走 plan.json 或平台 LLM 直出。
+//
+// ⚠ 口径提醒（已回报技能侧）：`view` 的值是**中文短标签**（平视/仰拍/俯拍/鸟瞰），不是契约要求的
+// 官方 9 条英文串（`ultra-wide eye-level deep perspective` …）。展示无妨，但**不能**把它当契约字段
+// 喂回 plan —— 那样每一镜都会撞"不在官方词表"。
+const novelShotDetailJSON = "分镜明细.json"
+
+// scriptDetailShot 结构化明细里的一条镜头（字段名对齐平台契约）。
+type scriptDetailShot struct {
+	// Episode 收成 any：真文件里它是**数字**（`"episode": 1`），而人是会写成字符串的 ——
+	// 声明成 string 会让 json.Unmarshal 整条失败、整份明细读不出来（这类"一个字段类型写错、
+	// 连带整份数据消失"的坑本项目记过一次：novels_script.go 里 manifest.version 就是）。
+	Episode    any      `json:"episode"`
+	ID         int      `json:"id"`
+	Duration   int      `json:"duration"`
+	ShotSize   string   `json:"shot_size"`
+	Scene      string   `json:"scene"`
+	Characters []string `json:"characters"`
+	Mode       string   `json:"mode"`
+	View       string   `json:"view"`
+	Camera     string   `json:"camera"`
+	HookType   string   `json:"hook_type"`
+	EndState   string   `json:"end_state"`
+	Action     string   `json:"action"`
+	ActionEN   string   `json:"action_en"`
+	Emotion    string   `json:"emotion"`
+	Sound      string   `json:"sound"`
+	Dialogue   []struct {
+		Speaker string `json:"speaker"`
+		Text    string `json:"text"`
+		OS      bool   `json:"os"`
+	} `json:"dialogue"`
+	Narration      string `json:"narration"`
+	SceneLandmarks string `json:"scene_landmarks"`
+	Light          string `json:"light"`
+}
+
+// loadNovelShotDetail 读一本书的结构化明细（没有或读不动就返回 nil —— 页签照旧走渲染包）。
+//
+// 读不动**不报错**：这份文件是技能侧的可选交付物，缺了只是"少一种数据源"，
+// 不该让整个页签打不开（与 loadPlanLenient 同一条政策）。
+func loadNovelShotDetail(book string) []scriptDetailShot {
+	raw, err := os.ReadFile(filepath.Join(book, "分镜", novelShotDetailJSON))
+	if err != nil {
+		return nil
+	}
+	var f struct {
+		Shots []scriptDetailShot `json:"shots"`
+	}
+	if json.Unmarshal(raw, &f) != nil {
+		return nil
+	}
+	return f.Shots
+}
+
+// detailEpisodes 明细里的集清单（按集号排序；`dir` 用**原始集号字符串**，供前端当键用）。
+func detailEpisodes(shots []scriptDetailShot) []scriptEpView {
+	type agg struct {
+		ep  string
+		cnt int
+	}
+	order := []string{}
+	byKey := map[string]*agg{}
+	for _, s := range shots {
+		k := epKeyOf(s.Episode)
+		if k == "" {
+			k = "1"
+		}
+		if _, ok := byKey[k]; !ok {
+			byKey[k] = &agg{ep: k}
+			order = append(order, k)
+		}
+		byKey[k].cnt++
+	}
+	sort.Slice(order, func(i, j int) bool {
+		ni, ei := strconv.Atoi(order[i])
+		nj, ej := strconv.Atoi(order[j])
+		if ei == nil && ej == nil && ni != nj {
+			return ni < nj
+		}
+		return order[i] < order[j]
+	})
+	out := make([]scriptEpView, 0, len(order))
+	for _, k := range order {
+		a := byKey[k]
+		out = append(out, scriptEpView{Episode: detailEpLabel(k), Dir: k, Shots: a.cnt})
+	}
+	return out
+}
+
+// detailEpLabel 集号 → 「第NN集」（明细里是数字字符串）。
+func detailEpLabel(k string) string {
+	if n, err := strconv.Atoi(k); err == nil {
+		return fmt.Sprintf("第%02d集", n)
+	}
+	return k
+}
+
+// detailShotViews 把明细里的某一集转成页签用的镜头视图（带上新字段）。
+func detailShotViews(shots []scriptDetailShot, want string) []scriptShotView {
+	out := []scriptShotView{}
+	for _, s := range shots {
+		k := epKeyOf(s.Episode)
+		if k == "" {
+			k = "1"
+		}
+		if want != k && want != detailEpLabel(k) {
+			continue
+		}
+		v := scriptShotView{
+			ID: s.ID, Size: s.ShotSize, Duration: s.Duration, Mode: s.Mode,
+			Action: s.Action, Narration: s.Narration, Chars: s.Characters,
+			View: s.View, HookType: s.HookType, EndState: s.EndState,
+			Landmarks: s.SceneLandmarks, Light: s.Light, SceneName: s.Scene,
+		}
+		if v.Mode == "" {
+			v.Mode = "ref2va"
+		}
+		for _, d := range s.Dialogue {
+			if strings.TrimSpace(d.Text) == "" {
+				continue
+			}
+			who := strings.TrimSpace(d.Speaker)
+			if who == "" {
+				who = "?"
+			}
+			if d.OS {
+				who += "(画外)"
+			}
+			v.Dialogue = append(v.Dialogue, who+":"+d.Text)
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
 // handleNovelScript GET /api/novels/script?path=<书目录>[&episode=<包目录>]
 //
 // 小说库详情弹窗的「剧本脚本 / 角色 / 场景」数据源(2026-09-26 用户要求:
@@ -177,10 +335,30 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 	// 一本书可能只有其中之一（技能侧 v2.14 起就常常只有新产物）。
 	assets, storyboard, pkgView := collectNovelDeliverables(book)
 	hasDeliverables := len(assets) > 0 || len(storyboard) > 0
+	// 结构化明细（技能侧新交的 `分镜/分镜明细.json`）：有它就用它出集清单与镜头明细 ——
+	// 它的字段与平台契约同名（view/hook_type/end_state/landmarks/light），比旧 plan.json 全。
+	detailShots := loadNovelShotDetail(book)
+	wantEp := strings.TrimSpace(r.URL.Query().Get("episode"))
 
 	bs := s.findBookScript(book)
 	if bs == nil {
-		// 没有渲染包，但盘上有技能侧新产物 → **仍然算"有东西可看"**。
+		// ① 没有渲染包，但有**结构化明细** → 直接用它服务（这正是不再"功能看起来没了"的那条路）
+		if len(detailShots) > 0 {
+			out := map[string]any{
+				"found": true, "kind": "detail-json", "source": novelShotDetailJSON,
+				"episodes": detailEpisodes(detailShots),
+				"chars":    []any{}, "scenes": []any{}, "props": []any{}, "deliverables": map[string]any{"assets": assets, "storyboard": storyboard},
+				"package": pkgView,
+				"hint": "这本书没有渲染脚本包，镜头明细来自技能侧的结构化明细 " + novelShotDetailJSON +
+					"（字段与平台契约同名）；渲染请走「视频制作」（平台 LLM 直出）",
+			}
+			if wantEp != "" {
+				out["shots"] = detailShotViews(detailShots, wantEp)
+			}
+			writeJSON(w, 200, out)
+			return
+		}
+		// ② 没有渲染包，但盘上有技能侧新产物 → **仍然算"有东西可看"**。
 		// 这是本页签 2026-09-27 之前的一个真缺口:技能侧把交付面换成 markdown 之后,
 		// 界面只会说"没有技能端脚本包",用户以为功能没了。
 		if hasDeliverables {
@@ -267,17 +445,29 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 	if bs.Deprecated {
 		out["deprecated"] = true
 	}
+	// 结构化明细优先（技能侧 2026-09-27 新交，字段与契约同名、比旧 plan.json 全）：
+	// 有它就覆盖集清单与镜头明细，包那半只留角色/场景/道具卡与"包是否废弃"的标记。
+	if len(detailShots) > 0 {
+		out["source"] = novelShotDetailJSON
+		out["episodes"] = detailEpisodes(detailShots)
+		if wantEp != "" {
+			out["shots"] = detailShotViews(detailShots, wantEp)
+			out["h3_prompt_of"] = detailEpLabel(wantEp)
+		}
+		writeJSON(w, 200, out)
+		return
+	}
 	// 按需取某一集的镜头明细
-	if want := strings.TrimSpace(r.URL.Query().Get("episode")); want != "" {
+	if wantEp != "" {
 		target := ""
 		for _, p := range pkgs {
-			if p == want || filepath.Base(p) == want {
+			if p == wantEp || filepath.Base(p) == wantEp {
 				target = p
 				break
 			}
 		}
 		if target == "" {
-			writeErr(w, 404, fmt.Errorf("这本书里没有这一集:%s", want))
+			writeErr(w, 404, fmt.Errorf("这本书里没有这一集:%s", wantEp))
 			return
 		}
 		plan := loadPlanLenient(target)
@@ -383,4 +573,25 @@ func loadPlanLenient(pkgDir string) *project.Plan {
 		return nil
 	}
 	return &p
+}
+
+// epKeyOf 集号 → 排序/匹配用的字符串键（数字与字符串两种写法都认）。
+func epKeyOf(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(t)
+	case float64:
+		if t == float64(int(t)) {
+			return strconv.Itoa(int(t))
+		}
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(t)
+	case json.Number:
+		return t.String()
+	default:
+		return strings.TrimSpace(fmt.Sprint(t))
+	}
 }

@@ -131,6 +131,106 @@ func TestNovelScriptListsSkillDeliverables(t *testing.T) {
 	}
 }
 
+// TestNovelScriptPrefersStructuredDetail 技能侧的**结构化明细**优先于旧渲染包（追补单 N3）。
+//
+// 依据：技能侧 2026-09-27 新交 `分镜/分镜明细.json`（2462 镜 / 40 集），字段名直接用平台契约的
+// `view` / `hook_type` / `end_state`，另有 `scene_landmarks` / `light`；而渲染包里的 plan.json 是
+// 停用前的旧形态（没有这几个字段）。所以页签的镜头明细要读明细，**包只用来补角色/场景/道具卡**。
+//
+// 同时钉住两件容易漏的：① 明细文件本身要在"技能侧交付"里看得见（原先的 `.md` 过滤器把它挡掉了）；
+// ② 只有明细、没有包的书也要能打开页签（found=true）。
+func TestNovelScriptPrefersStructuredDetail(t *testing.T) {
+	s, _ := newHiddenTestServer(t)
+	writeFile := func(book, rel, body string) {
+		full := filepath.Join(book, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	detail := `{"generated":"2026-09-27","engine":"h3","note":"机械派生","shots":[
+	  {"episode":1,"id":1,"duration":5,"shot_size":"特写","scene":"临水城","characters":["Shen Yan"],
+	   "mode":"ref2va","view":"平视","camera":"Static, no movement","hook_type":"reveal",
+	   "end_state":"he stands at the threshold","action":"他站在门槛前","action_en":"he stands",
+	   "emotion":"calm","sound":"wind","dialogue":[{"speaker":"沈砚","text":"我准了","os":false}],
+	   "narration":"","scene_landmarks":"gate tower (left)","light":"3000K warm side-backlight"},
+	  {"episode":2,"id":1,"duration":6,"shot_size":"中景","scene":"城隍庙","characters":[],
+	   "mode":"t2va","view":"俯拍","camera":"static","hook_type":"setup",
+	   "end_state":"empty hall","action":"空镜","action_en":"empty hall",
+	   "emotion":"","sound":"","dialogue":[],"narration":"三年了。",
+	   "scene_landmarks":"altar (center)","light":"7000K moon"}]}`
+
+	// ① 有包 + 有明细：明细优先，包补卡
+	both := mkBookWithScript(t, s, "两者都有", "漫剧脚本", 2)
+	writeFile(both, "分镜/分镜明细.json", detail)
+	_, m := doReq(t, s, "GET", "/api/novels/script?path="+urlEnc(both), nil)
+	if m["source"] != "分镜明细.json" {
+		t.Errorf("应标明数据来源是结构化明细，实际 %v", m["source"])
+	}
+	if eps, _ := m["episodes"].([]any); len(eps) != 2 {
+		t.Errorf("明细里有 2 集，实际 %v", m["episodes"])
+	}
+	if pkg, _ := m["package"].(map[string]any); pkg == nil || pkg["present"] != true {
+		t.Errorf("包仍在盘上时 package.present 应为 true（角色/场景卡还要用它），实际 %v", m["package"])
+	}
+	if chars, _ := m["characters"].([]any); len(chars) == 0 {
+		t.Error("角色卡那半仍应由渲染包提供（明细里没有卡）")
+	}
+	// 交付物清单里要看得见这个 json（原先只收 .md，正是 N3 报的缺口）
+	names := map[string]bool{}
+	if dl, ok := m["deliverables"].(map[string]any); ok {
+		for _, group := range []string{"assets", "storyboard"} {
+			if items, ok := dl[group].([]any); ok {
+				for _, it := range items {
+					if mm, ok := it.(map[string]any); ok {
+						names[mm["name"].(string)] = true
+					}
+				}
+			}
+		}
+	}
+	if !names["分镜明细.json"] {
+		t.Errorf("技能侧交付里应列出 分镜明细.json，实际 %v", names)
+	}
+
+	// ② 某一集的镜头明细要走明细（新字段必须真的带到前端）
+	_, m2 := doReq(t, s, "GET", "/api/novels/script?path="+urlEnc(both)+"&episode=1", nil)
+	shots, _ := m2["shots"].([]any)
+	if len(shots) != 1 {
+		t.Fatalf("第 1 集应有 1 镜，实际 %v", m2["shots"])
+	}
+	s0, _ := shots[0].(map[string]any)
+	for k, want := range map[string]string{
+		"view": "平视", "hook_type": "reveal", "end_state": "he stands at the threshold",
+		"landmarks": "gate tower (left)", "light": "3000K warm side-backlight",
+	} {
+		if got, _ := s0[k].(string); got != want {
+			t.Errorf("镜头明细缺 %s：得到 %q，期望 %q", k, got, want)
+		}
+	}
+	if d, _ := s0["dialogue"].([]any); len(d) != 1 || d[0] != "沈砚:我准了" {
+		t.Errorf("台词应转成「说话人:台词」，实际 %v", s0["dialogue"])
+	}
+	// 集号也能用「第NN集」形态取（前端显示的是这个）
+	_, m3 := doReq(t, s, "GET", "/api/novels/script?path="+urlEnc(both)+"&episode="+urlEnc("第01集"), nil)
+	if shots3, _ := m3["shots"].([]any); len(shots3) != 1 {
+		t.Errorf("用「第01集」也应取到第 1 集，实际 %v", m3["shots"])
+	}
+
+	// ③ 只有明细、没有包：页签照样要能打开
+	only := filepath.Join(s.novelRoot(), "只有明细")
+	writeFile(only, "分镜/分镜明细.json", detail)
+	_, m4 := doReq(t, s, "GET", "/api/novels/script?path="+urlEnc(only), nil)
+	if found, _ := m4["found"].(bool); !found {
+		t.Fatalf("只有结构化明细时 found 应为 true，实际 %v", m4)
+	}
+	if eps, _ := m4["episodes"].([]any); len(eps) != 2 {
+		t.Errorf("只有明细时也要给出集清单，实际 %v", m4["episodes"])
+	}
+}
+
 // TestFindBookScriptDetects 三种形态:书目录本身就是单集包 / 子目录里有多集包 / 什么都没有。
 func TestFindBookScriptDetects(t *testing.T) {
 	s, _ := newHiddenTestServer(t)

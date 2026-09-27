@@ -58,11 +58,26 @@ type ComfySettings struct {
 	// 旧的 Qwen-Image-Edit-2511 仍可选中(imageedit.go 按编辑底模文件名自动选图形态),
 	// 选中它时下面两个 LoRA 才有意义:Lightning 4 步加速、Multiple-Angles 转角度
 	// —— 它们都是为 2511 训的,套到 2.1 上不成立,所以 2.1 档下默认留空。
-	EditUNet       string `json:"edit_unet"`        // 默认 qwen_image_2.1_int8_convrot.safetensors
-	EditCLIP       string `json:"edit_clip"`        // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
-	EditVAE        string `json:"edit_vae"`         // 默认 qwen_image_2.1_vae_bf16.safetensors
-	EditTurboLoRA  string `json:"edit_turbo_lora"`  // 2511 专用加速 LoRA(2.1 档留空)
-	EditAnglesLoRA string `json:"edit_angles_lora"` // 2511 专用转角度 LoRA(2.1 档留空)
+	EditUNet string `json:"edit_unet"` // 默认 qwen_image_2.1_int8_convrot.safetensors
+	EditCLIP string `json:"edit_clip"` // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
+	EditVAE  string `json:"edit_vae"`  // 默认 qwen_image_2.1_vae_bf16.safetensors
+	// 下面两个 LoRA 是 **2511 专用**（见上面那段与 imageedit.go:217-230 的挂载点）。
+	//
+	// 【2026-09-27 技能侧追补单 N2 的答复 —— 这里不是漏配，是刻意留空】
+	// 那份单子看到盘上有
+	// `Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors`（810 MB）与
+	// `qwen-image-edit-2511-multiple-angles-lora.safetensors`（281 MB）就以为该接上，并判断
+	// "edit_unet 已指向 2511"。**事实相反**：本机 `edit_unet = qwen_image_2.1_int8_convrot.safetensors`
+	// （2.1 族），而盘上这两个 LoRA **只有 2511 版**（没有 2.1 版）—— 把 2511 的 LoRA 挂到 2.1 底模上
+	// 不是"更慢"或"没用"，而是**污染出图**（权重与底模不同代，patch 的投影维度对不上）。
+	// 所以 2.1 档下必须留空，且这一条被三处守着：
+	//   ① `editTripleIsLegacy2511` 迁移 —— 把"2511 底模 + 这两个 LoRA"的旧组合迁到 2.1 并清空；
+	//   ② `image_family_migration_test.go` 断言"2511 专用 LoRA 必须清空"；
+	//   ③ `EditAssets`（编辑链路的权重体检）会报"底模与 LoRA 不同代"的误配。
+	// 什么时候才该填：把 `edit_unet` 换回 2511 那一支（imageedit.go 按文件名自动切图形态），
+	// 此时这两个 LoRA 生效、4 步加速与"换机位"才可用。
+	EditTurboLoRA  string `json:"edit_turbo_lora"`  // 2511 专用加速 LoRA（Lightning 4 步）；2.1 档留空
+	EditAnglesLoRA string `json:"edit_angles_lora"` // 2511 专用转角度 LoRA（Multiple-Angles）；2.1 档留空
 
 	// ReserveVRAMGB 启动 ComfyUI 时预留的显存(GB),留给系统/浏览器。
 	// 实测渲染前别的进程已占 1-2GB,不预留就等于和桌面抢最后几 GB(CUDA OOM 或

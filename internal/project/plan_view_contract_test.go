@@ -217,6 +217,52 @@ func TestHookVocabularyMatchesOfficialList(t *testing.T) {
 	// PlanHookTypes 逐个断言，加词漏改提示词会立刻红。
 }
 
+// TestValidatePlanCloseUpWithoutCard 特写/近景却"没有参考卡的人"（2026-09-27 技能侧追补单 N1）。
+//
+// 这一档画面里几乎只有一张脸，而参考图是从 `characters` 派生的 —— 没有人就没有参考图，
+// 每次生成换一张新脸。技能侧全书 2462 镜里就抓到 3 镜（含全书第一镜），原话：
+// "根因不是笔误，而是这类缺陷没有门"。所以这条必须**正反都钉**。
+func TestValidatePlanCloseUpWithoutCard(t *testing.T) {
+	// 反向：特写 + 绑了角色 → 不报
+	p := viewShotPlan(2, true)
+	p.Shots[0].ShotSize = "特写"
+	if hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
+		t.Fatalf("特写绑了角色不该报：%v", PlanIssuesText(ValidatePlan(p)))
+	}
+	// 正向：特写 + 没有角色 → 报，且文案要给出两条出路
+	p = viewShotPlan(2, true)
+	p.Shots[0].ShotSize = "特写"
+	p.Shots[0].Characters = nil
+	issues := ValidatePlan(p)
+	if !hasIssue(issues, "warn", "却没有出场角色") {
+		t.Fatalf("特写没角色必须报：%v", PlanIssuesText(issues))
+	}
+	txt := strings.Join(PlanIssuesText(issues), "；")
+	for _, want := range []string{"绑上角色卡", "改到不露脸"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("提示里应给出去路 %q：%s", want, txt)
+		}
+	}
+	// 四种"脸上特写"都要认（含中近景：它同样以脸为主）
+	for _, size := range []string{"特写", "近景", "中近景", "大特写"} {
+		p = viewShotPlan(2, true)
+		p.Shots[0].ShotSize = size
+		p.Shots[0].Characters = nil
+		if !hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
+			t.Errorf("景别 %q 应算脸上特写：%v", size, PlanIssuesText(ValidatePlan(p)))
+		}
+	}
+	// 反向：中景/全景没角色是正常的（空镜、环境镜）
+	for _, size := range []string{"中景", "全景", "远景"} {
+		p = viewShotPlan(2, true)
+		p.Shots[0].ShotSize = size
+		p.Shots[0].Characters = nil
+		if hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
+			t.Errorf("景别 %q 不该算脸上特写：%v", size, PlanIssuesText(ValidatePlan(p)))
+		}
+	}
+}
+
 func TestValidatePlanHookDensity(t *testing.T) {
 	// 反向：每镜 reveal（强钩子）→ 不报
 	if issues := ValidatePlan(viewShotPlan(3, true)); hasIssue(issues, "warn", "hook_type") {

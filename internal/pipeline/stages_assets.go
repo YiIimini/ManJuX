@@ -25,6 +25,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	if err != nil {
 		return fmt.Errorf("尚未生成分镜方案:请先运行「剧本分镜」阶段")
 	}
+	// 身份真源唯一化：这本书有技能侧素材三卡就用它的定妆串（追补单 N4，见 asset_cards.go）。
+	// 放在这里而不是各出图点：下面每条路径（初出/补缺/多视角/三视图板）都从 plan 取提示词，
+	// 在**读完之后、出第一张图之前**覆盖一次，四条路才会看到同一个真源。
+	c.applyCardPrompts(proj, plan)
 	assets, err := c.store.LoadAssets(proj.ID)
 	if err != nil {
 		return err
@@ -936,6 +940,8 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 	if proj.Config.Params.Assets.Source == "skip" {
 		return true
 	}
+	// 与 runAssets 同一个真源替换（两条路各自读 plan，必须都覆盖，否则"初出用卡片、补缺用 LLM"）
+	c.applyCardPrompts(proj, plan)
 	if notice := styleFallbackNotice(proj, plan); notice != "" {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", notice)
 	}

@@ -354,5 +354,32 @@ func (e *Engine) EditAssets(ctx context.Context) []string {
 				a.label, a.file, a.where))
 		}
 	}
+	// 底模与 LoRA **不同代**的误配（2026-09-27 技能侧追补单 N2）。
+	//
+	// 这类误配的特点是**不报错**，只是把结果悄悄弄坏/弄没：
+	//   · 2511 专用 LoRA 挂在 2.1 底模上 → 权重与底模不同代，出图被污染（不是"没用"，是"弄坏"）；
+	//   · 反过来底模是 2511 而两个 LoRA 空着 → "4 步加速"与"换机位"静默失效，用的人以为在跑加速。
+	// 判据只认文件名里的 `2511` —— 与 imageedit.go 选图形态用的是同一个信号（不再另立一套）。
+	// 放在体重检里而不是 fatal：2.1 档空着是**正常状态**，只有"配了却配错代"才是问题。
+	editIs2511 := strings.Contains(strings.ToLower(c.EditUNet), "2511")
+	hasTurbo := strings.TrimSpace(c.EditTurboLoRA) != ""
+	hasAngles := strings.TrimSpace(c.EditAnglesLoRA) != ""
+	switch {
+	case (hasTurbo || hasAngles) && !editIs2511:
+		var which []string
+		if hasTurbo {
+			which = append(which, c.EditTurboLoRA)
+		}
+		if hasAngles {
+			which = append(which, c.EditAnglesLoRA)
+		}
+		missing = append(missing, fmt.Sprintf(
+			"编辑底模「%s」不是 2511，却配了 2511 专用 LoRA（%s）—— 权重与底模不同代会**污染出图**："+
+				"请清空这两个设置，或把编辑底模换回 2511 那一支（换回后它们才生效）",
+			c.EditUNet, strings.Join(which, " / ")))
+	case editIs2511 && !hasTurbo && !hasAngles:
+		missing = append(missing, "编辑底模是 2511，但加速/转角度 LoRA 都空着 —— "+
+			"4 步加速与「换机位」不会生效（要用就填那两个 2511 专用 LoRA；2.1 底模请保持空，见 config.go 的说明）")
+	}
 	return missing
 }

@@ -711,18 +711,38 @@ function onCardCmd(cmd, n) {
                   <b class="text-xs">分镜明细</b>
                   <span class="timecode">{{ scriptShots.length }} 镜</span>
                   <span class="timecode" style="font-size:10px">景别 · 时长 · 台词/旁白</span>
+                  <!-- 数据来源如实标出：结构化明细（技能侧新交，字段与契约同名、带主视角/钩子/尾帧）
+                       与旧渲染包（plan.json，没有这三个字段）要在界面上分得清 -->
+                  <span v-if="script.source" class="timecode" style="font-size:10px"
+                        :title="script.source === '分镜明细.json'
+                          ? '镜头明细来自技能侧结构化明细（带 view/hook_type/end_state/地标/光态）'
+                          : '镜头明细来自渲染脚本包 plan.json（旧形态：没有主视角/钩子/尾帧）'">
+                    {{ script.source === '分镜明细.json' ? '结构化明细' : '渲染包' }}
+                  </span>
                 </div>
                 <div class="flex-1 overflow-y-auto tree-scroll">
                   <div v-for="s in scriptShots" :key="s.id" class="shot-row">
-                    <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2 flex-wrap">
                       <span class="timecode" style="min-width:38px">#{{ s.id }}</span>
                       <el-tag size="small" effect="plain">{{ s.size || '—' }}</el-tag>
                       <span class="timecode">{{ s.duration }}s</span>
                       <el-tag size="small" :type="s.mode === 'ref2va' ? 'warning' : 'info'" effect="plain">{{ s.mode }}</el-tag>
+                      <el-tag v-if="s.view" size="small" type="info" effect="plain" title="主视角">{{ s.view }}</el-tag>
+                      <el-tag v-if="s.hook_type" size="small" type="success" effect="plain" title="官方受控钩子类型">{{ s.hook_type }}</el-tag>
+                      <el-tag v-if="s.characters?.length" size="small" effect="plain" title="出场角色（决定参考图）">{{ s.characters.join('、') }}</el-tag>
+                      <el-tag v-if="s.size && !s.characters?.length && (s.size.includes('特写') || s.size.includes('近景'))"
+                              size="small" type="danger" effect="dark" title="特写/近景却没有出场角色：这一档画面里几乎只有一张脸，没有卡就每次换一张新脸">
+                        无卡露脸
+                      </el-tag>
                     </div>
                     <div class="text-xs mt-1" style="white-space:pre-wrap">{{ s.action }}</div>
                     <div v-for="(d, i) in (s.dialogue || [])" :key="i" class="text-xs mt-1" style="color:var(--mx-amber)">💬 {{ d }}</div>
                     <div v-if="s.narration" class="text-xs mt-1" style="color:var(--mx-text3)">🎙 旁白:{{ s.narration }}</div>
+                    <div v-if="s.end_state" class="text-xs mt-1" style="color:var(--mx-text3)">⏭ 尾帧:{{ s.end_state }}</div>
+                    <div v-if="s.landmarks || s.light" class="text-xs mt-1" style="color:var(--mx-text3)">
+                      <span v-if="s.landmarks">📍 {{ s.landmarks }}</span>
+                      <span v-if="s.light"> · 💡 {{ s.light }}</span>
+                    </div>
                   </div>
                   <div v-if="!scriptShots.length" class="text-xs py-6 text-center" style="color:var(--mx-text3)">选一集看分镜</div>
                 </div>
