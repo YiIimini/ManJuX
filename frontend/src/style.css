@@ -13,6 +13,19 @@
   --mx-bg1: #08080a;
   --mx-bg2: #101013;
   --mx-bg3: #18181c;
+
+  /* 弹层蒙层：**只压暗 + 柔化，不遮挡**。
+     用户 2026-09-27 报障原话：「预览弹窗层级下面的窗口不要给黑色背景啊，后面的主应用窗口都看不到了」。
+     起因：三处全屏蒙层都用了近乎不透明的纯黑 —— 放大预览 .88/.95、全屏媒体预览 .82、
+     封面对比 .88/.95。这是个**桌面应用**（外壳窗口），盖掉之后整块屏是黑的，看着像"窗口没了"。
+     而 2026-09-26 那次要的"图与底有对比"**本来就不靠蒙层黑**（那次自己写的：图的 accent 细边 +
+     大投影才是对比感的主要来源），所以蒙层可以从"遮挡"退回"压暗"：
+       --mx-scrim        普通全屏预览（看单张图/看片）
+       --mx-scrim-strong 需要更强分离的对比视图（新旧封面对比、放大看封面细节）
+     要调只改这里 —— 三处蒙层都读它，不再各写一套数值。 */
+  --mx-scrim: color-mix(in srgb, var(--mx-bg0) 46%, transparent);
+  --mx-scrim-strong: color-mix(in srgb, var(--mx-bg0) 58%, transparent);
+  --mx-scrim-filter: blur(5px) saturate(.92);
   --mx-line: #1f1f24;
   --mx-line-hi: #33333c;
   /* 主色:该主题下是"银白"(其余 8 套主题各有各的强调色) */
@@ -1671,12 +1684,14 @@ button:focus-visible, [tabindex]:focus-visible, a:focus-visible {
    后写的胜(封面菜单钮栽过同一个坑,见 .cover-menu-wrap 那段)。 */
 .el-image-viewer__mask {
   opacity: 1 !important;
+  /* 2026-09-27 用户报障后**收回**到"压暗"口径（不再是近乎全黑）：
+     「预览弹窗层级下面的窗口不要给黑色背景啊，后面的主应用窗口都看不到了」。
+     对比感交给 ②（图的 accent 细边 + 大投影，那才是主要来源），蒙层只负责压暗与柔化。
+     数值见 :root 的 --mx-scrim / --mx-scrim-strong（三处蒙层共用一套）。 */
   background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--mx-bg1) 88%, transparent) 0%,
-      color-mix(in srgb, var(--mx-bg0) 95%, transparent) 100%),
+    var(--mx-scrim-strong),
     color-mix(in srgb, var(--mx-amber) 5%, transparent) !important;
-  backdrop-filter: blur(12px) saturate(.85);
+  backdrop-filter: blur(8px) saturate(.9);
 }
 .el-image-viewer__img {
   border-radius: 8px;

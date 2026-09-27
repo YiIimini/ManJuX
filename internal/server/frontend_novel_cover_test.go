@@ -100,8 +100,13 @@ func TestNovelCoverZoomPreview(t *testing.T) {
 	if !strings.Contains(mask, "opacity: 1 !important") {
 		t.Errorf("蒙层必须盖掉 EP 的 opacity:.5(半透明会让底层书名透在图上):\n%s", mask)
 	}
-	if !strings.Contains(mask, "var(--mx-bg0)") || !strings.Contains(mask, "var(--mx-amber)") {
-		t.Errorf("蒙层颜色必须取自主题变量(bg0 深底 + 一丝 accent)——写死颜色换个肤就又糊了:\n%s", mask)
+	// 蒙层颜色必须取自主题变量 —— 写死颜色换个肤就又糊了（09-26 的原始理由，仍然成立）。
+	// 2026-09-27 起颜色经 **--mx-scrim\* 变量**间接取（数值与"只压暗不遮挡"的口径在那一条里，
+	// 定义本身仍是 `color-mix(... var(--mx-bg0) NN%, transparent)`，见 frontend_overlay_test.go
+	// 对"必须由主题底色派生"的断言）—— 断言跟着这层间接改，要求的东西没变：
+	// ① 不写死颜色；② 仍混一丝 accent 当对比色。
+	if !strings.Contains(mask, "var(--mx-scrim") || !strings.Contains(mask, "var(--mx-amber)") {
+		t.Errorf("蒙层颜色必须取自主题变量(经 --mx-scrim* 由 bg0 派生 + 一丝 accent)——写死颜色换个肤就又糊了:\n%s", mask)
 	}
 	if !strings.Contains(mask, "backdrop-filter") {
 		t.Errorf("蒙层要模糊底层,把它化成色块而不是透字:\n%s", mask)

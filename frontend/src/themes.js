@@ -318,6 +318,11 @@ export function themeById(id) {
 //   CSS 里只留组件级的补充样式(描边/Focus 环等,那些是类选择器,不受影响)。
 export function applyElementPlusVars(root) {
   const V = {
+    // EP 的弹层蒙层（.el-overlay 读的就是它）：默认 50% 纯黑，暗底应用上再叠一层就显得整块屏都黑了。
+    // 2026-09-27 用户报障「预览弹窗层级下面的窗口不要给黑色背景…后面的主应用窗口都看不到了」——
+    // 全屏预览那三处已收到 46/58%（style.css 的 --mx-scrim*），弹窗这一层顺手收到 44%：
+    // 仍能把注意力压到弹窗上，但后面的应用还看得清（这是桌面应用，不像网页可以整屏遮）。
+    '--el-overlay-color-lighter': 'color-mix(in srgb, #000 44%, transparent)',
     '--el-color-primary': 'var(--mx-accent, var(--mx-amber))',
     '--el-color-primary-light-3': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 70%, #fff)',
     '--el-color-primary-light-5': 'color-mix(in srgb, var(--mx-accent, #f0a24a) 50%, #fff)',

@@ -161,7 +161,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); onUp() })
 </template>
 
 <style scoped>
-/* 蒙层与放大预览同一套口径(主题深底 + 模糊),不再用 EP 那层半透明纯黑薄纱 */
+/* 蒙层口径：**压暗 + 柔化，不遮挡**（2026-09-27 用户报障后统一，数值见 style.css 的 --mx-scrim*）。
+   这里用 strong 那一档：新旧封面要互相分得清，需要比普通预览更强的分离。
+   早先是 bg1 88% → bg0 95% 的渐变（近乎全黑），桌面壳里会把后面的应用整块盖掉。 */
 .cc-mask {
   position: fixed;
   inset: 0;
@@ -171,11 +173,9 @@ onBeforeUnmount(() => { window.removeEventListener('keydown', onKey); onUp() })
   justify-content: center;
   padding: 22px;
   background:
-    linear-gradient(180deg,
-      color-mix(in srgb, var(--mx-bg1) 88%, transparent) 0%,
-      color-mix(in srgb, var(--mx-bg0) 95%, transparent) 100%),
+    var(--mx-scrim-strong),
     color-mix(in srgb, var(--mx-amber) 5%, transparent);
-  backdrop-filter: blur(12px) saturate(.85);
+  backdrop-filter: blur(8px) saturate(.9);
 }
 .cc-shell {
   width: min(96vw, 1360px);

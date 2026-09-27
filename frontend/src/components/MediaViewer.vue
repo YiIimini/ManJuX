@@ -63,8 +63,12 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
      弹窗/抽屉里点图打开预览时,预览器被压在弹窗底下(看不见也点不到)。
      现取 2700:高于弹层计数器与运行日志悬浮窗(2600),低于永远最高的 Tip(3000)。 */
   z-index: 2700;
-  background: color-mix(in srgb, var(--mx-bg0) 82%, transparent);
-  backdrop-filter: blur(10px);
+  /* 蒙层：**只压暗 + 柔化，不遮挡**（口径与变量见 style.css 的 --mx-scrim）。
+     原先这里是 `--mx-bg0`(纯黑) 82% + blur(10px) —— 桌面壳里盖掉之后整屏全黑，
+     用户 2026-09-27 报障「后面的主应用窗口都看不到了」。弹层本身是不透明的壳
+     （.mv-shell 有自己的底与描边），所以蒙层不需要黑，只需要把注意力压过来。 */
+  background: var(--mx-scrim);
+  backdrop-filter: var(--mx-scrim-filter);
   display: flex; align-items: center; justify-content: center;
   padding: 32px;
 }
