@@ -33,10 +33,14 @@ import (
 const cardStyleMarker = "GUOFENG ANIMATED-FEATURE ART DIRECTION"
 
 var (
+	// 注意两处 `\r?`：技能侧的 markdown 是**在 Windows 上写的 CRLF**（实测角色卡 105993 字节、
+	// CRLF=true）。行锚定正则不写 `\r?` 就会一条都匹配不上 —— 而夹具若用 LF 写，测试照样是绿的。
+	// 这个坑真踩过：`^\*\*①[^\n]*\*\*[ \t]*$` 在 CRLF 上匹配 0 条（`\r` 卡在 `$` 前面）。
+	//
 	// cardSectionRe 卡片里的角色小节：`### 沈砚（主角 · 灾星）`
-	cardSectionRe = regexp.MustCompile(`(?m)^###[ \t]+(.+?)[ \t]*$`)
+	cardSectionRe = regexp.MustCompile(`(?m)^###[ \t]+(.+?)\r?[ \t]*$`)
 	// cardPortraitRe 小节里的「① 定妆」抬头（后面紧跟一个 ```text 块）
-	cardPortraitRe = regexp.MustCompile("(?m)^\\*\\*①[^\\n]*\\*\\*[ \t]*$")
+	cardPortraitRe = regexp.MustCompile("(?m)^\\*\\*①[^\\n]*\\*\\*\\r?[ \t]*$")
 	// cardFenceRe fenced 代码块（```text … ```）
 	cardFenceRe = regexp.MustCompile("(?s)```(?:text)?[ \t]*\r?\n(.*?)```")
 )

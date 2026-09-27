@@ -15,8 +15,12 @@ import (
 // 样本逐字取自真实产出（`data/小说/求你们骂我/素材/角色卡.md` 的沈砚一节），
 // 并用**真实目录约定**（`<小说库>/<书名>/素材/角色卡.md` 对 `<projects>/<书名>/<书名·第01集·x>/`）
 // 跑一遍端到端 —— 这条接线的全部风险都在"书名怎么对上"，不用真目录测等于没测。
+//
+// **夹具的换行必须是 CRLF**：真实角色卡是在 Windows 上写的（实测 CRLF=true）。
+// 第一版夹具用了 LF，于是行锚定正则少了 `\r?` 也照样绿 —— 而真机上解析出 0 个角色。
+// 夹具跟着真实形态走，这条测试才有意义。
 
-const cardSample = `# 角色卡 · 求你们骂我
+const cardSampleLF = `# 角色卡 · 求你们骂我
 
 > 口径：` + "`references/资产提示词-三卡规范.md`" + `。
 
@@ -44,6 +48,9 @@ Granny — front-facing half-body portrait. IDENTITY LOCK: seventy years old, wh
 GUOFENG ANIMATED-FEATURE ART DIRECTION (period Chinese): a photoreal 3D surface.
 ` + "```" + `
 `
+
+// cardSample 真实形态：CRLF。
+var cardSample = strings.ReplaceAll(cardSampleLF, "\n", "\r\n")
 
 func TestParseCharacterCardsAndStripStyle(t *testing.T) {
 	cards := project.ParseCharacterCards(cardSample)

@@ -209,9 +209,35 @@ type scriptDetailShot struct {
 		Text    string `json:"text"`
 		OS      bool   `json:"os"`
 	} `json:"dialogue"`
-	Narration      string `json:"narration"`
-	SceneLandmarks string `json:"scene_landmarks"`
+	Narration string `json:"narration"`
+	// SceneLandmarks 真文件里是**字符串数组**（`["City gate tower","Stone arch bridge"]`）。
+	// 收成 any 是吃过一次亏的：先前声明成 string → 整份 2.3MB JSON 的 Unmarshal 直接失败，
+	// 页签看起来"什么都没读到"，而**夹具测试却是绿的**（夹具里我自己写成了字符串）。
+	// 教训：夹具必须照**真实形态**写，否则测的是我脑子里那个文件，不是盘上那个。
+	SceneLandmarks any    `json:"scene_landmarks"`
 	Light          string `json:"light"`
+}
+
+// landmarksText 地标字段 → 一行文字（容忍数组/单字符串/空）。
+func landmarksText(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return strings.TrimSpace(t)
+	case []string:
+		return strings.Join(t, " · ")
+	case []any:
+		parts := make([]string, 0, len(t))
+		for _, it := range t {
+			if s, ok := it.(string); ok && strings.TrimSpace(s) != "" {
+				parts = append(parts, strings.TrimSpace(s))
+			}
+		}
+		return strings.Join(parts, " · ")
+	default:
+		return strings.TrimSpace(fmt.Sprint(t))
+	}
 }
 
 // loadNovelShotDetail 读一本书的结构化明细（没有或读不动就返回 nil —— 页签照旧走渲染包）。
@@ -290,7 +316,7 @@ func detailShotViews(shots []scriptDetailShot, want string) []scriptShotView {
 			ID: s.ID, Size: s.ShotSize, Duration: s.Duration, Mode: s.Mode,
 			Action: s.Action, Narration: s.Narration, Chars: s.Characters,
 			View: s.View, HookType: s.HookType, EndState: s.EndState,
-			Landmarks: s.SceneLandmarks, Light: s.Light, SceneName: s.Scene,
+			Landmarks: landmarksText(s.SceneLandmarks), Light: s.Light, SceneName: s.Scene,
 		}
 		if v.Mode == "" {
 			v.Mode = "ref2va"
