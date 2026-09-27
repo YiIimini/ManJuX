@@ -40,6 +40,12 @@ func TestDirectorPromptsCarrySpecRules(t *testing.T) {
 		"MAX(dialogue time, action time)", "12 seconds", "AT LEAST 5 seconds",
 		// ④ 自包含
 		"NEVER write", "同上",
+		// ⑤ 角色品质条与锚表权威（§3.3/§3.1，写在五官/安全段里 ⇒ 三条提示词都带）
+		"plastic or silicone skin is forbidden", "individual strands readable",
+		"MUST wear shoes", "at least 4 premium materials", "Anchor sheet is the ONLY authority",
+		"发型三要素",
+		// ⑥ 分镜必须解除静态卡的约束（§6.9；**只在这两条写 shots 的提示词里**）
+		"THE SHOT MUST MOVE", "no flutter, no dynamic action",
 	}
 	for name, prompt := range ShotPrompts() {
 		for _, w := range want {
@@ -47,6 +53,28 @@ func TestDirectorPromptsCarrySpecRules(t *testing.T) {
 				t.Errorf("%s 缺 %q —— 技能侧生成规范的口径掉了", name, w)
 			}
 		}
+	}
+}
+
+// TestSceneAndDynamicBlocks Scene 块只在**写 scenes 的提示词**里（分批分镜轮不产出场景卡）；
+// 动态解除块只在**写 shots 的提示词**里 —— 混在一起的守卫会要求"每条提示词都有全部规则"，
+// 那不是事实，也就守不住真正的缺口（见 ShotPrompts 的注释）。
+func TestSceneAndDynamicBlocks(t *testing.T) {
+	sceneMarkers := []string{
+		"FOUR ELEMENTS", "at least 2 of these five", "A-versus-B", "ALLOWED decay",
+		"foreground / midground / background",
+	}
+	if !strings.Contains(SystemPrompt, "## SCENE CARDS") {
+		t.Fatal("单轮直出提示词里应有场景卡段")
+	}
+	for _, m := range sceneMarkers {
+		if !strings.Contains(SystemPrompt, m) {
+			t.Errorf("场景卡段缺 %q（§4.2/§4.5/§4.7 的口径：四要素、三层与五项≥2、A 与 B 句式、反向白名单）", m)
+		}
+	}
+	// 分批分镜轮**不该**带场景卡段（它不产出场景卡）
+	if strings.Contains(batchSystemPrompt, "## SCENE CARDS") {
+		t.Error("分批分镜轮不产出场景卡，不该带那一段")
 	}
 }
 

@@ -769,10 +769,21 @@ func PropImagePrompt(proj *project.Project, plan *project.Plan, pr project.Prop)
 	return prompt
 }
 
-// propPlateClause 道具图的画面纪律（1:1 白底单件 + 不画字）。见 PropImagePrompt。
+// propPlateClause 道具图的画面纪律（1:1 白底单件 + 不画字 + 八项信息的可画化）。见 PropImagePrompt。
+//
+// 2026-09-27 按技能侧《平台侧生成规范》§5.1 的骨架补齐三样规范明确要求、而这里原先没写的东西：
+// ① **≥4 种顶级材质混搭 + 至少一处非功能性装饰**（"极繁＋静态展示"是道具的质感来源）；
+// ② **尺寸参照**（规范八项里有"尺寸"，不写模型不知道它多大 —— 大印与书签会长成一样）；
+// ③ **面板类道具内容留白**（系统 UI 那块全息面板绝不许画字，与场景板的汉字卫生同一条机理）。
 const propPlateClause = "Single object only, centred, shot 1:1 square from a straight-on angle, on a plain pure white " +
 	"seamless background: no scenery, no people, no hands, no cast shadow, no text, no letters, no numerals, no watermark, " +
-	"no logo, no label of any kind. Keep the object's material, colour and finish exactly as described."
+	"no logo, no label of any kind. Keep the object's material, colour and finish exactly as described. " +
+	"Build it as an ornate, statically displayed artefact: mix at least four premium materials with visible craft " +
+	"(engraving, inlay, filigree or high relief), and include at least one purely decorative, non-functional feature " +
+	"(asymmetric guard, tassel, fringe, beast-head finial, pierced openwork). State its SIZE against a human reference " +
+	"(a handspan wide / palm-sized / forearm long) so the scale is unambiguous. If this object is a screen-like panel " +
+	"(system interface, holographic display), keep its interior completely BLANK: never letter any text, digits, icons " +
+	"or UI glyphs into it."
 
 // sheetFramingWords LLM 写在 image_prompt 尾部的人像取景短语。
 //

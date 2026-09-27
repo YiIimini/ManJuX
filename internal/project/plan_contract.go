@@ -937,6 +937,81 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 	}
 
+	// ── 词表类判据（技能侧《平台侧生成规范》§6.2 角度词 / §2.4 敏感词 / §4.1 场景命名 / §6.9 三人同框）
+	//
+	// 四条都是"照词表判"的：角度词是必填项、敏感词云端会拦、场景名禁用单一名词、
+	// 三人同框不写前后关系则模型自己排（排出来的关系每一版都不一样）。
+	// 词表与判据在 spec_checks.go，这里只负责把它们接到契约上。
+	if len(p.Shots) > 0 {
+		var badAngle, banned, crowd []string
+		for _, sh := range p.Shots {
+			if !AngleWordOK(sh.AngleZH) {
+				badAngle = append(badAngle, fmt.Sprintf("#%d「%s」", sh.ID, sh.AngleZH))
+			}
+			// 敏感词：查**会进渲染的**文本（正文 + 动作），卡片侧在下面单独查
+			for _, f := range []struct{ name, val string }{
+				{"h3_prompt", sh.H3Prompt}, {"action", sh.Action},
+			} {
+				if w, hint := bannedWordingIn(f.val); w != "" {
+					banned = append(banned, fmt.Sprintf("#%d.%s「%s」→ %s", sh.ID, f.name, w, hint))
+				}
+			}
+			// 三人以上同框：正文里必须写明前后/遮挡关系
+			if len(sh.Characters) >= 3 && !hasAnyMarker(sh.H3Prompt+" "+sh.Action, PlanCrowdOrderMarkers) {
+				crowd = append(crowd, fmt.Sprintf("#%d(%d 人)", sh.ID, len(sh.Characters)))
+			}
+		}
+		if len(badAngle) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的机位角度词不在词表里（%s）—— 只认 %s（组合写法如「慢动作，中景，低角度仰拍」含其一即可）；"+
+					"角度词是必填项，写错等于这一镜没说「从哪看」",
+				len(badAngle), strings.Join(firstN(badAngle, 6), "、"), strings.Join(PlanAngleWords, "/"))
+		}
+		if len(banned) > 0 {
+			add("warn", "plan.shots",
+				"%d 处命中平台敏感词（%s）—— 这些词**云端会拦**（换后端才发现就晚了）；"+
+					"按规范给的安全替代改写即可（替代写法随命中项一起列出）",
+				len(banned), strings.Join(firstN(banned, 4), "；"))
+		}
+		if len(crowd) > 0 {
+			add("warn", "plan.shots",
+				"%d 个镜头三人以上同框却没写前后关系（%s）—— 规范要求「谁在前景、谁被挡、镜头怎么切」，"+
+					"不写就是让模型自己排：每一版站位都不一样，观众看到的是一团人",
+				len(crowd), strings.Join(firstN(crowd, 6), "、"))
+		}
+	}
+	// 角色卡的敏感词与场景命名（卡片侧）
+	var cardBanned, shortNames []string
+	for _, ch := range p.Characters {
+		if w, hint := bannedWordingIn(ch.ImagePrompt + " " + ch.BoardPrompt); w != "" {
+			cardBanned = append(cardBanned, fmt.Sprintf("%s「%s」→ %s", ch.Name, w, hint))
+		}
+	}
+	for _, sc := range p.Scenes {
+		if n := len([]rune(strings.TrimSpace(sc.Name))); n > 0 && n < PlanMinSceneNameRunes {
+			shortNames = append(shortNames, fmt.Sprintf("「%s」", sc.Name))
+		}
+		if w, hint := bannedWordingIn(sc.ImagePrompt); w != "" {
+			cardBanned = append(cardBanned, fmt.Sprintf("场景%s「%s」→ %s", sc.Name, w, hint))
+		}
+	}
+	for _, pr := range p.Props {
+		if w, hint := bannedWordingIn(pr.ImagePrompt + " " + pr.Description); w != "" {
+			cardBanned = append(cardBanned, fmt.Sprintf("道具%s「%s」→ %s", pr.Name, w, hint))
+		}
+	}
+	if len(cardBanned) > 0 {
+		add("warn", "plan.cards",
+			"%d 处卡片文本命中平台敏感词（%s）—— 卡片是所有参考图的源头，命中一次会跟着**每一镜**",
+			len(cardBanned), strings.Join(firstN(cardBanned, 3), "；"))
+	}
+	if len(shortNames) > 0 {
+		add("warn", "plan.scenes",
+			"%d 个场景名短于 %d 字（%s）—— 规范要求「四字以上、带修饰词」，严禁单一名词："+
+				"「城门」是地名占位，「临水城·城门·雨夜」才交代得清地点与时间",
+			len(shortNames), PlanMinSceneNameRunes, strings.Join(firstN(shortNames, 6), "、"))
+	}
+
 	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
 	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
 	if len(p.Scenes) > 0 {

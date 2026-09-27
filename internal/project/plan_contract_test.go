@@ -24,7 +24,7 @@ func samplePlan() *Plan {
 			Description: "二十岁男子", ImagePrompt: "a young man ...", Voice: "young male voice",
 		}},
 		Scenes: []Scene{{
-			ID: "scene_room", Name: "破庙", Description: "潮湿的破庙", ImagePrompt: "a ruined temple ...",
+			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙", ImagePrompt: "a ruined temple ...",
 			Landmarks: "门槛与东侧立柱", LightState: "黄昏，主光从门洞斜射",
 		}},
 		Shots: []Shot{{

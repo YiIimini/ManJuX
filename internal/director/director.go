@@ -275,12 +275,31 @@ const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same se
 // 一律由角色定妆照负责) —— 同一段提示词里两套要求,模型折中,场景板上就站了人。
 //
 // 三条:①只写地点本身;②**不写人**(空场是硬要求);③取景/画幅由渲染器加。
+// sysDynamicShotRules 分镜必须**显式解除**角色卡上的静态约束（技能侧《平台侧生成规范》§6.9）。
+//
+// 【为什么单列一段】角色卡与三视图板按规范要求"**无飘动、无动态动作**"（卡是静态图，飘动的衣料
+// 会让模型以为在拍视频），而**分镜恰恰相反**：衣料要飘、人物要动、卡上那句"静态微光/静态流光"
+// 在视频里可以流动起来。两边的约束方向相反，而先前平台的分镜提示词**一句都没提** ——
+// 模型会从参考图（静态卡）里继承那份"站定不动"的气质，成片就是一屋子人僵着说话。
+// 这条影响的是**每一镜的画面**，属于"看不见但看得见"的那类默认值：不写出来就自动站错边。
+const sysDynamicShotRules = `## THE SHOT MUST MOVE (the reference cards are intentionally static - lift that here)
+
+- The character sheets and turnaround boards are deliberately INERT: arms hanging naturally, no flutter, no dynamic action. **A shot is the opposite** — the cards exist to fix identity, not to fix posture. In every shot: cloth must hang, sway or flutter with the movement, hair and hems react, and people carry real body motion with amplitude and speed.
+- Any "static shimmer / static glow" wording on a card becomes ANIMATED here (light pulses, holograms flicker, runes drift) unless the shot says otherwise.
+- Do NOT copy a card's neutral studio pose into a shot: if a shot's action is walking, turning, kneeling or fighting, write the pose the action needs. The only thing the cards lock is the FACE, hair and costume design.
+- Keep the camera free: the shot's framing is decided by the shot (size, viewpoint, camera move), never inherited from the reference plate.`
+
+// sysSceneRules 场景卡规则。
 const sysSceneRules = `## SCENE CARDS (the location reference plates)
-- Every location that appears in any shot gets ONE scene card. Its image_prompt describes **the place itself and nothing else**: spatial layout and depth, architecture and building materials, ground surface, fixed props, the direction and quality of the light, time of day and weather.
+- Every location that appears in any shot gets ONE scene card. Its image_prompt describes **the place itself and nothing else**: spatial layout and de
+- **EXTRACT IMPLICIT LOCATIONS TOO (not just named places)**: a card is required whenever the text lets the audience sense "where this is / what surrounds them / what the weather and light are" — even when the place has no name. Treat any of these as a location: the subject stands or moves inside a specific environment ("he walks across the stone bridge"); the passage describes space, terrain, architecture, weather or atmosphere systematically ("mist crawling over the waste", "the last light on a broken wall"); an action, a gaze or a state implies the surroundings ("he looks up at the sky"); someone crosses or passes through a space ("she pushes the door open"); a memory or inner thought carries a place image ("she remembers the locust tree at home"). **Missing a place means every shot set there renders with no reference plate.**pth, architecture and building materials, ground surface, fixed props, the direction and quality of the light, time of day and weather.
 - **Never put people in a scene card** — no crowd, no passers-by, no vendors, no silhouettes, no "a scattered crowd of villagers". The scene plate is an EMPTY stage: every person in the finished video comes from a character sheet, so anyone drawn into the scene plate would be reused as an anonymous stranger in every shot at that location and would fight the cast's identity lock.
 - **EVENT ISOLATION (mandatory)**: the plate shows the location **as it is BEFORE anything happens there** — its timeless state. FORBIDDEN: blood, corpses, fresh fight damage, freshly broken objects, burning embers, footprints, dropped props, quest items, anything a character carries. ALLOWED: weathering, old rust, moss, long cracks, faded paint, settled dust — the marks of time, not of an event. Why it matters: the plate is fed to every shot at that location, so a scene rendered with the aftermath already in it makes the whole episode look like it happens after the event.
   Put this string VERBATIM in image_prompt: "pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath".
-- **PROP BUDGET**: name **2-4 groups** of FIXED furnishings, architectural parts or natural attachments (foreground and midground combined) — a table, a railing, a well, a wall niche, a dead tree. Never list story props or character-held objects: they belong to the prop cards and to the shot description. Fewer than two groups reads as an empty modelling shell; more than four turns the plate into a prop inventory and the model draws every single one.
+- **PROP BUDGET**: name **2-4 groups** of FIXED furnishings, architectural parts or natural attachments (foreground and midground combined) — a table, a railing, a well, a wall niche, a dead tree. Never list story props or character-held objects: they belong to the prop cards and to the shot description. Fewer than two groups reads as an empty modelling shell; more than four turns the plate into a prop inventory and the model draws every single one. Give **foreground 1-2 groups and midground 1-2 groups** (the far layer is not required), each with a short material + light note, and describe same-kind objects as a GROUP — never item by item.
+- **FOUR ELEMENTS (all four, never fewer)**: environment type + specific time + spatial mood + main visual features. The main picture must carry all three depth layers (foreground / midground / background) and include **at least 2 of these five**: sky, horizon, distant mountains, large architecture, open terrain. A plate with only one of them reads as a corner, not a location.
+- **WORTH LOOKING AT (the difference between "nice" and "alive")**: write the light as emotion, not as a timestamp — dawn's dead gold, the cold blue hour before sunrise, visible god rays through dust. State **how the light travels across the material** (light pooling on glazed tile, dusk running down rough stone, cold light talking to wet moss). Write colour poetically and specifically (faded vermilion + rusted celadon + cold grey-blue) and REQUIRED phrasing for the light-vs-shadow is an **A-versus-B** construction ("a warm golden lattice gently merging with warm grey shadow"). Add 2-4 strong mood words, one or two live atmosphere details (drifting leaves, rising mist, a guttering candle, suspended dust), and keep it clean and film-set tidy: designed space, no litter, no clutter, no broken junk. Prefer side light / back light / volumetric light; avoid flat top light.
+- **ALLOWED decay (the reverse whitelist)**: weathering, old rust, moss, old cracks, fading, settled dust, worn edges — the timeless wear of a place is fine and welcome. What is forbidden is only the **event aftermath** (the previous bullet).
 - **CONTINUITY LANDMARKS**: name the one or two fixed things whose screen position must stay the same every time we return to this location (a door frame, a central island, a mooring post, a specific tree). The audience re-identifies a place by them — if they move between shots, the space falls apart.
 - **LIGHT STATE**: state the time of day and the main light direction for this location (which side the key light comes from). Adjacent shots at the same location must not jump from noon to dusk.
 - Write it as a plain establishing view of the empty location, in the same art style as the series. Do not write framing, crop, camera angle or aspect ratio — the renderer adds those (per the project's aspect ratio), exactly as it does for character cards.`
@@ -339,7 +358,21 @@ const sysFaceVocabRules = `## FACE VOCABULARY & SAFE WORDING (mandatory — thes
 - 毛孔可见/汗毛/visible pores → matte skin with a soft natural finish (never realistic pores).
 - 血管可见/visible veins → drop it; if needed: faint blue veins at the temple, subtle.
 - Also banned: 性感暴露, 沟, 翘臀/蜜桃臀, 巨乳, 网衣/链式衣饰/蛛网衣, 大面积镂空, 暗示性动作, 不雅姿态, 低俗图案.
-- Costume quality (keeps the design rich without exposure): 立体剪裁(流畅衣身线条、侧身拼接、内藏式收省)、材质对撞至少 4 种高级材质、外层自然过渡到腰胯；女装必须有内搭。`
+- Costume quality (keeps the design rich without exposure): 立体剪裁(流畅衣身线条、侧身拼接、内藏式收省)、材质对撞至少 4 种高级材质、外层自然过渡到腰胯；女装必须有内搭。
+- Make-up and pupils: make-up is style-adaptive — period xianxia/fantasy uses an upturned eyeliner tail, huadian forehead mark, bitten-lip colour and a brow ornament; modern/urban uses earth-tone eyeshadow, a very fine liner, natural lip colour and a clean base. Pupil colour is one of 深黑 / 浅褐 / 琥珀 / 灰蓝 / 血红, and the GAZE must match the temperament (清冷 / 凌厉 / 温柔 / 狡黠 / 迷茫 / 坚毅 / 空洞) — a character with the wrong gaze reads as the wrong person.
+
+### Character quality bar (verbatim essentials; the style-related parts follow the project style string)
+- SKIN: cold porcelain or healthy wheat, luminous like jade — **plastic or silicone skin is forbidden**. Use "matte skin with a soft natural finish".
+- HAIR: layered, smooth and full, **individual strands readable** (毛流感清晰), and the parting plus strand direction must stay readable.
+- COSTUME: sculpted tailoring (flowing body lines, side panel seams, hidden darts), shoulders flowing naturally into the waist and hips, a waistline that follows real human proportions, and the natural slimness of well-cut clothing. Women's wear MUST have an inner layer. Mix **at least 4 premium materials**. Collar wording stays safe: high collar / small stand collar / shirt collar / 一字领(非低胸). No belt wider than a palm (prefer none), and the character MUST wear shoes.
+- POSE ON A CARD (static image): full-body standing, shoulders relaxed and level, hands folded in front or hanging at the sides, body turned a natural 3/4 toward the camera, chin slightly raised, robe hanging naturally — **no flutter, no dynamic action** (shots lift this, see THE SHOT MUST MOVE).
+- LIGHT on a card: even soft frontal light plus a fine rim / side-back light — **no harsh shadows**.
+- QUALITY WORDS: next-gen high-poly model, ray tracing, 8K, extreme detail (matched to the project style string).
+- Mood words: 1-2 at most, and they must fit the style.
+
+### Anchor sheet is the ONLY authority for a face (卡从表来)
+- The character sheet under 设定集 (人物外形锚表) outranks everything else: copy its fields **item by item**, add no adjectives of your own, and never reword them. Its 11 fields are: 年龄 / 身形 / 脸型 / 眉眼 / 鼻唇 / 肤色肤质 / 独特记号 / 发型三要素(束法+长度+额前状态) / 首套服装 / 气质 (plus name and role). A purely background character may carry only four: 年龄 / 身形 / 脸型 / 首套服装.
+- Changing the anchor sheet = changing the face: if you must differ, say so explicitly in the description; never silently drift. Costume may change between 造型档, the face and hair may not.`
 
 var SystemPrompt = sysHeader + `
 
@@ -352,6 +385,8 @@ var SystemPrompt = sysHeader + `
 ` + sysContinuityRules + `
 
 ` + sysShotTableRules + `
+
+` + sysDynamicShotRules + `
 
 ` + sysH3Format + `
 
@@ -850,6 +885,8 @@ Return STRICT JSON only (no markdown fences, no commentary):
 ` + sysContinuityRules + `
 
 ` + sysShotTableRules + `
+
+` + sysDynamicShotRules + `
 
 ` + sysH3Format + `
 
