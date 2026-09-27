@@ -396,13 +396,21 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		c.releaseVRAM(proj.ID, "管线结束")
 		c.finish(proj.ID)
 	}()
-	hasPlan := hasUsablePlan(c.store, proj.ID)
+	plan, planErr := c.store.LoadPlan(proj.ID)
+	hasPlan := planErr == nil && plan != nil && len(plan.Shots) > 0
 	stages := pipelineStages(phase, hasPlan)
+	// 上游把"写给生成器的话"混进 h3_prompt 时**如实报一次**（见 project/h3_clean.go）：
+	// 读取边界已经把这些行剔掉，但用户有权知道"这次渲染用的提示词与盘上文件不完全一样"
+	// —— 静默改数据是这类兜底最容易犯的错。
+	if plan != nil && plan.StrippedDirectives > 0 {
+		c.emit(proj.ID, "pipeline", 0, "warn", 0,
+			"⚠ 分镜提示词里混进了 %d 行生成器指令（REFERENCE ORDER / PICTURE MANIFEST 之类），"+
+				"已在渲染时剔除（这些是写给拼提示词的人的规则，不是给模型的内容）；要根治请让脚本侧重新导出",
+			plan.StrippedDirectives)
+	}
 	if phase == PhaseAll && hasPlan {
-		if plan, err := c.store.LoadPlan(proj.ID); err == nil {
-			c.emit(proj.ID, "pipeline", 0, "info", 0,
-				"⏩ 检测到已有分镜方案(%d 镜),跳过重新生成直接续跑(重新创作请到剧本页)", len(plan.Shots))
-		}
+		c.emit(proj.ID, "pipeline", 0, "info", 0,
+			"⏩ 检测到已有分镜方案(%d 镜),跳过重新生成直接续跑(重新创作请到剧本页)", len(plan.Shots))
 	}
 	started := time.Now()
 	c.emit(proj.ID, "pipeline", 0, "info", 0, "▶ 管线启动:%s", strings.Join(stageLabels(stages), " → "))

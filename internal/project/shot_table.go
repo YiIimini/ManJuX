@@ -23,9 +23,18 @@ import "strings"
 // 提示词规则承担 —— 详见 docs/渲染脚本契约.md 的说明。
 
 // PlanHookTypes 钩子类型**受控词表**（官方 STEP 5：one short label from a controlled vocabulary）。
-// 逐字照抄官方示例：visual-joke / reversal / suspense / tender / chase / reveal / callback / expression-beat。
+//
+// **官方是 10 个**（`3d-animation-short-generator/references/storyboard-guidelines.md`：
+// "one of the controlled vocabulary: setup / visual-joke / reversal / reveal / callback /
+// suspense / tender / chase / expression-beat / climax"）。
+// 2026-09-27 晚更正：此前只收 8 个 —— 因为抄的是**另一份**官方文件
+// `shot-table-spec.md` 那句，而那句写的是 "e.g." 只举了 8 个例子（还被我注释成"逐字照抄官方示例"）。
+// 代价是**把技能侧合法的取值判成违规**：技能侧 `qa_check.py` 的 HOOK_WORDS 正是官方那 10 个，
+// 而《求你们骂我》第 01 集 64 镜里 `setup` 就用了 13 次 —— 一导入就会刷一屏"词表外"的假告警。
+// 教训：**受控词表只能从"controlled vocabulary"那句抄**，不能从带 "e.g." 的举例句抄。
 var PlanHookTypes = []string{
-	"visual-joke", "reversal", "suspense", "tender", "chase", "reveal", "callback", "expression-beat",
+	"setup", "visual-joke", "reversal", "reveal", "callback",
+	"suspense", "tender", "chase", "expression-beat", "climax",
 }
 
 // PlanHookDensityTypes 密度自检认的三种"强钩子"（官方 STEP 5.5 检查 1：每连续三镜至少一个 reveal/reversal/callback）。

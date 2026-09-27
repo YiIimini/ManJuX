@@ -144,7 +144,7 @@ The per-shot JSON below IS the official standardized shot table. Each field maps
   · Shot ID & Duration      → id + duration
   · Continuity Handoff      → end_state (see SHOT END STATE & CROSS-SHOT CONTINUITY)
   · Reference Anchors       → scene (its landmarks + light_state) + characters (approved card names) + the reference pictures attached to this shot
-  · Hook Type               → hook_type: ONE label, from this controlled vocabulary ONLY: visual-joke / reversal / suspense / tender / chase / reveal / callback / expression-beat
+  · Hook Type               → hook_type: ONE label, from this controlled vocabulary ONLY: setup / visual-joke / reversal / reveal / callback / suspense / tender / chase / expression-beat / climax
   · Shot Description        → action + h3_prompt (keep the detail inside the shot paragraph, second by second where the beat needs it)
   · Audio & Dialogue Track  → dialogue / narration, and the <d> blocks inside h3_prompt
 

@@ -182,7 +182,41 @@ func TestValidatePlanConsecutiveShotSize(t *testing.T) {
 	}
 }
 
-// TestValidatePlanHookDensity 官方镜头表自检 1：钩子密度与两端强钩子。
+// TestHookVocabularyMatchesOfficialList 受控词表必须与**官方那句 "controlled vocabulary"** 逐字对齐。
+//
+// 回归（2026-09-27 晚）：原先只收 8 个，抄的是官方 `shot-table-spec.md` 里**带 "e.g." 的举例句**，
+// 而官方 `storyboard-guidelines.md` 的受控词表是 **10 个**（多 `setup` 与 `climax`）。
+// 后果不是"少两个词"这么轻：技能侧产出（`qa_check.py` 的 HOOK_WORDS 正是官方 10 个）里
+// `setup` 用得很多（《求你们骂我》第 01 集 64 镜里 13 次），一导入就让平台刷一屏假告警。
+// 所以这里既钉**集合内容**，也钉**提示词那一侧说的是同一份表**（否则 LLM 会永远不用这两个词）。
+func TestHookVocabularyMatchesOfficialList(t *testing.T) {
+	official := []string{"setup", "visual-joke", "reversal", "reveal", "callback",
+		"suspense", "tender", "chase", "expression-beat", "climax"}
+	if len(PlanHookTypes) != len(official) {
+		t.Fatalf("受控词表应为官方 %d 个，实际 %d 个：%v", len(official), len(PlanHookTypes), PlanHookTypes)
+	}
+	for _, h := range official {
+		if !InList(h, PlanHookTypes) {
+			t.Errorf("受控词表缺官方取值 %q", h)
+		}
+	}
+	// 行为：官方合法值一个都不该被判违规
+	p := viewShotPlan(3, true)
+	for _, h := range official {
+		p.Shots = p.Shots[:3]
+		for i := range p.Shots {
+			p.Shots[i].HookType = h
+		}
+		p.Shots[0].HookType = "reveal" // 开篇要强钩子，先满足，只测词表
+		if hasIssue(ValidatePlan(p), "warn", "不在官方受控词表") {
+			t.Errorf("官方合法取值 %q 被判成违规：%v", h, PlanIssuesText(ValidatePlan(p)))
+		}
+	}
+	// 双侧同源：产出提示词里必须列全同一份词表 —— 那半由
+	// TestViewVocabularyReachesBothSides（外部测试包，能同时 import project 与 director）遍历
+	// PlanHookTypes 逐个断言，加词漏改提示词会立刻红。
+}
+
 func TestValidatePlanHookDensity(t *testing.T) {
 	// 反向：每镜 reveal（强钩子）→ 不报
 	if issues := ValidatePlan(viewShotPlan(3, true)); hasIssue(issues, "warn", "hook_type") {

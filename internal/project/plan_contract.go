@@ -549,6 +549,29 @@ func ValidatePlan(p *Plan) []Issue {
 				badShots, strings.Join(fmtHits, "；"))
 		}
 
+		// 混进"写给生成器的话"（2026-09-27 晚，验收技能侧重出的脚本时实测）：
+		// 技能侧全书 2462 镜的 h3_prompt 都以 `REFERENCE ORDER: … characters array …` 开头，
+		// 还夹着 `the renderer appends an authoritative PICTURE MANIFEST…` —— 这些是**写给
+		// 拼提示词的人的规则**，官方仓一句都没有、共享契约也没定义。平台读取边界已经会剔掉
+		// （project/h3_clean.go，一处清理四条消费路径），但**必须在导入时就告诉人**：
+		// 上游不改，每次导出都会再带一遍。聚合报一次，别刷 2462 条。
+		dirShots := 0
+		var dirSample []string
+		for _, sh := range p.Shots {
+			if HasH3WriterDirectives(sh.H3Prompt) {
+				dirShots++
+				if len(dirSample) < 3 {
+					dirSample = append(dirSample, fmt.Sprintf("#%d", sh.ID))
+				}
+			}
+		}
+		if dirShots > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的 h3_prompt 里混着**生成器指令**（如 REFERENCE ORDER / PICTURE MANIFEST，%s…）："+
+					"渲染时会自动剔除，但根治要脚本侧重新导出 —— 这些行不属于官方提示词结构，官方仓里没有这种写法",
+				dirShots, strings.Join(dirSample, "、"))
+		}
+
 		// ── 官方「标准镜头信息表」STEP 5.5 的三条可机检自检（2026-09-27）──────────────
 		// 依据：`skills/3d-animation-short-generator/references/shot-table-spec.md`。
 		// 平台 plan.json 就是那张表（六列 ↔ 我们的字段见 shot_table.go 的对照），
