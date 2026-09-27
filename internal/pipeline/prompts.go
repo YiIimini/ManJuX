@@ -351,7 +351,55 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
 	EnsureVoiceoverClause(shot) // 画外音镜次补"嘴唇闭合"(幂等,在装配点做一次)
-	return EnsureVoiceInline(EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj)))), plan, plan.Characters)
+	// casting 清单只列**本镜真的会开口的人**(见 ShotSpeakers 的说明):以前这里传的是
+	// `plan.Characters`(全剧角色),于是每个镜头都背着一份 6 人的音色表 —— 含一个 10 岁
+	// 顽童的童声。没有台词的镜头(本集 54 镜里 17 镜)照样收到"这些人要用这些嗓子说话",
+	// 模型就把音频填成人声嘈杂,用户听到的是"全是小孩子乱吵"。
+	return EnsureVoiceInline(EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj)))), plan, ShotSpeakers(plan, shot))
+}
+
+// ShotSpeakers 本镜**真的会开口的人**:有台词的说话人(台词非空)+ 有旁白/画外音时的旁白者。
+//
+// 【为什么必须按镜头过滤 casting 清单】(2026-09-27 真机实证,用户报「渲染的分镜里全是
+// 小孩子乱吵的配音」)装配点原先把 `plan.Characters` 整个传给 EnsureVoiceInline,于是
+// **每一个镜头**的提示词尾部都挂着一份全剧音色表:
+//
+//	VOICE CASTING (authoritative - use exactly these timbres…):
+//	- 周廷 speaks with Deep heavy male voice…
+//	- 顽童 speaks with High cheeky child's voice, around 10, jeering
+//	…
+//
+// 而本集 54 个镜头里 17 个既没有台词也没有旁白 —— 那些镜头拿到的是一份"谁该用什么嗓子"
+// 的授权清单,却没有一句可念的话,官方句式又写着"use exactly these timbres",模型只能
+// 自己造人声;清单里恰好有一个童声,街市镜的音景又写着 crowd murmur/jeers,合起来就是
+// 满耳的童声嘈杂。**没有台词的镜头,一份 casting 都不该有。**
+//
+// 判据只看"本镜台词里出现过的说话人名字":认不出说话人(家丁/路人)时不进清单 ——
+// 宁可不给音色,也不要塞错人的嗓子。
+func ShotSpeakers(plan *project.Plan, shot *project.Shot) []project.Character {
+	if plan == nil || shot == nil {
+		return nil
+	}
+	speak := map[string]bool{}
+	for _, l := range shot.Dialogue {
+		name := strings.TrimSpace(l.Speaker)
+		if name == "" || strings.TrimSpace(l.Text) == "" {
+			continue
+		}
+		speak[name] = true
+	}
+	if len(speak) == 0 {
+		// 没有台词的镜头:只有旁白时才需要音色(旁白音色由 EnsureVoiceInline 自己给),
+		// 角色一个都不列 —— 这正是本次修复的核心。
+		return nil
+	}
+	var out []project.Character
+	for _, c := range plan.Characters {
+		if speak[strings.TrimSpace(c.Name)] {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // onScreenTextMarker 幂等判据(改了文案必须保留这个串,否则会重复叠加)。
