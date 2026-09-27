@@ -53,11 +53,11 @@ ManJuX 的渲染图**直接依赖**下列节点类,任何升级改名都会让�
 | ComfyUI-MiniMax-H3-PDD-Acc | `311a65d`(未变) | quality 加速档(Acc-8Step LoRA;它注册的是 `MiniMaxH3PDDAcc*` 四个 —— `MiniMaxH3SigmaShift` 实为本体内置,此行原记法已更正) |
 | ComfyUI-MiniMaxH3-Easy | `61ceb3c`(旧表记 `d100200`,实测早已不符,本次按实测改回) | H3 相关辅助节点 |
 | ComfyUI-KJNodes | `d3cfe21`(旧 `5710537`) | 通用图像节点 |
-| ComfyUI_IPAdapter_plus | `a0f451a`(未变) | 参考图相关 |
+| ComfyUI_IPAdapter_plus | `a0f451a`(未变;**2026-09-27 已停用**) | 参考图相关;ManJuX go/json **零引用**、上游 2025-04 起未更新 → 目录改名 `ComfyUI_IPAdapter_plus.disabled`(ComfyUI 跳过 `*.disabled`)。要恢复:去掉后缀,并把新路径补进 `safe.directory`(本机仓 owner 是另一台机器的 SID,改名会触发 `dubious ownership`) |
 | rgthree-comfy | `449c58fc`(原 `2c5342a`,2026-09-26 升级 6 个提交) | 图工具 |
 | was-node-suite-comfyui | `8f80db30`(原 `eb772ed`,2026-09-26 升级 1 个提交:新增 Execution Gate Controlboard / Fast Generate Text;视频加载器改为默认读全部帧) | 通用图像节点 |
 | MaskVidExperiments | `c32ed8c`(旧 `e5c4450`) | **局部重绘**(遮罩裁切/回贴) |
-| comfyui-vrgamedevgirl | `81a33b20`(原 `75d4370`,2026-09-26 升级 29 个提交) | 音频处理节点;该包只注册 `VRGDG_*`(231 个),ManJuX 图**零引用** |
+| comfyui-vrgamedevgirl | `8c49237b`(2026-09-26 `75d4370`→`81a33b20` 29 个提交;2026-09-27 再 →`8c49237b` 16 个提交,均为许可/文档与向导字段顺序) | 音频处理节点;该包只注册 `VRGDG_*`(231 个),ManJuX 图**零引用** |
 
 > 上表 commit 只作**回退参照**:平时无需钉版,出问题时可 `git -C <插件目录> checkout <commit>` 回退。
 > 完整 17 个节点(含上表之外的 FaceRefine / Turbo / Director / audio-T8 / Spectrum / latent-Upscaler)
