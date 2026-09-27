@@ -9,6 +9,7 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -139,16 +140,53 @@ func boardStale(master, board string) bool {
 	if err != nil {
 		return true
 	}
-	return mi.ModTime().After(bi.ModTime())
+	if mi.ModTime().After(bi.ModTime()) {
+		return true
+	}
+	// 画幅口径变了也要重出（2026-09-27）：板子从"跟随定妆照"改成固定 **16:9·2K**，
+	// 不判这一条的话，盘上那些旧板子会永远是竖的 —— 用户看到的就是「你改了吗？」。
+	// 只读像素、不动文件；读不到尺寸（老 jpeg/损坏）就不判，宁可少说一句。
+	if w, h := imagePixelSizeOrZero(board); w > 0 && (w != BoardWidth || h != BoardHeight) {
+		return true
+	}
+	return false
 }
 
 // BoardOptions 一次三视图板生成。
 type BoardOptions struct {
-	Master     string // 已通过的定妆照绝对路径（身份源）
+	Master string // 已通过的定妆照绝对路径（身份源）
+	// Canvas 可选：已备好的 **16:9 白底画布**（定妆照等比居中放进去）。
+	//
+	// 为什么需要它（2026-09-27）：Qwen-Image-2.1 的编辑链路**按第一张参考图的画幅决定
+	// 输出 latent**，所以"板子是 16:9"这件事只能靠"参考图就是 16:9"来实现。
+	// 空 = 直接用 Master（老行为：出成定妆照的画幅）。
+	Canvas     string
 	Prompt     string // 已装配好的定妆提示词（会被 BoardPrompt 改写成板的提示词）
 	Out        string // 目标路径；空 = BoardOutPath(Master)
 	Seed       int64
 	OnProgress func(percent int, note string)
+}
+
+// BoardCanvasPath 画布临时文件的落点（与板子同目录同主名，便于一起清理）。
+func BoardCanvasPath(boardOut string) string {
+	ext := filepath.Ext(boardOut)
+	return strings.TrimSuffix(boardOut, ext) + "_canvas" + ext
+}
+
+// boardCanvas 把定妆照放进一张 **w×h 白底画布**（等比缩放、居中、不裁切）。
+//
+// 口径为什么是"白底 + 居中 + 不裁切"：板子最终是一张白底规格书，边缘留白正好给
+// "三个全身横排 + 头部细节行"腾地方；而裁切会切掉角色的手臂/衣摆（板子要审的正是这些），
+// 拉伸更不行（比例一歪，板子上的人就不是定妆照那个人了）。
+func boardCanvas(ctx context.Context, f *ff.FF, master, out string, w, h int) error {
+	if w <= 0 || h <= 0 {
+		return fmt.Errorf("画布尺寸非法:%d×%d", w, h)
+	}
+	vf := fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=decrease,"+
+		"pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=white", w, h, w, h)
+	_, err := f.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
+		"-i", master, "-vf", vf, "-frames:v", "1", out)
+	return err
 }
 
 // GenerateBoard 生成/重出三视图细节板，返回产物路径。
@@ -176,8 +214,16 @@ func GenerateBoard(ctx context.Context, ce engine.Engine, o BoardOptions) (strin
 	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
 		return "", err
 	}
+	// 参考图 = 画布（有就优先）：2.1 编辑链按**第一张参考图的画幅**决定输出 latent，
+	// 喂 16:9 画布才出得了 16:9 板子；画布本身就是"定妆照居中放进白底"的同一张身份源。
+	ref := o.Master
+	if strings.TrimSpace(o.Canvas) != "" {
+		if _, err := os.Stat(o.Canvas); err == nil {
+			ref = o.Canvas
+		}
+	}
 	return ee.EditImage(ctx, comfyengine.ImageEditOptions{
-		RefImages:  []string{o.Master},
+		RefImages:  []string{ref},
 		Prompt:     BoardPrompt(o.Prompt),
 		Negative:   imageNegative,
 		Seed:       o.Seed,
@@ -199,13 +245,29 @@ func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Proje
 	if !boardStale(masterPath, out) {
 		return
 	}
-	// 三视图板是按**角色**那张定妆照派生的，取"角色"那一档尺寸（板子本身另走 BoardSize）。
-	w, h := assetImageSize(proj, "characters")
-	bw, bh := BoardSize(w, h)
+	// 三视图板是固定 16:9·2K 的规格书（见 BoardSize 的说明），与定妆照画幅无关。
+	bw, bh := BoardSize(0, 0)
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0,
 		"生成:「%s」三视图细节板（角度参考 / 人审一致性 / 建模向，%d×%d 16:9·2K）…", name, bw, bh)
+	// **画布**：Qwen-Image-2.1 的编辑链路按第一张参考图的画幅决定输出 latent
+	// （见 comfyengine/imageedit.go 的 buildEditGraphQwen21 说明）—— 所以"要一张 16:9 的板子"
+	// 只能靠喂一张 16:9 的参考图。只把尺寸写进选项是没用的：Options 此前根本没有尺寸可传，
+	// 板子一直跟着定妆照出成 9:16（2026-09-27 用户报「三视图为什么还是 9:16」就是这个）。
+	canvas := ""
+	if c.ff != nil {
+		canvas = BoardCanvasPath(out)
+		if err := boardCanvas(ctx, c.ff, masterPath, canvas, bw, bh); err != nil {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "三视图板:画布准备失败，按定妆照画幅出图:%v", err)
+			canvas = ""
+		} else {
+			// 画布是**中间产物**，用完就删：留在资产目录里虽然不会被 lib 的关联图 glob 收走
+			// （它只认 `*_board.png`，见 library.go 的 relatedGlobs），但会让人对着两个板子
+			// 文件猜哪个是真的。删了下次要重出时重新拼一张（ffmpeg 一次几十毫秒）。
+			defer os.Remove(canvas)
+		}
+	}
 	p, err := GenerateBoard(ctx, ce, BoardOptions{
-		Master: masterPath, Prompt: imagePrompt, Out: out, Seed: nameSeed("board", name),
+		Master: masterPath, Canvas: canvas, Prompt: imagePrompt, Out: out, Seed: nameSeed("board", name),
 		OnProgress: func(pct int, note string) {
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "三视图板「%s」:%s(%d%%)", name, note, pct)
 		},

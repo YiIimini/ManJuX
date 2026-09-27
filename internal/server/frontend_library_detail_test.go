@@ -28,8 +28,18 @@ func TestLibraryDetailImagesCentered(t *testing.T) {
 	}
 	src := string(raw)
 
-	if !strings.Contains(src, "repeat(auto-fill,112px)") || !strings.Contains(src, "justify-content:center") {
-		t.Error("详情弹窗的图片网格要定宽列 + 居中排（auto-fill+1fr 会把 1~2 张图压在左边）")
+	// 居中：flex 换行 + justify-content:center。
+	// ⚠ 上一版用的是 `repeat(auto-fill,112px)` + justify-content:center —— **实测不居中**：
+	// auto-fill 先把整行轨道铺满（空轨道照样占位），居中因此等于没居中（用户第二次反馈「也未居中」）。
+	if !strings.Contains(src, "flex flex-wrap") || !strings.Contains(src, "justify-content:center") {
+		t.Error("详情弹窗的图片要 flex 换行 + 居中排（grid auto-fill 的空轨道会占位，居中是假的）")
+	}
+	if strings.Contains(src, "grid-template-columns:repeat(auto-fill,112px)") {
+		t.Error("别再退回 grid auto-fill 定宽列 —— 那个做法不居中（见注释）")
+	}
+	// 高度：格子定高（撑满这一块给的高度），宽由产物比例算出来
+	if !strings.Contains(src, "height:' + IMG_BOX_H + '") || !strings.Contains(src, "const IMG_BOX_H") {
+		t.Error("图片格子要**定高**显示（用户：「图片显示高度应该是那个区域的高度」），宽度按产物比例")
 	}
 	if !strings.Contains(src, "object-fit:contain") || !strings.Contains(src, "object-position:center") {
 		t.Error("详情弹窗的图要 contain + 居中（cover 会把转台图/三视图板裁得只剩中间一条）")
@@ -37,6 +47,14 @@ func TestLibraryDetailImagesCentered(t *testing.T) {
 	if !strings.Contains(src, "tileRatio(f)") {
 		t.Error("格子形状要按产物形状给（tileRatio）：定妆照 3/4、转台图与三视图板 16:9")
 	}
+	// 「有没有角度参考」的判据必须认三视图板（用户：「三视图不就是多视角的吗，相关"单视角"状态也要同步调整显示」）
+	if !strings.Contains(src, "function hasAngleRef(") || !strings.Contains(src, "_board|_view_|_turnaround") {
+		t.Error("角度参考的判据要把 _board 算进去，否则已经有板子的角色会被标成「缺角度参考」")
+	}
+	if n := strings.Count(src, "hasAngleRef("); n < 3 {
+		t.Errorf("hasAngleRef 应被详情状态与卡片标记共用（定义 + 两处调用），实际 %d 处", n)
+	}
+
 	// tileRatio 的判据与 labelOf 同一套（文件名后缀），别去猜像素
 	for _, want := range []string{"function tileRatio(", "_board", "_turnaround", "return '16/9'", "return '3/4'"} {
 		if !strings.Contains(src, want) {

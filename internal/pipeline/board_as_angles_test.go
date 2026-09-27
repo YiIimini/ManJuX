@@ -85,3 +85,43 @@ func containsAll(s string, subs ...string) bool {
 	}
 	return true
 }
+
+// TestBoardSizeIsActuallyWired 板子的 16:9·2K 必须**真的接到生成口**上。
+//
+// 这条是补上一次翻车的洞（2026-09-27 用户拿着截图问「你改了吗？三视图为什么还是 9:16」）：
+// 我上一轮只改了 `BoardSize` 的数值 —— 而 `BoardOptions` 当时**根本没有尺寸字段**，
+// `GenerateBoard` 也就没往引擎传尺寸；2.1 的编辑链按**第一张参考图的画幅**决定输出 latent
+// （见 comfyengine/imageedit.go 的 buildEditGraphQwen21），于是板子照旧跟着定妆照出成 9:16。
+// 界面上的日志倒是写了"2048×1152"——**日志说了，图上没有**，这种"口径没接线"最难看出来。
+//
+// 所以这里钉四件事，缺一件就说明又断在某一环：
+//
+//	① BoardOptions 收画布；② GenerateBoard 把画布当第一张参考图；
+//	③ 调用点真的先拼出 16:9 画布再传进去；④ 旧画幅的板子会被判为过期（否则永远不重出）。
+func TestBoardSizeIsActuallyWired(t *testing.T) {
+	src, err := os.ReadFile("board.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	for _, want := range []string{
+		"Canvas     string",             // ① 选项里要有画布
+		"ref := o.Master",               // ② 生成时按画布优先取参考图
+		"ref = o.Canvas",                //
+		"canvas = BoardCanvasPath(out)", // ③ 调用点拼画布
+		"boardCanvas(ctx, c.ff, masterPath, canvas, bw, bh)",
+		"w != BoardWidth || h != BoardHeight", // ④ 画幅变了要重出
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("板子的 16:9·2K 没接到生成口上，缺：%q", want)
+		}
+	}
+	// 引擎侧那条前提也要在（编辑链按第一张参考图的画幅出图）——它变了这条接线就得重想
+	edit, err := os.ReadFile("../engine/comfyengine/imageedit.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(edit), "按第一张参考图的画幅") {
+		t.Error("编辑链「按第一张参考图画幅决定输出」这条前提在源码里没了 —— 画布那条路要重新确认")
+	}
+}

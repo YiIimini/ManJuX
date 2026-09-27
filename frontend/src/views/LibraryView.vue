@@ -102,10 +102,21 @@ async function openDetail(e) {
 
 // hasViews 该角色是否已有多视角参考图(多视角原图或转台图)。
 // 没有 = 用这个角色渲染时只有一张正面照 —— 详情弹窗要给补全入口。
+// hasAngleRef 该条目有没有**角度参考**（渲染时作第二张参考的那张图）。
+//
+// 2026-09-27 起判据有三种产物（用户：「三视图不就是多视角的吗，相关"单视角"状态也要同步调整显示」）：
+//   `_board`      三视图细节板 —— **现在的默认角度参考**（正/侧/背三个全身 + 6 个头部细节，16:9·2K）
+//   `_turnaround` 转台图 —— 显式开了多视角的老项目
+//   `_view_*`     逐张角度图（背面/侧面/四分之三）—— 更老的那条路
+// 只认后两种会让"已经有板子"的角色被标成「只有单张正面照」—— 状态与事实相反，
+// 用户会去点「补全多视角」，白烧一次 H3 转身。
+function hasAngleRef(images) {
+  return (images || []).some((f) => /_board|_view_|_turnaround/.test(String(f)))
+}
 const hasViews = computed(() => {
   const d = detail.value
   if (!d) return false
-  return (d.images || []).some((f) => /_view_|_turnaround/.test(String(f)))
+  return hasAngleRef(d.images)
 })
 
 // 补全多视角:一次 H3 转身渲染(数分钟),后端做完才返回,期间按钮保持 loading,
@@ -175,16 +186,16 @@ function imgURL(e, file) {
 // 哪些角色还只有一张正面照。
 function cardHasViews(e) {
   if (e.kind !== 'characters') return true
-  return (e.images || []).some((f) => /_view_|_turnaround/.test(String(f)))
+  return hasAngleRef(e.images) // 判据与详情弹窗同一处（见 hasAngleRef）
 }
 
 // tileRatio 详情弹窗里每个格子的形状：跟着**产物形状**走，不一律 3/4。
 //
-// 2026-09-27 用户：「资产库里的弹窗详情里的图片请居中对齐显示」。症状有两个来源，
-// 这条修的是第二个：格子固定 3/4 + cover 会把**横幅**裁得只剩中间一条 ——
-// 转台图是 4 格横向拼图(8:3)、三视图板是 16:9，按 3/4 显示等于"只给你看中间那个全身"。
-// 定妆照是竖幅(≈9:16 或 3:4)，仍走 3/4。
-// 判据与 labelOf 同一套（文件名后缀），不猜像素。
+// 2026-09-27 用户：「资产库里的弹窗详情里的图片请居中对齐显示」+「图片显示高度应该是那个区域的高度」。
+// 两条一起落到这里：格子**定高**（IMG_BOX_H 那一档，撑满这一块给的高度），宽按产物比例算 ——
+// 定妆照是竖幅(3/4)、转台图是 4 格横向拼图(8:3)、三视图板是 16:9。判据与 labelOf 同一套
+// （文件名后缀），不猜像素；图用 contain 完整显示、居中摆放。
+const IMG_BOX_H = '190px'
 function tileRatio(file) {
   const b = String(file).split('/').pop() || ''
   if (b.includes('_board') || b.includes('_turnaround')) return '16/9'
@@ -601,13 +612,13 @@ async function remove(e) {
             <div class="flex-1"></div>
             <template v-if="detail.kind === 'characters'">
               <el-tag v-if="hasViews" size="small" type="success" effect="plain">
-                含多视角参考(渲染时作第二张参考)
+                含角度参考(三视图板/转台图,渲染时作第二张参考)
               </el-tag>
               <template v-else>
                 <span class="text-xs" style="color:var(--mx-amber)">
-                  只有单张正面照 —— 渲染时该角色拿不到多视角参考
+                  缺角度参考 —— 只有正面照(渲染时侧面/背面只能靠模型自己编)
                 </span>
-                <el-tooltip content="H3 原地转身视频 → 抽帧转台图(约数分钟);完成后自动写回资产库,渲染直接调用" placement="top">
+                <el-tooltip content="可选:H3 原地转身视频 → 抽帧转台图(约数分钟)。**默认不需要** —— 角度参考已由三视图板接手(正/侧/背三个全身 + 6 个头部细节,16:9·2K);补了会作第二张参考一起喂给渲染" placement="top">
                   <el-button size="small" type="primary" plain :loading="viewsBusy" @click="doViews">
                     <el-icon class="mr-1"><MagicStick /></el-icon>
                     {{ viewsBusy ? '多视角生成中(约数分钟)…' : '补全多视角' }}
@@ -616,16 +627,15 @@ async function remove(e) {
               </template>
             </template>
           </div>
-          <!-- 图片格子：**居中排 + 整张完整显示**（2026-09-27 用户：「资产库里的弹窗详情里的图片
-               请居中对齐显示」）。两处一起修，因为它们是同一个症状的两个来源：
-               ① 1~2 张图时 `auto-fill` 把空列留在右边 → 看着是靠左而不是居中（改成定宽列 + 居中）；
-               ② 格子一律 3/4 + cover，而**转台图是 8:3、三视图板是 16:9** —— 横幅被裁得只剩
-                  中间一条（三视图板就只剩中间那个全身），既不是"居中对齐"也看不出板子全貌
-                  （改成按产物形状给格子 + contain 完整显示）。 -->
-          <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,112px);justify-content:center">
+          <!-- 图片区：**按这一块的高度显示、整体居中**（2026-09-27 用户两轮反馈的结论）。
+               上一版我把网格改成 `repeat(auto-fill,112px)` + justify-content:center —— 那是错的：
+               auto-fill 会先把整行轨道铺满（空轨道照样占位），居中因此等于没居中，图仍贴左。
+               现在改成 flex 换行 + 定高格子：格子高 = 这一块给的高度，宽由各自比例算出来
+               （定妆照 3/4 → 窄，三视图板 16/9 → 宽），整排水平居中，图用 contain 完整显示。 -->
+          <div class="flex flex-wrap gap-3" style="justify-content:center">
             <div v-for="(f, i) in detailImages" :key="f"
                  class="cursor-zoom-in relative rounded-lg overflow-hidden"
-                 :style="'aspect-ratio:' + tileRatio(f) + ';background:var(--mx-bg2);border:1px solid var(--mx-line)'"
+                 :style="'height:' + IMG_BOX_H + ';aspect-ratio:' + tileRatio(f) + ';background:var(--mx-bg2);border:1px solid var(--mx-line)'"
                  @click="previewDetail(i)">
               <img :src="imgURL(detail, f)" style="width:100%;height:100%;object-fit:contain;object-position:center"
                    loading="lazy" />
