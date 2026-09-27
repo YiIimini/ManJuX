@@ -261,28 +261,10 @@ async function toggleHidden(n) {
   } catch (e) { ElMessage.error(e.message) }
 }
 
-// 脚本创作:直接导入技能端已产出的脚本包(manifest.json + plan/plan.json),
-// **不走 LLM 拆集** —— 平台侧那一步单集 2-6 分钟深度推理,token 与时间全省。
-// 与「视频制作」是两个人**口**:这个入口找不到包就明确报错,不悄悄回落到 LLM。
-async function produceScript(n) {
-  const ep = n.script?.episodes || 0
-  try {
-    await ElMessageBox.confirm(
-      `将把《${n.name}》目录里已产出的脚本包直接导入(${ep} 集)并**自动开始批量产线**(资产定妆→渲染→质检→成片),不再跑 AI 拆集。` +
-      `\n导入后到「项目」页即可开始资产与渲染;包不合契约会被整批拒收,不会留下半成品。`,
-      '脚本创作(跳过 AI 拆集)', { confirmButtonText: '导入并开始生产', cancelButtonText: '取消', type: 'info' })
-  } catch { return }
-  try {
-    const r = await api.novelProduceScript(n.path)
-    const cnt = Array.isArray(r?.results) ? r.results.length : ep
-    ElMessage.success(r?.message || `已导入 ${cnt} 集脚本,批量产线已启动`)
-    await refresh()
-    await refreshProjects()
-    G.view = 'home'
-  } catch (e) {
-    ElMessage.error(e.message) // 契约拒收 / 找不到包:原样展示后端那句话
-  }
-}
+// 「技能端脚本导入」(把技能侧已产出的脚本包导进来的入口)已于 2026-09-27 按用户要求移除 ——
+// 用户定调「技能侧独立输出小说内容,不出脚本了,平台侧走 LLM 合理点」,盘上不会再有
+// 技能端脚本包可导,这个入口无用。后端 /api/novels/produce-script 仍保留(不删能力)。
+// 恢复方式:菜单里加回脚本导入项,这里加回导入函数,出口加回分支。
 
 // 封面重做:**可配置弹窗**(用户 2026-09-26:「做成一个用户自定义配置弹窗啊,重做需要点改变的啊」)。
 // 只换 seed 不叫重做 —— 同一个正向词重抽,构图几乎不变。所以把能"改变"的旋钮交给用户:
@@ -396,8 +378,8 @@ function viewCover(n) {
 
 // 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
 // 以后再加动作只改这里 + 菜单项,卡片模板不必再堆@click.stop。
+// (`script` 那条分支随技能端脚本导入入口一起于 2026-09-27 移除,见模板里的说明。)
 function onCardCmd(cmd, n) {
-  if (cmd === 'script') return produceScript(n)
   if (cmd === 'produce') return produce(n)
   if (cmd === 'cover') return openCoverDialog(n)
   if (cmd === 'hide') return toggleHidden(n)
@@ -467,11 +449,12 @@ function onCardCmd(cmd, n) {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <el-dropdown-item command="script" :disabled="!n.script"
-                                  :title="n.script ? '直接导入技能端已产出的脚本包(不再跑 AI 拆集)' : '这本书目录里没有技能端脚本包(需要 manifest.json + plan/plan.json)'">
-                  <el-icon><Document /></el-icon>脚本创作{{ n.script ? `（${n.script.episodes} 集）` : '' }}
-                </el-dropdown-item>
-                <el-dropdown-item command="produce" divided :disabled="producing">
+                <!-- 「脚本创作」(导入技能端已产出的脚本包)已于 2026-09-27 按用户要求隐藏:
+                     用户定调「技能侧独立输出小说内容,不出脚本了,还是平台侧走 LLM 合理点」,
+                     这个入口随之作废(盘上不会再有技能端脚本包可导)。
+                     后端能力仍保留(POST /api/novels/produce-script + store 的 novelProduceScript),
+                     要恢复只需把下面这一项加回来。 -->
+                <el-dropdown-item command="produce" :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
                 </el-dropdown-item>
                 <el-dropdown-item command="cover"

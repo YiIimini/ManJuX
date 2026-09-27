@@ -7,6 +7,24 @@ import (
 	"testing"
 )
 
+// stripVueComments 剥掉 `<!-- … -->` 注释块。
+//
+// 源码闸门必须**只看代码**:沿革说明里当然会提到被移除入口的名字(那正是注释的用途),
+// 拿整份文件做 Contains 会把说明文字当成代码命中。
+func stripVueComments(s string) string {
+	for {
+		i := strings.Index(s, "<!--")
+		if i < 0 {
+			return s
+		}
+		j := strings.Index(s[i:], "-->")
+		if j < 0 {
+			return s[:i]
+		}
+		s = s[:i] + s[i+j+3:]
+	}
+}
+
 // 小说库封面「作品菜单」的前端闸门(2026-09-25 用户要求)。
 //
 // 需求:封面右上角原来只有一个**删除**按钮,要改成菜单(视频制作 / 隐藏作品 / 删除作品)。
@@ -200,33 +218,31 @@ func cssBlockOf(t *testing.T, css, selector string) string {
 	return rest[:end]
 }
 
-// TestNovelsCoverMenuHasScriptEntry 小说库「脚本创作」入口(2026-09-26 用户要求新增)。
+// TestNovelsCoverMenuHidesScriptEntry 小说库「脚本创作」入口**已移除**(2026-09-27 用户要求隐藏)。
 //
-// 这个入口的意义是**省掉 LLM 拆集**:技能端已直出脚本,平台解析到就导包。
-// 钉三件事:菜单里有它、只在有脚本包时可用(**没有包就不给点**,避免用户以为能用)、
-// 走的是专用接口而不是复用它旁边的「视频制作」(后者是 LLM 那条路)。
-func TestNovelsCoverMenuHasScriptEntry(t *testing.T) {
+// 沿革:2026-09-26 用户要求新增它(技能端已直出脚本,平台解析到就导包,**省掉 LLM 拆集**);
+// 2026-09-27 用户改主意并拍板:「技能侧独立输出小说内容,不出脚本了,还是平台侧走 LLM 合理点」
+// —— 盘上不会再有人**技能端脚本包**可导,这个入口随之作废。
+//
+// 钉三件事:①菜单里**不再有**它;②「视频制作」(LLM 直出那条路)必须还在;
+// ③**后端能力不许一起删**(`/api/novels/produce-script` 由 TestStoreWiresProduceScript 钉)
+// —— 将来若又走脚本线,加回一个菜单项即可,不必重写接口。
+func TestNovelsCoverMenuHidesScriptEntry(t *testing.T) {
 	vuePath := filepath.Join("..", "..", "frontend", "src", "views", "NovelsView.vue")
 	vue, err := os.ReadFile(vuePath)
 	if err != nil {
 		t.Fatalf("读不到 %s: %v", vuePath, err)
 	}
-	src := string(vue)
-	for _, want := range []string{
-		`command="script"`,        // 菜单项
-		"脚本创作",                    // 文案
-		`:disabled="!n.script"`,   // 没有包就不给点
-		"api.novelProduceScript(", // 走专用接口
-		"function produceScript(", // 命令出口
-		"n.script.episodes",       // 角标/菜单显示集数
-	} {
-		if !strings.Contains(src, want) {
-			t.Errorf("脚本创作入口缺少 %q", want)
+	// 判据只看**代码**:注释里允许写沿革(那里当然会出现被移除入口的名字)。
+	src := stripVueComments(string(vue))
+	for _, gone := range []string{`command="script"`, "脚本创作", "function produceScript(", "api.novelProduceScript("} {
+		if strings.Contains(src, gone) {
+			t.Errorf("「脚本创作」入口应已移除,却仍有 %q", gone)
 		}
 	}
-	// 「视频制作」必须还在(它是 LLM 那条路,两个入口并存,不是替换)
+	// 「视频制作」必须还在(它是 LLM 直出那条路,现在也是唯一那条)
 	if !strings.Contains(src, `command="produce"`) || !strings.Contains(src, "视频制作") {
-		t.Error("「视频制作」入口不该被脚本创作取代")
+		t.Error("「视频制作」入口必须保留")
 	}
 }
 
