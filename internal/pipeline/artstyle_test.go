@@ -91,8 +91,14 @@ func TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn(t *testing.T) {
 	if strings.Contains(real, "clean cel shading") {
 		t.Errorf("上游点名 3D 写实时不得再注入二维赛璐璐(参考图会与成片脱节):%s", real)
 	}
-	if !strings.Contains(real, "3D CG character render") {
-		t.Errorf("上游的 3D 风格词应被翻译成 3D 渲染约束:%s", real)
+	// 2026-09-27 修正:这条串要的是**电影级写实人像**,不是 3D CG 手办。
+	// 旧判据 `Contains(s,"3d")` 会把它读成后者,于是往提示词里写
+	// "BJD-inspired sculpted forms … collectible virtual figure look"(手办质感)。
+	if !strings.Contains(real, "photorealistic cinematic portrait") {
+		t.Errorf("上游的写实电影风格词应被翻译成电影级人像约束:%s", real)
+	}
+	if strings.Contains(real, "BJD") || strings.Contains(real, "collectible virtual figure") {
+		t.Errorf("电影级写实不该被译成 3D CG 手办口径(s 里含 \"3d\" 不等于要手办):%s", real)
 	}
 	if strings.Contains(real, MediumMarker) {
 		t.Errorf("上游点名写实/3D 时不许再塞平台动画介质块(两个介质打架,模型只会糊):%s", real)

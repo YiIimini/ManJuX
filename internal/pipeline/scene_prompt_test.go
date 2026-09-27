@@ -69,8 +69,10 @@ func TestSceneImagePromptKeepsPhotorealGuard(t *testing.T) {
 		medium   bool   // 期望出现"二维/赛璐璐"介质块
 		evidence string // 期望出现的写实/3D 场景词
 	}{
+		// 2026-09-27 修正:这条串要的是**电影级写实**,不是 3D CG 手办/游戏引擎那一路。
+		// 旧判据 `Contains(s,"3d")` 会把它读成后者(与人物侧同一条 bug,见 prompts.go 的 has3D)。
 		{"写实电影风", "PHOTOREAL 3D CINEMATIC WORLD, SEMI-STYLISED ANIME-ADJACENT FACES, matte finish",
-			false, "3D CG environment render"},
+			false, "photorealistic cinematic environment"},
 		{"真人实拍", "真人实拍质感 + 港片胶片", false, "photorealistic cinematic environment"},
 		{"3D 皮克斯", "PIXAR-STYLE 3D RENDER, SOFT GLOBAL ILLUMINATION", true, "3D CG environment"},
 		{"国漫二维", "国漫二维动画, 赛璐璐平涂", true, "painted background art"},

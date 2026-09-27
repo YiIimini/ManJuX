@@ -759,7 +759,17 @@ func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKi
 		return prof.SheetIdentity
 	}
 	s := strings.ToLower(style)
-	has3D := strings.Contains(s, "3d") || strings.Contains(s, "bjd") || strings.Contains(style, "虚拟人") || strings.Contains(style, "虚拟偶像")
+	// has3D 只认"明确要 3D CG 虚拟人 / 手办"的写法。
+	//
+	// **不能用宽泛的 "3d"**(2026-09-27 实测修正):技能侧与平台的国风电影串都写着
+	// "a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces" —— 宽判据把它读成
+	// "要 3D CG 手办",于是往提示词里塞 "next-generation 3D CG character render,
+	// stylized BJD-inspired sculpted forms, … collectible virtual figure look":
+	// **手办/娃娃质感**,与"电影级写实"是两回事。真电影串是 photoreal 的
+	// "photorealistic cinematic portrait + realistic skin texture"那一支。
+	has3D := strings.Contains(s, "bjd") || strings.Contains(style, "虚拟人") || strings.Contains(style, "虚拟偶像") ||
+		strings.Contains(s, "virtual figure") || strings.Contains(s, "collectible figure") ||
+		strings.Contains(s, "3d render") || strings.Contains(s, "3d cg")
 	hasAnime := strings.Contains(style, "国漫") || strings.Contains(style, "动漫") || strings.Contains(style, "动画") || strings.Contains(s, "anime") || strings.Contains(s, "donghua")
 	hasComic := strings.Contains(style, "美漫") || strings.Contains(s, "comic")
 	hasInk := strings.Contains(style, "水墨") || strings.Contains(style, "国画")
