@@ -219,12 +219,16 @@ func TestPortraitPromptPerKind(t *testing.T) {
 	if strings.Contains(low, "upper-body") || strings.Contains(low, "front-facing") {
 		t.Errorf("器物必须重写人像取景,否则又会长成半身人像:\n%s", obj)
 	}
-	// 人:不重写(LLM 写的人像取景本来就对)
+	// 人:剥掉卡里那句写死的半身取景,换成**按画幅算**的构图(2026-09-27:
+	// `upper-body framing` 在 9:16 竖幅里装不下整个头,模型会裁头顶)。
 	human := PortraitPrompt(PortraitSubject{
 		Kind: KindHuman, Name: "小凡", Description: "少年", ImagePrompt: raw, FacesOn: true,
 	}, nil)
-	if !strings.Contains(strings.ToLower(human), "upper-body") {
-		t.Errorf("人的取景不该被改写:\n%s", human)
+	if strings.Contains(strings.ToLower(human), "upper-body") {
+		t.Errorf("卡里写死的半身取景应被剥掉:\n%s", human)
+	}
+	if !strings.Contains(human, "chest-up portrait") {
+		t.Errorf("人应按画幅拿到胸像构图(默认竖幅):\n%s", human)
 	}
 }
 

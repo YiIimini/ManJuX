@@ -130,15 +130,21 @@ func TestObjectSheetDropsHumanFraming(t *testing.T) {
 	}
 }
 
-// TestHumanSheetKeepsLlmFraming 人的取景由 LLM 写、**不重写**(它本来就是对的,
-// 重写只会白改提示词),人类忠实度条款保留。
-func TestHumanSheetKeepsLlmFraming(t *testing.T) {
+// TestHumanSheetFramingIsComputedFromAspect 人的取景**由平台按画幅算**,不再照抄卡里那句。
+//
+// 2026-09-27 用户报「角色定妆照应该是角色上半身的正面照片啊,咋现在角色头都顶上看不全」:
+// 卡里写死的 `upper-body framing`(上半身)在 768×1344 的竖幅里装不下整个头,模型把头顶
+// 裁掉了。取景因此改成按画幅算(竖幅 → 胸像 + 头顶留白);人类忠实度条款照旧保留。
+func TestHumanSheetFramingIsComputedFromAspect(t *testing.T) {
 	proj := &project.Project{}
 	proj.Config.Params = project.DefaultStageParams()
 	plan := &project.Plan{Style: "国漫二维动画", Characters: []project.Character{realLuqingyan}}
 	got := characterImagePrompt(proj, plan, realLuqingyan)
-	if !strings.Contains(got, "upper-body framing, front-facing") {
-		t.Errorf("人的取景应原样保留:\n%s", got)
+	if !strings.Contains(got, "chest-up portrait") || !strings.Contains(got, "clear empty space above the hair") {
+		t.Errorf("竖幅下应给「胸像 + 头顶留白」的构图:\n%s", got)
+	}
+	if strings.Contains(got, "upper-body framing") {
+		t.Errorf("卡里那句写死的半身取景应被剥掉(取景只有一个来源):\n%s", got)
 	}
 	if !strings.Contains(got, "IDENTITY FIDELITY") {
 		t.Error("人应带脸部忠实度条款")

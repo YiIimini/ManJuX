@@ -421,6 +421,14 @@ type PortraitSubject struct {
 	// 资产库那条路恒为 true:库是跨项目的全局资产,而全应用默认就是动漫化角色
 	// —— 库里生成真人脸,复用到任一项目都会与渲染侧打架(见 LibraryPortraitPrompt)。
 	FacesOn bool
+	// FrameW/FrameH 出图画幅(项目的 render.width/height)。
+	//
+	// 为什么要传下来(2026-09-27 用户报障「定妆照应该是上半身正面照片,咋头都顶上看不全」):
+	// 画幅决定**构图** —— 同样是"上半身",竖幅(9:16)里装得下的是胸像,横幅里装得下的是
+	// 头肩。卡里只写一句写死的 `upper-body framing` 时,竖幅里模型只能二选一:上下留白
+	// 或者放大到裁掉头顶 —— 实测它选后者。所以取景按画幅算(见 PortraitFramingClause),
+	// 而不是写死。0 值走默认画幅(与 project.DefaultStageParams 的 render 尺寸一致)。
+	FrameW, FrameH int
 }
 
 // PortraitPrompt **定妆照提示词的唯一装配点**(审计 P1-2)。
@@ -456,6 +464,12 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	}
 	if prof.RewriteSheetFraming {
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
+	} else if kind == KindHuman || kind == KindChibi {
+		// 人像:**也剥**卡里的人像取景短语,但换成"按画幅算"的构图纪律
+		// (PortraitFramingClause 在函数尾部追加)。2026-09-27 用户报「定妆照应该是
+		// 上半身正面照片,咋现在头都顶上看不全」——根因就是卡里写死的 `upper-body
+		// framing` 在 9:16 竖幅里装不下整个头。剥掉它,取景只剩一个来源。
+		prompt = stripSheetFramingWords(prompt)
 	}
 	style := ""
 	if plan != nil {
@@ -469,6 +483,13 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	prompt += uniformCivilianClarify(s.Description)
 	prompt += PortraitHairClause(kind)
 	prompt += PortraitPoseClause(kind)
+	// 构图纪律按**成片画幅**算(竖幅 → 胸像 + 头顶留白;横幅 → 头肩):卡里那句写死的
+	// `upper-body framing` 在竖幅里会把头顶裁掉 —— 见 PortraitFramingClause 的说明。
+	frameW, frameH := s.FrameW, s.FrameH
+	if frameW <= 0 || frameH <= 0 {
+		frameW, frameH = DefaultSheetFrameW, DefaultSheetFrameH
+	}
+	prompt += PortraitFramingClause(kind, frameW, frameH)
 	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
 	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
 	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
@@ -501,15 +522,20 @@ func PortraitHairClause(kind EntityKind) string {
 		"因为参考图就是全片身份的权威 —— 图上多一缕,成片里就会多一大绺。)\n"
 }
 
-// PortraitPromptForProject 项目内角色卡的便捷包装(取项目开关与方案风格)。
+// PortraitPromptForProject 项目内角色卡的便捷包装(取项目开关、方案风格与**出图画幅**)。
 func PortraitPromptForProject(proj *project.Project, plan *project.Plan, ch project.Character) string {
 	facesOn := true
+	frameW, frameH := 0, 0
 	if proj != nil {
 		facesOn = proj.Config.Params.Script.FacesOn()
+		// 画幅决定构图(胸像 vs 头肩),必须在装配时就拿到 —— 定妆照是按成片画幅出的
+		// (甲2),而"上半身"在竖幅里装不下整个头(2026-09-27 用户报障)。
+		frameW, frameH = proj.Config.Params.Render.Width, proj.Config.Params.Render.Height
 	}
 	return PortraitPrompt(PortraitSubject{
 		Kind: ResolveEntityKind(ch), Name: ch.Name,
 		Description: ch.Description, ImagePrompt: ch.ImagePrompt, FacesOn: facesOn,
+		FrameW: frameW, FrameH: frameH,
 	}, plan)
 }
 
@@ -565,30 +591,25 @@ var sheetFramingWords = []string{
 	"full body", "full-body", "head and shoulders", "portrait",
 }
 
-// rewriteSheetFraming 剥掉人像取景短语,追加该类型自己的取景(非人类型专用)。
-func rewriteSheetFraming(prompt, framing string) string {
+// stripSheetFramingWords 把取景短语剥干净(保留段落结构:只压行内空白)。
+//
+// 2026-09-27 起**人类也用它**:卡里那句写死的 `upper-body framing` 在竖幅(9:16)里
+// 与实际构图不一致(半身装不下整个头 → 模型裁头顶),取景改由 PortraitFramingClause
+// 按画幅算。同一条纪律:一段提示词里取景只有一个来源。
+func stripSheetFramingWords(prompt string) string {
 	out := prompt
 	for _, w := range sheetFramingWords {
 		// 大小写不敏感地整词剥离(replaceAllFold 见下)
 		out = replaceAllFold(out, w, "")
 	}
-	out = strings.Join(strings.Fields(out), " ")
-	out = strings.TrimRight(strings.TrimSpace(out), ",;")
-	// 剥掉碎片后可能留下 ", ," 这类空档:反复折叠直到稳定(实测
+	// 剥掉碎片后会留下 ", ," / " ," 这类空档(实测
 	// "…STYLE, Plain Background, upper-body framing, Front-Facing" → "…STYLE, , ")
-	for i := 0; i < 4; i++ {
-		before := out
-		out = strings.ReplaceAll(out, ", ,", ",")
-		out = strings.ReplaceAll(out, " ,", ",")
-		out = strings.ReplaceAll(out, ",,", ",")
-		out = strings.ReplaceAll(out, "; ;", ";")
-		out = strings.ReplaceAll(out, ",;", ",")
-		out = strings.ReplaceAll(out, "  ", " ")
-		if out == before {
-			break
-		}
-	}
-	out = strings.Trim(out, " ,;")
+	return foldProportionLeftovers(out)
+}
+
+// rewriteSheetFraming 剥掉人像取景短语,追加该类型自己的取景(非人类型与人类两条路共用)。
+func rewriteSheetFraming(prompt, framing string) string {
+	out := strings.Trim(stripSheetFramingWords(prompt), " ,;")
 	if strings.TrimSpace(framing) != "" {
 		out += ", " + strings.TrimSpace(framing)
 	}

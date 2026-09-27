@@ -252,3 +252,40 @@ func foldProportionLeftovers(s string) string {
 	}
 	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
+
+// 定妆照默认画幅 —— 与 project.DefaultStageParams 的 render 尺寸一致(768×1344 竖版)。
+// 资产库路径(抽卡 / 自定义新建)没有项目上下文,取不到项目画幅时用它。
+const (
+	DefaultSheetFrameW = 768
+	DefaultSheetFrameH = 1344
+)
+
+// PortraitFramingClause 人像定妆照的**构图纪律**,按成片画幅算。
+//
+// 事故(2026-09-27 用户报「角色定妆照应该是角色上半身的正面照片啊,咋现在角色头都顶上
+// 看不全」):画幅是 768×1344(9:16 竖),而卡里写的取景短语是 `upper-body framing`
+// —— 上半身是**横宽**的(肩宽 > 头高),塞进竖幅里模型只有两条路:上下留白,或者放大
+// 到裁掉头顶。实测它选了后者,于是"头看不全"。
+//
+// 所以取景不能是一句写死的"上半身",得**按画幅算**:
+//   - 竖幅(高 > 宽):胸像 —— 整个头在画面里、头发上方留白,胸腔以下留给背景。竖幅多出来的
+//     高度是给构图用的,不是给身高用的;
+//   - 方形/横幅:头肩 —— 本来就装得下,不必额外约束。
+//
+// 全是**正面描述**:图像侧(Krea-2)是 CFG 1.0 的蒸馏模型,否定词不生效还会把名词当指令
+// 画出来(见 artstyle.go 顶部),所以这里一个 not/never 都不写。
+func PortraitFramingClause(kind EntityKind, width, height int) string {
+	switch NormalizeEntityKind(string(kind)) {
+	case KindHuman, KindChibi:
+	default:
+		// 器物/灵宠/妖兽/场景各有自己的取景纪律(prof.SheetFraming),不套人像构图。
+		return ""
+	}
+	if height > width {
+		return " FRAMING (mandatory): a chest-up portrait in a vertical frame — the WHOLE head is inside the picture " +
+			"with clear empty space above the hair, the shoulders fully inside the frame, and the area below the chest " +
+			"stays plain background. The subject is centred and faces the camera."
+	}
+	return " FRAMING (mandatory): a head-and-shoulders portrait — the WHOLE head is inside the picture with clear " +
+		"empty space above the hair, and the shoulders are fully inside the frame. The subject is centred and faces the camera."
+}

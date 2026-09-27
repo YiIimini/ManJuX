@@ -111,10 +111,12 @@ func TestSkillProportionClauseSurvivesAssembly(t *testing.T) {
 	}
 	// ③ 平台侧的**职责条款一条都不能少**(让位只让比例,不让介质/取景/忠实度)
 	for _, want := range []string{
-		MediumMarker,         // 介质块(线稿/平涂/哑光)
-		"IDENTITY FIDELITY",  // 身份忠实度块
-		"upper-body framing", // 人像取景(人的取景交给 LLM,平台不许重写)
-		"front-facing",
+		MediumMarker,        // 介质块
+		"IDENTITY FIDELITY", // 身份忠实度块
+		// 取景(2026-09-27 起由平台**按画幅**算:竖幅 → 胸像 + 头顶留白;
+		// 卡里那句写死的 `upper-body framing` 会被剥掉,见 PortraitFramingClause)
+		"chest-up portrait",
+		"faces the camera",
 		"plain pure white seamless background",
 		"HAIR EXACTLY AS BRIEFED", // 发型纪律
 	} {

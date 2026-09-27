@@ -136,3 +136,49 @@ func TestPortraitPromptStripsFullBodyForHumansOnly(t *testing.T) {
 		t.Error("器物的『整件完整入画』是它自己的取景纪律,不该被剥掉")
 	}
 }
+
+// TestPortraitFramingClauseByAspect 构图随**画幅**变 —— 它不是常量,是算出来的。
+//
+// 用户 2026-09-27 的批评:「变量应该是实时改变的,不要固定成常量啊」。定妆照的取景
+// 正是这类东西:同一个"上半身",竖幅里装得下的是胸像、横幅里装得下的是头肩。
+func TestPortraitFramingClauseByAspect(t *testing.T) {
+	v := PortraitFramingClause(KindHuman, 768, 1344)
+	for _, want := range []string{"chest-up portrait", "the WHOLE head is inside the picture", "clear empty space above the hair"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("竖幅定妆取景缺「%s」:%s", want, v)
+		}
+	}
+	h := PortraitFramingClause(KindHuman, 1344, 768)
+	if !strings.Contains(h, "head-and-shoulders") {
+		t.Errorf("横幅应走头肩取景:%s", h)
+	}
+	if strings.Contains(h, "chest-up") {
+		t.Errorf("横幅不该要胸像(那是竖幅的构图):%s", h)
+	}
+	for _, k := range []EntityKind{KindObject, KindBeast, KindScene} {
+		if got := PortraitFramingClause(k, 768, 1344); got != "" {
+			t.Errorf("%v 不该套人像构图纪律:%s", k, got)
+		}
+	}
+	low := strings.ToLower(v + " " + h)
+	for _, bad := range []string{" no ", " not ", "never ", "without ", "avoid "} {
+		if strings.Contains(low, bad) {
+			t.Errorf("构图纪律不得含否定词「%s」(Krea-2 会把名词当指令画出来):%s", bad, low)
+		}
+	}
+}
+
+// TestPortraitPromptFollowsProjectAspect 端到端:装配点真的用上了**项目画幅**。
+func TestPortraitPromptFollowsProjectAspect(t *testing.T) {
+	proj := &project.Project{}
+	proj.Config.Params = project.DefaultStageParams()
+	plan := &project.Plan{Style: "国风电影级"}
+	ch := project.Character{ID: "c1", Name: "沈砚", ImagePrompt: "a lean young man"}
+	if got := PortraitPromptForProject(proj, plan, ch); !strings.Contains(got, "chest-up portrait") {
+		t.Errorf("默认竖幅应给胸像构图:\n%s", got)
+	}
+	proj.Config.Params.Render.Width, proj.Config.Params.Render.Height = 1344, 768
+	if got := PortraitPromptForProject(proj, plan, ch); !strings.Contains(got, "head-and-shoulders") {
+		t.Errorf("改成横幅后构图应跟着变(取景是算出来的,不是常量):\n%s", got)
+	}
+}
