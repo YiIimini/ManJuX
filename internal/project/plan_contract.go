@@ -122,6 +122,16 @@ func PlanIssuesText(issues []Issue) []string {
 
 // HasVoiceover 本镜是否有画外音(旁白标签 / os=true / narration 非空)。
 func HasVoiceover(sh Shot) bool {
+	// **vo_kind 优先**（技能侧生成规范 §6.6）：`speech` 是"画面里有人在说" ——
+	// 这时哪怕 narration 字段非空（旧管线那个字段大量是"没归到角色卡的话语"），
+	// 也不是画外音，**不该**写闭嘴句。反过来 inner/system/narration 一定是真画外。
+	// 只有 vo_kind 为空（老方案/技能侧没标）时才退回下面那套字段启发式。
+	switch strings.TrimSpace(sh.VoKind) {
+	case VoKindSpeech:
+		return false
+	case VoKindInner, VoKindSystem, VoKindNarration:
+		return true
+	}
 	for _, l := range sh.Dialogue {
 		if l.OS || IsVoiceoverSpeaker(l.Speaker) {
 			return true
@@ -743,13 +753,13 @@ func ValidatePlan(p *Plan) []Issue {
 	//   warn — 取值不认识 / 演出句没逐字写进正文 / 面板没进 prop_ids：前两者会让模型自己发挥，
 	//          后者会让面板图绑不上（口径要求 system 镜的 prop_ids 必含面板）。
 	if p.HasVoiceoverShots() {
-		var badKind, badRefs, noClauseInner, noClauseSys, noPanel []string
+		var badKind, badRefs, noClauseInner, noClauseSys, noPanel, monologue []string
 		for _, sh := range p.Shots {
 			k := strings.TrimSpace(sh.VoKind)
 			if k == "" {
 				continue
 			}
-			if k != VoKindInner && k != VoKindSystem && k != VoKindNarration {
+			if k != VoKindInner && k != VoKindSystem && k != VoKindNarration && k != VoKindSpeech {
 				badKind = append(badKind, fmt.Sprintf("#%d「%s」", sh.ID, k))
 				continue
 			}
@@ -793,11 +803,18 @@ func ValidatePlan(p *Plan) []Issue {
 				if !PlanSystemPerformanceOK(sh.H3Prompt) {
 					noClauseSys = append(noClauseSys, fmt.Sprintf("#%d", sh.ID))
 				}
+			case VoKindSpeech:
+				// **哑剧检查**（技能侧生成规范 §6.6 的精确口径）：画面里有人在说，
+				// 却在正文里写了「嘴唇完全闭合」—— 渲出来口型不动，观众看到的是「人在演但没声」。
+				// 反方向（真画外却没写闭嘴句）由 HasVoiceover 那条门管。
+				if strings.Contains(sh.H3Prompt, VoiceoverClauseMarker) {
+					monologue = append(monologue, fmt.Sprintf("#%d", sh.ID))
+				}
 			}
 		}
 		if len(badKind) > 0 {
 			add("warn", "plan.shots",
-				"%d 镜的 vo_kind 取值不认识（%s）——只认 inner（内心活动，Q 版演出）、system（系统，面板＋机器人）与 narration（旁白，无需演出句）；"+
+				"%d 镜的 vo_kind 取值不认识（%s）——只认 inner（内心，Q 版演出）、system（系统，面板＋机器人）、narration（旁白）与 speech（画面里有人在说）；"+
 					"认不出的值会被当成普通镜，观众看到的差别是「该出 Q 版的镜出了本人」",
 				len(badKind), strings.Join(firstN(badKind, 4), "、"))
 		}
@@ -818,6 +835,12 @@ func ValidatePlan(p *Plan) []Issue {
 				"%d 个系统镜的正文没写「全息面板＋Q 版机器人演出」那句（%s）—— 同上，演出句要逐字写进正文；"+
 					"面板里**不许写任何文字**（画面文字禁止）",
 				len(noClauseSys), strings.Join(firstN(noClauseSys, 6), "、"))
+		}
+		if len(monologue) > 0 {
+			add("warn", "plan.shots",
+				"%d 个 speech 镜（画面里有人在说）的正文里写了「%s」（%s）—— 渲出来是**哑剧**："+
+					"口型不动，观众看到的是「人在演但没声」。只有真画外（内心/系统/旁白）才写那句",
+				len(monologue), VoiceoverClauseMarker, strings.Join(firstN(monologue, 6), "、"))
 		}
 		if len(noPanel) > 0 {
 			add("warn", "plan.shots",

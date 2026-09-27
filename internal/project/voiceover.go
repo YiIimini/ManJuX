@@ -19,9 +19,16 @@ const (
 	VoKindInner = "inner"
 	// VoKindSystem 系统镜：全息面板（道具）＋ Q 版机器人（人物）演出。
 	VoKindSystem = "system"
+	// VoKindSpeech 画面里**有人在说**（技能侧生成规范 §6.6 五值之一）。
+	//
+	// 它是最容易被搞错的一档：这一镜**不许**写闭嘴句 —— 画面里有人张嘴说话却写了
+	// "lips remain completely closed"，渲出来就是**哑剧**（口型不动，观众看到的是"人在演但没声"）。
+	// 反过来，只有**真画外**（inner/system/narration，或 os=true 的台词）才写那句。
+	// 契约门对这两个方向各有一条（见 plan_contract.go 的闭嘴句一致性检查）。
+	VoKindSpeech = "speech"
 	// VoKindNarration 旁白（画外音）—— 技能侧 §4 提到的第三种取值，**不要求**演出句：
 	// 这一镜本身就是"画外音在说、画面里的人不说话"，平台原有通路足够
-	// （EnsureVoiceoverLips 补闭嘴句、compose 按旁白排版、说话人「旁白/系统/内心」都算画外音标签）。
+	// （EnsureVoiceoverClause 补闭嘴句、compose 按旁白排版、说话人「旁白/系统/内心」都算画外音标签）。
 	//
 	// 2026-09-27 实测：《求你们骂我》2462 镜里 **739 镜标了 narration** ——
 	// 门若不认它，导入时就会一口气报 739 条「取值不认识」，门自己变成噪音源。

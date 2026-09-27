@@ -66,7 +66,13 @@ const sysShotRulesTpl = `## SHOT PLAN RULES
 - mode: "ref2va" when character/scene reference images will be provided (any shot with on-screen characters); "t2va" for pure text-to-video shots without references.
 - dialogue speaker must match a character name, or use speaker "旁白" for narration. Keep spoken lines short (≤20 chars), punchy, ending with 。?! naturally. At most 2 speakers per shot.
 - DIALOGUE MUST FIT THE SHOT (critical): Mandarin delivery runs about {{CPS}} characters per second, and H3 needs roughly one extra second of headroom to start and settle. The shot's duration MUST be at least ceil(total_dialogue_chars / {{CPS}}) + 1 (rounded up to a whole second, min {{MIN}}, max {{MAX}}). A 20-character line therefore needs 6 seconds — never park a 20-character line in a {{MIN}}-second shot: the speech gets cut off and the finished video loses the end of the line. If a line cannot fit {{MAX}} seconds, split the beat into two shots, each carrying part of the line.
-- narration (旁白) is an off-screen voiceover; characters' lips stay closed. Use sparingly.`
+- narration (旁白) is an off-screen voiceover; characters' lips stay closed. Use sparingly.
+- SELF-CONTAINED (critical — one shot = one generation, the model has NO memory of the previous shot): every field must be written out in full. NEVER write "同上" / "如上" / "same as above" / "as before" / "…" and NEVER leave a field empty or fill it with a placeholder like "N/A" or "-" when the field asks for content. Location, people, light, time of day and prop state must all be stated in THIS shot.
+- SHOT LENGTH = MAX(dialogue time, action time) (official rule, applies at every duration): first compute the spoken line (total characters ÷ the character's emotional speaking rate — 低沉/哽咽 2.5-3.5, 威严/宣告 3-4, 正常叙事 3.5-4.5, 轻松/调侃 4-5, 愤怒/争吵 5-6.5 chars per second), then the time the on-screen action needs, and take the LARGER. If it exceeds {{MAX}} seconds, split at a sentence boundary — NEVER speed up dialogue and never cut a line in half.
+- PACING QUOTAS (official, scaled to our shot length): the first MEANINGFUL line of dialogue must arrive within 12 seconds of the episode start; never leave a stretch longer than 12 seconds with no dialogue at all (insert a line, a caption or a reaction beat); the emotional core (戏眼 — a held close-up, a silent stand-off, tears, a clenched fist) lasts AT LEAST 5 seconds, never a quick cut.
+- When the action is shorter than the dialogue, DO NOT pad with talk: add reaction shots (a listener's face, an environment detail, a close-up of a prop), slow the movement (a turn, a raised hand), use a slow camera move, or hold on a micro-expression.  When the dialogue is short, the action sets the length and the line sits in the gap.
+- Keep the framing varied: never the SAME shot_size (景别) more than 6 shots in a row.
+- Write only actions a real actor performs easily. Exact physical interactions and micro-movements (睫毛颤, 手指细小动作, 精密的持物角度) always break: externalise the emotion as body language instead (tension = glancing at a timepiece, eyes darting; anger = fists clenched, jaw tight; grief = head down, shoulders trembling), and give amplitude + speed + what it continues from.`
 
 // sysShotRules 渲染后的分镜规则段(单轮 SystemPrompt 与分批 batchSystemPrompt **共用同一段**,
 // 不各写一份 —— 写两份就又是一处会漂的口径)。
@@ -302,6 +308,39 @@ const animeFaceLock = `CHARACTER STYLE LOCK (MANDATORY, highest priority):
 //
 // 是 var 不是 const:分镜规则段由一个值 = renderShotRules()(见 sysShotRules),
 // 时长数字全部从常量渲染 —— 常量对了、文案写死照样会漂,所以文案本身也得是算出来的。
+// sysFaceVocabRules 五官词表 + 敏感词安全替代（技能侧《平台侧生成规范》§3.2/§2.4，**逐字**吸收）。
+//
+// 【为什么要单列一段】这两块都是"**改一个词就等于换一个词表**"的东西：
+//
+//	① 五官词表：模型侧被训练过的是**具体类型名**（鹅蛋脸/丹凤眼/远山眉…）。平台此前只要求
+//	   "写清脸型眼型"，LLM 于是爱写 `large bright eyes`、`精致五官`、`绝美` 这类**尺寸词与抽象词**
+//	   —— 那正是"全剧一张模板脸"的根源（同一天还报过"周廷和主角脸相似"）。词表把"挑一个具体类型"
+//	   变成硬要求，且**同类角色不许都用同一种**。
+//	② 敏感词禁止表：赤足/深V/低胸/超模身材/大眼长腿/半透/毛孔可见… 云端会拦，本地也照写
+//	   —— 免得换后端才发现。规范给了**安全替代写法**（高领/小立领、立体剪裁、写成头身比而不是"大长腿"），
+//	   照抄即可，不是"自己发明一套更保守的说法"。
+const sysFaceVocabRules = `## FACE VOCABULARY & SAFE WORDING (mandatory — these are controlled lists)
+
+### Face features: pick a SPECIFIC type name, never a size word or an abstract compliment
+- FACE SHAPE: 鹅蛋脸 / 瓜子脸(下巴微尖不过分) / 圆润苹果脸 / 方中带圆脸(柔和方颌) / 长菱形脸(颧骨微宽下颌收窄) / 心形脸 / 瘦长脸. Bone structure must read: defined but not hard, moderate cheekbone and jaw presence — NEVER an inflated face or a cone chin (锥子下巴).
+- BROWS: 远山眉 / 柳叶眉 (清冷疏离) · 剑眉 / 水弯眉 (英气干练) · 秋波眉 / 挑眉 (妩媚) · 野生平眉 (中性少年感). Hair-by-hair texture must be visible; never one identical brow for everyone.
+- EYES: 丹凤眼 / 桃花眼 / 杏眼 / 瑞凤眼 / 狐狸眼 / 下垂眼 / 柳叶眼 / 细长单眼皮 — plus the gaze/expression that matches the character's temperament (清冷/凌厉/温柔/狡黠/迷茫/坚毅/空洞).
+- NOSE: 高挺直鼻 / 微驼峰鼻 / 小巧翘鼻 / 鼻头圆润带肉感 / 希腊鼻 / 鼻梁低平. NEVER a cone or over-narrow nose.
+- LIPS: 薄唇轻抿 / 厚唇微翘 / M 唇 / 嘴角平直或下垂 / 嘴角一边习惯性上挑.
+- BANNED as feature words: "large eyes", "big bright eyes", "绝美", "精致五官", "眉目如画", "完美脸型", "supermodel face" and any pure size adjective. Saying "精致五官" tells the model NOTHING and pushes every character toward one template.
+- DIFFERENTIATE (critical): face shape / brows / eyes / nose / lips must be chosen per character (age, temperament, role) — characters of the same kind must NEVER all get the same combination.
+
+### Banned words and their safe replacements (verbatim from 人物道具提取指令)
+- 赤足/光脚/barefoot → the character MUST wear shoes: "cloth shoes", mud-caked hem; never bare feet.
+- 深V/低胸/露乳/low neckline → collar wording only: high collar / small stand collar / layered lapels / 一字领(非低胸). Never any chest-revealing design.
+- 宽腰封/紧束/勒紧 → 立体剪裁贴合身形 / 衣料垂坠自然收窄 (tailoring, not tightness); if a belt is needed it is at most a palm-wide thin cord or chain — preferably no belt at all.
+- 半透/透视装/sheer → opaque matte fabric with a woven texture (state explicitly that it is NOT see-through).
+- 超模身材/大长腿/legs 60% of height → express as proportions instead: "seven and a half heads tall, lean, straight-backed, shoulders about two head-widths".
+- 毛孔可见/汗毛/visible pores → matte skin with a soft natural finish (never realistic pores).
+- 血管可见/visible veins → drop it; if needed: faint blue veins at the temple, subtle.
+- Also banned: 性感暴露, 沟, 翘臀/蜜桃臀, 巨乳, 网衣/链式衣饰/蛛网衣, 大面积镂空, 暗示性动作, 不雅姿态, 低俗图案.
+- Costume quality (keeps the design rich without exposure): 立体剪裁(流畅衣身线条、侧身拼接、内藏式收省)、材质对撞至少 4 种高级材质、外层自然过渡到腰胯；女装必须有内搭。`
+
 var SystemPrompt = sysHeader + `
 
 ` + sysOutputFull + `
@@ -319,6 +358,8 @@ var SystemPrompt = sysHeader + `
 ` + sysHard + `
 
 ` + sysCastRules + `
+
+` + sysFaceVocabRules + `
 
 ` + sysSceneRules
 
@@ -788,7 +829,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 - segments 的 from/to 是分镜镜号区间:从 1 开始连续覆盖到总镜数,不重叠不留空。
 - 每段 3-6 镜;段与段之间是清晰的故事节拍(开场钩子/升级/转折/高潮/收尾)。
 - brief 必须自足:仅凭 brief(不看全文)就能写好本段每一镜。关键台词必须原文引用。
-- characters/scenes 覆盖全片所有出场者;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules + `
+- characters/scenes 覆盖全片所有出场者;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + `
 
 ` + sysSceneRules
 
@@ -813,6 +854,8 @@ Return STRICT JSON only (no markdown fences, no commentary):
 ` + sysH3Format + `
 
 ` + sysHard + `
+
+` + sysFaceVocabRules + `
 
 ## BATCH SCOPE
 - Produce ONLY the shots whose ids are inside the given range; do NOT invent shots outside it.
