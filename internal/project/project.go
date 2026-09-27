@@ -169,6 +169,10 @@ type Plan struct {
 	Scenes     []Scene     `json:"scenes"`
 	Props      []Prop      `json:"props,omitempty"`
 	Shots      []Shot      `json:"shots"`
+
+	// StrippedDirectives 本次读取时从 h3_prompt 里剔掉的"生成器指令行"条数（见 h3_clean.go）。
+	// **不进 JSON**：它是读取期的诊断量，不是方案的一部分（写回磁盘会把上游文件"改脏"）。
+	StrippedDirectives int `json:"-"`
 }
 
 // Asset 参考图资产。
@@ -558,6 +562,11 @@ func (s *Store) SavePlan(id string, plan *Plan) error {
 // 顺带做一次 mode 空值推断(见 shot_mode.go):契约把"空值"的推断交给平台,而所有
 // 消费者(渲染阶段、资产范围、2K 升级)都从这里拿 plan —— 在读取边界推断一次,
 // 四处同时正确。不写回磁盘,只影响本次读取的语义。
+//
+// 2026-09-27 晚再加一次**指令行剔除**(见 h3_clean.go):技能侧重出的包里,全书 2462 镜的
+// `h3_prompt` 都混着"写给生成器的话"(REFERENCE ORDER / PICTURE MANIFEST …),而平台是把
+// `shot.H3Prompt` 原样拼给模型的。同样放在这个边界上:一处清理,渲染/2K/质检四条消费路径
+// 同时干净;剔除条数记在 `StrippedDirectives` 上,由协调器播报一次(不静默改数据)。
 func (s *Store) LoadPlan(id string) (*Plan, error) {
 	raw, err := os.ReadFile(s.PlanPath(id))
 	if err != nil {
@@ -568,6 +577,13 @@ func (s *Store) LoadPlan(id string) (*Plan, error) {
 		return nil, err
 	}
 	p.NormalizeShotModes()
+	for i := range p.Shots {
+		cleaned, n := StripH3WriterDirectives(p.Shots[i].H3Prompt)
+		if n > 0 {
+			p.Shots[i].H3Prompt = cleaned
+			p.StrippedDirectives += n
+		}
+	}
 	return &p, nil
 }
 
