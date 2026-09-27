@@ -152,3 +152,59 @@ func TestAssetStageCallsCastDistinctness(t *testing.T) {
 		t.Error("判成撞脸后要带**分离指令**重出（只换种子不够 —— 上一轮已经「按着身份锁」画错了）")
 	}
 }
+
+// TestCastPeersSkipsSameCharacterVariants 同一个人的**造型档**不是"别的角色"。
+//
+// 【2026-09-27 用户报障】某集报了「定妆照「碑生」与「碑生」**长得像同一个人** …请重出其中一张」——
+// 同一张脸当然像同一个人：那是同一个角色的另一张造型档卡（同一个人换服装），
+// 而 castPeers 此前只按 **id** 排除自己，造型档 id 不同就被当成"别人"拉来比了。
+func TestCastPeersSkipsSameCharacterVariants(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(n string) string {
+		p := filepath.Join(dir, n)
+		if err := os.WriteFile(p, []byte("png"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	plan := &project.Plan{Characters: []project.Character{
+		{ID: "char_01", Name: "碑生"},
+		{ID: "char_01v2", Name: "碑生·抄碑"}, // 同一个人的另一档
+		{ID: "char_02", Name: "守钟女"},     // 真正的别人
+		{ID: "char_01_chibi", Name: "碑生Q版"},
+	}}
+	assets := map[string]project.Asset{
+		"char:char_01":       {File: mk("a.png")},
+		"char:char_01v2":     {File: mk("b.png")},
+		"char:char_02":       {File: mk("c.png")},
+		"char:char_01_chibi": {File: mk("d.png")},
+	}
+	peers := castPeers(dir, plan, assets, "char:char_01")
+	if len(peers) != 1 || peers[0].name != "守钟女" {
+		t.Fatalf("只该比「守钟女」一个（排除自己的造型档与 Q 版），实际 %+v", peers)
+	}
+	// 反向也成立：从造型档出发时，主卡同样不算"别人"
+	peers2 := castPeers(dir, plan, assets, "char:char_01v2")
+	if len(peers2) != 1 || peers2[0].name != "守钟女" {
+		t.Fatalf("从造型档出发也一样：%+v", peers2)
+	}
+	// 同名不同卡（数据脏时）也不比 —— 告警里分不清是谁，比了只会误导
+	plan2 := &project.Plan{Characters: []project.Character{
+		{ID: "char_01", Name: "阿婆"},
+		{ID: "char_09", Name: "阿婆"},
+	}}
+	assets2 := map[string]project.Asset{
+		"char:char_01": {File: mk("e.png")},
+		"char:char_09": {File: mk("f.png")},
+	}
+	if got := castPeers(dir, plan2, assets2, "char:char_01"); len(got) != 0 {
+		t.Errorf("同名两张卡不比（分不清谁是谁）：%+v", got)
+	}
+	// 比对对象要带 id（同名时告警里能分清）
+	plan3 := &project.Plan{Characters: []project.Character{
+		{ID: "char_01", Name: "碑生"}, {ID: "char_02", Name: "守钟女"},
+	}}
+	if got := castPeers(dir, plan3, assets, "char:char_01"); len(got) != 1 || got[0].id != "char_02" {
+		t.Errorf("比对对象要带卡片 id：%+v", got)
+	}
+}

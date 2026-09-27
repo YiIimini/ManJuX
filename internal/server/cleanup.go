@@ -27,32 +27,32 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		res.FreedMB += float64(size) / 1024 / 1024
 	}
 
-	// ① ComfyUI output/manjux 中的中间产物(不影响项目 output/ 里的成片)
+	// ① ComfyUI **运行时目录整扫**（输出中间产物 ＋ 参考图上传副本）
+	//
+	// 【2026-09-27 用户指示】「一键清理 还需要清理 D:\Ai\ComfyUI\ComfyUI\input 和 output 这两个目录」。
+	// 此前只清两样东西：`output/manjux/`（平台自己的中间产物）与 input 里**24 小时前的图片** ——
+	// 其余一律留着：ComfyUI 自己出的图、别的扩展名（.json/.mp4/latent）、近 24 小时的副本。
+	// 用户看到的就是"点了清理，这两个目录还占着几个 G"。
+	//
+	// 现在的边界（安全第一，宁可少删）：
+	//   ① **只删 1 小时前的文件**：正在跑的那一镜刚上传/刚写出的东西不能被删（此前 input 的 24 小时
+	//      窗口太保守，用户要的是"能用"而不是"绝对不误删"；1 小时足够覆盖任何在跑的任务）；
+	//   ② **input 的子目录不动**（旧决定保留：可能是用户自己放的素材）；output 的子目录按同样规则清文件；
+	//   ③ 文件清空后顺手删掉**空目录**（空目录不占空间但会让人以为还有东西）；
+	//   ④ `output/manjux/` 仍整删（平台自己的产物，无回收价值）。
 	g := s.cfg.Get()
 	var outCount int
 	var outSize int64
-	for _, outRoot := range comfyRunDirs(g.Comfy.RootDir, "output") {
-		manjuxOut := filepath.Join(outRoot, "manjux")
-		if st, err := os.Stat(manjuxOut); err != nil || !st.IsDir() {
-			continue
-		}
-		count := 0
-		filepath.WalkDir(manjuxOut, func(p string, e os.DirEntry, err error) error {
-			if err != nil || e.IsDir() {
-				return nil
-			}
-			if fi, e2 := e.Info(); e2 == nil {
-				outSize += fi.Size()
-			}
-			count++
-			return nil
-		})
-		if count > 0 && os.RemoveAll(manjuxOut) == nil {
-			outCount += count
+	sweepCut := time.Now().Add(-time.Hour)
+	for _, name := range []string{"output", "input"} {
+		for _, dir := range comfyRunDirs(g.Comfy.RootDir, name) {
+			n, size := sweepRunDir(dir, name, sweepCut)
+			outCount += n
+			outSize += size
 		}
 	}
 	if outCount > 0 {
-		add(fmt.Sprintf("ComfyUI 中间产物 %d 个文件", outCount), outSize)
+		add(fmt.Sprintf("ComfyUI input/output 运行时文件 %d 个（1 小时前的）", outCount), outSize)
 	}
 
 	// ② 项目内失败合成现场(compose-*failed)与截帧预览(_frames)
@@ -161,41 +161,9 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// ⑥ ComfyUI input 里的参考图上传副本(2026-09-12 用户「清理掉各环节产生的垃圾」)。
-	// 每次渲染/定妆都会把参考图上传到 ComfyUI 的 input 目录留一份,实测积到
-	// 252.8 MB / 202 个文件而从不清理。这些副本是可再生的(下一次渲染会重新上传),
-	// 所以安全;只删**超过 24 小时**的图片文件,且不动任何子目录(用户可能有自己的素材目录)。
-	// 位置一律走 comfyRunDirs:input 可能在本体目录,也可能在 root 下(见 comfy_paths.go)。
-	var inputN int
-	var inputSize int64
-	cut := time.Now().Add(-24 * time.Hour)
-	for _, inDir := range comfyRunDirs(g.Comfy.RootDir, "input") {
-		ents, err := os.ReadDir(inDir)
-		if err != nil {
-			continue
-		}
-		for _, e := range ents {
-			if e.IsDir() {
-				continue // 子目录一律不动(可能是用户自己的素材)
-			}
-			ext := strings.ToLower(filepath.Ext(e.Name()))
-			if ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".webp" {
-				continue
-			}
-			info, ierr := e.Info()
-			if ierr != nil || info.ModTime().After(cut) {
-				continue
-			}
-			if os.Remove(filepath.Join(inDir, e.Name())) == nil {
-				inputN++
-				inputSize += info.Size()
-			}
-		}
-	}
-	if inputN > 0 {
-		add(fmt.Sprintf("ComfyUI 参考图上传副本 %d 个(24 小时前的)", inputN), inputSize)
-	}
-
+	// ⑥（已并入 ①）：ComfyUI input 里的参考图上传副本曾经在这里单独清（只清 24 小时前的**图片**）。
+	// 2026-09-27 用户要求把 input/output 两个目录整个清干净之后，它已被 ① 的整扫覆盖 ——
+	// 留着就是"同一个目录两处各清一遍"，改范围时必然漏改一处（本仓栽过多次的老坑）。
 	// ⑦ 资产阶段的转身视频中间产物(<base>_views/ 目录):抽帧后视频本身不再作参考,
 	// 单个 5-30MB(2026-09-12 实测)。**只删视频与目录**,同目录的
 	// <base>_view_*.png / <base>_turnaround.png 是渲染真正要用的参考图,必须保留。

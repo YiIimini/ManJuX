@@ -41,18 +41,44 @@ const maxCastCompare = 3
 // castCompareLimit 一次比对里最多看几张别人的定妆照。
 type castPeer struct {
 	name string
+	id   string // 卡片 id：同名不同卡时报错信息里要能分清是谁（实测栽过一次）
 	path string
 }
 
 // castPeers 挑出"已经生成好的其他角色定妆照"（排除自己、排除 Q 版等派生资产）。
+// castPeers 挑**同剧其他角色**的已出图定妆照作比对对象。
+//
+// 【2026-09-27 用户报障 · 拿自己跟自己比】实测某集报了
+//
+//	⚠ 定妆照「碑生」与「碑生」**长得像同一个人** …请重出其中一张
+//
+// 同一张脸当然像同一个人 —— 那是**同一个角色的另一张造型档卡**（同一个人换服装），
+// 而这里此前只按 **id** 排除自己，造型档的 id 不同、于是被当成"别人"拉来比 ✗。
+// 判据改成平台既有的"是不是同一个人"（`project.SameCharacter`，与首页角色数、
+// 造型档派生同一套家族键）；名字相同的一律不比（同名两张本来就没法从告警里分清是谁）。
 func castPeers(projDir string, plan *project.Plan, assets map[string]project.Asset, selfID string) []castPeer {
 	if plan == nil {
 		return nil
+	}
+	selfCardID := strings.TrimPrefix(selfID, "char:")
+	var selfName string
+	for _, ch := range plan.Characters {
+		if ch.ID == selfCardID {
+			selfName = ch.Name
+			break
+		}
 	}
 	var out []castPeer
 	for _, ch := range plan.Characters {
 		id := "char:" + ch.ID
 		if id == selfID || strings.HasSuffix(ch.ID, "_chibi") {
+			continue
+		}
+		// 同一个人的另一档（或同名）：不是"别的角色"，比了只会得到"长得像同一个人"
+		if project.SameCharacter(selfCardID, selfName, ch.ID, ch.Name) {
+			continue
+		}
+		if selfName != "" && strings.TrimSpace(ch.Name) == strings.TrimSpace(selfName) {
 			continue
 		}
 		a, ok := assets[id]
@@ -63,12 +89,22 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 		if _, err := os.Stat(p); err != nil {
 			continue // 还没出图 / 被删了：拿不到图就不比
 		}
-		out = append(out, castPeer{name: ch.Name, path: p})
+		out = append(out, castPeer{name: ch.Name, id: ch.ID, path: p})
 		if len(out) >= maxCastCompare {
 			break
 		}
 	}
 	return out
+}
+
+// peerLabelByID 从比对对象里取某张卡的 id（告警里用来消除同名歧义）。
+func peerLabelByID(peers []castPeer, name string) string {
+	for _, p := range peers {
+		if p.name == name {
+			return p.id
+		}
+	}
+	return ""
 }
 
 // checkCastDistinctness 与已生成的其他角色比一次脸；撞脸则**带分离指令换种子重出一次**，
@@ -100,7 +136,13 @@ func (c *Coordinator) checkCastDistinctness(ctx context.Context, proj *project.P
 	if !hit {
 		return path, false
 	}
-	c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.SamePersonWarnText(name, other, &qc.SamePersonVerdict{Same: true, Note: note}))
+	// 告警里带上**卡片 id**：同名的两张卡（不该发生，但数据脏时会有）光看名字分不清是谁，
+	// 而人名相同又确实是不同人的情况在源文里并不罕见（"阿婆""小满"这类通名）。
+	otherLabel := other
+	if p := peerLabelByID(peers, other); p != "" {
+		otherLabel = other + "（卡片 " + p + "）"
+	}
+	c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", qc.SamePersonWarnText(name+"（卡片 "+id+"）", otherLabel, &qc.SamePersonVerdict{Same: true, Note: note}))
 	// 带**分离指令**换种子重出一次（只给一次，与朝向自检同一政策）
 	sep := imagePrompt + CastSeparationClause(other)
 	next, err := gen(kind, id, name, sep, "", ek, 1)
