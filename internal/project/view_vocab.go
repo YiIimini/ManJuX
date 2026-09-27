@@ -141,6 +141,36 @@ const (
 // PlanMaxConsecutiveSameShotSize 连续同景别的上限（整改单 §1.1 验收：连续同景别 ≤6 镜）。
 const PlanMaxConsecutiveSameShotSize = 6
 
+// ── 叙事配额（技能侧《平台侧生成规范》§6.5，逐字数字）────────────────────────────
+//
+// 三条都是"节奏"的可机检代理：首句台词太晚观众先游离、无台词段太长纯视觉流拖沓、
+// 戏眼被快切则情感浓度归零。规范里这三条来自 30 秒档、按比例缩到 10 秒镜。
+const (
+	// PlanFirstLineMaxSeconds 本集第一句有意义台词的最晚出现时间。
+	PlanFirstLineMaxSeconds = 12
+	// PlanNoLineRunMaxSeconds 连续无台词段的时长上限。
+	PlanNoLineRunMaxSeconds = 12
+	// PlanKeyBeatMinSeconds 情绪核心镜（戏眼）的最短时长。
+	PlanKeyBeatMinSeconds = 5
+)
+
+// sameAsAboveIn 字段里"指代上文"的写法（一镜一次生成，写指代等于什么都没写）。
+//
+// 判据同时认中英文：技能侧正文是中文（"同上""如上"），平台直出的字段也可能是英文
+// （`same as above` / `as before`）。返回命中的那个词，空串 = 没有。
+func sameAsAboveIn(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return ""
+	}
+	low := strings.ToLower(s)
+	for _, w := range []string{"同上", "如上", "同前", "如前所述", "same as above", "as above", "as before", "same as previous"} {
+		if strings.Contains(low, strings.ToLower(w)) {
+			return w
+		}
+	}
+	return ""
+}
+
 // PlanEndStateBannedWords 尾帧状态里**不许出现**的词（听觉/氛围/情绪类）。
 //
 // 理由（整改单 §1.2）：尾帧状态是写给**下游模型**看的画面交接单 —— 它只认看得见的东西

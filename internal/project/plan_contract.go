@@ -850,6 +850,93 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 	}
 
+	// ── 叙事配额与自包含（技能侧《平台侧生成规范》§6.5 / §2 / §14）──────────────────
+	//
+	// 三条配额都是"节奏"的可机检代理（规范原话：首句台词 ≤12 s、连续无台词段 ≤12 s、戏眼 ≥5 s）：
+	// 观众游离、纯视觉流拖长、情感浓度被快切消解 —— 这三种毛病此前只能靠感觉说。
+	// 自包含那条（禁"同上/如上"、禁留空）针对的是**一镜一次生成**：模型没有上一镜的记忆，
+	// 字段里写"同上"等于这一镜什么都没写。
+	if len(p.Shots) > 0 {
+		// ① 首句台词出现的时间（本方案 = 本集；平台一集一项目）
+		firstLineAt, elapsed, noLineRun, worstNoLine := -1, 0, 0, 0
+		for _, sh := range p.Shots {
+			hasLine := len(sh.Dialogue) > 0 || strings.TrimSpace(sh.Narration) != ""
+			if hasLine && firstLineAt < 0 {
+				firstLineAt = elapsed
+			}
+			if hasLine {
+				if noLineRun > worstNoLine {
+					worstNoLine = noLineRun
+				}
+				noLineRun = 0
+			} else {
+				noLineRun += sh.Duration
+			}
+			elapsed += sh.Duration
+		}
+		if noLineRun > worstNoLine {
+			worstNoLine = noLineRun
+		}
+		if firstLineAt > PlanFirstLineMaxSeconds {
+			add("warn", "plan.shots",
+				"本集第一句台词出现在第 %d 秒（上限 %d 秒）—— 开场太久没人在说话，观众会先游离；"+
+					"把一句台词或一处人声提前到前 %d 秒内",
+				firstLineAt, PlanFirstLineMaxSeconds, PlanFirstLineMaxSeconds)
+		}
+		if worstNoLine > PlanNoLineRunMaxSeconds {
+			add("warn", "plan.shots",
+				"最长连续无台词段 %d 秒（上限 %d 秒）—— 纯视觉流拖太久；"+
+					"在中间插一句台词、一条字幕或一个反应镜打断它",
+				worstNoLine, PlanNoLineRunMaxSeconds)
+		}
+		// ② 戏眼：情绪核心镜（特写/近景 ＋ climax/tender/expression-beat）必须留够时间，快切会消解情感浓度
+		var quick []string
+		for _, sh := range p.Shots {
+			if !hasString(PlanFaceCloseSizes, sh.ShotSize) {
+				continue
+			}
+			if !hasString([]string{"climax", "tender", "expression-beat"}, sh.HookType) {
+				continue
+			}
+			if sh.Duration < PlanKeyBeatMinSeconds {
+				quick = append(quick, fmt.Sprintf("#%d(%ds/%s)", sh.ID, sh.Duration, sh.HookType))
+			}
+		}
+		if len(quick) > 0 {
+			add("warn", "plan.shots",
+				"%d 个情绪核心镜短于 %d 秒（%s）—— 特写/近景上的 climax/tender/expression-beat 是**戏眼**，"+
+					"快切会让情感浓度归零（规范 §6.5：戏眼 ≥5 秒）",
+				len(quick), PlanKeyBeatMinSeconds, strings.Join(firstN(quick, 6), "、"))
+		}
+		// ③ 自包含：禁"同上/如上"，必填的文本字段不许留空
+		var sameAs, blank []string
+		for _, sh := range p.Shots {
+			for _, f := range []struct{ name, val string }{
+				{"action", sh.Action}, {"end_state", sh.EndState}, {"camera", sh.Camera},
+			} {
+				if hit := sameAsAboveIn(f.val); hit != "" {
+					sameAs = append(sameAs, fmt.Sprintf("#%d.%s「%s」", sh.ID, f.name, hit))
+				}
+			}
+			// 留空：action 必填；end_state 对"每段场景的首镜"合法留空（见 Shot.EndState 的说明）
+			if strings.TrimSpace(sh.Action) == "" {
+				blank = append(blank, fmt.Sprintf("#%d.action", sh.ID))
+			}
+		}
+		if len(sameAs) > 0 {
+			add("fail", "plan.shots",
+				"%d 处字段里写了「同上/如上」这类指代（%s）—— **一镜一次生成**，模型没有上一镜的记忆，"+
+					"写指代等于这一镜什么都没写；场地/人物/光/时间/道具状态每一镜都要写全",
+				len(sameAs), strings.Join(firstN(sameAs, 6), "、"))
+		}
+		if len(blank) > 0 {
+			add("warn", "plan.shots",
+				"%d 个镜头的「画面动作」是空的（%s）—— 空字段到了提示词那一层就是「这一镜没有动作」，"+
+					"模型只会自己编",
+				len(blank), strings.Join(firstN(blank, 6), "、"))
+		}
+	}
+
 	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
 	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
 	if len(p.Scenes) > 0 {
