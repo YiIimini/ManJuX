@@ -783,15 +783,57 @@ func loaders(c config.ComfySettings, accel string) map[string]any {
 // 画质比 8 步还差,而从界面与日志上都看不出原因。
 //
 // Acc-8Step 对 int8 量化底模**不兼容**(tensor 32 vs 1024,官方修复未合并主线):
-// 量化底模自动回退 Turbo,配合 fp16 VAE + ref_image_size=max。
+// 极速预览档的两套配方（expressRecipe 决定用哪套）。
+//
+// 2026-09-27（ComfyUI 侧交付单 `docs/ComfyUI侧交付-加速路线与显存回退-2026-09-27.md`）：
+// 盘上新增社区转换的 **TaoMate 三步 LoRA**（1.16 GiB，挂现有 int8 底模、不需换运行时），
+// 交付单在 124 帧上实测 **310.1s → 156.4s（1.98×）**、音轨完好。
+// 平台侧据此做的**唯一改动**是让"极速预览"这一档吃到它 —— 不新增档位、不动交付默认：
+//
+//   - `express` 的用途本来就是**抽卡/筛方向**（"极速预览"），而交付单把这套配方的适用面
+//     明确收窄到同一件事（3 步下参考图对画面的影响变大，建议先筛方向再上正式档）；
+//   - 交付默认（`quality` / `turbo` / `refine`）**一个字都没动** —— 3 步路线的身份与细节
+//     保真度没有被交付级验证过，不该上交付。
+//
+// **LoRA 与步数必须成对决定**：turbo 是 4 步蒸馏、TaoMate 是 3 步蒸馏，混着配（3 步 + 4 步
+// LoRA）会偏离训练锚点。所以这里只有一个决定点，`accelLoraFor` 与 `accelSteps` 都问它 ——
+// 本文件已经吃过一次"LoRA 那一半收口了、步数那一半没跟上"的亏（见 accelSteps 注释）。
+const (
+	expressTaoMateLoRA  = "TaoMate-H3-3step-ComfyUI.safetensors"
+	expressTaoMateSteps = 3
+	expressTurboSteps   = 4
+)
+
+// expressRecipe 极速预览档的配方：返回 (LoRA 文件名, 步数)。
+//
+// 用文件存在性做开关（而不是加一个设置项）：交付单给的是"文件在盘、配方已验证"，
+// 谁不想要这套就等于谁不想要这个文件 —— 改名/删除即回到原来的 turbo@4，
+// 不需要再改一次代码与设置页。
+func expressRecipe(job engine.Job, c config.ComfySettings) (string, int) {
+	if modelFileExists(c, expressTaoMateLoRA, []string{"loras"}) {
+		return expressTaoMateLoRA, expressTaoMateSteps
+	}
+	return turboLoRAFor(job, c), expressTurboSteps
+}
+
+// turboLoRAFor 按模式选官方 Turbo 蒸馏 LoRA（ref2va / fl2va 各一份）。
+func turboLoRAFor(job engine.Job, c config.ComfySettings) string {
+	if job.Mode != "ref2va" {
+		return c.TurboLoRAFL2VA
+	}
+	return c.TurboLoRARef2VA
+}
+
+// accelLoraFor 量化底模自动回退 Turbo,配合 fp16 VAE + ref_image_size=max。
 func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 	if job.Accel == "refine" {
 		return "" // 精修档:什么加速都不挂,让底模按自己的步数好好出图
 	}
-	turbo := c.TurboLoRARef2VA
-	if job.Mode != "ref2va" {
-		turbo = c.TurboLoRAFL2VA
+	if job.Accel == "express" {
+		lora, _ := expressRecipe(job, c)
+		return lora
 	}
+	turbo := turboLoRAFor(job, c)
 	if job.Accel != "quality" {
 		return turbo
 	}
@@ -812,8 +854,11 @@ func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 // 步数这一半没跟上:refine 档在局部重绘里会变成「8 步 + 不挂任何蒸馏 LoRA」= 白关蒸馏,
 // 修补过的那块与周围画面画质断层,而日志与界面都不提。这正是本项目记过一次的
 // "同一个语义两处实现"事故,当时的护栏只比了 LoRA 名、没比步数。
-func accelSteps(accel string, steps int) int {
-	switch accel {
+//
+// 2026-09-27:参数里带上 job/c —— 极速预览档的步数**必须跟着它实际挂的那条 LoRA 走**
+// (turbo 是 4 步蒸馏、TaoMate 是 3 步蒸馏),问同一个 expressRecipe 才不会配出跨锚点的组合。
+func accelSteps(job engine.Job, c config.ComfySettings, steps int) int {
+	switch job.Accel {
 	case "refine":
 		// 精修档:不挂蒸馏 LoRA,步数按"完整采样"给足 —— 4 步蒸馏的锚定值在这里无意义。
 		if steps < 20 {
@@ -824,8 +869,8 @@ func accelSteps(accel string, steps int) int {
 			return 8 // Acc-8Step 蒸馏锚定 8 步
 		}
 	case "express":
-		if steps > 4 {
-			return 4 // 极速预览
+		if _, recipeSteps := expressRecipe(job, c); steps > recipeSteps {
+			return recipeSteps // 极速预览:步数与所挂 LoRA 的训练锚点一致
 		}
 	}
 	if steps <= 0 {
@@ -920,7 +965,7 @@ func buildRenderGraph(job engine.Job, c config.ComfySettings, condRef string, up
 	model := link("32", 0)
 
 	// 步数:档位表只有一份实现(accelSteps),局部重绘等其它采样链也调它
-	steps := accelSteps(job.Accel, job.Steps)
+	steps := accelSteps(job, c, job.Steps)
 
 	// 镜间连续(MotionContext 接缝):加载上一镜 AV latent 钉入条件;
 	// 产物由 Trim 裁掉 pinned 头(音画同裁,match_tail 对齐时长)。

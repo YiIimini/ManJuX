@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/engine"
 )
 
 // TestAccelStepsIsSingleImplementation 档位→步数只能有一份实现。
@@ -12,22 +14,46 @@ import (
 // (局部重绘)是照抄模型链 —— 加速 LoRA 那半收口了、步数这半没有,于是 refine 档在局部重绘里
 // 变成"8 步 + 不挂蒸馏 LoRA",修补区与周围画质断层。这条同时钉行为与接线。
 func TestAccelStepsIsSingleImplementation(t *testing.T) {
+	c := testComfySettings()
+	jobOf := func(accel string) engine.Job {
+		j := baseJob("ref2va")
+		j.Accel = accel
+		return j
+	}
+	// 极速预览档的真实步数取决于盘上有没有 TaoMate 三步 LoRA（3 步）／否则回 turbo@4 ——
+	// 判据跟着**配方决定点**走，而不是写死一个数字（写死会让"文件在不在"决定测试红绿）。
+	expressLora, expressSteps := expressRecipe(jobOf("express"), c)
 	cases := []struct {
 		accel string
 		in    int
 		want  int
 	}{
-		{"refine", 8, 20},   // 精修档保底 20:低于它等于白关蒸馏
-		{"refine", 24, 24},  // 用户设更高就用更高
-		{"quality", 4, 8},   // Acc-8Step 锚定 8 步
-		{"express", 100, 4}, // 极速档压到 4
+		{"refine", 8, 20},              // 精修档保底 20:低于它等于白关蒸馏
+		{"refine", 24, 24},             // 用户设更高就用更高
+		{"quality", 4, 8},              // Acc-8Step 锚定 8 步
+		{"express", 100, expressSteps}, // 极速档压到"所挂 LoRA 的训练锚点"
 		{"turbo", 8, 8},
 		{"", 12, 12}, // 无档位:原样
 		{"", 0, 8},   // 未填:兜底 8
 	}
 	for _, c := range cases {
-		if got := accelSteps(c.accel, c.in); got != c.want {
+		if got := accelSteps(jobOf(c.accel), testComfySettings(), c.in); got != c.want {
 			t.Errorf("accelSteps(%q, %d) = %d,期望 %d", c.accel, c.in, got, c.want)
+		}
+	}
+	// 极速档的 LoRA 与步数必须**成对**（都问 expressRecipe）：混配 = 3 步 + 4 步蒸馏 LoRA，
+	// 偏离训练锚点，画面直接劣化且不报错。
+	if got := accelLoraFor(jobOf("express"), c); got != expressLora {
+		t.Errorf("极速档 LoRA = %q,期望 %q（与步数同源）", got, expressLora)
+	}
+	switch expressLora {
+	case expressTaoMateLoRA:
+		if expressSteps != expressTaoMateSteps {
+			t.Errorf("挂了 TaoMate 就必须跑 %d 步,实际配方给 %d", expressTaoMateSteps, expressSteps)
+		}
+	default:
+		if expressSteps != expressTurboSteps {
+			t.Errorf("回退 turbo 时必须跑 %d 步,实际配方给 %d", expressTurboSteps, expressSteps)
 		}
 	}
 
