@@ -224,6 +224,9 @@ async function testConn(target) {
             <!-- :precision="0" 不只是美观:该字段后端是 int,而 el-input-number 默认允许
                  手输小数,一旦落成 2.5 保存就会被 json.Unmarshal 拒掉(400),
                  若以任何方式写进 settings.json 更会让启动 fatalIf 直接退出。 -->
+            <el-tooltip placement="top" content="24GB 卡实测:预留 4GB 时峰值 −3.0GB、空闲 +3.0GB,且耗时完全不涨(5GB 起才掉速)。显存吃紧的正确顺序:先调这个 → 再降分辨率/规格 → 最后才换 w4a8 底模(权重省 8.5GB 只换来峰值 −0.66GB,细节更软,交付镜头不要换)。">
+              <span style="cursor:help;margin-right:6px">ⓘ</span>
+            </el-tooltip>
             <el-input-number v-model="form.comfy.reserve_vram_gb" :min="0" :max="8" :step="1" :precision="0" style="width:100%" />
           </el-form-item>
           <el-form-item label="Sage 注意力加速(官方推荐:生成约快一倍、显存占用更低;需已装 sageattention 包)">

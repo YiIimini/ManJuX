@@ -233,7 +233,7 @@ async function save() {
           <el-select v-model="form.render.accel">
             <el-option value="" label="Turbo 均衡(默认,官方4步蒸馏)" />
             <el-option value="quality" label="质量优先(Acc-8Step,成片推荐)" />
-            <el-option value="express" label="极速预览(int8 VAE+4步,抽卡用)" />
+            <el-option value="express" label="极速预览(TaoMate 3步,抽卡/筛方向用,不要用于交付)" />
           </el-select>
         </el-form-item>
         <el-form-item label="两阶段渲染(条件缓存,换 seed 不重编码)">
