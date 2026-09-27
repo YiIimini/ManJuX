@@ -52,7 +52,7 @@ func mkBookDetail(t *testing.T, s *Server, name string) string {
     {"episode":1,"id":1,"duration":5,"shot_size":"中景","scene":"临水城","scene_id":"scene_01",
      "characters":["沈砚"],"character_ids":["char_01"],"mode":"ref2va","view":"telephoto compression",
      "is_establishing":true,"view_note":"","angle_zh":"平视","camera":"static","hook_type":"reveal",
-     "end_state":"he stands","action":"沈砚撑开沈砚的伞","action_en":"he opens the umbrella",
+     "end_state":"he stands","action":"沈砚撑开沈砚的伞","action_en":"he opens the umbrella","prop_ids":["prop_01"],
      "emotion":"calm","sound":"rain","dialogue":[{"speaker":"沈砚","text":"我准了","os":false}],
      "narration":"","scene_landmarks":["city gate"],"light":"warm","h3_prompt":%q},
     {"episode":1,"id":2,"duration":5,"shot_size":"近景","scene":"临水城","scene_id":"scene_01",
@@ -132,8 +132,8 @@ func TestImportFromShotDetail(t *testing.T) {
 	if len(plan.Scenes) != 1 || plan.Scenes[0].Landmarks == "" || plan.Scenes[0].LightState == "" {
 		t.Errorf("场景卡应带地标与光态：%+v", plan.Scenes)
 	}
-	if len(plan.Props) != 2 {
-		t.Errorf("道具应**全带上**（含正文里没提到的那件），实际 %+v", plan.Props)
+	if len(plan.Props) != 1 || plan.Props[0].ID != "prop_01" {
+		t.Errorf("有 prop_ids 时应按引用收窄（只带 prop_01，不带没被引用的 prop_99），实际 %+v", plan.Props)
 	}
 	// ④ 自动开线（用户点导入的意图是出片）
 	if len(*started) != 1 || (*started)[0].Prefix != "明细书" {
@@ -142,6 +142,35 @@ func TestImportFromShotDetail(t *testing.T) {
 	// ⑤ 第 2 集（只有 1 镜、无台词的远景）也建出来了
 	if _, err := s.store.LoadPlan("明细书·第02集·未命名"); err != nil {
 		t.Errorf("第 2 集也该建出来（明细头部没给 title → 退「未命名」）：%v", err)
+	}
+}
+
+// TestImportCarriesAllPropsWhenNoPropIDs 老明细（没有 `prop_ids`）时道具**全带上**。
+//
+// 与上一条相对：有引用就按引用收窄，没引用就宁可多带 —— 这两种情况的判据必须分开，
+// 否则"这一集真的不用道具"与"这份方案没有道具引用信息"会被混为一谈（见 asset_scope.go）。
+func TestImportCarriesAllPropsWhenNoPropIDs(t *testing.T) {
+	s, _ := newHiddenTestServer(t)
+	book := mkBookDetail(t, s, "无引用书")
+	raw, err := os.ReadFile(filepath.Join(book, "分镜", novelShotDetailJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 抹掉所有 prop_ids（模拟老产出）
+	bad := strings.ReplaceAll(string(raw), `,"prop_ids":["prop_01"]`, "")
+	if err := os.WriteFile(filepath.Join(book, "分镜", novelShotDetailJSON), []byte(bad), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out := doReq(t, s, "POST", "/api/novels/produce-script", map[string]any{"path": book})
+	if code != 200 {
+		t.Fatalf("导入应 200，实际 %d：%v", code, out)
+	}
+	plan, err := s.store.LoadPlan("无引用书·第01集·求你们骂我")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Props) != 2 {
+		t.Errorf("没有 prop_ids 时应全带上（2 件），实际 %+v", plan.Props)
 	}
 }
 

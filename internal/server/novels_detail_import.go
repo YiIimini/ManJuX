@@ -139,18 +139,30 @@ func buildEpisodePlan(d *novelDetailFile, no int, title string, epShots []script
 			})
 		}
 	}
-	// 道具：**全带上**（2026-09-27 晚改）。
+	// 道具：**有 `prop_ids` 就按引用收窄，没有就全带上**（2026-09-27 晚，技能侧 S8 补了引用）。
 	//
-	// 早先按名字在正文里"尽力匹配"是错的解法 —— 那时我还没发现更大的问题：
-	// **平台从来没给道具出过图**（资产阶段的 check() 只遍历角色与场景），所以带不带都一样没用。
-	// 补上道具图之后口径就清楚了：道具图是**书级**资产，生成一次按名字进资产库、跨集 ♻ 复用
-	// （`reuseFromLibrary`），所以"全带上"的代价是**一本剧最多 15 张白底单件图**；
-	// 而"按名字猜"的代价是"某个道具在用到它的那一集偏偏没图"（正文没点名它时必然漏）。
-	// 宁可多带，不可漏带。
-	//
-	// 技能侧的 `prop_ids`（镜头→道具引用）到位后可以再收窄成"这一集用到的"（UI 更干净），
-	// 但那是优化、不是正确性前提 —— 见 asset_scope.go 的 wantsProp 注释。
+	// 收窄的依据是**整份明细**有没有引用信息（不是单看这一集）：技能侧现在按道具名分词
+	// 匹配出了引用（实测全书 43 镜命中），所以"某一集一镜都没引用道具"是一个**可信的结论**
+	// （这一集确实用不到道具图），而不是"信息缺失"。反之若整份都没有 `prop_ids`
+	// （老明细/别的产出方），就退回"全带上" —— 宁可多带，不可漏带。
+	// 生成侧的范围判据见 pipeline/asset_scope.go 的 wantsProp（同一条口径）。
+	propsKnown := false
+	for _, s := range d.Shots {
+		if len(s.PropIDs) > 0 {
+			propsKnown = true
+			break
+		}
+	}
+	needProp := map[string]bool{}
+	for _, s := range epShots {
+		for _, id := range s.PropIDs {
+			needProp[id] = true
+		}
+	}
 	for _, pr := range d.Props {
+		if propsKnown && !needProp[pr.ID] {
+			continue
+		}
 		if strings.TrimSpace(pr.ID) == "" && strings.TrimSpace(pr.Name) == "" {
 			continue
 		}
@@ -167,6 +179,7 @@ func buildEpisodePlan(d *novelDetailFile, no int, title string, epShots []script
 			Narration: s.Narration, Duration: s.Duration, H3Prompt: s.H3Prompt,
 			View: s.View, HookType: s.HookType, EndState: s.EndState,
 			Unbound: s.Unbound, UnboundReason: s.UnboundReason,
+			PropIDs: s.PropIDs, ShotSizeNote: s.ShotSizeNote,
 		}
 		sh.Scene = strings.TrimSpace(s.SceneID)
 		if sh.Scene == "" {
@@ -346,11 +359,23 @@ func detailCardViews(d *novelDetailFile) (chars []*scriptCharView, scenes []*scr
 		scenes = append(scenes, &scriptSceneView{ID: sc.ID, Name: sc.Name, Desc: sc.Description, In: in})
 	}
 	for _, pr := range d.Props {
+		// 「出现在几集」对道具优先按**镜头引用**（`prop_ids`，技能侧 2026-09-27 S8 补的）
+		// 数，没有引用信息时才退回"正文提到几集"——
+		// 引用是显式的，正文提及是猜的；猜的那份只配当兜底。
+		refEps := map[string]bool{}
+		for _, sh := range d.Shots {
+			for _, id := range sh.PropIDs {
+				if id == pr.ID {
+					refEps[epKeyOf(sh.Episode)] = true
+				}
+			}
+		}
 		in := 0
-		if len(d.Shots) > 0 {
-			// 「出现在几集」对道具是**正文提到几集**（按名字数）：导入时道具是**全带上**的
-			// （见 buildEpisodePlan 的说明：道具图是书级资产、靠资产库跨集复用），
-			// 所以"带进几集"恒等于 40、没有信息量；有没有被提到才是人想看的那一列。
+		if len(refEps) > 0 {
+			in = len(refEps)
+		} else if len(d.Shots) > 0 {
+			// 「出现在几集」对道具优先按**镜头引用**（`prop_ids`）数；没有引用信息时才退回
+			// "正文提到几集" —— 引用是显式的，正文提及是猜的，猜的那份只配当兜底。
 			for _, k := range detailEpKeys(d.Shots) {
 				var epShots []scriptDetailShot
 				for _, sh := range d.Shots {

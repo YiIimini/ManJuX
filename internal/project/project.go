@@ -109,6 +109,19 @@ type Shot struct {
 	Unbound       bool   `json:"unbound,omitempty"`
 	UnboundReason string `json:"unbound_reason,omitempty"`
 
+	// PropIDs 本镜用到的**道具**（技能侧 09-27 S8 按道具名分词匹配出的引用）。
+	//
+	// 为什么要有（2026-09-27）：平台侧刚把"道具图"这条路补完（此前道具只被读进来、从没出过图），
+	// 而"哪一集需要哪件道具"此前无据可依 —— 只能把全书的道具塞进每一集。有了这一位，
+	// 资产范围（asset_scope.go 的 wantsProp）就能按引用收窄，每集只带真用得着的。
+	// 空值合法（没有这个字段的明细/手工方案）：那时退回"全带上"。
+	PropIDs []string `json:"prop_ids,omitempty"`
+
+	// ShotSizeNote 景别被调整过的说明（技能侧留下的人话，如"建立镜头：由 特写 提为中景"）。
+	// 平台**不消费**它（判据只看 ShotSize 本身），收下来只为两件事：不静默丢字段、
+	// 页签能把它显示给人看（"这个景别为什么是中景而不是特写"）。
+	ShotSizeNote string `json:"shot_size_note,omitempty"`
+
 	// KeyframePrompt 本镜**首帧 T2I 静帧**提示词(技能侧 manju_plan.py 的
 	// build_keyframe_prompt 产出)。
 	//

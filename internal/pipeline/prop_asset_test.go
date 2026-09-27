@@ -89,3 +89,35 @@ func TestAssetStageIteratesProps(t *testing.T) {
 		t.Error("assetNeed 要有 wantsProp（`prop_ids` 到位后范围限制就落在它身上）")
 	}
 }
+
+// TestWantsPropScopedByPropIDs 道具范围判据：**有引用就按引用收窄，没引用就全要**。
+//
+// 这两件事必须分开（2026-09-27 技能侧 S8 补了 `shots[].prop_ids` 之后）：
+//   - 有引用信息 + 这一批镜头一个道具都没引用 = **可信结论**（这一集用不到道具图）→ 该跳过；
+//   - 整批压根没有 prop_ids 字段（老包/手工方案）= 信息缺失 → 该全带上。
+//
+// 只看"props map 空不空"分不出这两种，就会把道具图静默跳过 —— 而那正是"某集缺道具图"
+// 最隐蔽的成因（不会报错，只会画面里道具长得不像）。
+func TestWantsPropScopedByPropIDs(t *testing.T) {
+	shots := []project.Shot{
+		{Mode: "ref2va", Scene: "scene_01", Characters: []string{"char_01"}, PropIDs: []string{"prop_04"}},
+		{Mode: "ref2va", Scene: "scene_01"}, // 这一镜真的不用道具
+	}
+	need := needForShots(shots)
+	if !need.wantsProp("prop_04") {
+		t.Error("被引用到的道具必须想要")
+	}
+	if need.wantsProp("prop_99") {
+		t.Error("有 prop_ids 信息、却没被任何镜头引用 → 不该带（否则每集都塞 15 件）")
+	}
+	// 老方案：没有 prop_ids 字段 → 恒真要，不许因为"看不出需要"就跳过
+	legacy := needForShots([]project.Shot{{Mode: "ref2va", Scene: "scene_01", Characters: []string{"char_01"}}})
+	if !legacy.wantsProp("prop_99") {
+		t.Error("没有 prop_ids 信息时必须全带上（宁可多带一张图，不可漏）")
+	}
+	// 整片渲染（shots 空 → nil）同样不收窄
+	var all *assetNeed
+	if !all.wantsProp("prop_99") {
+		t.Error("整片渲染（不做范围限制）时道具全要")
+	}
+}

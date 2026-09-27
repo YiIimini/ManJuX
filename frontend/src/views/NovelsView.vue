@@ -750,6 +750,8 @@ function onCardCmd(cmd, n) {
                       <el-tag v-if="s.characters?.length" size="small" effect="plain" title="出场角色（决定参考图）">{{ s.characters.join('、') }}</el-tag>
                       <!-- 刻意不绑卡/不给脸：技能侧显式标了 unbound。**不是缺陷**，所以用素色标签，
                            并把 reason 翻成人话；详细说明在 unbound_hint 里（挂 tooltip） -->
+                      <el-tag v-if="s.shot_size_note" size="small" type="info" effect="plain"
+                              :title="s.shot_size_note">景别已调整</el-tag>
                       <el-tag v-if="s.unbound" size="small" type="info" effect="plain"
                               :title="s.unbound_hint || (s.unbound_reason === 'no_card' ? '画面里的人不在本集角色表（群演/一次性角色）：要让他露脸就得先建卡' : '刻意不给脸（背影/局部/群像）')">
                         {{ s.unbound_reason === 'no_card' ? '群演未建卡' : (s.unbound_reason === 'faceless_by_design' ? '刻意无脸' : '未绑卡') }}

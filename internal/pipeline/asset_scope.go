@@ -19,6 +19,14 @@ import (
 type assetNeed struct {
 	chars  map[string]bool
 	scenes map[string]bool
+
+	// props 道具 id 集合；propsKnown 表示"这批镜头**确实带了**道具引用信息"。
+	//
+	// 两件事分开记是有原因的（2026-09-27）：`props` 为空可能是"这一镜真的不用道具"，
+	// 也可能是"这批方案根本没有 prop_ids 这个字段"（老渲染包/手工方案）。前者该跳过、
+	// 后者该全带上 —— 只看 map 是否为空分不出这两种，就会把道具图静默跳过。
+	props      map[string]bool
+	propsKnown bool
 }
 
 // needForShots 从镜头集反推所需资产。shots 为空时返回 nil(= 不做范围限制)。
@@ -29,7 +37,7 @@ func needForShots(shots []project.Shot) *assetNeed {
 	if len(shots) == 0 {
 		return nil
 	}
-	need := &assetNeed{chars: map[string]bool{}, scenes: map[string]bool{}}
+	need := &assetNeed{chars: map[string]bool{}, scenes: map[string]bool{}, props: map[string]bool{}}
 	for _, s := range shots {
 		if s.Mode != "ref2va" {
 			continue
@@ -39,6 +47,14 @@ func needForShots(shots []project.Shot) *assetNeed {
 		}
 		if s.Scene != "" {
 			need.scenes[s.Scene] = true
+		}
+		// 道具引用：**只要这一批镜头里有任意一镜带了 prop_ids**，就算"有据可依"，
+		// 之后按引用收窄（包括"这一批一个道具都不用"这种正常结论）。
+		if len(s.PropIDs) > 0 {
+			need.propsKnown = true
+			for _, id := range s.PropIDs {
+				need.props[id] = true
+			}
 		}
 	}
 	return need
@@ -59,16 +75,17 @@ func (n *assetNeed) wantsScene(id string) bool {
 	return n.scenes[id]
 }
 
-// wantsProp 道具**不做取镜范围限制**：始终为真。
+// wantsProp 道具是否在本次取镜范围内。
 //
-// 为什么与角色/场景不一样（2026-09-27）：范围是从**镜头引用**反推的，而镜头里**没有道具引用**
-// —— 技能侧的明细还没有 `prop_ids` 字段（那是唯一还差的一条，见导入侧注释）。既然反推不出来，
-// 就不能拿"没有引用"当"不需要"，否则道具图会被静默跳过。
-//
-// 代价可控：道具是**书级**的（本机实例 15 件），且生成后按名字进资产库跨集复用（`reuseFromLibrary`）
-// —— 一本剧最多出 15 张白底单件图，第二次起都是 ♻。
-// `prop_ids` 到位后这里改成 `return n.props[id]`（连同 needForShots 一起填），范围限制自然生效。
-func (n *assetNeed) wantsProp(string) bool { return true }
+// 2026-09-27：技能侧补了 `shots[].prop_ids`（按道具名分词匹配，全书 43 镜命中），
+// 于是这一位**真的能判**了 —— 有引用信息就按引用收窄；没有（老明细/手工方案）就**恒真**
+// （宁可多带一张图，也不要因为"看不出它需要"而把道具图静默跳过）。
+func (n *assetNeed) wantsProp(id string) bool {
+	if n == nil || !n.propsKnown {
+		return true
+	}
+	return n.props[id]
+}
 
 // isEmpty 本次范围内没有任何资产需求(例如单镜重渲一个 t2va 镜头)。
 func (n *assetNeed) isEmpty() bool {

@@ -45,6 +45,9 @@ type scriptShotView struct {
 	Unbound       bool   `json:"unbound,omitempty"`
 	UnboundReason string `json:"unbound_reason,omitempty"`
 	UnboundHint   string `json:"unbound_hint,omitempty"` // 技能侧写的中文说明（挂 tooltip）
+
+	// ShotSizeNote 景别被调整过的说明（技能侧 S5：建立镜头由特写提为中景）。挂 tooltip 给人看。
+	ShotSizeNote string `json:"shot_size_note,omitempty"`
 }
 
 type scriptEpView struct {
@@ -296,14 +299,20 @@ type scriptDetailShot struct {
 	Unbound       bool   `json:"unbound"`
 	UnboundReason string `json:"unbound_reason"`
 	UnboundHint   string `json:"unbound_hint"`
-	Camera        string `json:"camera"`
-	HookType      string `json:"hook_type"`
-	EndState      string `json:"end_state"`
-	Action        string `json:"action"`
-	ActionEN      string `json:"action_en"`
-	Emotion       string `json:"emotion"`
-	Sound         string `json:"sound"`
-	Dialogue      []struct {
+	// PropIDs 这一镜用到的道具（技能侧 09-27 S8 按道具名分词匹配出的引用；全书 43 镜命中）。
+	// 有了它，平台就不必"把 15 件道具全塞进每一集"，可以只带这一集真用得着的。
+	PropIDs []string `json:"prop_ids"`
+	// ShotSizeNote 景别被调整过的说明（如 S5：建立镜头由特写提为中景）。
+	ShotSizeNote   string `json:"shot_size_note"`
+	IsEstablishing bool   `json:"is_establishing"`
+	Camera         string `json:"camera"`
+	HookType       string `json:"hook_type"`
+	EndState       string `json:"end_state"`
+	Action         string `json:"action"`
+	ActionEN       string `json:"action_en"`
+	Emotion        string `json:"emotion"`
+	Sound          string `json:"sound"`
+	Dialogue       []struct {
 		Speaker string `json:"speaker"`
 		Text    string `json:"text"`
 		OS      bool   `json:"os"`
@@ -401,7 +410,8 @@ func detailShotViews(shots []scriptDetailShot, want string) []scriptShotView {
 			Action: s.Action, Narration: s.Narration, Chars: s.Characters,
 			View: s.View, ViewNote: s.ViewNote, AngleZH: s.AngleZH,
 			Unbound: s.Unbound, UnboundReason: s.UnboundReason, UnboundHint: s.UnboundHint,
-			HookType: s.HookType, EndState: s.EndState,
+			ShotSizeNote: s.ShotSizeNote,
+			HookType:     s.HookType, EndState: s.EndState,
 			Landmarks: landmarksText(s.SceneLandmarks), Light: s.Light, SceneName: s.Scene,
 		}
 		if v.Mode == "" {
