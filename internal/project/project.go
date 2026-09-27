@@ -117,6 +117,20 @@ type Shot struct {
 	// 空值合法（没有这个字段的明细/手工方案）：那时退回"全带上"。
 	PropIDs []string `json:"prop_ids,omitempty"`
 
+	// VoKind 本镜的**画外演出类型**（技能侧 2026-09-27 新口径，用户定调）：
+	//
+	//	"inner"  正角内心活动 —— 由该角色的 **Q 版形象**在画面里演出这段心思，**本人闭嘴、不演这段**；
+	//	"system" 系统 —— 科幻悬浮**全息面板**（道具）＋ **Q 版小机器人**（人物）同框，人闭嘴、不念系统台词；
+	//	空        普通镜。
+	//
+	// 它**不是展示字段**：参考图装配按它决定带哪几张（见 pipeline/refs.go），
+	// 所以契约门会检查它的取值、它的悬挂引用与"演出句有没有逐字写进正文"。
+	VoKind string `json:"vo_kind,omitempty"`
+	// ChibiIDs inner 镜里演出的 Q 版卡 id（技能侧约定 `chibi_<原角色id>`）。
+	ChibiIDs []string `json:"chibi_ids,omitempty"`
+	// SystemAssets system 镜的两件资产：{"bot":"chibi_sys_01","panel":"prop_holo_01"}。
+	SystemAssets map[string]string `json:"system_assets,omitempty"`
+
 	// ShotSizeNote 景别被调整过的说明（技能侧留下的人话，如"建立镜头：由 特写 提为中景"）。
 	// 平台**不消费**它（判据只看 ShotSize 本身），收下来只为两件事：不静默丢字段、
 	// 页签能把它显示给人看（"这个景别为什么是中景而不是特写"）。

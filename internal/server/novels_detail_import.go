@@ -180,6 +180,7 @@ func buildEpisodePlan(d *novelDetailFile, no int, title string, epShots []script
 			View: s.View, HookType: s.HookType, EndState: s.EndState,
 			Unbound: s.Unbound, UnboundReason: s.UnboundReason,
 			PropIDs: s.PropIDs, ShotSizeNote: s.ShotSizeNote,
+			VoKind: strings.TrimSpace(s.VoKind), ChibiIDs: s.ChibiIDs, SystemAssets: s.SystemAssets,
 		}
 		sh.Scene = strings.TrimSpace(s.SceneID)
 		if sh.Scene == "" {

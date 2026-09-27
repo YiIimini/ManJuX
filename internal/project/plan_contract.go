@@ -731,6 +731,102 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 	}
 
+	// ── 画外演出：内心活动 / 系统（技能侧 2026-09-27 新口径，用户定调）────────────────
+	//
+	// 口径：**内心活动由该角色的 Q 版形象演出（本人闭嘴、不演这段）；系统由全息面板＋Q 版机器人演出
+	// （人闭嘴、不念系统台词）**。这两类镜的**参考图完全不同**（见 pipeline/refs.go），
+	// 所以字段写错/引用悬空的后果不是"少一张图"，而是"该出 Q 版却出了本人""系统镜没有面板"。
+	//
+	// 门分三种：
+	//   fail — 引用悬空（chibi_ids / system_assets 指向方案里不存在的卡）：渲染时那张图会被静默丢掉，
+	//          玩家看到的是"Q 版没画进来"，而日志里一条错都没有。这是**数据错**，导入就该拦住。
+	//   warn — 取值不认识 / 演出句没逐字写进正文 / 面板没进 prop_ids：前两者会让模型自己发挥，
+	//          后者会让面板图绑不上（口径要求 system 镜的 prop_ids 必含面板）。
+	if p.HasVoiceoverShots() {
+		var badKind, badRefs, noClauseInner, noClauseSys, noPanel []string
+		for _, sh := range p.Shots {
+			k := strings.TrimSpace(sh.VoKind)
+			if k == "" {
+				continue
+			}
+			if k != VoKindInner && k != VoKindSystem && k != VoKindNarration {
+				badKind = append(badKind, fmt.Sprintf("#%d「%s」", sh.ID, k))
+				continue
+			}
+			// 引用完整性：Q 版卡 / 机器人 / 面板都必须真的在方案里
+			for _, id := range sh.ChibiIDs {
+				if !p.HasCharacterID(id) {
+					badRefs = append(badRefs, fmt.Sprintf("#%d chibi_ids→%s", sh.ID, id))
+				}
+			}
+			if k == VoKindSystem {
+				for _, key := range []string{"bot", "panel"} {
+					id := strings.TrimSpace(sh.SystemAssets[key])
+					if id == "" {
+						badRefs = append(badRefs, fmt.Sprintf("#%d system_assets.%s 为空", sh.ID, key))
+						continue
+					}
+					ok := false
+					if key == "bot" {
+						ok = p.HasCharacterID(id)
+					} else {
+						ok = p.HasPropID(id)
+					}
+					if !ok {
+						badRefs = append(badRefs, fmt.Sprintf("#%d system_assets.%s→%s", sh.ID, key, id))
+					}
+				}
+				if panel := strings.TrimSpace(sh.SystemAssets["panel"]); panel != "" && !hasString(sh.PropIDs, panel) {
+					noPanel = append(noPanel, fmt.Sprintf("#%d(%s)", sh.ID, panel))
+				}
+			}
+			// 演出句必须**逐字**写进正文（技能侧同一条纪律：字段填了不算、写进正文才算）
+			switch k {
+			case VoKindInner:
+				if len(sh.ChibiIDs) == 0 {
+					badRefs = append(badRefs, fmt.Sprintf("#%d vo_kind=inner 但 chibi_ids 为空", sh.ID))
+				}
+				if !PlanInnerPerformanceOK(sh.H3Prompt) {
+					noClauseInner = append(noClauseInner, fmt.Sprintf("#%d", sh.ID))
+				}
+			case VoKindSystem:
+				if !PlanSystemPerformanceOK(sh.H3Prompt) {
+					noClauseSys = append(noClauseSys, fmt.Sprintf("#%d", sh.ID))
+				}
+			}
+		}
+		if len(badKind) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的 vo_kind 取值不认识（%s）——只认 inner（内心活动，Q 版演出）、system（系统，面板＋机器人）与 narration（旁白，无需演出句）；"+
+					"认不出的值会被当成普通镜，观众看到的差别是「该出 Q 版的镜出了本人」",
+				len(badKind), strings.Join(firstN(badKind, 4), "、"))
+		}
+		if len(badRefs) > 0 {
+			add("fail", "plan.shots",
+				"%d 处画外演出的资产引用**悬空**（%s）—— 渲染时那几张图会被静默丢掉："+
+					"内心镜少了 Q 版就会把本人画进去（口径要求本人不演这段），系统镜少了面板模型每镜自己编一块屏",
+				len(badRefs), strings.Join(firstN(badRefs, 4), "、"))
+		}
+		if len(noClauseInner) > 0 {
+			add("warn", "plan.shots",
+				"%d 个内心镜的正文没写「由该角色的 Q 版形象演出」那句（%s）—— 字段标了不算，"+
+					"演出句必须逐字写进 h3_prompt 正文（技能侧 2026-09-27 口径）",
+				len(noClauseInner), strings.Join(firstN(noClauseInner, 6), "、"))
+		}
+		if len(noClauseSys) > 0 {
+			add("warn", "plan.shots",
+				"%d 个系统镜的正文没写「全息面板＋Q 版机器人演出」那句（%s）—— 同上，演出句要逐字写进正文；"+
+					"面板里**不许写任何文字**（画面文字禁止）",
+				len(noClauseSys), strings.Join(firstN(noClauseSys, 6), "、"))
+		}
+		if len(noPanel) > 0 {
+			add("warn", "plan.shots",
+				"%d 个系统镜的 prop_ids 里没有那块全息面板（%s）—— 口径要求 system 镜的 prop_ids 必含面板，"+
+					"否则面板图绑不上这一镜、参考图里也就没有它",
+				len(noPanel), strings.Join(firstN(noPanel, 4), "、"))
+		}
+	}
+
 	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
 	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
 	if len(p.Scenes) > 0 {

@@ -89,11 +89,32 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		roles = append(roles, RefRole{Picture: len(refs), Kind: roleKind, Name: name, ID: id})
 	}
 	withAngles := wantsAnglesStrip(shot.ShotSize)
+	// 画外演出（技能侧 2026-09-27 新口径，用户定调）：**内心活动由 Q 版形象演出、系统由
+	// 机器人＋全息面板演出**。这不是"顺手多带一张图"，而是这两类镜**必须带对图** ——
+	// 带错的表现是"该出 Q 版却出了本人"或"系统镜没有面板、模型自己编一块屏"。
+	voKind := strings.TrimSpace(shot.VoKind)
+	chibiOf := map[string]string{} // 原角色 id → Q 版资产 id（技能侧约定 chibi_<原角色id>）
+	for _, id := range shot.ChibiIDs {
+		if base := strings.TrimPrefix(strings.TrimSpace(id), "chibi_"); base != "" && base != id {
+			chibiOf[base] = id
+		}
+	}
 	for _, cid := range shot.Characters {
 		a, ok := assets["char:"+cid]
 		if !ok || a.File == "" {
 			missing = append(missing, cid)
 			continue
+		}
+		// 内心镜：**本人不演这段**（口径原话）—— 有 Q 版卡就用 Q 版顶替本镜的身份参考，
+		// 不再附本人那张正面照（两张一起附会请模型把两个人**都**画进画面）。
+		// Q 版卡还没出图时不顶替（宁可按老样子给本人照，也不让这一镜没有身份参考）。
+		if voKind == "inner" {
+			if chibiID, has := chibiOf[cid]; has {
+				if ca, ok2 := assets["char:"+chibiID]; ok2 && ca.File != "" {
+					add("character", "character_chibi", chibiID, ca.Name, filepath.Join(dir, ca.File))
+					continue
+				}
+			}
 		}
 		master := filepath.Join(dir, a.File)
 		turn := turnaroundPath(dir, a.File)
@@ -127,6 +148,30 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 			add("scene", "scene", shot.Scene, a.Name, filepath.Join(dir, a.File))
 		} else {
 			missing = append(missing, shot.Scene)
+		}
+	}
+	// 系统镜：机器人（Q 版人物）＋ 全息面板（道具）同框。
+	//
+	// 这是**唯一**把道具图塞进参考图集合的地方，与官方那句 "Props never get a picture; describe props
+	// in text only" 是一次**明确例外**：面板不是"布景里的一件东西"，而是这一镜的**演出者**（系统
+	// 的门面），不给她一张图，模型每镜都会自己编一块形状与发光方式都不同的屏。口径来自用户
+	// 2026-09-27 的定调，记在这里免得下次有人按"官方规则"把它删掉。
+	if voKind == "system" {
+		bot := strings.TrimSpace(shot.SystemAssets["bot"])
+		if bot != "" {
+			if a, ok := assets["char:"+bot]; ok && a.File != "" {
+				add("character", "system_bot", bot, a.Name, filepath.Join(dir, a.File))
+			} else {
+				missing = append(missing, bot)
+			}
+		}
+		panel := strings.TrimSpace(shot.SystemAssets["panel"])
+		if panel != "" {
+			if a, ok := assets["prop:"+panel]; ok && a.File != "" {
+				add("prop", "system_panel", panel, a.Name, filepath.Join(dir, a.File))
+			} else {
+				missing = append(missing, panel)
+			}
 		}
 	}
 	return refs, roles, missing

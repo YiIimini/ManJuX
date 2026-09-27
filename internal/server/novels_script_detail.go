@@ -48,6 +48,14 @@ type scriptShotView struct {
 
 	// ShotSizeNote 景别被调整过的说明（技能侧 S5：建立镜头由特写提为中景）。挂 tooltip 给人看。
 	ShotSizeNote string `json:"shot_size_note,omitempty"`
+
+	// VoKind 画外演出类型（技能侧 2026-09-27 口径）：inner=内心活动(Q版演出)、
+	// system=系统(全息面板＋Q版机器人)。页签据此给一枚标记 —— 它是"这一镜由谁演"的唯一线索。
+	VoKind string `json:"vo_kind,omitempty"`
+	// ChibiIDs / SystemAssets 原样透给界面：**名字由前端查**（页签本来就有角色/道具列表），
+	// 后端不再拼一份 —— 两处各拼一遍必然走散（与"资产 id 的三种叫法"同一条教训）。
+	ChibiIDs     []string          `json:"chibi_ids,omitempty"`
+	SystemAssets map[string]string `json:"system_assets,omitempty"`
 }
 
 type scriptEpView struct {
@@ -303,15 +311,24 @@ type scriptDetailShot struct {
 	// 有了它，平台就不必"把 15 件道具全塞进每一集"，可以只带这一集真用得着的。
 	PropIDs []string `json:"prop_ids"`
 	// ShotSizeNote 景别被调整过的说明（如 S5：建立镜头由特写提为中景）。
-	ShotSizeNote   string `json:"shot_size_note"`
-	IsEstablishing bool   `json:"is_establishing"`
-	Camera         string `json:"camera"`
-	HookType       string `json:"hook_type"`
-	EndState       string `json:"end_state"`
-	Action         string `json:"action"`
-	ActionEN       string `json:"action_en"`
-	Emotion        string `json:"emotion"`
-	Sound          string `json:"sound"`
+	ShotSizeNote string `json:"shot_size_note"`
+	// VoKind 画外演出类型（技能侧 2026-09-27 新口径）：
+	//   "inner"  正角内心活动 —— 由该角色的 **Q 版形象**演出这段心思，本人闭嘴、不演这段；
+	//   "system" 系统 —— 科幻悬浮**全息面板**(道具) + **Q 版小机器人**(人物) 同框，人不念系统台词。
+	// 它同时决定**参考图**（见 pipeline/refs.go），所以必须读进来、不能只当展示字段。
+	VoKind string `json:"vo_kind"`
+	// ChibiIDs inner 镜里演出的 Q 版卡 id（技能侧约定 `chibi_<原角色id>`，如 chibi_char_01）。
+	ChibiIDs []string `json:"chibi_ids"`
+	// SystemAssets system 镜的两件资产：{"bot":"chibi_sys_01","panel":"prop_holo_01"}。
+	SystemAssets   map[string]string `json:"system_assets"`
+	IsEstablishing bool              `json:"is_establishing"`
+	Camera         string            `json:"camera"`
+	HookType       string            `json:"hook_type"`
+	EndState       string            `json:"end_state"`
+	Action         string            `json:"action"`
+	ActionEN       string            `json:"action_en"`
+	Emotion        string            `json:"emotion"`
+	Sound          string            `json:"sound"`
 	Dialogue       []struct {
 		Speaker string `json:"speaker"`
 		Text    string `json:"text"`
@@ -411,7 +428,8 @@ func detailShotViews(shots []scriptDetailShot, want string) []scriptShotView {
 			View: s.View, ViewNote: s.ViewNote, AngleZH: s.AngleZH,
 			Unbound: s.Unbound, UnboundReason: s.UnboundReason, UnboundHint: s.UnboundHint,
 			ShotSizeNote: s.ShotSizeNote,
-			HookType:     s.HookType, EndState: s.EndState,
+			VoKind:       strings.TrimSpace(s.VoKind), ChibiIDs: s.ChibiIDs, SystemAssets: s.SystemAssets,
+			HookType: s.HookType, EndState: s.EndState,
 			Landmarks: landmarksText(s.SceneLandmarks), Light: s.Light, SceneName: s.Scene,
 		}
 		if v.Mode == "" {

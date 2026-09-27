@@ -105,6 +105,26 @@ func RefManifest(shot project.Shot, roles []RefRole) string {
 				"- <Picture %d> = %s (the SCENE reference). This is the scene picture and it is the LAST "+
 					"picture: background layout, props and lighting come from it, the camera stays free.\n",
 				r.Picture, r.Name))
+		case "character_chibi":
+			// 内心活动镜（技能侧 2026-09-27 口径）：画面里演出这段心思的是**这个人的 Q 版形象**，
+			// 本人不在画面里。这里必须写死这两点 —— 否则模型会把 Q 版当"第二个角色"再画一个本人。
+			sb.WriteString(fmt.Sprintf(
+				"- <Picture %d> = the CHIBI (Q-version) figure of %s — the SAME character, drawn in chibi "+
+					"proportions (about 2.5–3 heads tall, big head, clear silhouette). This figure performs "+
+					"the inner monologue in this shot, and %s's own live-action body is NOT in this frame: "+
+					"draw ONE figure, the chibi, and keep its signature brows, eyes and marks.\n",
+				r.Picture, r.Name, r.Name))
+		case "system_bot":
+			sb.WriteString(fmt.Sprintf(
+				"- <Picture %d> = the system's companion CHIBI ROBOT (%s). It is a MACHINE — not a person, "+
+					"not the speaking character, and not a second human. Keep its capsule body, single-eye "+
+					"visor, antenna light and white-porcelain shell with glowing seams.\n", r.Picture, r.Name))
+		case "system_panel":
+			sb.WriteString(fmt.Sprintf(
+				"- <Picture %d> = the floating HOLOGRAPHIC PANEL (%s, a prop). This is the system interface: "+
+					"a thin suspended slab with a glowing rim and faint scan lines. Its interior stays BLANK — "+
+					"never letter any text, digits, icons or UI glyphs into it (on-screen text is forbidden).\n",
+				r.Picture, r.Name))
 		}
 	}
 	// 结束语按**本镜实际有没有拼合图**定制:没有拼合图时还提它,只会让模型去找一张不存在的图。

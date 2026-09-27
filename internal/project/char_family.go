@@ -172,6 +172,14 @@ func lastIsDigit(s string) bool {
 // 编号、名字是手写档名,两边理论上一致,一旦有一边不规范(主卡沿用旧编号),只认单边
 // 就会漏判;漏判的后果是变体卡退回文生图(同一角色几张脸会漂),而那正是 §4.1 要防的事。
 func CharFamilyKeys(id, name string) (idKey, nameKey string) {
+	// Q 版形象**不是造型档**（2026-09-27 技能侧新口径）：造型档是"同一个人按场换服装"，
+	// 而 Q 版是"同一个人的另一种画法"，观众靠它认"这段是心里话"。
+	// 不排除的话，`chibi_person_01`（名字常常只是主卡名加后缀）会被并进主卡的家族里，
+	// 界面上就显示成"沈砚 2 个造型档"——用户看不懂多出来的那张是什么。
+	// 给它一个**独占**的家族键（前缀区分），于是它与主卡各自成组、互不影响。
+	if IsChibiCard("", id) {
+		return "chibi:" + strings.TrimSpace(id), ""
+	}
 	if base, _, ok := charIDFamily(id); ok {
 		idKey = base
 	}

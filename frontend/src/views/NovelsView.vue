@@ -42,6 +42,24 @@ const script = ref(null)        // /api/novels/script 的汇总(集清单 + 角�
 const scriptShots = ref([])     // 当前选中集的镜头明细
 const scriptEp = ref('')
 const scriptBusy = ref(false)
+
+// voCastText 画外演出镜的"演出者"一行摘要（技能侧 2026-09-27 口径）。
+//
+// 名字在**本地**查（script 里已经有角色/道具清单），不在后端再拼一遍 ——
+// 同一条数据两处各拼一次必然走散（"资产 id 的三种叫法"就是这么来的）。
+function voCastText(s) {
+  const cname = (id) => (script.value?.characters || []).find((c) => c.id === id)?.name || id
+  const pname = (id) => (script.value?.props || []).find((p) => p.id === id)?.name || id
+  if (s?.vo_kind === 'inner') {
+    const ids = s.chibi_ids || []
+    return ids.length ? ids.map(cname).join('、') : '（chibi_ids 为空 —— 这一镜没有 Q 版形象可选，页签会标出来）'
+  }
+  if (s?.vo_kind === 'system') {
+    const a = s.system_assets || {}
+    return `${cname(a.bot || '')} ＋ ${pname(a.panel || '')}`
+  }
+  return ''
+}
 const expandedDirs = ref(new Set())      // 展开的目录节点 key
 const chapTree = ref([])
 // 中文数字段→数值(卷二→2,卷二十三→23);非中文数字返回 null
@@ -752,6 +770,21 @@ function onCardCmd(cmd, n) {
                            并把 reason 翻成人话；详细说明在 unbound_hint 里（挂 tooltip） -->
                       <el-tag v-if="s.shot_size_note" size="small" type="info" effect="plain"
                               :title="s.shot_size_note">景别已调整</el-tag>
+                      <!-- 画外演出（技能侧 2026-09-27 口径）：内心活动由 Q 版形象演出、系统由全息面板＋Q 版机器人演出。
+                           标记出来是因为它决定**参考图**（这一镜画面里该出现谁）—— 人审时不该靠翻提示词正文才知道。
+                           名字在本地查（characters/props 页签的数据就在手上），不在后端再拼一份。 -->
+                      <el-tag v-if="s.vo_kind === 'inner'" size="small" type="warning" effect="plain"
+                              :title="'内心活动：由 Q 版形象演出，本人闭嘴、不演这段 —— ' + voCastText(s)">
+                        内心·Q版演出
+                      </el-tag>
+                      <el-tag v-else-if="s.vo_kind === 'system'" size="small" type="warning" effect="plain"
+                              :title="'系统：全息面板（道具）＋ Q 版机器人（人物）同框，人不念系统台词 —— ' + voCastText(s)">
+                        系统·面板＋机器人
+                      </el-tag>
+                      <el-tag v-else-if="s.vo_kind" size="small" type="danger" effect="plain"
+                              :title="'vo_kind 取值不认识：' + s.vo_kind + '（只认 inner / system；认不出的会被当普通镜渲染）'">
+                        vo_kind 不认识
+                      </el-tag>
                       <el-tag v-if="s.unbound" size="small" type="info" effect="plain"
                               :title="s.unbound_hint || (s.unbound_reason === 'no_card' ? '画面里的人不在本集角色表（群演/一次性角色）：要让他露脸就得先建卡' : '刻意不给脸（背影/局部/群像）')">
                         {{ s.unbound_reason === 'no_card' ? '群演未建卡' : (s.unbound_reason === 'faceless_by_design' ? '刻意无脸' : '未绑卡') }}

@@ -46,6 +46,13 @@ const scenesWithAsset = computed(() =>
 const propsWithAsset = computed(() =>
   (plan.value?.props || []).map(p => ({ ...p, asset: assets.value['prop:' + p.id] })))
 
+// isChibiCard Q 版形象（技能侧 `kind: "chibi"` 或 id `chibi_<原角色id>`）。
+// 判据两处都认，与后端 project.IsChibiCard 同一口径 —— 它是"同一个人的另一种画法"，
+// 不是造型档，页面上要能一眼区分（否则用户看到 61 张卡不知道多出来的 30 张是什么）。
+function isChibiCard(c) {
+  return String(c?.kind || '').toLowerCase() === 'chibi' || String(c?.id || '').startsWith('chibi_')
+}
+
 // ---------- 造型档归人(技能侧清单 §4.2) ----------
 //
 // 技能侧把"造型随剧情变"落成**一角色多张卡**:主卡 +「翻篇·收容所」「翻篇·归零」…
@@ -387,6 +394,10 @@ const doneShots = computed(() =>
                     <div class="flex items-center gap-2">
                       <b class="text-sm truncate">{{ row.c.name }}</b>
                       <el-tag v-if="row.c.variant" size="small" effect="plain" type="info">{{ row.c.variant }}</el-tag>
+                      <!-- Q 版形象（技能侧 2026-09-27 口径：内心活动由它演出）：它不是造型档，
+                           所以单独标一枚，免得被当成"这个人的第 N 套衣服" -->
+                      <el-tag v-if="isChibiCard(row.c)" size="small" effect="plain" type="warning"
+                              title="Q 版形象：内心活动镜里由它演出（本人闭嘴、不演那段）。2.5–3 头身，保留签名眉眼与记号">Q版</el-tag>
                       <el-tag v-if="row.c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
                       <el-tag v-else size="small" :type="sourceTone(row.c.asset?.source)" effect="plain">{{ sourceLabel(row.c.asset?.source) }}</el-tag>
                       <i class="dot" :class="row.c.asset ? 'ok' : 'warn'"></i>
