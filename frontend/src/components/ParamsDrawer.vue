@@ -234,7 +234,12 @@ async function save() {
           <el-select v-model="form.render.accel">
             <el-option value="" label="Turbo 均衡(默认,官方4步蒸馏)" />
             <el-option value="quality" label="质量优先(Acc-8Step,成片推荐)" />
-            <el-option value="express" label="极速预览(TaoMate 3步,抽卡/筛方向用,不要用于交付)" />
+            <el-option value="express" label="极速预览/抽卡(TaoMate 3步,约 2×;不要用于交付)" />
+            <!-- 3 步的实测副作用（ComfyUI 侧整改单 2026-09-27 · P1-2）：参考图会**压过提示词** ——
+                 同提示同参考图，8 步落在暗色厅堂、3 步跟着街景参考图走成了明亮街市。
+                 所以它只适合"抽卡/筛构图方向"（快 2 倍、看出方向后再升规格重跑），不能顶掉交付档。 -->
+            <el-alert type="warning" :closable="false" style="margin-top:6px"
+              title="抽卡档约快 2×（实测 156 s vs 310 s/镜），但 3 步下**参考图会压过提示词**（实测：8 步按提示落在暗色厅堂，3 步跟着参考图走成明亮街市）—— 只用于筛方向/抽卡，定了方向再换回交付档重跑。" />
           </el-select>
         </el-form-item>
         <el-form-item label="两阶段渲染(条件缓存,换 seed 不重编码)">

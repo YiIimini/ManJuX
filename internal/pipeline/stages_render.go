@@ -44,6 +44,14 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		}
 	}
 
+	// 档位可见性（ComfyUI 侧整改单 2026-09-27 · P0-2）：选了「画质档」但底模是量化版时，
+	// 引擎会**回退**成 turbo —— 回退本身是有意设计且有测试的，但**静默**的后果是
+	// "界面上写着画质档、跑出来与默认档一模一样"，事后只能翻代码才知道。
+	// 每次运行播报**一次**（不逐镜刷），说清"没生效 + 为什么 + 怎么才能真正生效"。
+	if note := comfyengine.AccelTierNote(rp.Accel, "ref2va", g.Comfy); note != "" {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", note)
+	}
+
 	// 引擎解析:本次覆盖 > 项目配置(引擎=api 时云端 API Key 必须就绪)
 	engName := rp.Engine
 	if engineOverride == "auto" || engineOverride == "comfy" || engineOverride == "api" {

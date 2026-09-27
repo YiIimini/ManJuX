@@ -824,6 +824,47 @@ func turboLoRAFor(job engine.Job, c config.ComfySettings) string {
 	return c.TurboLoRARef2VA
 }
 
+// accelQualityPlan quality 档**打算**挂哪条加速 LoRA，以及"挂不上"的原因（空 = 能挂）。
+//
+// 抽出来是为了让**选路**（accelLoraFor）与**播报**（AccelTierNote）共用同一条判据 ——
+// 两处各写一遍必然走散（本仓记过多次：同一个语义两处实现，改一处漏一处）。
+//
+// 判据本身**没有改动**（量化底模与量化底模不兼容 Acc-8Step，是有意设计且有测试的：
+// accel_lora_test.go 的 TestAccelQualityLoraGuard/…NoAccFile）；这里只把结论说出来。
+func accelQualityPlan(job engine.Job, c config.ComfySettings) (string, string) {
+	acc := "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors"
+	if job.Mode != "ref2va" {
+		acc = "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors"
+	}
+	if !modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
+		return "", fmt.Sprintf("盘上没有 %s", acc)
+	}
+	if base := unetFor(job, c); isQuantizedBase(base) {
+		return "", fmt.Sprintf("底模 %s 是**量化版**，Acc-8Step 与量化底模不兼容（tensor 32 vs 1024）", base)
+	}
+	return acc, ""
+}
+
+// AccelTierNote 档位与实际挂上的 LoRA **不一致**时给一行可检索的说明（一致时返回空串）。
+//
+// 由来（ComfyUI 侧整改单 2026-09-27 · P0-2）：本机 4 个 H3 底模全是 int8/w4a8，
+// 而 quality 档要的非剪枝底模是 40 GB 级 —— 所以用户选 `quality` **必然**回退 turbo，
+// 而回退是**静默**的：界面上写着"画质档"，跑出来的却是交付默认那套，
+// 事后只能靠翻代码才知道"我选的档没生效"。
+//
+// 只加可见性，**不动选路**（门禁与既有测试原样保留）。
+func AccelTierNote(accel, mode string, c config.ComfySettings) string {
+	if accel != "quality" {
+		return ""
+	}
+	if _, why := accelQualityPlan(engine.Job{Accel: accel, Mode: mode}, c); why != "" {
+		return fmt.Sprintf("所选「画质档(quality)」**没有生效**，实际按 turbo 档渲染：%s。"+
+			"画质档需要**非剪枝 H3 底座**（40 GB 级，本机没有）；要真正的画质档请先补那个底座，"+
+			"否则这一步与「默认档」出的图完全一样", why)
+	}
+	return ""
+}
+
 // accelLoraFor 量化底模自动回退 Turbo,配合 fp16 VAE + ref_image_size=max。
 func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 	if job.Accel == "refine" {
@@ -837,11 +878,7 @@ func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 	if job.Accel != "quality" {
 		return turbo
 	}
-	acc := "MiniMax-H3-Ref2VA-Acc-8Step_pruned_comfy.safetensors"
-	if job.Mode != "ref2va" {
-		acc = "MiniMax-H3-FL2VA-Acc-8Step_pruned_comfy.safetensors"
-	}
-	if !isQuantizedBase(unetFor(job, c)) && modelFileExists(c, acc, []string{"loras", "diffusion_models"}) {
+	if acc, why := accelQualityPlan(job, c); why == "" {
 		return acc
 	}
 	return turbo
