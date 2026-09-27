@@ -571,6 +571,11 @@ func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scen
 	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
 		return prompt // 已经是本装配点的产物:不重复叠加
 	}
+	// 场景板是**空场**:卡片里若写了人群/行人(实测《求你们骂我》写着
+	// "a scattered crowd of villagers"),先整项删掉 —— 平台随后追加的取景纪律
+	// ("completely deserted and unpeopled")与它本来是打架的,模型只会折中,而场景板
+	// 上的人会被 H3 当成"这个地方本来就有的陌生人"带进每一镜。
+	prompt = StripSceneCrowd(prompt)
 	if prof.RewriteSheetFraming {
 		// 剥掉 LLM 从人像模板抄来的取景(plain background / upper-body framing /
 		// portrait …),换成"整块地方的空场环境图" —— 与其余非人类型同一套做法。

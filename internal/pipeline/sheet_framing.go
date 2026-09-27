@@ -289,3 +289,47 @@ func PortraitFramingClause(kind EntityKind, width, height int) string {
 	return " FRAMING (mandatory): a head-and-shoulders portrait — the WHOLE head is inside the picture with clear " +
 		"empty space above the hair, and the shoulders are fully inside the frame. The subject is centred and faces the camera."
 }
+
+// sceneCrowdItemPhrases 命中即**整项删除**的人群短语 —— 场景板必须是空场。
+//
+// 为什么必须删,而不是"靠平台的空场纪律压过去":两套要求会打架。实测《求你们骂我》的
+// 场景卡写着 "a scattered crowd of villagers in grey and brown cloth",而平台出场景图时按
+// KindScene 的取景纪律又追加 "completely deserted and unpeopled" —— 模型折中,场景板上
+// 就站了人。而场景板是**参考图**:上面的人会被 H3 当成"这个地方本来就有的陌生人"带进
+// 该地点的每一镜,与角色的身份锁直接打架。
+//
+// 只列"除了人没有别的解读"的写法(`figures`/`silhouettes` 这类歧义词不碰 —— 它们也可能
+// 是建筑轮廓);按 `,` `;` 句末 `.` 切**整项删**,不是删词 —— 删词会留下
+// `a of in grey and brown cloth` 这种残迹。
+var sceneCrowdItemPhrases = []string{
+	"passers-by", "passersby", "pedestrians", "bystanders", "townsfolk", "villagers",
+	"shoppers", "stallholders", "street vendors", "vendors", "crowd", "crowds", "crowded",
+}
+
+// StripSceneCrowd 把场景卡提示词里的人群体项删掉(空场纪律见 entity_prompts 的 KindScene)。
+// 幂等(删过一次再删结果不变);大小写不敏感。
+func StripSceneCrowd(prompt string) string {
+	items := splitPromptItems(prompt)
+	out := make([]string, 0, len(items))
+	removed := false
+	for _, it := range items {
+		l := strings.ToLower(it)
+		hit := false
+		for _, w := range sceneCrowdItemPhrases {
+			if strings.Contains(l, w) {
+				hit = true
+				break
+			}
+		}
+		if hit {
+			removed = true
+			continue // 整项删除(含尾部标点)
+		}
+		out = append(out, it)
+	}
+	got := strings.Join(out, "")
+	if removed {
+		got = trimDanglingSeparator(got)
+	}
+	return foldProportionLeftovers(got)
+}

@@ -176,6 +176,22 @@ const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same se
 - If the source states a character's appearance (age, build, hair color, scars...), follow it EXACTLY; never beautify or average it away. A fat character stays fat, an old character stays old, a scarred character keeps the scar.
 - Faces are ORIGINAL DESIGNS (avoid infringing anyone's likeness): never model a character on a real person, actor, singer, celebrity or public figure, never name a character after one, and never write "looks like <real person>" in any field.`
 
+// sysSceneRules 场景卡 image_prompt 的写作规则。
+//
+// 【为什么要有(2026-09-27 补的缺口)】角色卡有一整套规则(sysCastRules:身份前置、
+// 发型三要素、原创底线、取景交给渲染器),场景卡却只有 schema 里一句
+// "ENGLISH establishing-shot image prompt for this location" —— 场景图长什么样全看
+// LLM 当天怎么写。实测《求你们骂我》的场景卡里写着
+// "a scattered crowd of villagers in grey and brown cloth",而平台出场景图时按 KindScene
+// 的取景纪律追加 "completely deserted and unpeopled"(场景图必须是**空场**:画面里的人
+// 一律由角色定妆照负责) —— 同一段提示词里两套要求,模型折中,场景板上就站了人。
+//
+// 三条:①只写地点本身;②**不写人**(空场是硬要求);③取景/画幅由渲染器加。
+const sysSceneRules = `## SCENE CARDS (the location reference plates)
+- Every location that appears in any shot gets ONE scene card. Its image_prompt describes **the place itself and nothing else**: spatial layout and depth, architecture and building materials, ground surface, fixed props, the direction and quality of the light, time of day and weather.
+- **Never put people in a scene card** — no crowd, no passers-by, no vendors, no silhouettes, no "a scattered crowd of villagers". The scene plate is an EMPTY stage: every person in the finished video comes from a character sheet, so anyone drawn into the scene plate would be reused as an anonymous stranger in every shot at that location and would fight the cast's identity lock.
+- Write it as a plain establishing view of the empty location, in the same art style as the series. Do not write framing, crop, camera angle or aspect ratio — the renderer adds those (per the project's aspect ratio), exactly as it does for character cards.`
+
 // animeFaceLock 角色画风锁(注入到用户附加要求最前面)。
 //
 // 三个"必须"对应三件不同的事:①`style` 字段与每张 image_prompt、每镜 H3 提示词
@@ -209,7 +225,9 @@ var SystemPrompt = sysHeader + `
 
 ` + sysHard + `
 
-` + sysCastRules
+` + sysCastRules + `
+
+` + sysSceneRules
 
 // UserPromptFmt 用户提示模板。
 const UserPromptFmt = `Source text (Chinese):

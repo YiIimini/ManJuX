@@ -182,3 +182,39 @@ func TestPortraitPromptFollowsProjectAspect(t *testing.T) {
 		t.Errorf("改成横幅后构图应跟着变(取景是算出来的,不是常量):\n%s", got)
 	}
 }
+
+// TestStripSceneCrowd 场景板必须**空场**:卡片里的人群项整项删除、不留残迹,
+// 而地点本身的内容一条不许动。
+//
+// 实测来源:技能侧《求你们骂我》的场景卡写着 "a scattered crowd of villagers in grey and
+// brown cloth",平台又追加 "completely deserted and unpeopled" —— 两套要求打架,
+// 模型折中,场景板上站了人(抽帧看得到)。场景板是参考图,上面的人会被带进每一镜。
+func TestStripSceneCrowd(t *testing.T) {
+	real := "wide ancient Chinese market street at midday, blue flagstone paving, low wooden shopfronts, " +
+		"vegetable baskets and bamboo carrying poles along the roadside, a scattered crowd of villagers in grey and brown cloth, " +
+		"distant city gate and hanging lanterns, warm hazy sunlight"
+	got := StripSceneCrowd(real)
+	for _, gone := range []string{"crowd", "villagers"} {
+		if strings.Contains(strings.ToLower(got), gone) {
+			t.Errorf("人群项「%s」应被整项删掉:\n%s", gone, got)
+		}
+	}
+	for _, keep := range []string{"blue flagstone paving", "low wooden shopfronts", "distant city gate", "warm hazy sunlight"} {
+		if !strings.Contains(got, keep) {
+			t.Errorf("地点本身的内容不该被动,缺「%s」:\n%s", keep, got)
+		}
+	}
+	for _, bad := range []string{", ,", ",,", "  ", ", ."} {
+		if strings.Contains(got, bad) {
+			t.Errorf("整项删除后不该留标点残迹 %q:\n%s", bad, got)
+		}
+	}
+	if again := StripSceneCrowd(got); again != got {
+		t.Errorf("应幂等:\n首次:%s\n再次:%s", got, again)
+	}
+	// 歧义词不碰:"figure"/"silhouette" 也可能是建筑与雕塑轮廓,不是人。
+	keep2 := "the silhouette of a pagoda, a figure of carved stone"
+	if got2 := StripSceneCrowd(keep2); got2 != keep2 {
+		t.Errorf("歧义词(figure/silhouette)不该被误删:\n原:%s\n后:%s", keep2, got2)
+	}
+}
