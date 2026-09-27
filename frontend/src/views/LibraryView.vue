@@ -178,6 +178,19 @@ function cardHasViews(e) {
   return (e.images || []).some((f) => /_view_|_turnaround/.test(String(f)))
 }
 
+// tileRatio 详情弹窗里每个格子的形状：跟着**产物形状**走，不一律 3/4。
+//
+// 2026-09-27 用户：「资产库里的弹窗详情里的图片请居中对齐显示」。症状有两个来源，
+// 这条修的是第二个：格子固定 3/4 + cover 会把**横幅**裁得只剩中间一条 ——
+// 转台图是 4 格横向拼图(8:3)、三视图板是 16:9，按 3/4 显示等于"只给你看中间那个全身"。
+// 定妆照是竖幅(≈9:16 或 3:4)，仍走 3/4。
+// 判据与 labelOf 同一套（文件名后缀），不猜像素。
+function tileRatio(file) {
+  const b = String(file).split('/').pop() || ''
+  if (b.includes('_board') || b.includes('_turnaround')) return '16/9'
+  return '3/4'
+}
+
 // labelOf 按文件名推断图片用途,便于一眼看出哪张是定妆照、哪张是转台图
 function labelOf(file) {
   const b = String(file).split('/').pop() || ''
@@ -603,12 +616,19 @@ async function remove(e) {
               </template>
             </template>
           </div>
-          <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,minmax(112px,1fr))">
+          <!-- 图片格子：**居中排 + 整张完整显示**（2026-09-27 用户：「资产库里的弹窗详情里的图片
+               请居中对齐显示」）。两处一起修，因为它们是同一个症状的两个来源：
+               ① 1~2 张图时 `auto-fill` 把空列留在右边 → 看着是靠左而不是居中（改成定宽列 + 居中）；
+               ② 格子一律 3/4 + cover，而**转台图是 8:3、三视图板是 16:9** —— 横幅被裁得只剩
+                  中间一条（三视图板就只剩中间那个全身），既不是"居中对齐"也看不出板子全貌
+                  （改成按产物形状给格子 + contain 完整显示）。 -->
+          <div class="grid gap-2" style="grid-template-columns:repeat(auto-fill,112px);justify-content:center">
             <div v-for="(f, i) in detailImages" :key="f"
                  class="cursor-zoom-in relative rounded-lg overflow-hidden"
-                 style="aspect-ratio:3/4;background:var(--mx-bg2);border:1px solid var(--mx-line)"
+                 :style="'aspect-ratio:' + tileRatio(f) + ';background:var(--mx-bg2);border:1px solid var(--mx-line)'"
                  @click="previewDetail(i)">
-              <img :src="imgURL(detail, f)" style="width:100%;height:100%;object-fit:cover" loading="lazy" />
+              <img :src="imgURL(detail, f)" style="width:100%;height:100%;object-fit:contain;object-position:center"
+                   loading="lazy" />
               <span class="absolute text-xs px-1 py-0.5"
                     style="left:0;right:0;bottom:0;background:color-mix(in srgb, var(--mx-bg0) 58%, transparent);color:var(--mx-text)">{{ labelOf(f) }}</span>
             </div>
