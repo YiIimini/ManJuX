@@ -58,12 +58,22 @@ ManJuX 的渲染图**直接依赖**下列节点类,任何升级改名都会让�
 | rgthree-comfy | `449c58fc`(原 `2c5342a`,2026-09-26 升级 6 个提交) | 图工具 |
 | was-node-suite-comfyui | `8f80db30`(原 `eb772ed`,2026-09-26 升级 1 个提交:新增 Execution Gate Controlboard / Fast Generate Text;视频加载器改为默认读全部帧) | 通用图像节点 |
 | MaskVidExperiments | `c32ed8c`(旧 `e5c4450`) | **局部重绘**(遮罩裁切/回贴) |
-| comfyui-vrgamedevgirl | `8c49237b`(2026-09-26 `75d4370`→`81a33b20` 29 个提交;2026-09-27 再 →`8c49237b` 16 个提交,均为许可/文档与向导字段顺序) | 音频处理节点;该包只注册 `VRGDG_*`(231 个),ManJuX 图**零引用** |
+| comfyui-vrgamedevgirl | `8c49237b`(2026-09-26 `75d4370`→`81a33b20` 29 个提交;2026-09-27 再 →`8c49237b` 16 个提交,均为许可/文档与向导字段顺序) | 音频处理节点;该包只注册 `VRGDG_*`(**265** 个;2026-09-27 补齐 librosa 与 ComfyUI-LTXVideo 后,启动时 3 个失败子模块归零),ManJuX 图**零引用** |
+| ComfyUI-LTXVideo | `61ee82b`(**2026-09-27 新装**,Lightricks 官方,72 MB) | 官方 LTX 节点包(83 个节点)。**装它的直接原因是 VRGDG**:`VRGDG_LTXLoopingSampler` 按**目录名**反射加载 `ComfyUI-LTXVideo` 包、再取 `looping_sampler`/`easy_samplers`/`latents` 三个子模块,包不在就整块子模块 import 失败。ManJuX 图**不引用**它 |
 
 > 上表 commit 只作**回退参照**:平时无需钉版,出问题时可 `git -C <插件目录> checkout <commit>` 回退。
-> 完整 17 个节点(含上表之外的 FaceRefine / Turbo / Director / audio-T8 / Spectrum / latent-Upscaler)
+> 完整 **18** 个节点(含上表之外的 FaceRefine / Turbo / Director / audio-T8 / Spectrum / latent-Upscaler / LTXVideo)
 > 的基线快照见 `D:\Ai\ComfyUI\_maintenance\20260926-upgrade\baseline-repos.json`(最新)、
 > `D:\Ai\ComfyUI\_maintenance\20260924-upgrade\baseline-repos.json`(上一版)。
+>
+> **2026-09-27 pip 侧两笔**(为消掉 VRGDG 的启动报错;装前装后逐项比对,关键版本**零漂移**):
+> ① `librosa 1.0.0`(+ numba 0.67 / llvmlite 0.49 / scikit-learn / soundfile / soxr / pooch)——VRGDG 的 `.nodes` 与
+> `.GeneralVideoNodes` 需要它(`librosa.load`、`feature.rms`、`beat.beat_track`、`onset.onset_strength`);
+> ② `ComfyUI-LTXVideo` 的 `requirements.txt`(新增 `diffusers 0.40` / `timm 1.0.30` / `colour-science 0.4.7` /
+> `OpenImageIO 3.1.17` / `ninja 1.11`)。落地位置=ComfyUI 自己的 venv `D:\Ai\ComfyUI\standalone-env\Lib\site-packages`。
+> 未动的:`numpy 2.5.1` / `scipy 1.18.0` / `torch 2.11.0+cu130` / `torchvision` / `torchaudio` / `transformers 5.14.1` /
+> `tokenizers` / `huggingface_hub 1.25.1` / `safetensors` / `Pillow`。
+> ⚠️ 补的是**导入依赖**,不是 LTX 权重:VRGDG 的 LTX 相关节点现在能加载,真要跑仍需 LTX 主模型权重(本机没有,属大件,未下)。
 >
 > ⚠️ **渲染根节点是本体内置,不在插件里(2026-09-26 实测确认)**:`MiniMaxH3ReferenceToVideo` /
 > `MiniMaxH3ImageToVideo` / `MiniMaxH3SigmaShift` / `EmptyMiniMaxH3LatentAV` 全部来自
@@ -196,6 +206,12 @@ workflow-templates 0.11.70),所以目标取**发行 tag `v0.37.4` 而不是 mast
 ManJuX 阻断级 10 个节点**缺失 0**;三个升级包分别加载 231 / 24 / 463 个节点(was-node 由 461 → 463,
 正是该提交新增的两个);**无任何 traceback**。vrgamedevgirl 仍报 `librosa` / `ComfyUI-LTXVideo` 三个子模块缺失
 —— **升级前就如此,非本轮引入**。
+
+> **追记(2026-09-27 晚,已修)**:上面那段「仍报三个子模块缺失」当时是**待办**。已补装:① `librosa 1.0.0`;
+> ② 官方 `ComfyUI-LTXVideo` 包(`61ee82b`)及其 requirements。复测启动日志:`[VRGDG] ... **265 nodes, 0 failed submodule(s)**`
+> —— `Some submodules failed to import` 整段已消失;`ComfyUI-LTXVideo` 自身 83 个节点加载正常;
+> 全站节点数 **2386 → 2503**,ManJuX 阻断级 10 个节点**缺失仍为 0**。组件层不受影响:本次只加依赖与新包,**未改现有底模与平台设置**。
+
 
 **回退方法**:本体 `git checkout 830232b8`(分支 `backup_before_v0.37.4`);插件在各目录 `git checkout backup_before_20260926`。
 新基线快照:`D:\Ai\ComfyUI\_maintenance\20260926-upgrade\baseline-repos.json`。
