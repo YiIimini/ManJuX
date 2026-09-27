@@ -680,6 +680,14 @@ func validName(name string) bool {
 	return true
 }
 
+// ValidProjectName 项目名是否合法（规则与 Create 校验的**同一份**实现）。
+//
+// 为什么导出：导入侧要在"建项目"之前自检 —— 用户点一次「脚本创作」是**整批 40 集**，
+// 一个标题里带了全角逗号就会让整批导入失败（2026-09-27 实测：
+// `求你们骂我·第02集·骂人一处，现钱五文` → "项目名仅允许中文、字母、数字、下划线、连字符"）。
+// 所以调用方先清洗、再自检、真不合规就退用安全名，绝不把整批拖下水。
+func ValidProjectName(name string) bool { return validName(name) }
+
 // FingerprintFile 计算文件内容指纹(md5 前 16 位),用于资产变更检测。
 func FingerprintFile(path string) string {
 	raw, err := os.ReadFile(path)

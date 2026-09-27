@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // novels_detail_import_test.go 「脚本创作」新导入路（吃技能侧结构化明细）的契约。
@@ -26,6 +28,13 @@ func mkBookDetail(t *testing.T, s *Server, name string) string {
 	}
 	// 集标题从 markdown 一级标题取（明细头部没给 title —— 正是设计点 1 的兜底路）
 	if err := os.WriteFile(filepath.Join(dir, "第01集.md"), []byte("# 第01集 · 求你们骂我 — 分镜（内核）\r\n\r\n正文\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 第 02 集的标题**故意带全角逗号**（真实数据里第02/05/07集就是这样：
+	// 「骂人一处，现钱五文」）—— 项目名只允许 中文/字母/数字/`_`/`-`/`·`，
+	// 不清洗就会让**整批导入**失败在"项目名仅允许…"上。夹具照真实形态写，
+	// 这条路径才不会又是"夹具太干净所以绿"。
+	if err := os.WriteFile(filepath.Join(dir, "第02集.md"), []byte("# 第02集 · 骂人一处，现钱五文 — 分镜（内核）\r\n\r\n正文\r\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	style := "GUOFENG ANIMATED-FEATURE ART DIRECTION (period Chinese): a photoreal 3D surface with IDEALISED faces."
@@ -139,14 +148,101 @@ func TestImportFromShotDetail(t *testing.T) {
 	if len(*started) != 1 || (*started)[0].Prefix != "明细书" {
 		t.Errorf("导入后应为这一本启动产线，实际 %v", *started)
 	}
-	// ⑤ 第 2 集（只有 1 镜、无台词的远景）也建出来了
-	if _, err := s.store.LoadPlan("明细书·第02集·未命名"); err != nil {
-		t.Errorf("第 2 集也该建出来（明细头部没给 title → 退「未命名」）：%v", err)
+	// ⑤ 第 2 集也建出来了，而且**标题里的全角逗号被清洗成 `·`**（合法项目名）
+	ep2 := "明细书·第02集·骂人一处·现钱五文"
+	if !project.ValidProjectName(ep2) {
+		t.Fatalf("夹具自身有问题：%s 不是合法项目名", ep2)
+	}
+	if _, err := s.store.LoadPlan(ep2); err != nil {
+		t.Errorf("第 2 集应按清洗后的标题建出来（%s）：%v", ep2, err)
 	}
 }
 
-// TestImportCarriesAllPropsWhenNoPropIDs 老明细（没有 `prop_ids`）时道具**全带上**。
+// TestImportRefusesWhenNameImpossible 书名本身带非法字符 ⇒ **整批拒收**，一个项目都不落盘。
 //
+// 这一条钉的是"名字在校验那一遍就判死"：建项目那一遍只要有一集失败，就会留下
+// "前几集已经建好了"的半批状态（2026-09-27 用户实测：ep01 建成、ep02 因名字失败）。
+func TestImportRefusesWhenNameImpossible(t *testing.T) {
+	s, _ := newHiddenTestServer(t)
+	// 书目录名带全角逗号（NTFS 允许，但平台的项目名规则不允许）⇒ 前缀就无法出合法名
+	book := mkBookDetail(t, s, "坏书，带逗号")
+	code, out := doReq(t, s, "POST", "/api/novels/produce-script", map[string]any{"path": book})
+	if code != 400 {
+		t.Fatalf("名字不可能合法时应整批拒收（400），实际 %d：%v", code, out)
+	}
+	entries, _ := os.ReadDir(s.store.Root())
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "坏书") && e.IsDir() {
+			sub, _ := os.ReadDir(filepath.Join(s.store.Root(), e.Name()))
+			if len(sub) > 0 {
+				t.Errorf("整批拒收时不该在盘上留下项目：%s/%s", e.Name(), sub[0].Name())
+			}
+		}
+	}
+	if _, err := s.store.LoadPlan("坏书·带逗号·第01集·求你们骂我"); err == nil {
+		t.Error("不该有任何一集落地")
+	}
+}
+
+// TestImportRollsBackHalfBatch 建到一半失败 ⇒ **回滚本次新建**，不留半批。
+//
+// 手法：在第二集的项目目录位置先放一个**同名文件**，让 `MkdirAll` 失败（`Create` 报错），
+// 于是第一集必然已经建好 —— 正是要回滚的那个状态。
+func TestImportRollsBackHalfBatch(t *testing.T) {
+	s, _ := newHiddenTestServer(t)
+	book := mkBookDetail(t, s, "半批书")
+	ep1 := "半批书·第01集·求你们骂我"
+	ep2 := "半批书·第02集·骂人一处·现钱五文"
+	block := filepath.Join(s.store.Root(), "半批书", ep2)
+	if err := os.MkdirAll(filepath.Dir(block), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(block, []byte("挡路的文件"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out := doReq(t, s, "POST", "/api/novels/produce-script", map[string]any{"path": book})
+	if code != 500 {
+		t.Fatalf("建项目失败应报 500，实际 %d：%v", code, out)
+	}
+	if _, err := s.store.LoadPlan(ep1); err == nil {
+		t.Error("失败后必须回滚：第一集不该留在盘上（半批状态更难查）")
+	}
+	if _, err := os.Stat(filepath.Join(s.store.Root(), "半批书", ep1)); err == nil {
+		t.Error("失败后第一集的目录也该被删掉")
+	}
+}
+
+// TestProjectNameFromTitleAlwaysValid 集标题 → 项目名：**任何**标题都不能让建项目失败。
+//
+// 起因（2026-09-27 用户报障）：`求你们骂我·第02集·骂人一处，现钱五文` 建项目失败 ——
+// 项目名只允许 中文/字母/数字/`_`/`-`/`·`，而技能侧的集名是给人读的自然语言（带全角逗号）。
+// 这是**整批**操作（一次导入 40 集），一个标题不合规就会让整批失败，所以这一步必须有测试钉住
+// —— 而且夹具必须用**真实标题**（第02/05/07 集那种带全角逗号的），否则又是"夹具太干净所以绿"。
+func TestProjectNameFromTitleAlwaysValid(t *testing.T) {
+	cases := []string{
+		"求你们骂我",        // 正常
+		"骂人一处，现钱五文",    // 真实数据：全角逗号
+		"周家的账，田家的火",    // 真实数据
+		"明天，江心见",       // 真实数据
+		"第一集（上）",       // 中文括号
+		"他问：你是谁？",      // 冒号问号
+		"第 3 集 大结局",    // 半角空格
+		"",             // 空标题 → 退「未命名」
+		"……",           // 全是不合规字符 → 清洗后为空 → 退「未命名」
+		"《拜我别后悔》番外",    // 书名号
+		"A/B\\C:D*E?F", // 文件系统保留字符
+	}
+	for _, title := range cases {
+		name := fmt.Sprintf("求你们骂我·第02集·%s", orDefault(safeSeries(title), "未命名"))
+		if !project.ValidProjectName(name) {
+			t.Errorf("标题 %q 生成的项目名 %q 不合法（会让整批导入失败在「项目名仅允许…」上）", title, name)
+		}
+		if strings.ContainsAny(name, `/\:*?"<>|`) {
+			t.Errorf("标题 %q 生成的项目名 %q 含文件系统保留字符", title, name)
+		}
+	}
+}
+
 // 与上一条相对：有引用就按引用收窄，没引用就宁可多带 —— 这两种情况的判据必须分开，
 // 否则"这一集真的不用道具"与"这份方案没有道具引用信息"会被混为一谈（见 asset_scope.go）。
 func TestImportCarriesAllPropsWhenNoPropIDs(t *testing.T) {

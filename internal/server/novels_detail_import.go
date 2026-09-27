@@ -229,9 +229,13 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 		return false
 	}
 	titles := episodeTitles(book, d)
-	bookName := strings.TrimSpace(d.Book)
-	if bookName == "" {
-		bookName = filepath.Base(book)
+	// 项目名前缀一律用**书目录名**（不是 JSON 里的 book 字段）：
+	// 目录名天然是文件系统安全的，而且与既有约定一致（`<projects>/<书>/<书>·第NN集·标题>`，
+	// 见 Store.Dir 的 seriesRe）；分成两套前缀会让同一本书的集散进两个目录，
+	// 也会让封面/开线按错的前缀去找（那两处用的是同一个前缀）。
+	namePrefix := filepath.Base(book)
+	if strings.TrimSpace(namePrefix) == "" {
+		namePrefix = orDefault(safeSeries(d.Book), "未命名书")
 	}
 
 	type result struct {
@@ -258,10 +262,33 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 			}
 		}
 		title := titles[no]
-		name := fmt.Sprintf("%s·第%02d集·%s", bookName, no, orDefault(title, "未命名"))
+		// 集标题必须**清洗后**再进项目名：技能侧的集名是给人读的自然语言
+		// （实测《求你们骂我》第02集「骂人一处，现钱五文」带全角逗号），
+		// 而项目名只允许 中文/字母/数字/`_`/`-`/`·` —— 直接拼会让**整批导入**失败在
+		// "项目名仅允许…"上（用户点一次导入是 40 集）。清洗口径与拆集那条路**同一份实现**
+		// （safeSeries：非法字换成 `·`、合并连续 `·`、去掉首尾 `·`）。
+		name := fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, orDefault(safeSeries(title), "未命名"))
+		if !project.ValidProjectName(name) {
+			// 兜底：真遇上没见过的情况也**只退这一集的名字**，不拖累整批。
+			s.opLog("⚠ 第%02d集标题 %q 清洗后仍不合规，本集退用「未命名」", no, title)
+			name = fmt.Sprintf("%s·第%02d集·未命名", namePrefix, no)
+		}
+		// 名字合法性在**校验这一遍**就判死（而不是等到建项目时才发现）：
+		// 建项目那一遍只要有一集失败就会留下"前几集已经建好了"的半批状态 ——
+		// 2026-09-27 实测：用户点一次「脚本创作」，ep01 建成、ep02 因名字失败，
+		// 盘上就留了半批（后来被用户自己的一键清理收掉）。这里是同一政策的第一道：
+		// **任何一集的名字不可能落盘，就先在报价阶段整批拒收**（第二道是建项目那段的回滚）。
+		if !project.ValidProjectName(name) {
+			results = append(results, result{
+				Package: fmt.Sprintf("%s·第%02d集", namePrefix, no), ID: name,
+				Fails: []string{fmt.Sprintf("集标题 %q 无法生成合法项目名（%s）", title, name)},
+			})
+			fails++
+			continue
+		}
 		plan, _, _ := buildEpisodePlan(d, no, title, epShots)
 		issues := project.ValidatePlan(plan)
-		res := result{Package: fmt.Sprintf("%s·第%02d集", bookName, no), ID: name, Shots: len(plan.Shots)}
+		res := result{Package: fmt.Sprintf("%s·第%02d集", namePrefix, no), ID: name, Shots: len(plan.Shots)}
 		if f := project.PlanFails(issues); len(f) > 0 {
 			res.Fails = project.PlanIssuesText(f)
 			res.Warns = warnsText(issues)
@@ -283,15 +310,25 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 	}
 
 	// 落盘：与拆集/旧包导入同一条约定（`<projects>/<书名>/<书名·第NN集·标题>/`，见 Store.Dir）
-	created := 0
+	//
+	// 这一段带**回滚**：任何一个项目建不出来，就把**本次**建出来的删掉再报错。
+	// 理由是平台一贯的政策 —— "半导入状态更难查"（校验那一遍已经是整批拒收了，
+	// 这一遍是防"建到一半失败"：2026-09-27 实测过一次半批，见上面名字校验的注释）。
+	var createdIDs []string
 	for _, st := range stage {
-		if _, ok := s.store.Get(st.name); !ok {
-			if _, err := s.store.Create(st.name, s.projectConfigDefault()); err != nil {
-				writeErr(w, 500, fmt.Errorf("建项目 %s 失败:%w", st.name, err))
-				return true
-			}
-			created++
+		if _, ok := s.store.Get(st.name); ok {
+			continue // 已存在 = 重新导入，不算本次新建，也不参与回滚
 		}
+		if _, err := s.store.Create(st.name, s.projectConfigDefault()); err != nil {
+			for _, id := range createdIDs {
+				_ = s.store.Delete(id)
+			}
+			s.opLog("⛔ 建项目失败(%s),已回滚本次新建的 %d 个项目,不留半批", st.name, len(createdIDs))
+			writeErr(w, 500, fmt.Errorf("建项目 %s 失败:%w（已回滚本次新建的 %d 个，盘上不会留半批）",
+				st.name, err, len(createdIDs)))
+			return true
+		}
+		createdIDs = append(createdIDs, st.name)
 	}
 	s.store.Rescan()
 	for i := range stage {
@@ -303,11 +340,11 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 			return true
 		}
 		results = append(results, result{
-			Package: fmt.Sprintf("%s·第%02d集", bookName, st.no), ID: st.name, Shots: len(st.plan.Shots),
+			Package: fmt.Sprintf("%s·第%02d集", namePrefix, st.no), ID: st.name, Shots: len(st.plan.Shots),
 			Warns: append(warnsText(st.issue), append(details, overflow...)...),
 		})
 		s.opLog("📥 已从脚本明细导入第%02d集(项目「%s」):%d 镜 / %d 角色 / %d 场景 / %d 道具(新建 %d)",
-			st.no, st.name, len(st.plan.Shots), len(st.plan.Characters), len(st.plan.Scenes), len(st.plan.Props), created)
+			st.no, st.name, len(st.plan.Shots), len(st.plan.Characters), len(st.plan.Scenes), len(st.plan.Props), len(createdIDs))
 		_ = nMode
 	}
 	// 顺序与旧包那条路一致：先写盘 → 再重扫 → 再封面 → 最后开产线
@@ -323,8 +360,8 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 		"source": novelShotDetailJSON, "rescan_added": added, "projects_total": total,
 		"contract": fmt.Sprintf("manjux.plan v%d", project.PlanContractVersion),
 	})
-	s.applyNovelCover(bookName, ids, book)
-	s.autoStartBatch(bookName)
+	s.applyNovelCover(namePrefix, ids, book)
+	s.autoStartBatch(namePrefix)
 	return true
 }
 
