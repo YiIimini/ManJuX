@@ -25,15 +25,42 @@ func samplePlan() *Plan {
 		}},
 		Scenes: []Scene{{
 			ID: "scene_room", Name: "破庙", Description: "潮湿的破庙", ImagePrompt: "a ruined temple ...",
+			Landmarks: "门槛与东侧立柱", LightState: "黄昏，主光从门洞斜射",
 		}},
 		Shots: []Shot{{
 			ID: 1, Scene: "scene_room", Characters: []string{"char_a"},
 			ShotSize: "中景", Camera: "slow push-in", Action: "他站起来",
+			View:     ViewAerial45,
+			EndState: "他站在供桌前，右手抬起指向门外，视线朝左前方，地面水渍未干",
 			Dialogue: []Line{{Speaker: "阿甲", Text: "我准了。"}},
 			Duration: 5, Mode: "ref2va",
-			H3Prompt: "subject_definitions:\n<Subject 1> is 阿甲 ...\n<d>[Chinese] 我准了。</d>",
+			H3Prompt: compliantH3("subject_definitions:\n<Subject 1> is 阿甲 ...\n\ndetailed_description:\n" +
+				SampleStyleSentence + "\n[Shot 1] he stands up under " + ViewAerial45 + "; " +
+				PlanEstablishingExtra + ".<d>[Chinese] 我准了。</d>"),
 		}},
 	}
+}
+
+// SampleStyleSentence 合规样本的风格句（写在第一个 [Shot] 之前，官方硬规则）。
+const SampleStyleSentence = "A cinematic GUOFENG period film, real materials, soft motivated key light, natural film grain."
+
+// compliantH3 把一段提示词补成"格式合规"的骨架：风格句位置正确、主视角串与建立镜头串都在。
+//
+// 为什么需要一个基线：契约里有一批**覆盖率类**判据（主视角、建立镜头、H3 格式），
+// 任何"最小样本"都会命中它们 —— 而每个用例真正要测的只是自己那一维。给样本一个合规基线，
+// 用例就只剩一个变量（本包的纪律：一条规则一个击穿用例，别让别的规则混进来搅浑判据）。
+func compliantH3(body string) string {
+	if !strings.Contains(body, "detailed_description:") && !strings.Contains(body, "integrated_multimodal_description:") {
+		body += "\n\ndetailed_description:\n" + SampleStyleSentence + "\n[Shot 1] " +
+			ViewAerial45 + "; " + PlanEstablishingExtra + "."
+	}
+	if _, ok := PlanViewIn(body); !ok {
+		body += "\n" + ViewAerial45 + "."
+	}
+	if !strings.Contains(body, PlanEstablishingExtra) {
+		body += " " + PlanEstablishingExtra + "."
+	}
+	return body
 }
 
 func TestValidatePlanCleanSample(t *testing.T) {

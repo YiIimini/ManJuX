@@ -72,6 +72,24 @@ type Shot struct {
 	Mode       string   `json:"mode"`       // ref2va(有参考图) / t2va(纯文生)
 	H3Prompt   string   `json:"h3_prompt"`  // 完整六段式/三段式提示词(LLM 直出)
 
+	// View 本镜的**主视角/机位角度**(英文,逐字来自官方 9 视角词表,见 view_vocab.go)。
+	//
+	// 为什么与 Camera 分开(2026-09-27 技能侧整改单 §1.1):Camera 是**运镜**(推/拉/摇),
+	// View 是**机位**(往哪看、从多高看)。原先只有 Camera,于是镜头语言退化成
+	// "景别推两个运镜值"—— 最长 21 镜同景别、零机位角度,画面像用同一台机器拍完整集。
+	// 空值合法(存量包):契约按 warn 提示,不拒收。
+	View string `json:"view,omitempty"`
+
+	// EndState 本镜**尾帧状态**:这一镜最后一帧的画面上有什么(人物位置/姿态/表情/
+	// 视线方向/环境状态),供下一镜接着写。
+	//
+	// 为什么要有(整改单 §1.2):平台只有 seam 开关(把上一镜尾帧喂给下一镜),
+	// 却没有任何"尾帧长什么样"的写法约束 —— 于是"接上一镜"这件事全靠模型自己猜。
+	// **禁写听觉/氛围/情绪词**(寂静/压抑…)——下游画不出来,只会稀释视觉信息,
+	// 判据见 view_vocab.go 的 EndStateBannedIn。跨场景切换处不要求动作连贯
+	// (改用渐隐渐显 + 转场字幕),所以空值对"每段场景的首镜"是允许的。
+	EndState string `json:"end_state,omitempty"`
+
 	// KeyframePrompt 本镜**首帧 T2I 静帧**提示词(技能侧 manju_plan.py 的
 	// build_keyframe_prompt 产出)。
 	//
@@ -106,6 +124,16 @@ type Scene struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	ImagePrompt string `json:"image_prompt"`
+
+	// Landmarks 本场景的**连续性地标**:同场景跨镜必须保持屏幕位置的固定物
+	// (门框/中岛/系船桩/树…)。跨镜回到同一地点时,观众靠这些不动的东西认出"还是这儿";
+	// 地标在镜头之间换位置,空间就散了。
+	Landmarks string `json:"landmarks,omitempty"`
+
+	// LightState 本场景的**光态**:日/夜 + 主光方向(如 "黄昏,主光从西侧门洞斜射")。
+	// H3 每镜独立渲染,同一地点相邻两镜一个中午一个黄昏就是硬伤;写成字段后
+	// 分镜与提示词都照着它写,不靠模型从上下文猜。
+	LightState string `json:"light_state,omitempty"`
 }
 
 // Prop 道具卡。

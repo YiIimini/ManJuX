@@ -150,6 +150,27 @@ func NeededShotSeconds(sh Shot) int {
 	return need
 }
 
+// familyMatchName 说话人的"家族基名"命中了哪张卡（没有则返回空串）。
+//
+// 用于把 warn 说得更准：技能侧 v2.9 前落盘的是本名（`沈砚`），而卡名可能是档名（`沈砚·七品`），
+// 于是"查不到卡"的根因被一句笼统的"不在角色表里"盖住。这里只做**识别**：
+// 认出是同一个人就把该改哪里说清楚，**绝不改写** dialogue[].speaker（见调用点注释）。
+func familyMatchName(p *Plan, name string) string {
+	base := CharFamilyBaseName(name)
+	if base == "" {
+		return ""
+	}
+	for _, ch := range p.Characters {
+		if ch.Name == "" || ch.Name == name {
+			continue
+		}
+		if CharFamilyBaseName(ch.Name) == base {
+			return ch.Name
+		}
+	}
+	return ""
+}
+
 // ValidatePlan 契约校验。返回全部问题(按镜头顺序),空数组 = 合规。
 func ValidatePlan(p *Plan) []Issue {
 	var out []Issue
@@ -189,6 +210,23 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 		if strings.TrimSpace(s.ImagePrompt) == "" {
 			add("warn", fmt.Sprintf("scenes[%d]", i), "场景 %s 缺 image_prompt —— 环境参考图只能现编", s.Name)
+		}
+		// ── 场景板(T2I)的汉字门（2026-09-27 技能侧整改单 §1.4 / 平台侧整改清单 §6.2）──────
+		//
+		// 场景板是文生图出的**环境参考图**，会被 H3 当成"这个地方本来就长这样"带进**每一镜** ——
+		// 板上糊一个乱码字形，那一集每一镜都带着它（与"场景板里画了人 → 每镜都出现同一个陌生人"
+		// 是同一条机理，见 pipeline.StripSceneCrowd）。
+		//
+		// 与 `<d>` 外汉字门**不同**的是这里的口径更严：**出现任何汉字即提示，不扣主体名**。
+		// 扣减集合是给 h3_prompt 用的（官方要求用文字点名主体，名字里的汉字不可避免），
+		// 而场景卡的 image_prompt 里没有"必须写中文名"的理由 —— 渲染期点名靠英文结构与
+		// PICTURE MANIFEST。实测《求你们骂我》12 张场景卡每张都以中文名开头（合计 178 字），
+		// 就是因为原先只有总阈值门、且把主体名算成合法。
+		if n := CountCJK(s.ImagePrompt); n > 0 {
+			add("warn", fmt.Sprintf("scenes[%d]", i),
+				"场景 %s 的 image_prompt 里有 %d 个汉字 —— 场景板是 T2I 出的，汉字会被画成"+
+					"乱码字形糊在环境板上，而这块板会被带进用到该场景的每一镜；"+
+					"画面提示词一律写英文（平台装配时会自动清掉，但产出侧就该是干净的）", s.Name, n)
 		}
 		sceneIDs[s.ID] = true
 	}
@@ -256,6 +294,33 @@ func ValidatePlan(p *Plan) []Issue {
 					s, strings.Join(PlanShotSizes, "/"))
 			}
 		}
+		// ── 主视角（2026-09-27 技能侧整改单 §1.1）──────────────────────────
+		//
+		// 渲染真正读的是 h3_prompt，所以覆盖率判据以提示词为准（聚合在循环外报一次）；
+		// 这里只查两件"精确且少见"的事：字段不在官方词表里、字段与提示词对不上。
+		// 后者等于自检面板在骗人 —— 审计时看到 view 写了鸟瞰，成片却是平视。
+		if v := strings.TrimSpace(sh.View); v != "" {
+			known := false
+			for _, want := range PlanViews {
+				if v == want {
+					known = true
+					break
+				}
+			}
+			if !known {
+				add("warn", where, "view=%q 不是官方 9 视角词表里的串（必须逐字写）—— %s", v, PlanViewHint())
+			} else if got, ok := PlanViewIn(sh.H3Prompt); ok && got != v {
+				add("warn", where,
+					"view 字段写的是 %q，而 h3_prompt 里出现的是 %q —— 两者必须一致（渲染读的是提示词）",
+					v, got)
+			}
+		}
+		// ── 尾帧状态里的听觉/氛围词（§1.2 只写看得见的）──────────────────────
+		if hit := EndStateBannedIn(sh.EndState); len(hit) > 0 {
+			add("warn", where,
+				"end_state 里有听觉/氛围/情绪词 %s —— 尾帧状态只写看得见的：人物位置、姿态、"+
+					"表情、视线方向、环境状态（下游画不出「寂静」「压抑」这类词）", strings.Join(hit, "、"))
+		}
 		// ── 语音层(v2)────────────────────────────────────────────────────
 		//
 		// 这三条是"配音错"的可判形态。用户报的是「系统旁白,主角动嘴?」——
@@ -301,7 +366,20 @@ func ValidatePlan(p *Plan) []Issue {
 					}
 				}
 				if !found {
-					add("warn", where, "说话人 %q 不在角色表里(只有画外音标签可以这么写)", name)
+					// 完全一致匹配是**有意保留**的口径（2026-09-27 技能侧整改单 §2.5 / 平台侧整改清单 §6.1）：
+					// 技能侧 v2.9 起落盘即写卡名（`沈砚` → 该章生效的 `沈砚·七品`），实测两本
+					// "说话人查不到卡 = 0 句"。平台若在这里**自动改写** speaker，字幕与台词归属
+					// 就会与产出侧不一致 —— 所以只做诊断：家族基名命中时把"认得出是同一个人"
+					// 这件事说清楚（`沈砚` vs `沈砚·七品`），让人一眼知道该改哪里，绝不动数据。
+					if hit := familyMatchName(p, name); hit != "" {
+						add("warn", where,
+							"说话人 %q 与卡名「%s」不是完全一致，但家族基名一致（按 %s 判定为同一人）——"+
+								"音色绑定靠这个名字连线，产出侧落盘时写卡名即可（技能侧 v2.9 已改）；"+
+								"平台不改写 dialogue[].speaker（改写会让字幕/台词归属与产出侧不一致）",
+							name, hit, CharFamilyBaseName(name))
+					} else {
+						add("warn", where, "说话人 %q 不在角色表里(只有画外音标签可以这么写)", name)
+					}
 				}
 			}
 		}
@@ -355,6 +433,112 @@ func ValidatePlan(p *Plan) []Issue {
 			add("warn", where,
 				"台词+旁白需约 %d 秒、超过单镜上限 %d 秒 —— 会被抬到上限并可能截断,建议拆镜",
 				need, PlanMaxShotSeconds)
+		}
+	}
+
+	// ── 覆盖率类判据（整改单 §1.1/§1.2/§1.5）────────────────────────────────
+	//
+	// 这三组都是"每镜都可能命中"的规则，**按计划聚合报一次**，不逐镜刷屏：
+	// 一条 56 镜的方案若逐镜报"缺尾帧状态"，报告里 50 条噪音会把真正的那几条淹掉
+	// （本包的老规矩：误拦/刷屏的规则比没有规则更糟，因为报告没人看）。
+	// 每条都带上"命中几镜 / 共几镜"与示例镜号，够定位也不吵。
+	if len(p.Shots) > 0 {
+		var noView []string
+		viewSet := map[string]bool{}
+		for _, sh := range p.Shots {
+			if v, ok := PlanViewIn(sh.H3Prompt); ok {
+				viewSet[v] = true
+			} else if strings.TrimSpace(sh.H3Prompt) != "" {
+				noView = append(noView, fmt.Sprintf("#%d", sh.ID))
+			}
+		}
+		if len(noView) > 0 {
+			add("warn", "plan.shots",
+				"%d/%d 镜的 h3_prompt 里找不到机位视角串 —— 镜头语言只剩景别+运镜，"+
+					"整集会像用同一台机器拍完（%s；缺视角的镜：%s）",
+				len(noView), len(p.Shots), PlanViewHint(), strings.Join(firstN(noView, 6), " "))
+		}
+		// 视角单调：只有一两种视角同样是"同一台机器"的另一种形态。
+		// 阈值取 6：整改单的验收是"camera 取值从 2 个涨到 ≥6 个"，且只对 ≥10 镜的方案判
+		// （短方案本来就装不下 6 种角度，硬判就是误拦）。
+		if len(p.Shots) >= 10 && len(viewSet) < 6 {
+			add("warn", "plan.shots",
+				"整集只用了 %d 种机位视角（%s）—— 官方词表有 9 条，建议至少铺开到 6 种，"+
+					"否则景别变化也救不回「镜头感」", len(viewSet), strings.Join(viewKeys(viewSet), " / "))
+		}
+
+		var establishingBad []string
+		var establishingClose []string
+		for i, sh := range p.Shots {
+			if !IsEstablishingShot(p.Shots, i) || strings.TrimSpace(sh.H3Prompt) == "" {
+				continue
+			}
+			if !strings.Contains(sh.H3Prompt, PlanEstablishingExtra) {
+				establishingBad = append(establishingBad, fmt.Sprintf("场景 %s 的首镜 #%d", sh.Scene, sh.ID))
+			}
+			for _, bad := range PlanEstablishingBannedSizes {
+				if strings.Contains(sh.ShotSize, bad) {
+					establishingClose = append(establishingClose, fmt.Sprintf("场景 %s 的首镜 #%d 是「%s」", sh.Scene, sh.ID, sh.ShotSize))
+				}
+			}
+		}
+		if len(establishingBad) > 0 {
+			add("warn", "plan.shots",
+				"%d 个建立镜头没写建立镜头串 —— 观众第一次看见一个地点时得先交代地点："+
+					"逐字写上 %q（%s）", len(establishingBad), PlanEstablishingExtra, strings.Join(establishingBad, "、"))
+		}
+		if len(establishingClose) > 0 {
+			add("warn", "plan.shots",
+				"建立镜头用了特写/小景别 —— %s；小景别当建立镜头等于没交代地点，换远景/全景/中景",
+				strings.Join(establishingClose, "、"))
+		}
+
+		// 尾帧状态：只对"后面还有同一场景的镜头"的那些镜判 —— 跨场景本来就不要求动作连贯
+		// （改用渐隐渐显 + 转场字幕），每段场景的末镜与全片末镜不写尾帧状态是对的。
+		var noEnd []string
+		for i, sh := range p.Shots {
+			if i+1 >= len(p.Shots) {
+				continue
+			}
+			next := p.Shots[i+1]
+			if strings.TrimSpace(next.Scene) != strings.TrimSpace(sh.Scene) {
+				continue // 跨场景：不要求接动作
+			}
+			if strings.TrimSpace(sh.EndState) == "" {
+				noEnd = append(noEnd, fmt.Sprintf("#%d", sh.ID))
+			}
+		}
+		if len(noEnd) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜缺 end_state（尾帧状态）—— 它们后面紧跟着同一场景的下一镜，"+
+					"没有尾帧状态时「接上一镜」只能靠模型猜（缺尾帧的镜：%s）",
+				len(noEnd), strings.Join(firstN(noEnd, 6), " "))
+		}
+
+		// 连续同景别（整改单 §1.1 验收：连续同景别 ≤6 镜）
+		if runSize, runStart, n := longestSameShotSizeRun(p.Shots); n > PlanMaxConsecutiveSameShotSize {
+			add("warn", "plan.shots",
+				"连续 %d 镜同一个景别「%s」（#%d 起）—— 上限 %d 镜；连续同景别是「画面单调」最直接的成因",
+				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
+		}
+
+		// H3 官方格式（§1.5 的可机检三条）：聚合报一次，附前几条人话说明
+		var fmtHits []string
+		badShots := 0
+		for _, sh := range p.Shots {
+			if v := H3FormatViolations(sh.H3Prompt); len(v) > 0 {
+				badShots++
+				for _, s := range v {
+					if len(fmtHits) < 4 {
+						fmtHits = append(fmtHits, fmt.Sprintf("#%d %s", sh.ID, s))
+					}
+				}
+			}
+		}
+		if badShots > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的 h3_prompt 不符合官方格式（写错了不报错，只是成片变差）：%s",
+				badShots, strings.Join(fmtHits, "；"))
 		}
 	}
 

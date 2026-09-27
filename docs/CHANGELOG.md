@@ -10,6 +10,45 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## 技能侧整改单落地：镜头语言层（视角 / 尾帧状态 / 场景卡 / H3 格式）（2026-09-27）
+
+**根因**（依据技能侧 `docs/技能侧交付-平台侧整改单-2026-09-27.md` §1.1–§1.5）：平台直出的分镜在
+**镜头语言**上是残缺的 —— `camera` 只有运镜、**零机位角度**（复核实测：最长连续 21 镜同景别）；
+没有"这一镜最后一帧长什么样"的字段（衔接只靠平台自己的 seam 开关，没有写法）；场景卡没有事件隔离
+（板上带着剧情痕迹，而这块板会被带进用到该场景的**每一镜**）；场景板还以中文名开头（T2I 出图，
+汉字会被画成乱码字形）；H3 官方 10 条硬规则里有 4 条从没写进过提示词。
+
+**修复**（产出侧 + 守门侧两层，全部在平台侧）：
+- **主视角**：新增 `internal/project/view_vocab.go`（官方 9 条视角词表 = 唯一真源）与 `shots[].view`
+  字段；`director` 新增 `VIEWPOINT` 段（9 条用法与条件性标注、建立镜头串
+  `ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot`、
+  建立镜头禁用特写、连续同景别 ≤6 镜）。
+- **尾帧状态**：新增 `shots[].end_state` 与 `director` 的 `SHOT END STATE & CROSS-SHOT CONTINUITY` 段
+  （同片段"然后/紧接着"承接；同场景跨片段"接上一片段结尾，"复述尾帧；跨场景**不要求**动作连贯，
+  改渐隐渐显＋转场字幕）；`end_state` 禁听觉/氛围/情绪词（判据 `EndStateBannedIn`）。
+- **场景卡**：新增 `scenes[].landmarks`（连续性地标）＋ `scenes[].light_state`（光态）＋ 事件隔离
+  （只画事件发生前的地点固有状态、物件配额 2–4 组、串 `pre-event timeless location, …`）。
+  **装配点兜底**：`pipeline.SceneImagePrompt` 强制带上事件隔离串，并自动清掉卡片里的汉字
+  （`project.StripCJK`：整句丢弃优先；整段中文退回逐字删除；清空也不退回原文）——
+  契约门只能"提示"，真正保证**渲染输入干净**的必须是唯一的装配点。
+- **H3 官方格式**：`sysH3Format` 补 4 条（`retention_analysis` 不许写 `(Sx)`／`<Picture N>` 只在
+  当帧锚时独立成行／`<Video N>` 与 `<Audio N>` 编号互不相干／描述覆盖请求总时长优先于字数配额）；
+  其中可机检的三条落成 `project.H3FormatViolations`（按镜聚合报一条 warn）。
+- **契约**：规则表新增 8 条 **warn** 级（#20–#27，见 `docs/渲染脚本契约.md`）——
+  **不升 `PlanContractVersion`**：这一批全是 warn，存量 v2 包照旧收下（升版本会把现网所有包
+  判成"版本不符"而整批拒收，与这批规则的意图无关）。
+
+**顺带修掉两个真实缺口**（新加的"双侧同源"守卫当场抓到）：
+① 规划轮（**真正写 `scenes[]` 的那条路径**）漏了 `sysSceneRules` —— 场景卡规则从没进过它；
+② 同一条路径的 scenes schema 里没有 `landmarks`/`light_state` 两个新字段。
+
+**验证**：`internal/project/plan_view_contract_test.go`（视角覆盖/视角单调/字段与提示词一致/
+建立镜头/尾帧状态与禁用词/连续同景别/场景卡汉字/H3 格式，每条正反双向）；
+`plan_contract_ext_test.go::TestViewVocabularyReachesBothSides`（词表必须同时出现在产出侧的对应路径）；
+`pipeline/scene_prompt_test.go`（清汉字 + 事件隔离串恰好 1 份 + 二次装配幂等）；
+`project.StripCJK` 三情形（中文名开头卡片 / 整段中文 / 全英文）＋ 破折号与花引号不被误删。
+`scripts/check.ps1` 其余五门通过（前端门在本机"经管道捕获子进程输出"时有已知误报，见交接单）。
+
 ## 参考图从未生效：根因是 autogrow 提交键写错（2026-09-27）
 
 **根因**（真机实测 + ComfyUI 0.37.4 源码）：H3 Ref2V 的参考图**一张都没进过条件** ——

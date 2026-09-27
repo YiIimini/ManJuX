@@ -77,6 +77,85 @@ func CountCJK(text string) int {
 // reDialogueBlock 官方「说」的通道：`<d>…</d>`（跨行、非贪婪）。
 var reDialogueBlock = regexp.MustCompile(`(?s)<d>.*?</d>`)
 
+// reSentenceSplit 句末标点后的空白（用来把一段提示词切成句子，便于整段丢弃含中文的句子）。
+var reSentenceSplit = regexp.MustCompile(`([.。!！?？])\s+`)
+
+// reCJKPunct 中文/全角标点（丢掉汉字之后它们会变成孤立残渣）。
+//
+// 只收**中文与全角**那两类（U+3000–303F 标点符号、U+FF00–FFEF 全角形式），
+// 不收 U+2014 破折号 / U+201C 花引号 / U+2026 省略号 —— 那些在英文正文里是**正常标点**，
+// 一并删掉会把 "EXACTLY — the same layout" 改成 "EXACTLY the same layout"（实测踩过）。
+var reCJKPunct = regexp.MustCompile(`[\x{3000}-\x{303f}\x{ff00}-\x{ffef}]`)
+
+// reSpaceRun 连续空白。
+var reSpaceRun = regexp.MustCompile(`\s+`)
+
+// reLeadingJunk 结果开头的孤立标点/空白（整段中文被丢弃后会留下 " . ..." 这类残渣）。
+var reLeadingJunk = regexp.MustCompile(`^[\s.,;:、，。；：\-—)]+`)
+
+// StripCJK 把一段**画面提示词**里的汉字清干净，供图像模型直接使用。
+//
+// ## 为什么需要它（而不是只靠契约门）
+//
+// 2026-09-27 技能侧整改单 §1.4 / 平台侧整改清单 §6.2：场景板是 T2I 出的环境参考图，
+// 而它会作为 H3 的参考图被带进**用到该场景的每一镜**。中文名开头（实测
+// `临水城（口径锁定正名表里的地点）. Photorealistic…` 12 张卡合计 178 字）会被画成
+// 乱码字形糊在环境板上 —— 契约门能提示，但门是"拒收/提示"语义，存量包、人工改过的卡、
+// 以及任何绕过门的路径都还在。**渲染输入必须干净**这件事只能由装配点保证。
+//
+// ## 口径
+//
+// 优先**整句丢弃**：按句末标点切句，含汉字的句子整句删掉（那通常是"中文名（中文注解）"
+// 这一段，删掉后英文正文原样保留）。整段都是中文时退回**逐字删除**并清理残渣，
+// 清完什么都不剩就**返回空串** —— 调用方（场景图装配点）会照常追加取景与风格块，
+// 交出去的是一个"不指定具体地点的空场"，这比留着汉字让模型画成乱码字形好得多
+// （空提示词的风险由契约门提示，乱码字形是必然发生的画面污染）。
+//
+// 幂等：清干净的文本再清一次不变（装配点可能被调用两次：资产阶段 + 渲染前补齐）。
+func StripCJK(text string) string {
+	if CountCJK(text) == 0 {
+		return text
+	}
+	// ① 整句丢弃
+	parts := reSentenceSplit.Split(text, -1)
+	seps := reSentenceSplit.FindAllString(text, -1)
+	var kept []string
+	for i, p := range parts {
+		if CountCJK(p) > 0 {
+			continue // 整句含汉字 → 丢
+		}
+		tail := ""
+		if i < len(seps) {
+			tail = seps[i] // 把句末标点接回去（Split 把它切掉了）
+		}
+		if strings.TrimSpace(p) != "" {
+			kept = append(kept, p+tail)
+		}
+	}
+	out := strings.Join(kept, " ")
+	if CountCJK(out) > 0 || strings.TrimSpace(out) == "" {
+		// ② 退回逐字删除（整段中文的情形）
+		out = removeHanRunes(text)
+	}
+	out = reCJKPunct.ReplaceAllString(out, " ")
+	out = reSpaceRun.ReplaceAllString(out, " ")
+	out = reLeadingJunk.ReplaceAllString(out, "")
+	return strings.TrimSpace(out)
+}
+
+// removeHanRunes 逐字删除汉字（保留其余字符，交给调用方清理残渣）。
+func removeHanRunes(text string) string {
+	var sb strings.Builder
+	sb.Grow(len(text))
+	for _, r := range text {
+		if HanRune(r) {
+			continue
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
 // maskProtectedCJK 把**受保护的汉字**按 rune 等长遮成空格，返回遮罩后的文本：
 //
 //   - `<d>…</d>` 整块（官方指定给「说」的通道，里面的汉字合法且必须逐字保留）；

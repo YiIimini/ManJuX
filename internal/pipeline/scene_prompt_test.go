@@ -31,6 +31,46 @@ func scenePlan() *project.Plan {
 	}
 }
 
+// TestSceneImagePromptStripsCJKAndIsolatesEvent 场景板的两条硬纪律
+// （2026-09-27 技能侧整改单 §1.3 事件隔离 / §1.4 汉字卫生）。
+//
+// 场景板会被 H3 带进**用到该场景的每一镜**，所以这两条都不是"好看一点"：汉字会被画成乱码
+// 字形糊在环境板上（每镜都带着），事件后果物（血渍/遗物）会让整集看起来发生在事件之后。
+// 契约门只能提示，这里验的是**装配点真的做了**（存量包与人工改过的卡都从这条路走）。
+func TestSceneImagePromptStripsCJKAndIsolatesEvent(t *testing.T) {
+	plan := scenePlan()
+	// 技能侧实测的原句形态：以中文名开头，后面才是英文正文
+	plan.Scenes[0].ImagePrompt = "临水城前街（口径锁定正名表里的地点）. Photorealistic 3D cinematic " +
+		"environment plate: a wet stone street with a wooden archway."
+	got := SceneImagePrompt(&project.Project{}, plan, plan.Scenes[0])
+
+	// 卡片自己的汉字（中文名 + 中文注解）必须没了。注意**不能**断言整段结果 0 汉字：
+	// 下面追加的介质/风格块是**中英对照**的既有设计（如 "国漫二维动画, 赛璐璐平涂 …"），
+	// 那不是本门管的（本门管的是卡片正文以中文名开头这件事）。
+	for _, bad := range []string{"临水城前街", "口径锁定正名表", "地点"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("卡片里的汉字 %q 没被清掉（T2I 会画成乱码字形，且这块板每镜都带着）:\n%s", bad, got)
+		}
+	}
+	if n := project.CountCJK(project.StripCJK(plan.Scenes[0].ImagePrompt)); n != 0 {
+		t.Errorf("卡片正文清洗后还剩 %d 个汉字", n)
+	}
+	if !strings.Contains(got, "wet stone street") {
+		t.Errorf("清汉字不该把英文正文一起清掉:\n%s", got)
+	}
+	if !strings.Contains(got, project.PlanScenePreEventClause) {
+		t.Errorf("场景板必须带事件隔离串（只画事件发生前的地点固有状态）:\n%s", got)
+	}
+	if n := strings.Count(got, project.PlanScenePreEventClause); n != 1 {
+		t.Errorf("事件隔离串应恰好 1 份，实际 %d 份（重复装配不得叠加）:\n%s", n, got)
+	}
+	// 幂等：把成品写回卡片再装配一次，必须**逐字不变**
+	plan.Scenes[0].ImagePrompt = got
+	if again := SceneImagePrompt(&project.Project{}, plan, plan.Scenes[0]); again != got {
+		t.Errorf("第二次装配改变了结果（幂等被破坏）:\n一次:%s\n二次:%s", got, again)
+	}
+}
+
 // TestSceneImagePromptInjectsSeriesStyle 场景图必须与角色图**同一套画风**:
 // 全片风格串要进提示词,而人像取景要被换成环境空场。
 func TestSceneImagePromptInjectsSeriesStyle(t *testing.T) {

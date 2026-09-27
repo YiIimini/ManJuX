@@ -614,11 +614,21 @@ func characterImagePrompt(proj *project.Project, plan *project.Plan, ch project.
 // 幂等:同一段提示词重复装配不会叠加(带过 SCENE FIDELITY 就直接返回),
 // 所以"资产阶段装配一次、渲染前补齐再装配一次"是安全的。
 func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scene) string {
-	prompt := sc.ImagePrompt
 	prof := EntityProfileOf(KindScene)
-	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
-		return prompt // 已经是本装配点的产物:不重复叠加
+	// 幂等判据按**卡片原文**判：本函数可能被调用两次（资产阶段装配一次、渲染前补齐再一次），
+	// 而装配出来的成品会被写回卡片 —— 第二次进来时它已经是成品，必须原样返回，
+	// 否则下面的清洗与追加会把它再改一遍（"重复装配改变结果"正是这里要避免的）。
+	if prof.SheetMarker != "" && strings.Contains(sc.ImagePrompt, prof.SheetMarker) {
+		return sc.ImagePrompt
 	}
+
+	// 汉字卫生（2026-09-27 技能侧整改单 §1.4 / 平台侧整改清单 §6.2）：场景板是 T2I 出的，
+	// 汉字几乎必然变成乱码字形糊在环境板上 —— 而这块板会被 H3 带进**用到该场景的每一镜**。
+	// 契约门只能"提示"，存量包、人工改过的卡与绕过门的路径都还在，所以真正保证渲染输入
+	// 干净的只能是装配点（coordinator 不从别处取原值，见 coordinator.go 的注释）。
+	// **只清卡片自己的文本**：下面追加的风格/介质/忠实度块本来就有中英对照，不该被动。
+	prompt := project.StripCJK(sc.ImagePrompt)
+
 	// 场景板是**空场**:卡片里若写了人群/行人(实测《求你们骂我》写着
 	// "a scattered crowd of villagers"),先整项删掉 —— 平台随后追加的取景纪律
 	// ("completely deserted and unpeopled")与它本来是打架的,模型只会折中,而场景板
@@ -630,6 +640,14 @@ func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scen
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
 	}
 	prompt += styleExpand(planStyle(plan), facesOnOf(proj), KindScene)
+
+	// 事件隔离（整改单 §1.3）：场景板只画**事件发生前的地点固有状态**。
+	// 板上若带着血渍/尸体/刚破碎物/遗落道具，那一集每一镜都像"事情已经发生过"
+	// （与"板上画了人 → 每镜都出现同一个陌生人"同一条机理）。LLM 侧已在 sysSceneRules
+	// 要求写这一串，这里兜底：**装配点是唯一出口**，所以渲染输入里必然有它（幂等：已有就不叠）。
+	if !strings.Contains(prompt, project.PlanScenePreEventClause) {
+		prompt += " " + project.PlanScenePreEventClause + "."
+	}
 	return prompt
 }
 

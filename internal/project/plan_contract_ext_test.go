@@ -21,6 +21,41 @@ import (
 // 为什么是两份:project 是更底层的包,director 反过来 import project,真共享常量会成环。
 // 复制常量的风险是**两边悄悄走散** —— 那就等于技能端按 A 规则产出、平台端按 B 规则验收。
 // 所以这个外部测试包(可以同时 import 两边)把"必须相等"钉死:谁改了一边,这里立刻红。
+// TestViewVocabularyReachesBothSides 视角/尾帧/场景卡三套词表必须**同时**出现在两侧:
+// 契约门按 project 的常量判,而产出侧是 director 的提示词文案 —— 只改一边的后果是
+// "门按 A 判、LLM 按 B 写",两边都觉得自己对(2026-09-27 技能侧整改单 §1.1–§1.3)。
+//
+// 按**产出什么**分组守:写 shots 的两条路径守视角与尾帧状态,写 scenes 的两条路径守场景卡。
+// 混着要求"每条提示词都有全部规则"不是事实(分批分镜轮不产出场景卡),也就守不住真缺口 ——
+// 2026-09-27 这条守卫就抓到过一次:规划轮(真正写 scenes[] 的地方)漏了 sysSceneRules。
+func TestViewVocabularyReachesBothSides(t *testing.T) {
+	for name, sp := range director.ShotPrompts() {
+		for _, v := range project.PlanViews {
+			if !strings.Contains(sp, v) {
+				t.Errorf("%s 缺视角词表项 %q —— LLM 写不出契约门认得的机位", name, v)
+			}
+		}
+		if !strings.Contains(sp, project.PlanEstablishingExtra) {
+			t.Errorf("%s 缺建立镜头串 %q", name, project.PlanEstablishingExtra)
+		}
+		for _, want := range []string{"end_state", "尾帧状态", "view"} {
+			if !strings.Contains(sp, want) {
+				t.Errorf("%s 缺 %q —— 产出侧不写这个字段,契约门就永远在报同一件事", name, want)
+			}
+		}
+	}
+	for name, sp := range director.ScenePrompts() {
+		if !strings.Contains(sp, project.PlanScenePreEventClause) {
+			t.Errorf("%s 缺场景事件隔离串 %q", name, project.PlanScenePreEventClause)
+		}
+		for _, want := range []string{"landmarks", "light_state", "EVENT ISOLATION", "PROP BUDGET"} {
+			if !strings.Contains(sp, want) {
+				t.Errorf("%s 缺场景卡纪律 %q", name, want)
+			}
+		}
+	}
+}
+
 func TestContractConstantsMatchDirector(t *testing.T) {
 	if project.PlanCharsPerSecond != director.CharsPerSecond {
 		t.Fatalf("口播速率走散:contract=%v director=%v",

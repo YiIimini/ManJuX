@@ -31,10 +31,11 @@ func cjkIssues(issues []Issue, sub string) []Issue {
 // cjkShotPlan 造一个"除此之外都合规"的方案：只替换 h3_prompt。
 //
 // 必须让 h3_prompt 自带 `<d>`：契约里「有台词却没有任何 <d>」是 fail，那条与本门无关，
-// 混进来会让边界用例读不出真正的原因。
+// 混进来会让边界用例读不出真正的原因。同理，替换进来的提示词要过 compliantH3 补上
+// 主视角/建立镜头串 —— 覆盖率类判据（§1.1）与本门无关，不该出现在这里的报告里。
 func cjkShotPlan(h3 string) *Plan {
 	p := samplePlan()
-	p.Shots[0].H3Prompt = h3
+	p.Shots[0].H3Prompt = compliantH3(h3)
 	return p
 }
 
@@ -92,7 +93,7 @@ func TestValidatePlanCJKSubtractsSubjectNames(t *testing.T) {
 	// 会额外报一条无关 warn（说话人不在角色表），把"零 issue"的判据搅浑。
 	p.Shots[0].Dialogue = nil
 	p.Shots[0].Narration = ""
-	p.Shots[0].H3Prompt = sb.String()
+	p.Shots[0].H3Prompt = compliantH3(sb.String())
 
 	// 先证明这份提示词里的汉字确实压过了 fail 线（否则用例是空的）
 	if n := CountCJK(p.Shots[0].H3Prompt); n <= PlanCJKFailOutsideDialogue {
