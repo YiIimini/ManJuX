@@ -23,6 +23,17 @@ type novelItem struct {
 	Produced bool        `json:"produced"`         // 是否已创建过系列项目
 	Hidden   bool        `json:"hidden"`           // 已隐藏(界面状态,见 novels_hidden.go)
 	Script   *bookScript `json:"script,omitempty"` // 目录里发现的技能端脚本包(nil=没有,见 novels_script.go)
+
+	// Detail 技能侧的**结构化明细**（`分镜/分镜明细.json`）。2026-09-27 起它是「脚本创作」
+	// 的首选来源 —— 有它时入口可用、且**不**标「历史包」（那个标签只对旧渲染包有意义）。
+	Detail *novelDetailBrief `json:"detail,omitempty"`
+}
+
+// novelDetailBrief 书卡上要显示的结构化明细概况（只够判断"有没有、多少集"）。
+type novelDetailBrief struct {
+	Episodes int    `json:"episodes"`
+	Shots    int    `json:"shots"`
+	Source   string `json:"source"`
 }
 
 // novelRoot 小说库根目录(设置项;空=未配置)。
@@ -85,6 +96,11 @@ func (s *Server) handleNovels(w http.ResponseWriter, r *http.Request) {
 	// 入口「脚本创作」—— 直接导包,不再跑 LLM 拆集。检测放在排序后,批量读盘的顺序更顺。
 	for i := range out {
 		out[i].Script = s.findBookScript(out[i].Path)
+		if d := loadNovelDetail(out[i].Path); d != nil {
+			out[i].Detail = &novelDetailBrief{
+				Episodes: len(detailEpKeys(d.Shots)), Shots: len(d.Shots), Source: novelShotDetailJSON,
+			}
+		}
 	}
 	// 打隐藏标记 + 过滤(打标记在排序之后,顺序不受影响)
 	visible := out[:0]

@@ -77,7 +77,7 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 		// 无角色也无场景(纯空镜):身份锚定没什么可锚的,但**风格段与介质覆盖仍必须带上**
 		// —— 空镜一样要服从全片画风。此前这条早退分支直接把风格与介质段丢了,
 		// 结果是"空镜写实、其余动画"的花片(实测真实项目第 1 镜正是无人物空镜)。
-		return styleAndMediumBlock(plan, facesOn) + proportion + shot.H3Prompt
+		return styleAndMediumBlock(plan, facesOn, shot.H3Prompt) + proportion + shot.H3Prompt
 	}
 	var sb strings.Builder
 	sb.WriteString("【身份锚定(全片统一,优先级最高)】\n")
@@ -188,7 +188,7 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			}
 		}
 	}
-	sb.WriteString(styleAndMediumBlock(plan, facesOn))
+	sb.WriteString(styleAndMediumBlock(plan, facesOn, shot.H3Prompt))
 	// 比例锚点放在**最后**(紧贴 shot.H3Prompt)是有意的:它是"别让比例跑掉"的约束而不是
 	// 剧情内容,而它要防的正是紧随其后的画面 —— 动作一多,模型优先保动作、把形体当装饰丢掉
 	// (与【外貌不变项】记的那次漂移同一机理),所以取离画面最近的注意力位置。
@@ -235,13 +235,20 @@ func planStyle(plan *project.Plan) string {
 //   - 介质覆盖:无条件声明"人物与整体画法以本段为准",风格串里的 realism/胶片措辞
 //     只作用于布景与影调。**不做关键词匹配** —— LLM 的措辞追不完
 //     (实测本机真实项目的 "gritty rural Chinese period realism…35mm film grain" 一个词都不命中)。
-func styleAndMediumBlock(plan *project.Plan, facesOn bool) string {
+//
+// **incoming（本镜提示词原文）只用来判一件事：让位**。技能侧产出的提示词**自带**风格句
+// （官方格式要求它写在 `[Shot 1]` 之前），此时平台再插一段风格块 = 一段提示词两套风格，
+// 模型只会取中值。所以判据是"提示词里已经有风格句了吗"（`project.HasStyleSentence`，
+// 与导入侧提 `plan.Style` 用**同一个**判据），有就不写风格那两行、只留法务底线。
+// 这与比例锚点的让位是同一条设计（见 styleExpandFor 与 proportion_clause.go）：
+// **不改上游文本，只让自己那段不重复**。
+func styleAndMediumBlock(plan *project.Plan, facesOn bool, incoming string) string {
 	var sb strings.Builder
 	style := ""
 	if plan != nil {
 		style = strings.TrimSpace(plan.Style)
 	}
-	if style != "" {
+	if style != "" && !project.HasStyleSentence(incoming) {
 		sb.WriteString("【全片视觉风格】" + style + "\n")
 	}
 	if style != "" {
@@ -255,11 +262,19 @@ func styleAndMediumBlock(plan *project.Plan, facesOn bool) string {
 		// 现在只保留**法务与原创性**那条(不影射真实人物、原创设计):它不规定画风,
 		// 是任何风格下都必须成立的底线 —— 那也正是当初加介质锁的一半理由(避免侵权),
 		// 而"必须动漫化"那另一半是风格选择,归技能端。
-		sb.WriteString("【风格执行】以上风格由剧集设定指定,照此渲染,不要另换画风;" +
-			"全片风格必须逐镜一致(同一部剧不得出现两种画风)。\n" +
-			"STYLE AUTHORITY (from the series spec, do not substitute): render exactly in the style line above and keep " +
-			"it identical in every shot of this series. Every design stays ORIGINAL: never make a character resemble a " +
-			"real person, actor, singer, celebrity or public figure.\n")
+		if project.HasStyleSentence(incoming) {
+			// 让位：风格句已经在提示词里（技能端写的），这里只留法务底线；
+			// "照上面那行风格渲染"这句在这里会指向空气（上面没有那行），所以不写。
+			sb.WriteString("【原创性底线】STYLE AUTHORITY (the style line is already stated inside the shot text — keep " +
+				"it identical in every shot of this series): every design stays ORIGINAL: never make a character " +
+				"resemble a real person, actor, singer, celebrity or public figure.\n")
+		} else {
+			sb.WriteString("【风格执行】以上风格由剧集设定指定,照此渲染,不要另换画风;" +
+				"全片风格必须逐镜一致(同一部剧不得出现两种画风)。\n" +
+				"STYLE AUTHORITY (from the series spec, do not substitute): render exactly in the style line above and keep " +
+				"it identical in every shot of this series. Every design stays ORIGINAL: never make a character resemble a " +
+				"real person, actor, singer, celebrity or public figure.\n")
+		}
 	} else if facesOn {
 		// 上游没给风格(极少数):用平台的动漫化兜底,并说明这是兜底 ——
 		// 风格该由谁定写清楚,免得下一轮又变成"平台偷偷替我决定画风"。

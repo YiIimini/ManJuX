@@ -78,6 +78,79 @@ type scriptPropView struct {
 	In     int    `json:"in"` // 出现在几集里
 }
 
+// novelDetailChar / Scene / Prop 技能侧**卡**（`素材/卡片.json`，也内嵌在明细里）。
+// 字段名是平台契约名（见 project.Character/Scene/Prop），只多了 `board_prompt`（三视图板提示词）。
+type novelDetailChar struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Description string `json:"description"`
+	ImagePrompt string `json:"image_prompt"`
+	BoardPrompt string `json:"board_prompt"`
+	Voice       string `json:"voice"`
+}
+
+type novelDetailScene struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ImagePrompt string `json:"image_prompt"`
+	Landmarks   string `json:"landmarks"`
+	LightState  string `json:"light_state"`
+}
+
+type novelDetailProp struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	EN          string `json:"en"`
+	Description string `json:"description"`
+	ImagePrompt string `json:"image_prompt"`
+}
+
+// novelDetailFile 技能侧结构化明细全文（`分镜/分镜明细.json`，2026-09-27 起 = 可渲染的 plan）。
+//
+// 头部 `contract/version/book/episodes/episode_seconds` 让平台能像读包一样判契约版本；
+// 内嵌三类卡之后，平台**不必再解析 markdown**（技能侧回复 §3 的原话）。
+type novelDetailFile struct {
+	Contract string `json:"contract"`
+	Version  int    `json:"version"`
+	Book     string `json:"book"`
+	Episodes []struct {
+		No      int    `json:"no"`
+		Title   string `json:"title"`
+		Shots   int    `json:"shots"`
+		Seconds int    `json:"seconds"`
+	} `json:"episodes"`
+	Characters []novelDetailChar  `json:"characters"`
+	Scenes     []novelDetailScene `json:"scenes"`
+	Props      []novelDetailProp  `json:"props"`
+	Shots      []scriptDetailShot `json:"shots"`
+}
+
+// loadNovelDetail 读整份结构化明细（没有/读不动返回 nil —— 页签与导入各自有兜底）。
+func loadNovelDetail(book string) *novelDetailFile {
+	raw, err := os.ReadFile(filepath.Join(book, "分镜", novelShotDetailJSON))
+	if err != nil {
+		return nil
+	}
+	var f novelDetailFile
+	if json.Unmarshal(raw, &f) != nil {
+		return nil
+	}
+	if len(f.Shots) == 0 {
+		return nil
+	}
+	return &f
+}
+
+// loadNovelShotDetail 只要镜头（页签那条路用）。
+func loadNovelShotDetail(book string) []scriptDetailShot {
+	if d := loadNovelDetail(book); d != nil {
+		return d.Shots
+	}
+	return nil
+}
+
 // scriptDeliverableView 技能侧**新交付物**的一条（`素材/*.md`、`分镜/*.md`）。
 //
 // 为什么要它（2026-09-27 用户：「技能侧的脚本重新输出了，小说库里的剧本创作功能回归」）：
@@ -202,22 +275,31 @@ type scriptDetailShot struct {
 	Scene      string   `json:"scene"`
 	Characters []string `json:"characters"`
 	Mode       string   `json:"mode"`
-	View       string   `json:"view"`      // 官方 9 条之一，**可空**（裁定 A：小景别留空是对的）
-	ViewNote   string   `json:"view_note"` // view 为什么留空（技能侧写的说明）
-	AngleZH    string   `json:"angle_zh"`  // 机位角度中文短标签（平视/仰拍/俯拍/鸟瞰）——不是契约字段
-	Camera     string   `json:"camera"`
-	HookType   string   `json:"hook_type"`
-	EndState   string   `json:"end_state"`
-	Action     string   `json:"action"`
-	ActionEN   string   `json:"action_en"`
-	Emotion    string   `json:"emotion"`
-	Sound      string   `json:"sound"`
-	Dialogue   []struct {
+	// SceneID / CharacterIDs 是技能侧 2026-09-27 补齐的**机器用引用**（给人读的是
+	// `scene`(中文名) 与 `characters`(显示名)）。平台按 ID 绑参考图 —— 只认名字会遇到
+	// 同名与造型档（`沈砚` vs `沈砚·一品`）歧义。老明细没有这两个字段时留空，
+	// 导入时退回按名字匹配（见 buildEpisodePlan）。
+	SceneID      string   `json:"scene_id"`
+	CharacterIDs []string `json:"character_ids"`
+	View         string   `json:"view"`      // 官方 9 条之一，**可空**（裁定 A：小景别留空是对的）
+	ViewNote     string   `json:"view_note"` // view 为什么留空（技能侧写的说明）
+	AngleZH      string   `json:"angle_zh"`  // 机位角度中文短标签（平视/仰拍/俯拍/鸟瞰）——不是契约字段
+	Camera       string   `json:"camera"`
+	HookType     string   `json:"hook_type"`
+	EndState     string   `json:"end_state"`
+	Action       string   `json:"action"`
+	ActionEN     string   `json:"action_en"`
+	Emotion      string   `json:"emotion"`
+	Sound        string   `json:"sound"`
+	Dialogue     []struct {
 		Speaker string `json:"speaker"`
 		Text    string `json:"text"`
 		OS      bool   `json:"os"`
 	} `json:"dialogue"`
 	Narration string `json:"narration"`
+	// H3Prompt 每镜的**六段式/三段式全文**（技能侧 2026-09-27 补齐，对应他们的 R1）。
+	// **这是渲染真正吃的东西** —— 明细能不能当 plan 用，就看有没有这个字段。
+	H3Prompt string `json:"h3_prompt"`
 	// SceneLandmarks 真文件里是**字符串数组**（`["City gate tower","Stone arch bridge"]`）。
 	// 收成 any 是吃过一次亏的：先前声明成 string → 整份 2.3MB JSON 的 Unmarshal 直接失败，
 	// 页签看起来"什么都没读到"，而**夹具测试却是绿的**（夹具里我自己写成了字符串）。
@@ -246,24 +328,6 @@ func landmarksText(v any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprint(t))
 	}
-}
-
-// loadNovelShotDetail 读一本书的结构化明细（没有或读不动就返回 nil —— 页签照旧走渲染包）。
-//
-// 读不动**不报错**：这份文件是技能侧的可选交付物，缺了只是"少一种数据源"，
-// 不该让整个页签打不开（与 loadPlanLenient 同一条政策）。
-func loadNovelShotDetail(book string) []scriptDetailShot {
-	raw, err := os.ReadFile(filepath.Join(book, "分镜", novelShotDetailJSON))
-	if err != nil {
-		return nil
-	}
-	var f struct {
-		Shots []scriptDetailShot `json:"shots"`
-	}
-	if json.Unmarshal(raw, &f) != nil {
-		return nil
-	}
-	return f.Shots
 }
 
 // detailEpisodes 明细里的集清单（按集号排序；`dir` 用**原始集号字符串**，供前端当键用）。
@@ -372,17 +436,22 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 	hasDeliverables := len(assets) > 0 || len(storyboard) > 0
 	// 结构化明细（技能侧新交的 `分镜/分镜明细.json`）：有它就用它出集清单与镜头明细 ——
 	// 它的字段与平台契约同名（view/hook_type/end_state/landmarks/light），比旧 plan.json 全。
-	detailShots := loadNovelShotDetail(book)
+	detail := loadNovelDetail(book)
+	var detailShots []scriptDetailShot
+	if detail != nil {
+		detailShots = detail.Shots
+	}
 	wantEp := strings.TrimSpace(r.URL.Query().Get("episode"))
 
 	bs := s.findBookScript(book)
 	if bs == nil {
 		// ① 没有渲染包，但有**结构化明细** → 直接用它服务（这正是不再"功能看起来没了"的那条路）
 		if len(detailShots) > 0 {
+			chars, scenes, props := detailCardViews(detail)
 			out := map[string]any{
 				"found": true, "kind": "detail-json", "source": novelShotDetailJSON,
-				"episodes": detailEpisodes(detailShots),
-				"chars":    []any{}, "scenes": []any{}, "props": []any{}, "deliverables": map[string]any{"assets": assets, "storyboard": storyboard},
+				"episodes":   detailEpisodes(detailShots),
+				"characters": chars, "scenes": scenes, "props": props, "deliverables": map[string]any{"assets": assets, "storyboard": storyboard},
 				"package": pkgView,
 				"hint": "这本书没有渲染脚本包，镜头明细来自技能侧的结构化明细 " + novelShotDetailJSON +
 					"（字段与平台契约同名）；渲染请走「视频制作」（平台 LLM 直出）",
@@ -485,6 +554,12 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 	if len(detailShots) > 0 {
 		out["source"] = novelShotDetailJSON
 		out["episodes"] = detailEpisodes(detailShots)
+		// 三类卡也以明细内嵌的那份为准（旧包的卡没有 scene 的地标/光态，道具也只有 en）
+		if chars, scenes, props := detailCardViews(detail); len(chars)+len(scenes)+len(props) > 0 {
+			out["characters"] = chars
+			out["scenes"] = scenes
+			out["props"] = props
+		}
 		if wantEp != "" {
 			out["shots"] = detailShotViews(detailShots, wantEp)
 			out["h3_prompt_of"] = detailEpLabel(wantEp)

@@ -212,13 +212,18 @@ async function readChapter(ch) {
 // 相关的交付物后按用户要求**回归**。回归时多了一句诚实提示:若技能侧已把盘上这些包标成
 // 废弃(`漫剧脚本/_已废弃-说明.md`),导入的是**历史包**,正式渲染仍建议走「视频制作」。
 async function produceScript(n) {
-  const ep = n.script?.episodes || 0
-  const dep = n.script?.deprecated ? `\n⚠ 技能侧已把这本书的渲染包标为废弃（只留查看）——导入的是历史包；正式渲染建议走「视频制作」（平台 LLM 直出）。` : ''
+  const ep = n.detail?.episodes || n.script?.episodes || 0
+  const src = n.detail
+    ? `将从技能侧**结构化明细**（${n.detail.source}，${n.detail.episodes} 集 / ${n.detail.shots} 镜）直接建出集项目：每镜提示词、角色/场景/道具卡都从明细里取，不再跑 AI 拆集。`
+    : `将把《${n.name}》目录里已产出的脚本包直接导入（${ep} 集）`
+  const dep = (!n.detail && n.script?.deprecated)
+    ? `\n⚠ 技能侧已把这本书的渲染包标为废弃（只留查看）——导入的是历史包；正式渲染建议走「视频制作」（平台 LLM 直出）。`
+    : ''
   try {
     await ElMessageBox.confirm(
-      `将把《${n.name}》目录里已产出的脚本包直接导入（${ep} 集）并**自动开始批量产线**（资产定妆→渲染→质检→成片），不再跑 AI 拆集。` +
+      src + '并**自动开始批量产线**（资产定妆→渲染→质检→成片）。' +
       dep +
-      `\n导入后到「项目」页即可开始资产与渲染；包不合契约会被整批拒收，不会留下半成品。`,
+      `\n导入后到「项目」页即可开始资产与渲染；不合契约会被整批拒收，不会留下半成品。`,
       '脚本创作(跳过 AI 拆集)', { confirmButtonText: '导入并开始生产', cancelButtonText: '取消', type: 'info' })
   } catch { return }
   try {
@@ -478,7 +483,13 @@ function onCardCmd(cmd, n) {
             <el-icon :size="34" color="var(--mx-text3)"><Reading /></el-icon>
             <span class="timecode">{{ n.type === 'dir' ? '文件夹' : '单文件' }}</span>
           </div>
-          <el-tag v-if="n.script" size="small" type="warning" effect="dark" class="absolute top-2 left-2">
+          <!-- 卡片角标：优先展示**结构化明细**（新的、可渲染的脚本产物），没有才退回旧渲染包 -->
+          <el-tag v-if="n.detail" size="small" type="success" effect="dark" class="absolute top-2 left-2"
+                  :title="`技能侧结构化明细：${n.detail.episodes} 集 / ${n.detail.shots} 镜（可直接建项目）`">
+            明细 {{ n.detail.episodes }} 集
+          </el-tag>
+          <el-tag v-else-if="n.script" size="small" type="warning" effect="dark" class="absolute top-2 left-2"
+                  :title="n.script.deprecated ? '旧渲染包（技能侧已标为废弃/历史包）' : '技能侧渲染脚本包'">
             脚本 {{ n.script.episodes }} 集
           </el-tag>
           <el-tag v-else-if="n.produced" size="small" type="success" effect="dark" class="absolute top-2 left-2">已创作</el-tag>
@@ -498,17 +509,20 @@ function onCardCmd(cmd, n) {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <!-- 「脚本创作」:导入技能端已产出的**渲染脚本包**(manifest.json + plan/plan.json)
-                     并自动开始批量产线。2026-09-27 沿革:当天按用户要求隐藏(技能侧停产出),
-                     当晚技能侧恢复脚本交付后按用户要求**回归**。没有包时禁用(不给"点了才报错")。 -->
-                <el-dropdown-item command="script" :disabled="!n.script"
-                                  :title="n.script
-                                    ? (n.script.deprecated
-                                        ? '这本书的渲染包已被技能侧标为废弃(只留查看)——导入的是历史包,正式渲染建议走「视频制作」'
-                                        : '直接导入技能端已产出的脚本包并自动开始批量产线(不再跑 AI 拆集)')
-                                    : '这本书目录里没有技能端渲染脚本包(需要 manifest.json + plan/plan.json)'">
-                  <el-icon><Document /></el-icon>脚本创作{{ n.script ? `（${n.script.episodes} 集）` : '' }}
-                  <el-tag v-if="n.script?.deprecated" size="small" type="info" effect="plain" style="margin-left:6px">历史包</el-tag>
+                <!-- 「脚本创作」:导入技能侧的脚本产物并自动开始批量产线。
+                     2026-09-27 晚起**优先走结构化明细**（`分镜/分镜明细.json`，每镜带 h3_prompt、
+                     引用是 ID、三类卡内嵌）；没有明细时才退回旧渲染包，那时才标「历史包」。 -->
+                <el-dropdown-item command="script" :disabled="!n.script && !n.detail"
+                                  :title="n.detail
+                                    ? `从技能侧结构化明细（${n.detail.source}，${n.detail.episodes} 集 / ${n.detail.shots} 镜）直接建项目并自动开产线`
+                                    : (n.script
+                                        ? (n.script.deprecated
+                                            ? '这本书的渲染包已被技能侧标为废弃(只留查看)——导入的是历史包,正式渲染建议走「视频制作」'
+                                            : '直接导入技能端已产出的脚本包并自动开始批量产线(不再跑 AI 拆集)')
+                                        : '这本书目录里没有技能端脚本产物(需要 分镜/分镜明细.json,或旧的 manifest.json + plan/plan.json)')">
+                  <el-icon><Document /></el-icon>脚本创作{{ n.detail ? `（${n.detail.episodes} 集）` : (n.script ? `（${n.script.episodes} 集）` : '') }}
+                  <el-tag v-if="!n.detail && n.script?.deprecated" size="small" type="info" effect="plain" style="margin-left:6px">历史包</el-tag>
+                  <el-tag v-else-if="n.detail" size="small" type="success" effect="plain" style="margin-left:6px">明细</el-tag>
                 </el-dropdown-item>
                 <el-dropdown-item command="produce" :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作

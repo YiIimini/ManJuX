@@ -62,8 +62,10 @@ func final2KPrompt(proj *project.Project, plan *project.Plan) string {
 		sb.WriteString("REFINE, DO NOT REDESIGN: improve sharpness and clarity naturally, keeping the source's own " +
 			"look, grading and grain character; do not stylise, do not repaint.\n")
 	}
-	// 风格 + 介质覆盖(与分镜路径同一段实现,不另写一份)
-	sb.WriteString(styleAndMediumBlock(plan, facesOn))
+	// 风格 + 介质覆盖(与分镜路径同一段实现,不另写一份)。
+	// incoming 传空:这是**整片一次性**的 2K 提示词,不属于任何一镜 —— 风格行本来就该写在这里
+	// （分镜那条路的"让位"是因为提示词里已经有技能端那句；这里没有，所以照常写出来）。
+	sb.WriteString(styleAndMediumBlock(plan, facesOn, ""))
 	// 画面文字兜底与分镜路径同源:整片重生成同样会把招牌/牌匾上的字画错,
 	// 而"文字"这一条只有一个实现点(EnsureNoOnScreenText)。
 	return EnsureOnScreenTextRule(sb.String())

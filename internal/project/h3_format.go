@@ -70,6 +70,38 @@ func H3FormatViolations(h3 string) []string {
 	return out
 }
 
+// StyleSentenceOf 取 `h3_prompt` 里的**风格句**：`detailed_description:` 之后、第一个 `[Shot`
+// 之前的那一段（官方格式规定风格句写在这儿，`ref-en.txt` §5.2）。
+//
+// 为什么要有它（2026-09-27）：技能侧的提示词**自带**这段风格句，而平台装配时也会插一段
+// 平台侧的风格块 —— 一段提示词两套风格，模型只会取中值（与角色卡那条是同一条机理）。
+// 平台不删上游文本（那是它的定义权），而是**让位**：装配时发现已有风格句就不再注入。
+// 同一判据两处用：`pipeline`（装配让位）与 `server`（导入时把风格句提成 plan.Style，
+// 好让参考图也服从同一套风格）。**只能有一份实现** —— 两处各写一段正则必然走散。
+//
+// 返回 (风格句, 是否存在)。切不出就返回空与 false（不做猜测）。
+func StyleSentenceOf(h3 string) (string, bool) {
+	i := strings.Index(h3, "detailed_description:")
+	if i < 0 {
+		return "", false
+	}
+	head := i + len("detailed_description:")
+	j := strings.Index(h3[head:], "[Shot")
+	if j < 0 {
+		return "", false
+	}
+	if s := strings.TrimSpace(h3[head : head+j]); s != "" {
+		return s, true
+	}
+	return "", false
+}
+
+// HasStyleSentence 提示词里是否已经带了风格句（装配让位用的判据）。
+func HasStyleSentence(h3 string) bool {
+	_, ok := StyleSentenceOf(h3)
+	return ok
+}
+
 // sectionOf 取 `marker` 之后、下一个六段式小节标题之前的那一段。
 //
 // 为什么按小节切而不是全文搜：`(S1)` 在 detailed_description 里是**合法且必须**的写法

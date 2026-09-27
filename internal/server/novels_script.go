@@ -175,6 +175,17 @@ func (s *Server) handleNovelProduceScript(w http.ResponseWriter, r *http.Request
 		return
 	}
 	book := strings.TrimSpace(in.Path)
+	// ① **新路优先**：技能侧的结构化明细（`分镜/分镜明细.json`）现在就是"可渲染的 plan"
+	// （每镜带 `h3_prompt`、引用是 ID、三类卡内嵌）。走它，旧渲染包才真正退成历史。
+	if d := loadNovelDetail(book); d != nil {
+		eps := detailEpKeys(d.Shots)
+		s.opLog("📜 脚本创作:《%s》 → 从 %s 导入(%d 集 / %d 镜)",
+			filepath.Base(book), novelShotDetailJSON, len(eps), len(d.Shots))
+		if s.importNovelDetail(w, book, d) {
+			return
+		}
+	}
+	// ② 老路：旧的渲染脚本包（没明细时才走；入口上会标「历史包」）
 	bs := s.findBookScript(book)
 	if bs == nil {
 		writeErr(w, 400, fmt.Errorf(

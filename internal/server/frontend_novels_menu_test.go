@@ -242,9 +242,15 @@ func TestNovelsMenuHasScriptEntry(t *testing.T) {
 			t.Errorf("「脚本创作」入口应已回归，却缺少 %q", want)
 		}
 	}
-	// 没有包时禁用（不给"点了才报错"），有废弃标记时给"历史包"提示
-	if !strings.Contains(src, `:disabled="!n.script"`) {
-		t.Error("没有脚本包时该入口必须禁用")
+	// 入口的可用条件是"**有脚本产物**"—— 2026-09-27 晚起首选是结构化明细
+	// （`分镜/分镜明细.json`），所以判据从 `!n.script` 变成 `!n.script && !n.detail`：
+	// 只写 `!n.script` 会把"只有明细、没有旧包"的书永远禁用掉（而那正是新交付形态）。
+	if !strings.Contains(src, `:disabled="!n.script && !n.detail"`) {
+		t.Error("入口禁用条件必须同时看明细与旧包（只有明细的书也要能导）")
+	}
+	// 「历史包」标签只在**没有明细**时出现：有明细时它是新产物，不该背历史的锅
+	if !strings.Contains(src, "!n.detail && n.script?.deprecated") {
+		t.Error("「历史包」标签应只在没有结构化明细时出现")
 	}
 	if !strings.Contains(src, "deprecated") || !strings.Contains(src, "历史包") {
 		t.Error("技能侧把包标废弃时，界面必须如实提示「导入的是历史包」")
