@@ -369,8 +369,14 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	}
 	res, err := compose.Compose(ctx, c.ff, clips, plan, outDir, compose.Params{
 		Width: proj.Config.Params.Render.Width, Height: proj.Config.Params.Render.Height,
+		// 交付分辨率与渲染尺寸解耦(红果对标 G1):渲染尺寸受 H3 的短边 768 上限约束,
+		// 而交付是 1080×1920。0/0 = 按画幅自动(compose.deliverSize 是唯一判据点)。
+		DeliverWidth: p.DeliverWidth, DeliverHeight: p.DeliverHeight,
 		Transition: p.Transition, BurnSubtitles: p.BurnSubtitles,
 		SubtitleSize: p.SubtitleSize, Loudness: p.Loudness, FadeSec: fade,
+		// 字幕下边距(避开平台底部 UI 安全区):吃的是**交付高度**,
+		// 因为字幕是在交付缩放之后烧的。
+		SubtitleMarginV: p.SubtitleMarginV,
 		// 峰值归一:同一个"假开关"的另一半 —— 参数一直存在,而真正生效的
 		// loudnorm TP 写死 -1.5(审计 P1-1)。
 		Peak:    p.Peak,
@@ -390,7 +396,13 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	for _, note := range res.AudioNotes {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", 96, "🔊 %s", note)
 	}
-	c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒)", filepath.Base(res.FinalPath), res.Duration)
+	// 成片信息报**实测值**:交付分辨率与渲染尺寸解耦之后,"成片多大"不再是配置里那个数
+	// (可能被放大到交付档、可能按画幅自动取标准档)—— 报实测值,用户不必去追配置推断。
+	if res.Width > 0 && res.Height > 0 {
+		c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒 · %d×%d)", filepath.Base(res.FinalPath), res.Duration, res.Width, res.Height)
+	} else {
+		c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒)", filepath.Base(res.FinalPath), res.Duration)
+	}
 
 	// 云端 2K 定稿(可选,消耗云额度)
 	if p.Upgrade2K {

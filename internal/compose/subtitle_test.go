@@ -178,7 +178,7 @@ func TestCuePlanDrivesBothSubtitles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ass, err := assWindow(t, buildASS(plan, starts, durations, 4, 768, 1344, &cp))
+	ass, err := assWindow(t, buildASS(plan, starts, durations, 4, subtitleMarginVPctDefault, 768, 1344, &cp))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -164,7 +164,31 @@ type AssembleParams struct {
 	BurnSubtitles bool    `json:"burn_subtitles"` // 烧录字幕
 	Loudness      int     `json:"loudness"`       // 目标响度 LUFS(默认 -16)
 	Peak          float64 `json:"peak"`           // 峰值归一(默认 0.92 → loudnorm 的 TP≈-0.72 dBTP)
-	SubtitleSize  int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 5)
+	SubtitleSize  int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 4)
+	// SubtitleMarginV 字幕下边距(屏高百分比,默认 15)。
+	//
+	// 为什么是 15(红果/抖音对标 §1.7):平台在画面底部盖着 UI(进度条、账号信息条),
+	// 创作者侧口径是字幕要避开底部约 15% 的区域;旧实现写死 8% —— 恰好压在危险区里。
+	// 这里只做钳制,真正决定像素值的地方在 compose(subtitleMarginVPctDefault),
+	// 且吃的是**交付高度**(1080×1920 交付时 15% = 288px)。
+	SubtitleMarginV int `json:"subtitle_margin_v"`
+	// DeliverWidth/DeliverHeight 交付分辨率(成片最终画幅)。
+	//
+	// 为什么要跟 render.width/height 分开(红果/抖音对标 §3 的 G1):`render.width/height`
+	// **同时**驱动 H3 的生成尺寸与成片的交付尺寸,而 H3 本地渲染的短边上限是 768、
+	// 平台交付口径是 1080×1920 —— 旧实现里"把交付升到 1080"做不到(改了 H3 会渲不出来),
+	// 于是把 768→1080 的放大工作留给了平台。现在渲染归渲染、交付归交付:
+	// 成片在终混时缩放到这里填的尺寸,且**缩放在调色与字幕之前**(锐化/颗粒因此作用在
+	// 交付像素上,字幕也按交付画幅排版)。
+	//
+	// 0/0 = 未表态 → **按画幅取交付标准**(竖屏 1080×1920 / 横屏 1920×1080)。
+	// 为什么默认敢自动放大(而不是"跟随渲染"):交付标准不是风格选择,而"指望人记得去
+	// 项目参数里改"正是本项目反复吃过的亏(见 GradeAuto 的说明)。要按渲染尺寸原样交付的
+	// 项目,把这两个值显式填成渲染尺寸即可(那时不缩放,与解耦之前完全一致)。
+	//
+	// 只填一边视为未表态(坏配置不猜另一半);奇数边长会被向下取偶(yuv420p 要求)。
+	DeliverWidth  int `json:"deliver_width"`
+	DeliverHeight int `json:"deliver_height"`
 	// FadeSec 转场时长(秒;fade/dissolve 用)。0 = 用设置页的 render.fade_sec。
 	//
 	// 为什么要单独一个字段(审计 P1-1):`render.fade_sec` 一直是纯摆设 ——
@@ -287,6 +311,26 @@ func animatedFeatureStyle(style string) bool {
 // DenoiseOn 是否启用音频净化(未表态 = 开,与 ViewsOn/FacesOn 同一套语义)。
 func (a AssembleParams) DenoiseOn() bool { return a.Denoise == nil || *a.Denoise }
 
+// DeliverMinEdge/DeliverMaxEdge 交付分辨率的合法边长区间。
+//
+// 下限 64:再小不可能是"交付",多半是把字号/百分比填错了格;
+// 上限 8192:4K 以上没有交付场景(对标文档明确"不要上 4K"),留出余量即可。
+const (
+	DeliverMinEdge = 64
+	DeliverMaxEdge = 8192
+)
+
+// clampDeliverEdge 钳制 + 向下取偶(见 Sanitize;x264 的 yuv420p 要求偶数边长)。
+func clampDeliverEdge(v int) int {
+	if v < DeliverMinEdge {
+		v = DeliverMinEdge
+	}
+	if v > DeliverMaxEdge {
+		v = DeliverMaxEdge
+	}
+	return v / 2 * 2
+}
+
 // DefaultStageParams 返回全局默认的阶段参数。
 func DefaultStageParams() StageParams {
 	return StageParams{
@@ -335,7 +379,11 @@ func DefaultStageParams() StageParams {
 			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)
 			// fade=平滑交叉叠化(用户 2026-09-10 定调:不要 dissolve 像素溶解的粒子观感)
 			Transition: "fade", BurnSubtitles: true,
-			Loudness: -16, Peak: 0.92, SubtitleSize: 4,
+			Loudness: -16, Peak: 0.92, SubtitleSize: 4, SubtitleMarginV: 15,
+			// 交付分辨率:0/0 = 按画幅自动(竖屏 1080×1920 / 横屏 1920×1080)。
+			// 不在这里写死尺寸 —— 写死就意味着横屏项目也要照抄竖屏的交付档,
+			// 而"按画幅算"这件事只有一个实现点(compose.deliverSize)。
+			DeliverWidth: 0, DeliverHeight: 0,
 			Upgrade2K: false, Denoise: Bool(true),
 			// 电影调色默认开(H3 直出的平淡数码味是用户反复提的观感问题;
 			// 要"一点不动"的项目显式选 off),但**档位不写死**:
@@ -407,6 +455,29 @@ func (p *StageParams) Sanitize() {
 	}
 	if p.Assemble.SubtitleSize <= 0 {
 		p.Assemble.SubtitleSize = 4
+	}
+	// 字幕下边距:未表态(0/负)落回默认 15%,上限 30% ——
+	// 再大就把字幕推到画面中线以上,那不是"安全区"而是"字幕跑到脸上了"。
+	//
+	// 与 compose 的关系:compose.subtitleMarginVPct 对 0 也是同一个默认值(同口径双写,
+	// 项目不能反向依赖 compose,所以只能两处各写一份,改一处要看另一处)。
+	if p.Assemble.SubtitleMarginV <= 0 {
+		p.Assemble.SubtitleMarginV = 15
+	}
+	if p.Assemble.SubtitleMarginV > 30 {
+		p.Assemble.SubtitleMarginV = 30
+	}
+	// 交付分辨率(见 AssembleParams.DeliverWidth 的说明):
+	//   - 只填一边 = 坏配置 → 两边都归 0(未表态,交给 compose 按画幅取交付标准),不猜;
+	//   - 成对填写 → 钳到 [64, 8192] 并向下取偶(yuv420p 不接受奇数边长);
+	//   - 0/0 → 原样保留(它是"按画幅自动"这一显式语义,不是"没填好")。
+	dw, dh := p.Assemble.DeliverWidth, p.Assemble.DeliverHeight
+	switch {
+	case dw <= 0 || dh <= 0:
+		p.Assemble.DeliverWidth, p.Assemble.DeliverHeight = 0, 0
+	default:
+		p.Assemble.DeliverWidth = clampDeliverEdge(dw)
+		p.Assemble.DeliverHeight = clampDeliverEdge(dh)
 	}
 	// 调色档归一:未表态(空串 / auto)归成 GradeAuto;四个规范档位原样保留
 	// (大小写/空白不敏感);其余认不出的脏值落回 film。

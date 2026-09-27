@@ -78,8 +78,11 @@ func TestComposeEndToEndAudioAlignsToVideo(t *testing.T) {
 	if info.AudioRate != 48000 {
 		t.Errorf("音轨采样率应为 48000,实际 %d", info.AudioRate)
 	}
-	if info.Width != 320 || info.Height != 192 {
-		t.Errorf("成片画幅应为 320x192,实际 %dx%d", info.Width, info.Height)
+	// 画幅:交付档是**按画幅自动**的(见 deliver.go)—— 这里渲染是 320×192(横屏),
+	// 未填交付尺寸时按交付标准出 1920×1080,而不是跟随渲染尺寸。这条断言盯的是
+	// "默认交付档对不对",而不是这条链的音频对齐(那是下面几行的事)。
+	if info.Width != deliverHorizontalW || info.Height != deliverHorizontalH {
+		t.Errorf("成片画幅应为交付标准 %dx%d,实际 %dx%d", deliverHorizontalW, deliverHorizontalH, info.Width, info.Height)
 	}
 	// 音频实况必须留下可读的说明(接缝切点统计 + 响度链是否降级)
 	if len(res.AudioNotes) == 0 {
@@ -251,6 +254,110 @@ func TestComposeFadeShortShotKeepsAudioInSync(t *testing.T) {
 	if math.Abs(res.Duration-video) > 0.12 {
 		t.Errorf("回报的成片时长 %.3fs 与实际画面 %.3fs 不符", res.Duration, video)
 	}
+}
+
+// TestComposeDeliversAtStandardSize 交付层的端到端契约(红果/抖音对标 G1)。
+//
+// 一条真实链路要同时满足四件事,缺任何一件都是"看着成功、交付不合格":
+//  1. **成片画幅 = 交付档**,不是渲染尺寸(H3 的短边上限是 768,交付口径是 1080×1920);
+//  2. **字幕按交付画幅排版**:ASS 的 PlayRes 与 MarginV 吃的是交付高度 ——
+//     否则 1080 的画面上会贴着一套按 1344 算出来的字号与安全区;
+//  3. **下边距避开平台底部 UI 安全区**(旧实现写死 8%,压在平台 UI 里);
+//  4. **成片不带镜头文件继承来的容器元数据**(ComfyUI 的整份工作流 JSON)。
+func TestComposeDeliversAtStandardSize(t *testing.T) {
+	f, err := ff.New("", "")
+	if err != nil {
+		t.Skipf("本机无 ffmpeg,跳过: %v", err)
+	}
+	dir := t.TempDir()
+	ctx := context.Background()
+	clip := filepath.Join(dir, "clip.mp4")
+	// 渲染尺寸取项目的出厂竖幅 768×1344 的缩小版(320×560,同比例),免得测试白等编码。
+	if _, err := f.Run(ctx, "-y", "-hide_banner", "-loglevel", "error",
+		"-f", "lavfi", "-i", "testsrc=size=320x560:rate=24:duration=3",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=3",
+		"-map", "0:v", "-map", "1:a", "-shortest",
+		"-c:v", "libx264", "-preset", "ultrafast", "-crf", "28", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-b:a", "128k", "-ac", "2", clip); err != nil {
+		t.Fatalf("造测试镜头失败: %v", err)
+	}
+	outDir := filepath.Join(dir, "out")
+	_ = os.MkdirAll(outDir, 0o755)
+	plan := &project.Plan{Shots: []project.Shot{
+		{ID: 1, Duration: 3, Dialogue: []project.Line{{Speaker: "甲", Text: "交付画幅要对"}}},
+	}}
+	var notes []string
+	// 只给渲染尺寸,**不给**交付尺寸 —— 走"按画幅自动"的默认档(1080×1920)。
+	res, err := Compose(ctx, f, []string{clip}, plan, outDir, Params{
+		Width: 320, Height: 560, Transition: "cut", BurnSubtitles: true,
+		SubtitleSize: 4, Loudness: -16, Grade: GradeOff,
+	}, func(_ int, n string) { notes = append(notes, n) })
+	if err != nil {
+		t.Fatalf("合成失败: %v", err)
+	}
+	info, err := f.Probe(res.FinalPath)
+	if err != nil {
+		t.Fatalf("探测成片失败: %v", err)
+	}
+	if info.Width != deliverVerticalW || info.Height != deliverVerticalH {
+		t.Fatalf("竖屏项目应交付 %dx%d,实际 %dx%d", deliverVerticalW, deliverVerticalH, info.Width, info.Height)
+	}
+	// 交付这一步必须留痕(静默放大等于用户不知道成片被重采样过)
+	if joined := strings.Join(notes, "|"); !strings.Contains(joined, "交付") {
+		t.Errorf("交付分辨率必须是如实播报的一部分,实际进度文案:%q", joined)
+	}
+
+	ass, err := os.ReadFile(filepath.Join(outDir, "final.ass"))
+	if err != nil {
+		t.Fatalf("读 final.ass 失败: %v", err)
+	}
+	text := string(ass)
+	if !strings.Contains(text, fmt.Sprintf("PlayResX: %d", deliverVerticalW)) ||
+		!strings.Contains(text, fmt.Sprintf("PlayResY: %d", deliverVerticalH)) {
+		t.Errorf("字幕必须按**交付画幅**排版(PlayRes 应为 %dx%d):\n%s",
+			deliverVerticalW, deliverVerticalH, firstLines(text, 8))
+	}
+	// 下边距 = 交付高度 × 15%(安全区下限);旧值 8% 正是"压在平台 UI 里"的那一版
+	wantMargin := deliverVerticalH * subtitleMarginVPctDefault / 100
+	if !strings.Contains(text, fmt.Sprintf(",%d,%d,%d,1", deliverVerticalW*5/100, deliverVerticalW*5/100, wantMargin)) {
+		t.Errorf("字幕下边距应为交付高度的 %d%%(=%dpx),实际样式行:%s",
+			subtitleMarginVPctDefault, wantMargin, styleLine(text))
+	}
+
+	// 导出卫生:成片里不该再带着 ComfyUI 的工作流 JSON
+	tags := formatTags(t, f, res.FinalPath)
+	if tags != "" && strings.Contains(tags, "prompt") {
+		t.Errorf("成片容器元数据里不该留着镜头继承来的 prompt 标签(那是整份工作流 JSON):%s", tags)
+	}
+}
+
+// formatTags 读成片的容器级元数据(没有则空串)。
+func formatTags(t *testing.T, f *ff.FF, path string) string {
+	t.Helper()
+	ctx := context.Background()
+	raw, err := sysexec.Hide(exec.CommandContext(ctx, f.Ffprobe,
+		"-v", "error", "-show_entries", "format_tags", "-of", "json", path)).Output()
+	if err != nil {
+		t.Fatalf("读元数据失败: %v", err)
+	}
+	return string(raw)
+}
+
+func firstLines(s string, n int) string {
+	lines := strings.Split(s, "\n")
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func styleLine(ass string) string {
+	for _, l := range strings.Split(ass, "\n") {
+		if strings.HasPrefix(l, "Style: Dialogue") {
+			return l
+		}
+	}
+	return "(找不到 Style 行)"
 }
 
 // TestComposeAnnouncesAspectMismatch L13:输入镜头的画幅与成片规格不一致时,

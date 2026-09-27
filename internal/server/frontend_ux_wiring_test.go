@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // 本分区前端改动的接线闸门(甲1/甲3 的界面接线、乙5 的忙提示、乙7 的 2K 导出、乙9 的云端 seed 标记)。
@@ -146,6 +148,60 @@ func TestFrontendParamsDrawerWiresGradeAndSeamReset(t *testing.T) {
 	}
 	if !strings.Contains(drawer, "每场重置") {
 		t.Error("接缝重置间隔的标签要写清 0/1 = 每场重置的语义")
+	}
+}
+
+// TestFrontendParamsDrawerWiresDeliveryAndSubtitleMargin 交付分辨率(P1-1)与字幕安全区(P0-3)
+// 必须真的接进项目参数抽屉,且默认口径与后端一致。
+//
+// 为什么这两条要闸门:它们改的是**交付口**(成片最终画幅 + 字幕落点),用户在界面上
+// 看不出"没接上" —— 参数照存、成片照出,只是没按用户以为的口径出。判据落三件事:
+//   - 值绑在 assemble.deliver_width/deliver_height/subtitle_margin_v;
+//   - 缺键时有归一化(老项目快照没有这些键,保存是整份快照回写);
+//   - 默认口径与后端同一个数(前端 15% ↔ 后端 Sanitize 落 15;上限 30 两边一致)。
+func TestFrontendParamsDrawerWiresDeliveryAndSubtitleMargin(t *testing.T) {
+	drawer := readFrontend(t, "src/components/ParamsDrawer.vue")
+	hints := readFrontend(t, "src/renderHints.js")
+
+	for _, want := range []string{
+		`v-model="form.assemble.deliver_width"`,
+		`v-model="form.assemble.deliver_height"`,
+		`v-model="form.assemble.subtitle_margin_v"`,
+	} {
+		if !strings.Contains(drawer, want) {
+			t.Errorf("项目参数抽屉缺少 %s —— 这个参数是假开关(能存、后端不认或用户设不到)", want)
+		}
+	}
+	for _, want := range []string{
+		"form.assemble.deliver_width = deliverEdgeOf(",
+		"form.assemble.deliver_height = deliverEdgeOf(",
+		"form.assemble.subtitle_margin_v = subtitleMarginOf(",
+	} {
+		if !strings.Contains(drawer, want) {
+			t.Errorf("抽屉打开时缺少缺键兜底:%s(否则空值会被整份快照回写进项目参数)", want)
+		}
+	}
+	// 交付档的"未表态 = 按画幅自动"必须能被界面表达出来,且不能被前端就地算成具体尺寸
+	// (按画幅算只有一个实现点:后端 compose.deliverSize)
+	if !strings.Contains(hints, "export function deliverEdgeOf") || !strings.Contains(hints, "if (!Number.isFinite(v) || v <= 0) return 0") {
+		t.Error("deliverEdgeOf 必须把未填/脏值保留成 0(= 按画幅自动),不能在前端替后端算出 1080")
+	}
+	if !strings.Contains(drawer, "deliverSummary(") {
+		t.Error("交付分辨率必须有人话说明(留 0 = 按画幅自动这条语义不看说明是猜不出来的)")
+	}
+
+	// 默认口径两侧同一个数:前端 15%(安全区下限)↔ 后端 Sanitize 的同一落点
+	if !strings.Contains(hints, "SUBTITLE_MARGIN_DEFAULT = 15") {
+		t.Error("字幕下边距的默认值必须是 15%(避开平台底部 UI 安全区)—— 旧值 8% 正压在危险区里")
+	}
+	var p project.StageParams
+	p.Sanitize()
+	if p.Assemble.SubtitleMarginV != 15 {
+		t.Errorf("后端 Sanitize 的下边距默认值是 %d,而前端说明写的是 15 —— 两侧必须是同一个数",
+			p.Assemble.SubtitleMarginV)
+	}
+	if !strings.Contains(hints, "SUBTITLE_MARGIN_MAX = 30") || project.DeliverMaxEdge != 8192 {
+		t.Error("字幕下边距上限(30)与交付边长上限(8192)必须两侧同口径,否则界面能填出后端会钳掉的值")
 	}
 }
 

@@ -33,12 +33,31 @@ import (
 
 // Params 合成参数。
 type Params struct {
+	// Width/Height 是**渲染**尺寸:它同时决定逐镜规范化的画布,以及 H3 生成时的尺寸。
+	//
+	// 它**不是**交付尺寸 —— 两者在 2026-09-27 之后解耦(见 DeliverWidth/DeliverHeight)。
 	Width, Height int
-	Transition    string // cut / fade / dissolve
-	BurnSubtitles bool
-	SubtitleSize  int     // 字号(屏高百分比)
-	Loudness      int     // LUFS
-	FadeSec       float64 // 转场时长
+	// DeliverWidth/DeliverHeight 交付分辨率(项目参数 assemble.deliver_width/height)。
+	//
+	// 存在的理由(红果/抖音对标实测):H3 本地渲染的短边上限是 768(768×1344),而平台
+	// 交付口径是 1080×1920。渲染尺寸不能再涨,于是"把 768 放大到 1080"这一步必须有人做
+	// —— 不做就等于把放大交给平台(平台会按自己的算法二次编码)。这里让它由我们自己
+	// 在终混时做,并使用 lanczos。
+	//
+	// 0/0(两个都为 0)= 跟随 Width/Height,即成片与镜头同规格(老项目/不关心交付档的
+	// 项目走这条,行为与解耦之前完全一致)。
+	DeliverWidth, DeliverHeight int
+	Transition                  string // cut / fade / dissolve
+	BurnSubtitles               bool
+	SubtitleSize                int // 字号(屏高百分比)
+	// SubtitleMarginV 字幕下边距(屏高百分比;0 = 默认 15%)。
+	//
+	// 为什么要抬到 15%(对标实测):抖音/红果在画面底部盖着一层平台 UI,创作者侧口径是
+	// 字幕要避开底部约 15% 的区域。旧实现写死 8% —— 恰好压在危险区里,手机上会被
+	// 进度条/文案条压住。(取值下限见 subtitleMarginVPct 的说明。)
+	SubtitleMarginV int
+	Loudness        int     // LUFS
+	FadeSec         float64 // 转场时长
 	// Peak 真峰值上限 dBTP(loudnorm 的 TP;项目参数 assemble.peak,默认 0.92 线性
 	// 即约 -0.72 dBTP)。
 	//
@@ -56,6 +75,14 @@ type Params struct {
 // defaultPeakLinear peak 参数的默认值(0.92 线性 ≈ -0.72 dBTP)。
 const defaultPeakLinear = 0.92
 
+// subtitleMarginVPctDefault 字幕下边距的默认值(屏高百分比)。
+//
+// 15% 是**下限口径**:创作者侧对标的说法是"字幕要避开底部约 15% 的平台 UI 区"
+// (进度条、账号信息条都盖在那里),所以下边距取 15% 恰好是安全区的边界,
+// 而不是往下贴。旧实现写死 8% —— 手机上会被平台 UI 压住下半截。
+// 上限在 project.Sanitize 里钳(30%),免得改大之后字幕跑到画面中线以上。
+const subtitleMarginVPctDefault = 15
+
 // peakDBTP 把项目的线性 peak 参数折算成 loudnorm 的 TP(dBTP)。
 //
 // 换算:dBTPS = 20·log10(线性峰值)。0.92 → -0.72 dBTP,比旧写死的 -1.5 略紧
@@ -72,6 +99,12 @@ type Result struct {
 	FinalPath string
 	SRTPath   string
 	Duration  float64
+	// Width/Height 成片的实测画幅(= 交付分辨率)。
+	//
+	// 为什么要回传:交付分辨率与渲染尺寸解耦之后,"成片到底多大"不再是配置里那个数
+	// (可能被放大、可能按画幅自动取标准档、奇数边长还可能被取偶)—— 事件流里报一个
+	// **实测**值,用户才不用去追配置推断。探测失败时为 0(调用方不显示)。
+	Width, Height int
 	// AudioNotes 音频处理实况(切点是否落在静音、降噪是否生效),供管线如实回显。
 	AudioNotes []string
 }
@@ -146,6 +179,9 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 			"-c:a", "aac", "-b:a", "192k", "-ac", "2"}
 		// 色彩标记:只是把"这段像素本来是什么口径"写进输出,不做任何色彩转换。
 		normArgs = append(normArgs, shotColorArgs(colorInfos[i])...)
+		// 容器级元数据在这里就清掉:镜头文件里内嵌着 ComfyUI 的整份工作流 JSON,
+		// 不清就会被后面每一代继承到成片(见 stripMetadataArgs)。
+		normArgs = append(normArgs, stripMetadataArgs()...)
 		normArgs = append(normArgs, "-shortest", part)
 		if _, err := f.Run(ctx, normArgs...); err != nil {
 			return nil, fmt.Errorf("镜头 %d 规范化失败: %w", i+1, err)
@@ -258,7 +294,16 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	// 调色档(甲1):统一在终混这一步应用,且**必须排在字幕之前** ——
 	// 颗粒(noise)、暗角(vignette)与锐化若作用在字幕上,字会被压糊(见 finalVideoFilters)。
 	burnt := p.BurnSubtitles && plan != nil
-	vf, needEncode := finalVideoFilters(p.Grade, burnt)
+	// 交付分辨率(见 deliver.go):缩放在整条链的最前面 —— 于是调色(锐化/颗粒/暗角)
+	// 与字幕都作用在**交付像素**上,而不是 768 原生像素上。
+	deliverW, deliverH, deliverNote := p.deliverSize()
+	scaleFilter, scaleNote := deliverScale(p.Width, p.Height, deliverW, deliverH)
+	for _, n := range []string{deliverNote, scaleNote} {
+		if n != "" && onProgress != nil {
+			onProgress(84, n)
+		}
+	}
+	vf, needEncode := finalVideoFilters(p.Grade, burnt, scaleFilter)
 	if g := GradeFilter(p.Grade); g != "" && onProgress != nil {
 		onProgress(86, fmt.Sprintf("🎨 调色档 %s 已应用(在字幕之前:颗粒与暗角不作用在字幕上)", NormalizeGrade(p.Grade)))
 	}
@@ -270,12 +315,16 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	}
 	if burnt {
 		ass := filepath.Join(outDir, "final.ass")
-		if err := os.WriteFile(ass, []byte(buildASS(plan, starts, durations, p.SubtitleSize, p.Width, p.Height, cues)), 0o644); err != nil {
+		// 字幕按**交付画幅**排版(PlayRes = 交付尺寸):ASS 是在缩放之后烧的,
+		// 字号与下边距都吃交付高度 —— 1080×1920 交付时 15% 下边距 = 288px。
+		if err := os.WriteFile(ass, []byte(buildASS(plan, starts, durations, p.SubtitleSize, p.subtitleMarginVPct(), deliverW, deliverH, cues)), 0o644); err != nil {
 			return nil, err
 		}
 	}
 	// 色彩标记透传:全片口径统一时把那份标记写到成品上(不写等于让播放器继续猜)。
 	args = append(args, colorArgs...)
+	// 成片不带镜头文件继承来的容器元数据(ComfyUI 工作流 JSON)。
+	args = append(args, stripMetadataArgs()...)
 	if needEncode {
 		args = append(args,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
@@ -311,6 +360,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	// 按错的时间轴去排下一集。探测失败才退回算术值(不阻断出片)。
 	if info, perr := f.Probe(finalPath); perr == nil && info.Duration > 0 {
 		res.Duration = info.Duration
+		res.Width, res.Height = info.Width, info.Height
 	} else {
 		res.Duration = total
 	}
@@ -923,21 +973,27 @@ func srtTime(sec float64) string {
 // playW/playH 为成片画幅,字幕网格与字号随画幅缩放;
 // 超宽台词自动断行(中文无空格,ASS 智能换行不生效,单行超出即出界截断)。
 //
-// 保持原签名:走镜头级窗口;合成内部走 buildASS(带真实人声落点)。
+// 保持原签名:走镜头级窗口 + 默认下边距;合成内部走 buildASS(带真实人声落点与项目下边距)。
 func BuildASS(plan *project.Plan, starts, durations []float64, sizePct, playW, playH int) string {
-	return buildASS(plan, starts, durations, sizePct, playW, playH, nil)
+	return buildASS(plan, starts, durations, sizePct, subtitleMarginVPctDefault, playW, playH, nil)
 }
 
-// buildASS BuildASS 的内部实现。cues 为按真实人声排好的落点计划(可为 nil = 全走镜头级窗口)。
-func buildASS(plan *project.Plan, starts, durations []float64, sizePct, playW, playH int, cues *cuePlan) string {
+// buildASS BuildASS 的内部实现。cues 为按真实人声排好的落点计划(可为 nil = 全走镜头级窗口);
+// marginVPct 为字幕下边距(屏高百分比,<=0 用默认)。
+func buildASS(plan *project.Plan, starts, durations []float64, sizePct, marginVPct, playW, playH int, cues *cuePlan) string {
 	if sizePct <= 0 {
 		sizePct = 4
+	}
+	if marginVPct <= 0 {
+		marginVPct = subtitleMarginVPctDefault
 	}
 	if playW < 32 || playH < 32 {
 		playW, playH = 1080, 1920
 	}
 	fontSize := playH * sizePct / 100
-	marginV := playH * 8 / 100
+	// 下边距:避开平台底部 UI 安全区(见 subtitleMarginVPctDefault)。
+	// 这里吃的是**交付高度**(playH)—— 1080×1920 交付时 15% = 288px。
+	marginV := playH * marginVPct / 100
 	marginLR := playW * 5 / 100
 	// 单行可容字数 ≈ 可用宽度/字宽(全角字宽≈字号);不足下限兜底
 	maxRunes := int(float64(playW-marginLR*2) / float64(fontSize) * 0.98)

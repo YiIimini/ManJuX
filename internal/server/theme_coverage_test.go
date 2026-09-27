@@ -93,6 +93,10 @@ var colorAllowlist = map[string][]colorAllow{
 		{"#ffb454", reasonArt}, {"#12b886", reasonArt},
 		{"#f2f4f8", reasonArt}, {"#33333c", reasonArt},
 		{"#ff9ecf", reasonArt}, {"#8a93a8", reasonArt},
+		// 国风电影级(新默认画风)的色卡:青绿黛青 + 米金,取自该预设的
+		// "muted celadon-grey and ink-wash palette" —— 纯展示信息(画风 chip 的两个色块),
+		// 与上面那一批同性质:它们标的是**别的画风长什么样**,不能跟着当前主题变。
+		{"#2f5d5a", reasonArt}, {"#c9b382", reasonArt},
 	},
 	"components/ShotCard.vue":       {{"#000", reasonPlatform}},
 	"components/ShotTuneDialog.vue": {{"#000", reasonPlatform}},

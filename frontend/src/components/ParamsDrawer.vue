@@ -2,7 +2,7 @@
 import { G, api, refreshProject } from '../store'
 import { computed, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { GRADE_OPTIONS, gradeOf, seamResetOf, seamResetSummary, cloudSeedWarning } from '../renderHints'
+import { GRADE_OPTIONS, gradeOf, seamResetOf, seamResetSummary, cloudSeedWarning, deliverEdgeOf, deliverSummary, subtitleMarginOf } from '../renderHints'
 
 const visible = computed({
   get: () => !!G.paramsDrawer,
@@ -49,6 +49,11 @@ watch(stageId, () => {
   // 界面上看着像坏了(后端还得再兜一次)。归一化规则见 renderHints.js。
   form.assemble.grade = gradeOf(form)
   form.render.seam_reset_every = seamResetOf(form)
+  // 交付分辨率与字幕下边距:同样是后加的键。这里必须归一化成数字 ——
+  // 空值会被整份快照回写进项目参数,界面上看着像坏了(后端还得再兜一次)。
+  form.assemble.deliver_width = deliverEdgeOf(form, 'deliver_width')
+  form.assemble.deliver_height = deliverEdgeOf(form, 'deliver_height')
+  form.assemble.subtitle_margin_v = subtitleMarginOf(form)
 }, { immediate: true })
 
 // 调色档说明:跟着当前选项走(选了才知道这一档到底做什么)
@@ -57,6 +62,9 @@ const gradeDesc = computed(() =>
 
 // 接缝重置间隔的人话说明
 const seamSummary = computed(() => seamResetSummary(form.render.seam_reset_every))
+
+// 交付分辨率的人话说明(留 0 = 按画幅自动)
+const deliverNote = computed(() => deliverSummary(form.assemble.deliver_width, form.assemble.deliver_height))
 
 // 云端 + 固定 seed = 不可复现(乙9):条件与文案见 renderHints.cloudSeedWarning
 const cloudSeedNote = computed(() => cloudSeedWarning(form.render.engine, form.render.seed))
@@ -71,6 +79,7 @@ const titles = {
 
 // 渲染风格预设(与后端 pipeline.StylePresets 对齐;可多选组合)
 const STYLE_PRESETS = [
+  { key: 'guofeng_cinematic', name: '国风电影级', sw: ['#2f5d5a', '#c9b382'] },
   { key: 'urban_xianxia', name: '都市仙侠霓虹', sw: ['#f97a1f', '#53d8ff'] },
   { key: 'guoman_2d',     name: '国漫二维动画', sw: ['#ff6b6b', '#ffd166'] },
   { key: 'live_action',   name: '真人实拍质感', sw: ['#93a0bd', '#edf1fa'] },
@@ -328,6 +337,23 @@ async function save() {
         </el-form-item>
         <el-form-item label="字幕字号(屏高 %)">
           <el-slider v-model="form.assemble.subtitle_size" :min="3" :max="9" :step="1" show-input />
+        </el-form-item>
+        <el-form-item label="字幕下边距(屏高 %;避开平台底部 UI 安全区)">
+          <el-slider v-model="form.assemble.subtitle_margin_v" :min="5" :max="30" :step="1" show-input />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            默认 15% —— 抖音/红果在画面底部盖着 UI(进度条、账号条),创作者侧口径是字幕要避开底部约 15% 的区域。
+            按**交付高度**算:1080×1920 交付时 15% = 288px。
+          </div>
+        </el-form-item>
+        <el-form-item label="交付分辨率(成片最终画幅;留 0 = 按画幅自动)">
+          <div class="flex gap-2 items-center w-full">
+            <el-input-number v-model="form.assemble.deliver_width" :min="0" :max="8192" :step="2" style="flex:1" />
+            <span style="color:var(--mx-text3)">×</span>
+            <el-input-number v-model="form.assemble.deliver_height" :min="0" :max="8192" :step="2" style="flex:1" />
+          </div>
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            {{ deliverNote }}
+          </div>
         </el-form-item>
         <el-form-item label="云端 2K 定稿(合成后自动 regeneration 升 2K,消耗云额度)">
           <el-switch v-model="form.assemble.upgrade_2k" />
