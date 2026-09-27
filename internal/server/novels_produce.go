@@ -105,6 +105,19 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("小说正文过短(%d 字,预处理后)", len([]rune(text))))
 		return
 	}
+	// 人物外形锚表(技能侧写在 <书名>/设定集/ 下)拼在**正文之前**,作为硬约束。
+	//
+	// 为什么必须有这一步(2026-09-27 实证):正文里的外貌描写实测为零 —— 《求你们骂我》
+	// 第 001 章对主角只有"沈砚睁开眼，正躺在一摊泔水里",而平台 LLM 写出的角色卡是
+	// "瘦长脸、下颌线清晰、眉骨高、深棕色丹凤眼、冷白哑光、左眉尾一道短疤、低马尾及肩胛…"
+	// —— 整套外形是 LLM 现编的:换一次直出就可能换一张脸,而且作者的意图没有落点。
+	// 注意正文合并(readMerged)明确跳过 `设定` 目录,所以这张表要单独读进来
+	// (见 docs/技能侧调整-人物外形锚表.md)。
+	if sheet := readCharacterSheet(in.Path); sheet != "" {
+		text = sheet + "\n\n" + text
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: fmt.Sprintf("🧬 已注入人物外形锚表(%d 字):角色外形以此表为准", len([]rune(sheet)))})
+	}
 	// 读取立项.json 的 art_style 作为视频渲染风格(2026-09-11 用户定调)
 	artStyle := ""
 	if fi.IsDir() {
@@ -276,3 +289,51 @@ func dedupEps(in []string) ([]string, int) {
 }
 
 // ---------- 进行中拆集任务注册表(首页占位卡数据源) ----------
+
+// characterSheetMaxRunes 外形锚表注入上限(字)。
+//
+// 锚表是"每人数行"的东西,超过这个量说明写跑偏了(或者把整本设定集塞进来了);
+// 截断比把 token 烧光好 —— 而且截断发生在**字符**边界上,不会切坏 UTF-8。
+const characterSheetMaxRunes = 2500
+
+// characterSheetHeader 注入时的抬头:明确它是硬约束,而不是"可供参考的背景资料"。
+const characterSheetHeader = "【人物外形锚表 · 硬约束】以下每个角色的外形必须逐项照抄" +
+	"(脸型 / 眉眼 / 鼻唇 / 肤色 / 独特记号 / 发型三要素 / 首套服装),不得改写、不得美化、不得把两个人的特征合并;" +
+	"正文里没有写到的外貌一律以此表为准:\n"
+
+// readCharacterSheet 读 <书名>/设定集/ 下的「人物外形锚表」。
+//
+// 找不到就返回空串(不报错):绝大多数存量书还没有这张表,没有它走原来的路 ——
+// 由 LLM 从正文提炼(质量会差,但不该让整个生产流程失败)。
+func readCharacterSheet(dir string) string {
+	fi, err := os.Stat(dir)
+	if err != nil || !fi.IsDir() {
+		return ""
+	}
+	var cands []string
+	for _, pat := range []string{
+		filepath.Join(dir, "设定集", "*人物外形*.md"),
+		filepath.Join(dir, "设定*", "*人物外形*"),
+	} {
+		if m, _ := filepath.Glob(pat); len(m) > 0 {
+			cands = m
+			break
+		}
+	}
+	if len(cands) == 0 {
+		return ""
+	}
+	sort.Strings(cands)
+	b, err := os.ReadFile(cands[0])
+	if err != nil {
+		return ""
+	}
+	s := strings.TrimSpace(string(NormalizeNovelText(b)))
+	if s == "" {
+		return ""
+	}
+	if rs := []rune(s); len(rs) > characterSheetMaxRunes {
+		s = string(rs[:characterSheetMaxRunes])
+	}
+	return characterSheetHeader + s
+}
