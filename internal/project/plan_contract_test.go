@@ -50,6 +50,11 @@ const SampleStyleSentence = "A cinematic GUOFENG period film, real materials, so
 // 为什么需要一个基线：契约里有一批**覆盖率类**判据（主视角、建立镜头、H3 格式），
 // 任何"最小样本"都会命中它们 —— 而每个用例真正要测的只是自己那一维。给样本一个合规基线，
 // 用例就只剩一个变量（本包的纪律：一条规则一个击穿用例，别让别的规则混进来搅浑判据）。
+// compliantH3 把夹具的提示词补成**真实形态**的官方格式（六段齐、亮度守卫、排除句、保留标记…）。
+//
+// 为什么必须补全（2026-09-27）：输出门扩到"六段齐与顺序／亮度守卫／排除句／保留标记／声音段句数"
+// 之后，原先那些只有一两段的缩水夹具**全都会被抓**——这不是门太严，是夹具不像真东西
+// （本仓的老规矩：夹具必须照真实形态写，干净的夹具会给出假的绿灯）。
 func compliantH3(body string) string {
 	if !strings.Contains(body, "detailed_description:") && !strings.Contains(body, "integrated_multimodal_description:") {
 		body += "\n\ndetailed_description:\n" + SampleStyleSentence + "\n[Shot 1] " +
@@ -60,6 +65,31 @@ func compliantH3(body string) string {
 	}
 	if !strings.Contains(body, PlanEstablishingExtra) {
 		body += " " + PlanEstablishingExtra + "."
+	}
+	// 六段齐（Ref2VA）：subject_definitions / summary / retention_analysis / detailed_description
+	// / overall_soundscape / non_diegetic_music，**按官方顺序**。
+	if !strings.Contains(body, "summary:") {
+		body = strings.Replace(body, "detailed_description:",
+			"summary:\n[reference generation] A short drama beat built from the attached reference pictures.\n\n"+
+				"retention_analysis:\n- <Subject 1> (appears in [Shot 1]): fully_preserved - identity, costume and marks.\n\n"+
+				"detailed_description:", 1)
+	}
+	if !strings.Contains(body, "subject_definitions:") {
+		body = "subject_definitions:\n<Subject 1> is the first listed character; its front sheet is the first attached picture.\n\n" + body
+	}
+	if !strings.Contains(body, "overall_soundscape:") {
+		body += "\n\noverall_soundscape:\nQuiet room tone with distant rain and soft footsteps."
+	}
+	if !strings.Contains(body, "non_diegetic_music:") {
+		body += "\n\nnon_diegetic_music:\nN/A"
+	}
+	// 官方强制收尾：排除句 + 亮度守卫句
+	if !containsAny(strings.ToLower(body), "no watermark", "no logo", "no captions") {
+		body += " No watermarks, no logos, no captions, no added lettering on clothing or props."
+	}
+	if !containsAny(body, "clearly visible and adequately lit") {
+		body += " Subjects must remain clearly visible and adequately lit throughout the video; " +
+			"avoid rendering any frame nearly black or overly dark."
 	}
 	return body
 }

@@ -510,6 +510,7 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 			return nil, err
 		}
 		enforceStyleLock(plan, sourceText)
+		normalizePlan(plan, opt)
 		return plan, nil
 	}
 	plan, err := generateSingle(ctx, client, sourceText, opt, contentDriven, secondsGiven)
@@ -517,7 +518,24 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 		return nil, err
 	}
 	enforceStyleLock(plan, sourceText)
+	normalizePlan(plan, opt)
 	return plan, nil
+}
+
+// normalizePlan 直出结果进契约之前的**最后一手归一化**（两条产出路径共用，只此一处）。
+//
+// 目前只做一件事：把"说话人是本方案角色、但不在本镜画面里"的台词标成画外音
+// （`os=true`）—— 真跑实测 40 镜里有 5 镜是这种情况，全部报 fail，而**语义上本来就该是
+// 画外音**（人在画外喊的那句）。判据与边界见 project.MarkOffscreenSpeakers 的说明：
+// 只改这一种，画外音标签与"名字写错了"都不动。
+func normalizePlan(plan *project.Plan, opt Options) {
+	if plan == nil {
+		return
+	}
+	if n := project.MarkOffscreenSpeakers(plan); n > 0 && opt.OnNote != nil {
+		opt.OnNote("把 %d 条「说话人不在本镜画面里」的台词标成画外音（os=true）—— 语义上本来就是画外音，"+
+			"标上之后契约不再因此 fail", n)
+	}
 }
 
 // extractGlobalStyle 从 sourceText 提取「全局风格:」行的值(截到换行)。

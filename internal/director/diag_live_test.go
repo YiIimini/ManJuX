@@ -11,6 +11,7 @@ import (
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/llm"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // 线上复现诊断(默认跳过,会**真实调用 LLM**)。
@@ -109,4 +110,24 @@ func TestDiagPlanRoundLive(t *testing.T) {
 	}
 	t.Logf("✔ 端到端成功:耗时 %s,方案《%s》%d 角色 / %d 场景 / %d 镜",
 		time.Since(e2eStart).Round(time.Second), plan.Title, len(plan.Characters), len(plan.Scenes), len(plan.Shots))
+
+	// 官方 H3 格式的输出门**在这里也跑一遍**：直出成功不等于满足官方要求，
+	// 没有这一步，用户问"LLM 解析是否满足 H3 官方要求"时只能靠翻代码估。
+	bad := 0
+	for _, sh := range plan.Shots {
+		for _, v := range project.H3FormatViolations(sh.H3Prompt) {
+			bad++
+			t.Logf("  [H3格式] 镜 %d：%s", sh.ID, v)
+		}
+	}
+	t.Logf("H3 格式违规：%d 条 / %d 镜", bad, len(plan.Shots))
+	fails, warns := 0, 0
+	for _, is := range project.ValidatePlan(plan) {
+		if is.Level == "fail" {
+			fails++
+		} else {
+			warns++
+		}
+	}
+	t.Logf("契约自检：fail=%d warn=%d", fails, warns)
 }

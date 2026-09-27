@@ -490,10 +490,14 @@ func TestValidatePlanSceneCardCJK(t *testing.T) {
 	}
 }
 
-// TestH3FormatViolations 官方格式的三条可机检判据（§1.5）。
+// TestH3FormatViolations 官方格式的可机检判据（§1.5 ＋ 2026-09-27 扩的那批）。
 func TestH3FormatViolations(t *testing.T) {
-	ok := "subject_definitions:\n<Subject 1> is 阿甲 ...\n\nretention_analysis:\n- <Picture 1>: fully_preserved - 阿甲 ...\n\n" +
-		"detailed_description:\n" + SampleStyleSentence + "\n[Shot 1] he stands. [Shot 2] At 00:06.00 he walks.\n\n" +
+	ok := "subject_definitions:\n<Subject 1> is 阿甲 ...\n\n" +
+		"summary:\n[reference generation] A short beat built from the attached pictures.\n\n" +
+		"retention_analysis:\n- <Picture 1>: fully_preserved - 阿甲 ...\n\n" +
+		"detailed_description:\n" + SampleStyleSentence + "\n[Shot 1] he stands. [Shot 2] At 00:06.000 he walks.\n" +
+		"No watermarks, no logos, no captions. Subjects must remain clearly visible and adequately lit " +
+		"throughout the video; avoid rendering any frame nearly black or overly dark.\n\n" +
 		"overall_soundscape:\nquiet room tone\n\nnon_diegetic_music:\nN/A"
 	if got := H3FormatViolations(ok); len(got) != 0 {
 		t.Fatalf("合规提示词不该报，实际：%v", got)
@@ -508,18 +512,45 @@ func TestH3FormatViolations(t *testing.T) {
 		},
 		{
 			"首镜带时间戳",
-			strings.Replace(ok, "[Shot 1] he stands.", "[Shot 1] At 00:00.00 he stands.", 1),
+			strings.Replace(ok, "[Shot 1] he stands.", "[Shot 1] At 00:00.000 he stands.", 1),
 			"首镜无时间戳",
 		},
 		{
 			"时间戳形态不对",
-			strings.Replace(ok, "At 00:06.00", "At 6s", 1),
+			strings.Replace(ok, "At 00:06.000", "At 6s", 1),
 			"形态不对",
 		},
 		{
 			"风格句写在首镜里（前面是空的）",
 			strings.Replace(ok, SampleStyleSentence+"\n", "", 1),
 			"之前是空的",
+		},
+		{
+			"六段缺 summary",
+			strings.Replace(ok, "summary:\n[reference generation] A short beat built from the attached pictures.\n\n", "", 1),
+			"六段不齐",
+		},
+		{
+			"缺亮度守卫句",
+			strings.Replace(ok, "Subjects must remain clearly visible and adequately lit throughout the video; "+
+				"avoid rendering any frame nearly black or overly dark.", "", 1),
+			"亮度守卫句",
+		},
+		{
+			"缺排除句",
+			strings.Replace(ok, "No watermarks, no logos, no captions. ", "", 1),
+			"排除句",
+		},
+		{
+			// 递增判据要**两个以上**带时间戳的镜才谈得上：这里造一个回退的第三镜
+			"时间戳不递增",
+			strings.Replace(ok, "At 00:06.000 he walks.", "At 00:06.000 he walks. [Shot 3] At 00:03.000 he stops.", 1),
+			"严格递增",
+		},
+		{
+			"retention 里没有官方标记",
+			strings.Replace(ok, "fully_preserved", "保留得很好", 1),
+			"保留标记",
 		},
 	}
 	for _, tc := range cases {

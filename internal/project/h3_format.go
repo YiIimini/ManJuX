@@ -67,6 +67,91 @@ func H3FormatViolations(h3 string) []string {
 					"写进首镜等于只有那一镜是这部片的画风", strings.TrimSuffix(marker, ":")))
 		}
 	}
+
+	// ── 以下为 2026-09-27 扩的「官方硬要求」输出门 ─────────────────────────────
+	//
+	// 为什么扩：此前只兜三条（retention 里的 (Sx)、时间戳、风格句位置），而内嵌的官方规范
+	// 有二十来条**可机检**的硬要求（六段齐与顺序、亮度守卫、排除句、保留标记、声音段句数、
+	// `<d>` 语言标签…）。提示词写全了不等于模型照做 —— 用户问"LLM 解析是否满足 H3 官方要求"
+	// 时，如果没有这些门，唯一的答案就是"没法知道"。门让"满不满足"变成可测的。
+	//
+	// 判据一律**宽松**（有即可，不判措辞）：这些是质量级问题，宁少报不误报。
+
+	// ④ 模式判定与段落齐备：Ref2VA 六段 / T2VA 三段，且顺序固定
+	ref2va := containsAny(h3, "subject_definitions:", "retention_analysis:", "detailed_description:")
+	if ref2va {
+		order := []string{"subject_definitions:", "summary:", "retention_analysis:",
+			"detailed_description:", "overall_soundscape:", "non_diegetic_music:"}
+		if miss := missingSections(h3, order); len(miss) > 0 {
+			out = append(out, fmt.Sprintf(
+				"Ref2VA 六段不齐：缺 %s —— 官方要求这六段**顺序固定**、逐段存在（缺段时模型收不到那部分约束）",
+				strings.Join(miss, "、")))
+		} else if bad := firstOutOfOrder(h3, order); bad != "" {
+			out = append(out, fmt.Sprintf(
+				"六段顺序不对：%s 出现在它前面那一段之前 —— 官方顺序是 %s",
+				bad, strings.Join(order, " → ")))
+		}
+	} else {
+		order := []string{"integrated_multimodal_description:", "overall_soundscape:", "non_diegetic_music:"}
+		if miss := missingSections(h3, order); len(miss) > 0 {
+			out = append(out, fmt.Sprintf(
+				"T2VA 三段不齐：缺 %s —— 官方要求这三段顺序固定", strings.Join(miss, "、")))
+		}
+	}
+
+	// ⑤ 亮度守卫句（官方强制：正文最后一句）
+	if !containsAny(h3, "clearly visible and adequately lit", "adequately lit throughout") {
+		out = append(out, "缺官方**强制亮度守卫句** —— detailed_description 的最后一句必须是 "+
+			"\"Subjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\"")
+	}
+
+	// ⑥ 排除句（不写字/水印/LOGO/字幕 —— 与平台的「画面文字禁止」同一条）
+	if !containsAny(strings.ToLower(h3), "no watermark", "no logo", "no captions", "no added lettering") {
+		out = append(out, "缺**排除句** —— 正文结尾要用一句散文排除水印/LOGO/字幕/衣物上加字（否则模型会自己加字）")
+	}
+
+	// ⑦ retention_analysis 的保留标记必须用官方词表
+	if seg, ok := sectionOf(h3, "retention_analysis:"); ok {
+		if !containsAny(seg, "fully_preserved", "partially_preserved", "attribute_transfer", "weak_reference") {
+			out = append(out, "retention_analysis 里没有任何官方保留标记（fully_preserved / partially_preserved / "+
+				"attribute_transfer / weak_reference）—— 这一段逐行说「每张参考图保留了什么」")
+		}
+	}
+
+	// ⑧ 声音两段：非空（或 N/A）＋句数上限（官方 1–4 句 / 1–3 句）
+	if seg, ok := sectionOf(h3, "overall_soundscape:"); ok {
+		if n := sentenceCount(seg); n > h3MaxSoundscapeSentences {
+			out = append(out, fmt.Sprintf(
+				"overall_soundscape 写了 %d 句（官方上限 %d 句、一段连续散文）—— 这里只写环境音与非语言人声，"+
+					"对白/歌唱/画面内有源音乐都在正文里，不该复述", n, h3MaxSoundscapeSentences))
+		}
+	}
+	if seg, ok := sectionOf(h3, "non_diegetic_music:"); ok {
+		if n := sentenceCount(seg); n > h3MaxMusicSentences {
+			out = append(out, fmt.Sprintf(
+				"non_diegetic_music 写了 %d 句（官方上限 %d 句）—— 只写乐器/速度/节奏/动态，不写抽象情绪词",
+				n, h3MaxMusicSentences))
+		}
+	}
+
+	// ⑨ 说话人标记只许出现在正文段（retention 那条已在 ① 报了，这里管别处）
+	if m := speakerTagOutsideDescription(h3); m != "" {
+		out = append(out, fmt.Sprintf(
+			"说话人标记 %s 出现在正文段之外 —— (Sx) 只写在 detailed_description 的台词句里"+
+				"（retention_analysis 尤其不许），实体锁定句写在正文段开头", m))
+	}
+
+	// ⑩ 时间戳必须**严格递增**（此前只判形态）
+	if times := shotTimestamps(h3); len(times) > 1 {
+		for i := 1; i < len(times); i++ {
+			if times[i].ms <= times[i-1].ms {
+				out = append(out, fmt.Sprintf(
+					"时间戳没有严格递增：[Shot %d] %s 之后是 [Shot %d] %s —— 官方要求严格递增（两位小数）",
+					times[i-1].n, times[i-1].raw, times[i].n, times[i].raw))
+				break
+			}
+		}
+	}
 	return out
 }
 
