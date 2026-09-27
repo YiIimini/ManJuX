@@ -64,6 +64,10 @@ var assemblyOwners = map[string][]string{
 	// styleExpand/castContrastBlock —— 那会按实体类型重算一套),但必须把取景从
 	// "半身胸像"换成"多视图板"。它**只**被允许调一次 rewriteSheetFraming。
 	"BoardImagePrompt": {"rewriteSheetFraming("},
+	// 第四个装配点(2026-09-27 补道具图):道具此前**只被读进来、从没出过图** ——
+	// 库里 props 类目、上传的"道具图"、assetImageSize 注释里的"道具图"都在,唯独资产阶段
+	// 没遍历它。装配口径与场景图一致(清汉字 + 换取景 + 注入风格块),取景换成"1:1 白底单件"。
+	"PropImagePrompt": {"styleExpand(", "rewriteSheetFraming("},
 }
 
 // goTopLevelFuncs 把源码里的**顶层函数**切成 函数名 → 函数体行。

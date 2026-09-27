@@ -682,6 +682,58 @@ func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scen
 	return prompt
 }
 
+// PropImagePrompt 道具图的**唯一装配点**（2026-09-27 补：道具此前被读进来却从没出过图）。
+//
+// 缺口是这么发现的：技能侧交付了三类卡（角色/场景/道具），平台契约也把 `props` 收下来了
+// （`project.Prop` 的注释写着"字段收下来才算真读到了"），库里有 `props` 类目、上传也支持
+// "道具图"、`assetImageSize` 的注释甚至写着"定妆照／场景图／**道具图**" —— 但资产阶段的
+// `check()` 只遍历了角色与场景，**道具一次都没生成过**。于是"道具卡"这一整类产出只躺在
+// 计划里给人看，渲染侧完全没用上。
+//
+// 口径与技能侧的卡片规范一致：**1:1 白底单件**（不画场景、不画人、不写字），
+// 供人审"这块东西长什么样"与跨镜一致性 —— **不进 H3 的参考图集合**（官方那条
+// "Props never get a picture; describe props in text only" 说的是参考图顺序，保持不变；
+// 见 refs.go 只带角色与场景）。
+//
+// 幂等：与场景/角色同口径 —— 已含本类型的 SheetMarker 就原样返回（本函数会被调用两次：
+// 资产阶段一次、渲染前补齐一次，装配成品会写回卡片）。
+func PropImagePrompt(proj *project.Project, plan *project.Plan, pr project.Prop) string {
+	prof := EntityProfileOf(KindObject)
+	if prof.SheetMarker != "" && strings.Contains(pr.ImagePrompt, prof.SheetMarker) {
+		return pr.ImagePrompt
+	}
+	// 汉字卫生：与场景板同一条机理（T2I 会把汉字画成乱码字形）。
+	prompt := project.StripCJK(pr.ImagePrompt)
+	// 兜底：卡片没写或写歪时，用中文描述/英文外观短语拼一句最小可用的 ——
+	// 道具卡缺 image_prompt 的存量包里很常见（老包只有 en）。
+	if strings.TrimSpace(prompt) == "" {
+		fallback := strings.TrimSpace(pr.EN)
+		if fallback == "" {
+			fallback = project.StripCJK(pr.Description)
+		}
+		if fallback != "" {
+			prompt = fallback + " — a single object, catalogued."
+		}
+	}
+	if prof.RewriteSheetFraming {
+		// 剥掉从人像模板抄来的取景（upper-body framing / plain background / portrait …），
+		// 换成"单件器物、白底、正对镜头"—— 与其余非人类型同一套做法。
+		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
+	}
+	prompt += styleExpand(planStyle(plan), facesOnOf(proj), KindObject)
+	// 白底单件与"不画字"两条是道具图的可比性前提：底不干净就跨镜对不上，
+	// 画了字（名牌/标签）就成了乱码字形 —— 两条都写死在这里，不靠上游记得写。
+	if !strings.Contains(prompt, propPlateClause) {
+		prompt += " " + propPlateClause
+	}
+	return prompt
+}
+
+// propPlateClause 道具图的画面纪律（1:1 白底单件 + 不画字）。见 PropImagePrompt。
+const propPlateClause = "Single object only, centred, shot 1:1 square from a straight-on angle, on a plain pure white " +
+	"seamless background: no scenery, no people, no hands, no cast shadow, no text, no letters, no numerals, no watermark, " +
+	"no logo, no label of any kind. Keep the object's material, colour and finish exactly as described."
+
 // sheetFramingWords LLM 写在 image_prompt 尾部的人像取景短语。
 //
 // 为什么要逐个剥掉而不是"整句替换":这些短语散落在语句中(且大小写/连字符写法不一),

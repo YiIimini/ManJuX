@@ -59,6 +59,17 @@ func (n *assetNeed) wantsScene(id string) bool {
 	return n.scenes[id]
 }
 
+// wantsProp 道具**不做取镜范围限制**：始终为真。
+//
+// 为什么与角色/场景不一样（2026-09-27）：范围是从**镜头引用**反推的，而镜头里**没有道具引用**
+// —— 技能侧的明细还没有 `prop_ids` 字段（那是唯一还差的一条，见导入侧注释）。既然反推不出来，
+// 就不能拿"没有引用"当"不需要"，否则道具图会被静默跳过。
+//
+// 代价可控：道具是**书级**的（本机实例 15 件），且生成后按名字进资产库跨集复用（`reuseFromLibrary`）
+// —— 一本剧最多出 15 张白底单件图，第二次起都是 ♻。
+// `prop_ids` 到位后这里改成 `return n.props[id]`（连同 needForShots 一起填），范围限制自然生效。
+func (n *assetNeed) wantsProp(string) bool { return true }
+
 // isEmpty 本次范围内没有任何资产需求(例如单镜重渲一个 t2va 镜头)。
 func (n *assetNeed) isEmpty() bool {
 	return n != nil && len(n.chars) == 0 && len(n.scenes) == 0

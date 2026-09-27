@@ -46,7 +46,8 @@ func mkBookDetail(t *testing.T, s *Server, name string) string {
     {"id":"char_09","name":"路人甲","kind":"human","description":"路人","image_prompt":"extra","board_prompt":"board","voice":"man"}
   ],
   "scenes":[{"id":"scene_01","name":"临水城","description":"城门","image_prompt":"gate plate","landmarks":"city gate (left)","light_state":"warm 3000K"}],
-  "props":[{"id":"prop_01","name":"沈砚的伞","en":"an oiled paper umbrella","description":"旧伞","image_prompt":"umbrella"}],
+  "props":[{"id":"prop_01","name":"沈砚的伞","en":"an oiled paper umbrella","description":"旧伞","image_prompt":"umbrella"},
+           {"id":"prop_99","name":"没被提到的令牌","en":"an unmentioned tablet","description":"正文里没人提它","image_prompt":"tablet"}],
   "shots":[
     {"episode":1,"id":1,"duration":5,"shot_size":"中景","scene":"临水城","scene_id":"scene_01",
      "characters":["沈砚"],"character_ids":["char_01"],"mode":"ref2va","view":"telephoto compression",
@@ -123,15 +124,16 @@ func TestImportFromShotDetail(t *testing.T) {
 	if len(sh.Dialogue) != 1 || sh.Dialogue[0].Speaker != "沈砚" || sh.Dialogue[0].Text != "我准了" {
 		t.Errorf("台词应映射成 Line：%+v", sh.Dialogue)
 	}
-	// ③ 卡：只带这一集用到的角色/场景 + 正文里提到的道具
+	// ③ 卡：只带这一集用到的角色/场景；**道具全带**（道具图是书级资产、靠库跨集复用，
+	//    按名字猜会漏掉"正文没点名它"的那一件）
 	if len(plan.Characters) != 1 || plan.Characters[0].ID != "char_01" {
 		t.Errorf("只应带第 1 集用到的角色，实际 %+v", plan.Characters)
 	}
 	if len(plan.Scenes) != 1 || plan.Scenes[0].Landmarks == "" || plan.Scenes[0].LightState == "" {
 		t.Errorf("场景卡应带地标与光态：%+v", plan.Scenes)
 	}
-	if len(plan.Props) != 1 || plan.Props[0].ID != "prop_01" {
-		t.Errorf("道具应按正文名字匹配带进来（沈砚的伞 在动作里），实际 %+v", plan.Props)
+	if len(plan.Props) != 2 {
+		t.Errorf("道具应**全带上**（含正文里没提到的那件），实际 %+v", plan.Props)
 	}
 	// ④ 自动开线（用户点导入的意图是出片）
 	if len(*started) != 1 || (*started)[0].Prefix != "明细书" {
@@ -186,8 +188,8 @@ func TestNovelScriptCardsFromDetail(t *testing.T) {
 		t.Fatalf("场景卡应 1 个，实际 %d", len(scenes))
 	}
 	props, _ := out["props"].([]any)
-	if len(props) != 1 {
-		t.Fatalf("道具卡应 1 个，实际 %d", len(props))
+	if len(props) != 2 {
+		t.Fatalf("道具卡应来自明细内嵌卡（2 个），实际 %d", len(props))
 	}
 	// 「出现在几集」：char_01 只在第 1 集 → in=1
 	if in, _ := c0["in"].(float64); int(in) != 1 {

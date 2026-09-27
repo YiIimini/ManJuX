@@ -226,6 +226,14 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		// (2026-09-26 乙1,四条出图路径必须同源)。
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "")
 	}
+	// 道具图（2026-09-27 补）：技能侧的三类卡里，道具此前**只被读进来、从没出过图**
+	// —— 库里 `props` 类目、上传的"道具图"、`assetImageSize` 注释里那句"道具图"都在，
+	// 唯独资产阶段没遍历它。这里补齐：1:1 白底单件的单件图，供人审与跨镜一致性；
+	// **不进 H3 的参考图集合**（官方：Props never get a picture；refs.go 只带角色与场景）。
+	// 跨集复用靠资产库按名字命中（同书 40 集只生成一次），所以导入时把道具全带上不浪费。
+	for _, pr := range plan.Props {
+		check("props", "prop:"+pr.ID, pr.Name, pr.Description, PropImagePrompt(proj, plan, pr), KindObject)
+	}
 
 	// Q 版形象(chibi):主定妆照就绪的角色同步生成 Q 版,内心活动镜头的表达素材。
 	// 独立资产 ID(char:<id>_chibi),渲染 ref 不携带,仅作画面内容/花絮素材。
@@ -975,6 +983,14 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		}
 		// 与资产阶段同源:渲染前补齐也必须走场景装配唯一实现点(见 StageAssets 里的说明)。
 		check("scenes", "scene:"+sc.ID, sc.Name, sc.Description, SceneImagePrompt(proj, plan, sc), "")
+	}
+	// 道具图（与 runAssets 同一个装配点 PropImagePrompt）：两条路径都要遍历，
+	// 否则会出现"初出有道具图、补缺却没有"。范围同角色/场景 —— 按本次取镜范围要（need）。
+	for _, pr := range plan.Props {
+		if !need.wantsProp(pr.ID) {
+			continue
+		}
+		check("props", "prop:"+pr.ID, pr.Name, pr.Description, PropImagePrompt(proj, plan, pr), KindObject)
 	}
 	if len(list) == 0 {
 		return true

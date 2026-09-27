@@ -139,19 +139,24 @@ func buildEpisodePlan(d *novelDetailFile, no int, title string, epShots []script
 			})
 		}
 	}
-	// 道具：明细的镜头里**没有**道具引用（技能侧的字段还没加），所以只能按名字在正文里
-	// 做**尽力匹配** —— 宁可少带一个道具图，也不要把 15 件道具塞进每一集（那是 15×40 张图）。
-	// 已请技能侧给 `prop_ids`；字段到位后这一段直接换成 ID 匹配。
-	if len(d.Props) > 0 {
-		text := episodeText(epShots)
-		for _, pr := range d.Props {
-			if strings.TrimSpace(pr.Name) == "" || !strings.Contains(text, pr.Name) {
-				continue
-			}
-			plan.Props = append(plan.Props, project.Prop{
-				ID: pr.ID, Name: pr.Name, EN: pr.EN, Description: pr.Description, ImagePrompt: pr.ImagePrompt,
-			})
+	// 道具：**全带上**（2026-09-27 晚改）。
+	//
+	// 早先按名字在正文里"尽力匹配"是错的解法 —— 那时我还没发现更大的问题：
+	// **平台从来没给道具出过图**（资产阶段的 check() 只遍历角色与场景），所以带不带都一样没用。
+	// 补上道具图之后口径就清楚了：道具图是**书级**资产，生成一次按名字进资产库、跨集 ♻ 复用
+	// （`reuseFromLibrary`），所以"全带上"的代价是**一本剧最多 15 张白底单件图**；
+	// 而"按名字猜"的代价是"某个道具在用到它的那一集偏偏没图"（正文没点名它时必然漏）。
+	// 宁可多带，不可漏带。
+	//
+	// 技能侧的 `prop_ids`（镜头→道具引用）到位后可以再收窄成"这一集用到的"（UI 更干净），
+	// 但那是优化、不是正确性前提 —— 见 asset_scope.go 的 wantsProp 注释。
+	for _, pr := range d.Props {
+		if strings.TrimSpace(pr.ID) == "" && strings.TrimSpace(pr.Name) == "" {
+			continue
 		}
+		plan.Props = append(plan.Props, project.Prop{
+			ID: pr.ID, Name: pr.Name, EN: pr.EN, Description: pr.Description, ImagePrompt: pr.ImagePrompt,
+		})
 	}
 
 	// ② 镜头 + 风格句提取
@@ -343,7 +348,9 @@ func detailCardViews(d *novelDetailFile) (chars []*scriptCharView, scenes []*scr
 	for _, pr := range d.Props {
 		in := 0
 		if len(d.Shots) > 0 {
-			// 道具没有镜头引用（技能侧字段待补），只能按名字在正文里数 —— 与导入时的同一口径
+			// 「出现在几集」对道具是**正文提到几集**（按名字数）：导入时道具是**全带上**的
+			// （见 buildEpisodePlan 的说明：道具图是书级资产、靠资产库跨集复用），
+			// 所以"带进几集"恒等于 40、没有信息量；有没有被提到才是人想看的那一列。
 			for _, k := range detailEpKeys(d.Shots) {
 				var epShots []scriptDetailShot
 				for _, sh := range d.Shots {
