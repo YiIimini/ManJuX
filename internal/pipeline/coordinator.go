@@ -48,6 +48,10 @@ type Coordinator struct {
 	ff     *ff.FF
 	bus    *Bus
 	lib    *library.Library // 跨项目资产库(可为 nil=禁用)
+
+	// vlm 视觉调用的闸门（限流熔断 + 调用预算，见 vlm_guard.go）。
+	// 进程级：限流是同一份 key 的全局状态，换项目重来照样会被拒。
+	vlm vlmGuard
 }
 
 // Run 一次运行。

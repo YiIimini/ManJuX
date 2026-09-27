@@ -269,13 +269,22 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 		"max_tokens":  8192,
 		"temperature": 0.2,
 	}
-	if jsonMode {
+	// json 模式兼容（2026-09-27 实测定案）：OpenAI 兼容端点里有一类要求**提示词里出现
+	// "json" 这个词**才允许 response_format=json_object（DeepSeek 实测直接 400 Bad Request）。
+	// 所以在开 json 模式时主动补一句，并在真被拒时**降级成普通模式重试**——
+	// 解析端本来就容忍"JSON 被包在散文里"（见 textdetect.go 的说明）。
+	curJSON := jsonMode
+	if curJSON {
+		msgs = appendJSONHint(msgs)
+		body["messages"] = msgs
+	}
+	if curJSON {
 		body["response_format"] = map[string]string{"type": "json_object"}
 	}
-	raw, _ := json.Marshal(body)
 	var out []byte
 	var resp *http.Response
 	for attempt := 0; attempt < 3; attempt++ {
+		raw, _ := json.Marshal(body)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
 		if err != nil {
 			return "", err
@@ -289,6 +298,13 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 		out, _ = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		if resp.StatusCode == http.StatusOK {
 			break
+		}
+		// json 模式被端点拒绝（400/422）→ 去掉 response_format 重试一次。
+		if curJSON && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity) {
+			curJSON = false
+			delete(body, "response_format")
+			resp.Body.Close()
+			continue
 		}
 		// 免费档限流(429)退避重试
 		if resp.StatusCode == http.StatusTooManyRequests && attempt < 2 {
@@ -316,4 +332,23 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 		return "", fmt.Errorf("VLM 返回空内容(finish=%s)", cr.Choices[0].FinishReason)
 	}
 	return stripReasoning(content), nil
+}
+
+// appendJSONHint 开 json 模式时**主动**让提示词里出现 "json" 字样。
+//
+// 为什么要有（2026-09-27 实测）：DeepSeek 端点在 response_format=json_object 但提示词里
+// 没有 "json" 这个词时直接 400 Bad Request。补一句既避免一次白跑，也让"降级重试"成为兜底
+// 而不是唯一路径。补在**第一条 system** 上（没有就新加一条），不动调用方自己的提示词内容。
+func appendJSONHint(msgs []map[string]any) []map[string]any {
+	const hint = "输出格式：只输出一个 json 对象（json object），不要任何解释文字或代码块围栏。"
+	for i, m := range msgs {
+		if m["role"] != "system" {
+			continue
+		}
+		if s, ok := m["content"].(string); ok {
+			msgs[i]["content"] = s + "\n" + hint
+			return msgs
+		}
+	}
+	return append([]map[string]any{{"role": "system", "content": hint}}, msgs...)
 }

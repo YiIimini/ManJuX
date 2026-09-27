@@ -16,6 +16,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/fsutil"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
 )
@@ -71,7 +72,9 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 记账放在调用方(而不是共享实现里):"一次运行只提醒一次"是**本次运行**的性质,
 	// 而共享实现也被「单资产重新生成」那条路用(那次是一次用户动作,每次都该提醒)。
 	propNoCapWarned := false
-	castNoCapWarned := false // 撞脸自检没能力验的提醒也按**本次运行**记一次账（与比例自检同一政策）
+	castNoCapWarned := false // 撞脸自检"没能力验"的提醒也按**本次运行**记一次账（与比例自检同一政策）
+	// 视觉调用预算每轮重置（见 vlm_guard.go）：不重置的话第二轮连一次都验不了。
+	c.VLMResetBudget()
 	checkProportion := func(ek EntityKind, imagePrompt, name, path string) *qc.ProportionReport {
 		rep, outcome := c.checkPortraitProportion(ctx, proj, ek, imagePrompt, name, path)
 		if outcome == proportionNoCapability && !propNoCapWarned {
@@ -420,9 +423,20 @@ func (c *Coordinator) checkPortraitProportion(ctx context.Context, proj *project
 	if strings.TrimSpace(path) == "" {
 		return nil, proportionNotApplicable
 	}
+	// 限流熔断 / 调用预算（见 vlm_guard.go）：跳过时**不发**每卡一条的告警 ——
+	// 原因已经各播报过一次，再刷 30 条只是噪音（用户 2026-09-27 报的正是这种刷屏）。
+	if c.vlmSkipReason(proj) != "" {
+		return nil, proportionNotApplicable
+	}
 	rep, err := qc.DetectPortraitProportion(ctx, client, path, HumanProportionClausePresent(imagePrompt))
 	if err != nil {
-		// 读图/调用/解析失败 = "没验过",如实说出来,不当作通过(与画面文字检测同一口径)。
+		// 限流是**全局**原因（同一份 key 的所有调用都受影响）：说一次就够，不再逐卡刷 ——
+		// 用户 2026-09-27 报的正是"每张卡一条 429 告警"这种刷屏。其余失败是**本地**原因
+		// （读图/解析/图太大），照旧逐卡如实告警："没验过"不等于"验过了没问题"。
+		if llm.IsRateLimited(err) {
+			c.vlmNote(proj, err)
+			return nil, proportionNotApplicable
+		}
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
 			"⚠ 定妆照「%s」比例自检失败(未判定,不当作通过):%v", name, err)
 		return nil, proportionChecked

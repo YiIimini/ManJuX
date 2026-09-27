@@ -2,10 +2,12 @@ package pipeline
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
 )
@@ -94,7 +96,7 @@ func (c *Coordinator) checkCastDistinctness(ctx context.Context, proj *project.P
 	if len(peers) == 0 {
 		return path, false
 	}
-	hit, other, note := c.castCollision(ctx, proj, path, peers)
+	hit, other, note := c.castCollision(ctx, proj, proj.ID, path, peers)
 	if !hit {
 		return path, false
 	}
@@ -107,7 +109,7 @@ func (c *Coordinator) checkCastDistinctness(ctx context.Context, proj *project.P
 			"↻ 撞脸重出失败(%v)，保留原图「%s」——可在资产详情里点「重新生成」再抽一次", err, name)
 		return path, false
 	}
-	if hit2, o2, n2 := c.castCollision(ctx, proj, next, peers); hit2 {
+	if hit2, o2, n2 := c.castCollision(ctx, proj, proj.ID, next, peers); hit2 {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
 			"⚠ 重出后「%s」仍与「%s」像同一个人（%s）—— 已收手，请在资产详情里改描述/提示词后「重新生成」，"+
 				"或把两人的年龄/脸型/眼型差异写得再具体些", name, o2, n2)
@@ -125,21 +127,46 @@ const CastSkipNoCapability = "未配置视觉模型，**撞脸自检没跑**（�
 // castCollision 与 peers 逐张比对，返回(是否撞脸, 撞到谁, 说明)。
 //
 // 调用失败一律**当作没判定**（不当作通过）：返回 false 但发出告警 —— 与比例自检同一口径。
-func (c *Coordinator) castCollision(ctx context.Context, proj *project.Project, path string, peers []castPeer) (bool, string, string) {
+func (c *Coordinator) castCollision(ctx context.Context, proj *project.Project, projectID, path string, peers []castPeer) (bool, string, string) {
 	client := TurnaroundVerifier(c.cfg.Get().VLM)
 	if client == nil {
 		return false, "", ""
 	}
+	cache := loadCastCache(c.store.Dir(projectID))
+	dirty := false
+	defer func() {
+		if dirty {
+			_ = saveCastCache(c.store.Dir(projectID), cache)
+		}
+	}()
 	for _, p := range peers {
 		if ctx.Err() != nil {
 			return false, "", ""
 		}
+		// 按**图片指纹**记账：同一对脸问过一次就不再问（用户为了修一张脸会反复重跑同一段，
+		// 每次从头再问一遍 = 接口被压到限流的主因之一，见 vlm_guard.go 的说明）。
+		if e, ok := cache.lookup(path, p.path); ok {
+			if e.Same {
+				return true, p.name, e.Note
+			}
+			continue
+		}
+		// 限流静默 / 预算用尽：跳过（原因已各播报过一次）
+		if c.vlmSkipReason(proj) != "" {
+			return false, "", ""
+		}
 		v, err := qc.DetectSamePerson(ctx, client, path, p.path)
 		if err != nil {
+			if llm.IsRateLimited(err) {
+				c.vlmNote(proj, err)
+				return false, "", ""
+			}
 			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
 				"⚠ 撞脸自检未判定(不当作通过):与「%s」比对失败:%v", p.name, err)
 			return false, "", ""
 		}
+		cache.put(path, p.path, v.Same, v.Note)
+		dirty = true
 		if v.Same {
 			return true, p.name, v.Note
 		}
@@ -166,4 +193,66 @@ func CastSeparationClause(otherName string) string {
 		"(中文对照:上一次生成被判为与同剧「" + other + "」像同一个人。这次必须让人一眼看出是两个不同的人:" +
 		"改**脸型与骨相(下颌/颧骨/眉骨)、年龄感、眼型、眉形、肤色、发型剪影**;" +
 		"身份锁里的固定记号与服装保持不变 —— 不是换一个人,是不许和「" + other + "」共用一张脸。)\n"
+}
+
+// ---------- 判定记账（按图片指纹）----------
+//
+// 用户为了修一张脸会**反复重跑同一段资产阶段**，而上一轮的判定完全没记账 ——
+// 每次从头把同一对脸再问一遍，是接口被压到限流的主因之一（见 vlm_guard.go）。
+// 这里按**两张图的指纹**记账：指纹没变就直接用上次的结论，一次视觉调用都不花。
+// 放在项目目录里（`cast_checks.json`），随项目走；指纹变了（重出了一张）自然失效。
+
+const castCacheFile = "cast_checks.json"
+
+type castCacheEntry struct {
+	A    string `json:"a"` // 图 A 的内容指纹
+	B    string `json:"b"` // 图 B 的内容指纹
+	Same bool   `json:"same"`
+	Note string `json:"note,omitempty"`
+}
+
+type castCache map[string]castCacheEntry
+
+func castCacheKey(pathA, pathB string) string {
+	// key 只用来索引，真实性由条目里的指纹保证（读的时候再比一次）。
+	return filepath.Base(pathA) + "|" + filepath.Base(pathB)
+}
+
+func loadCastCache(dir string) castCache {
+	c := castCache{}
+	raw, err := os.ReadFile(filepath.Join(dir, castCacheFile))
+	if err != nil {
+		return c
+	}
+	_ = json.Unmarshal(raw, &c)
+	return c
+}
+
+func saveCastCache(dir string, c castCache) error {
+	raw, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, castCacheFile), raw, 0o644)
+}
+
+// lookup 命中条件：**两张图的指纹都没变**（只比文件名会被"重出了一张"骗过去）。
+func (c castCache) lookup(pathA, pathB string) (castCacheEntry, bool) {
+	e, ok := c[castCacheKey(pathA, pathB)]
+	if !ok {
+		return castCacheEntry{}, false
+	}
+	fa, fb := project.FingerprintFile(pathA), project.FingerprintFile(pathB)
+	if fa == "" || fb == "" || e.A != fa || e.B != fb {
+		return castCacheEntry{}, false
+	}
+	return e, true
+}
+
+func (c castCache) put(pathA, pathB string, same bool, note string) {
+	fa, fb := project.FingerprintFile(pathA), project.FingerprintFile(pathB)
+	if fa == "" || fb == "" {
+		return
+	}
+	c[castCacheKey(pathA, pathB)] = castCacheEntry{A: fa, B: fb, Same: same, Note: note}
 }
