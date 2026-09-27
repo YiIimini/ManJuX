@@ -565,11 +565,15 @@ func planCharFamilies(projectID string, s *Server) map[string]charFamilyInfo {
 	if err != nil {
 		return nil
 	}
+	// 归族走**共用实现**（2026-09-28）：单卡口径（CharFamilyKey，id 优先）在
+	// "主卡 id 规范、档卡 id 不规范"时会分成两族，而 SameCharacter 那把尺子已经修正 ——
+	// 两处各写一遍必然走散（界面显示"两个人"，撞脸自检却知道他们是一个人）。
+	index := project.CharFamilyIndex(plan.Characters)
 	// 主卡 = 同族里**档位号最小**的那张(0 = 名字不带档名的家族本名,最优先);
 	// 档位相同(理论上不会)时取计划里先出现的那张,保证结果稳定。
 	bestRank, masterID := map[string]int{}, map[string]string{}
 	for _, ch := range plan.Characters {
-		k := project.CharFamilyKey(ch.ID, ch.Name)
+		k := index[ch.ID]
 		r := project.CharVariantNumberOf(ch.ID)
 		if cur, ok := bestRank[k]; !ok || r < cur {
 			bestRank[k], masterID[k] = r, ch.ID
@@ -577,7 +581,7 @@ func planCharFamilies(projectID string, s *Server) map[string]charFamilyInfo {
 	}
 	out := make(map[string]charFamilyInfo, len(plan.Characters))
 	for _, ch := range plan.Characters {
-		k := project.CharFamilyKey(ch.ID, ch.Name)
+		k := index[ch.ID]
 		out[ch.ID] = charFamilyInfo{
 			Family:  k,
 			Base:    project.CharFamilyBaseName(ch.Name),

@@ -203,9 +203,152 @@ func CharFamilyKey(id, name string) string {
 }
 
 // SameCharacter 两张卡是不是**同一个人**(同角色的不同造型档也算同一个人)。
+//
+// 【2026-09-28 补：两边混用时的漏洞】此前只比 `CharFamilyKey`（id 优先）——
+// 主卡 id 规范（`char_01`）、档卡 id 不规范（`char_01_young` 这类没有档位号）时，
+// 主卡按 **id** 得到家族键、档卡按 **名字** 得到另一个键，**永远碰不上** ✗。
+// 后果不只是计数：撞脸自检会把"同一个人的少年期与成年期"当成两个角色比，
+// 报出"这两个人长得像同一个人"（用户报过的那类假警的另一种形态）。
+//
+// 补的规则**只在 id 说不出话时**生效：
+//
+//	(a) 两边 id 家族都能解析 → 相同才算同一个人（既有取舍：id 是人写的机器编号，
+//	    它说不同就宁可多生成一张卡，也不能让两个不同角色共用一张脸）；
+//	(b) 有一边 id 家族解析不出来（id 本身没信息）→ 只要**名字基名**相同就算同一个人。
 func SameCharacter(aID, aName, bID, bName string) bool {
-	ka, kb := CharFamilyKey(aID, aName), CharFamilyKey(bID, bName)
-	return ka != "" && ka == kb
+	aIDKey, aNameKey := CharFamilyKeys(aID, aName)
+	bIDKey, bNameKey := CharFamilyKeys(bID, bName)
+	if aIDKey != "" && bIDKey != "" {
+		return aIDKey == bIDKey
+	}
+	if aNameKey != "" && aNameKey == bNameKey {
+		return true
+	}
+	// 名字也给不出结论时退回 id 家族（至少有一边可解析的情况上面已覆盖，这里兜底）
+	return aIDKey != "" && aIDKey == bIDKey
+}
+
+// CharFamilyIndex 一批角色卡 → **卡片 id → 归一后的家族键**（同一个人拿到同一个键）。
+//
+// 为什么要有它（2026-09-28）：`CharFamilyKey` 是**单卡**口径（id 优先），而"归族"是
+// **成对**关系 —— 上面 SameCharacter 那条"一边 id 说不出话就看名字"的规则，用单键没法表达
+// （A 与 B 同族、B 与 C 同族，A 与 C 也必须同族）。这里用并查集把两种口径合起来，
+// 于是首页角色数、界面分组、撞脸比对三处**共用同一份归族结果**，不会再各写一遍。
+//
+// Q 版形象独立成族（不是造型档，见 CharFamilyKeys 的说明）。
+func CharFamilyIndex(chars []Character) map[string]string {
+	parent := map[string]string{}
+	var find func(string) string
+	find = func(x string) string {
+		p, ok := parent[x]
+		if !ok {
+			parent[x] = x
+			return x
+		}
+		if p == x {
+			return x
+		}
+		r := find(p)
+		parent[x] = r
+		return r
+	}
+	union := func(a, b string) {
+		ra, rb := find(a), find(b)
+		if ra != rb {
+			parent[rb] = ra
+		}
+	}
+	// 先建节点：每张卡用自己的 id 当节点名（id 为空时退回名字）
+	node := func(c Character) string {
+		if s := strings.TrimSpace(c.ID); s != "" {
+			return "card:" + s
+		}
+		return "name:" + strings.TrimSpace(c.Name)
+	}
+	byIDKey := map[string]string{}
+	byNameKey := map[string]string{}
+	for _, c := range chars {
+		n := node(c)
+		find(n)
+		idKey, nameKey := CharFamilyKeys(c.ID, c.Name)
+		if idKey != "" {
+			if first, ok := byIDKey[idKey]; ok {
+				union(n, first)
+			} else {
+				byIDKey[idKey] = n
+			}
+		}
+		if nameKey != "" {
+			if first, ok := byNameKey[nameKey]; ok {
+				union(n, first)
+			} else {
+				byNameKey[nameKey] = n
+			}
+		}
+	}
+	// 再把"同一名字但两边 id 都能解析且不同族"的情形拆开：
+	// 名字并了、而 id 明确说不是一个人 ⇒ 以 id 为准（既有取舍）。
+	for _, c := range chars {
+		for _, d := range chars {
+			if c.ID == d.ID {
+				continue
+			}
+			ci, _ := CharFamilyKeys(c.ID, c.Name)
+			di, _ := CharFamilyKeys(d.ID, d.Name)
+			if ci != "" && di != "" && ci != di {
+				// 两张 id 明确不同族的卡不能同族 —— 若被名字并到了一起，按 id 拆开
+				if find(node(c)) == find(node(d)) {
+					parent[find(node(d))] = node(d)
+				}
+			}
+		}
+	}
+	// 每组取一个**人可读的规范标签**（不是内部节点名）：
+	// 优先用组内最小的 id 家族键（`char_1` 这种，与旧行为一致 —— 界面与投影都在用它），
+	// 没有 id 家族键时才用名字基名。**要确定性**：同一批卡换顺序也得给出同一个标签，
+	// 否则前端的分组会随数据顺序抖。
+	type canon struct {
+		idKey, nameKey, fallback string
+	}
+	groups := map[string][]canon{}
+	for _, c := range chars {
+		idKey, nameKey := CharFamilyKeys(c.ID, c.Name)
+		fallback := strings.TrimSpace(c.ID)
+		if fallback == "" {
+			fallback = "name:" + strings.TrimSpace(c.Name)
+		}
+		root := find(node(c))
+		groups[root] = append(groups[root], canon{idKey: idKey, nameKey: nameKey, fallback: fallback})
+	}
+	label := map[string]string{}
+	for root, members := range groups {
+		best := ""
+		for _, m := range members {
+			if m.idKey != "" && (best == "" || m.idKey < best) {
+				best = m.idKey
+			}
+		}
+		if best == "" {
+			for _, m := range members {
+				if m.nameKey != "" && (best == "" || m.nameKey < best) {
+					best = m.nameKey
+				}
+			}
+		}
+		if best == "" {
+			for _, m := range members {
+				if best == "" || m.fallback < best {
+					best = m.fallback
+				}
+			}
+		}
+		label[root] = best
+	}
+	out := make(map[string]string, len(chars))
+	for _, c := range chars {
+		out[c.ID] = label[find(node(c))]
+	}
+	return out
 }
 
 // CharFamilyCount 一批角色卡里有几个「人」(同一角色的多张造型档算一个人)。
@@ -215,10 +358,8 @@ func SameCharacter(aID, aName, bID, bName string) bool {
 // "怎么多出来一堆新角色"。
 func CharFamilyCount(chars []Character) int {
 	seen := map[string]bool{}
-	for _, c := range chars {
-		if k := CharFamilyKey(c.ID, c.Name); k != "" {
-			seen[k] = true
-		}
+	for _, k := range CharFamilyIndex(chars) {
+		seen[k] = true
 	}
 	return len(seen)
 }
