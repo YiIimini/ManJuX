@@ -73,7 +73,9 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		// 注册键与拆集内部 safeSeries 规整键一致,防占位卡孤儿(同 novels.go)
 		name = safeSeries(name)
-		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, "", nil)
+		// 这条入口(手工粘贴文本拆集)拿不到小说目录,取不到外形锚表 —— 传空串,
+		// 行为与本轮改动之前一致(锚表只走"从小说库生产"那条有目录可查的路)。
+		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, "", "", nil)
 		if err != nil {
 			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
 		}

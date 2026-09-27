@@ -105,18 +105,19 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("小说正文过短(%d 字,预处理后)", len([]rune(text))))
 		return
 	}
-	// 人物外形锚表(技能侧写在 <书名>/设定集/ 下)拼在**正文之前**,作为硬约束。
+	// 人物外形锚表(技能侧写在 `<书名>/设定集/` 下):**交给拆集,由它拼进每一集的 source**。
 	//
-	// 为什么必须有这一步(2026-09-27 实证):正文里的外貌描写实测为零 —— 《求你们骂我》
-	// 第 001 章对主角只有"沈砚睁开眼，正躺在一摊泔水里",而平台 LLM 写出的角色卡是
-	// "瘦长脸、下颌线清晰、眉骨高、深棕色丹凤眼、冷白哑光、左眉尾一道短疤、低马尾及肩胛…"
-	// —— 整套外形是 LLM 现编的:换一次直出就可能换一张脸,而且作者的意图没有落点。
-	// 注意正文合并(readMerged)明确跳过 `设定` 目录,所以这张表要单独读进来
-	// (见 docs/技能侧调整-人物外形锚表.md)。
-	if sheet := readCharacterSheet(in.Path); sheet != "" {
-		text = sheet + "\n\n" + text
+	// 为什么是"交给拆集"而不是"拼在这里的 text 上"(2026-09-27 真机实证后的修正):
+	// 这份 `text` 只喂**拆集**(写 brief),而每集项目的 source.txt 是
+	// `《系列》…【本集剧情】brief ＋【本集原文】` —— 锚表拼在 text 上根本到不了
+	// 脚本阶段的 LLM,角色卡照旧现编(实测第 01 集把 19 岁/低束发/灰白短打编成
+	// 24 岁/高髻/灰褐色短打)。详见 episodeSourceWithSheet 的说明。
+	// 同时不再拼进 text:拆集要的是干净正文(章界识别 + 每集 brief 的上下文),
+	// 2500 字的锚表混进去只会让每个 brief 调用多背一份无关 token。
+	sheet := readCharacterSheet(in.Path)
+	if sheet != "" {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-			Message: fmt.Sprintf("🧬 已注入人物外形锚表(%d 字):角色外形以此表为准", len([]rune(sheet)))})
+			Message: fmt.Sprintf("🧬 已读取人物外形锚表(%d 字):将拼进每一集的分镜输入,角色外形以它为准", len([]rune(sheet)))})
 	}
 	// 读取立项.json 的 art_style 作为视频渲染风格(2026-09-11 用户定调)
 	artStyle := ""
@@ -170,7 +171,7 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, _, err := s.splitNovelToProjects(splitCtx, name, text, maxEp, artStyle, func(series string, newEps []string) {
+		_, _, err := s.splitNovelToProjects(splitCtx, name, text, maxEp, artStyle, sheet, func(series string, newEps []string) {
 			seriesFinal = series
 			if prodP == nil {
 				prodP = prodStart(series, splitCancel) // 注册生产者(含 cancel:停止按钮可中断拆集)
@@ -300,6 +301,32 @@ const characterSheetMaxRunes = 2500
 const characterSheetHeader = "【人物外形锚表 · 硬约束】以下每个角色的外形必须逐项照抄" +
 	"(脸型 / 眉眼 / 鼻唇 / 肤色 / 独特记号 / 发型三要素 / 首套服装),不得改写、不得美化、不得把两个人的特征合并;" +
 	"正文里没有写到的外貌一律以此表为准:\n"
+
+// episodeSourceWithSheet 把外形锚表拼进**一集的 source.txt**(幂等;空表原样返回)。
+//
+// 【为什么必须拼在"每集"而不是"拆集输入"上】(2026-09-27 真机实证)
+// 锚表最早接在 `handleNovelProduce` 的 `text` 上 —— 那份 text 只喂给**拆集**(写 brief),
+// 而每集项目的 `source.txt` 是 `《系列》…【本集剧情】brief ＋【本集原文】`(见 createSeg),
+// **锚表不在里面**。于是脚本阶段的 LLM 看到的仍然是一份没有外貌信息的原文,
+// 角色卡照旧现编:实测《求你们骂我》第 01 集的项目里,沈砚被判成
+// 「二十四岁 / 头顶高髻 / 灰褐色短褐 / 左眉尾疤」,而锚表写的是
+// 「十九岁 / 低束发、中短及下颌 / 洗得发白的灰白粗布短打 / 左手腕墨色纹路 + 右前臂新刀口」——
+// **定妆照按"现编的那个人"出图,全片的身份锚从一开始就是错的**。
+//
+// 所以锚表必须落在**产线的每一集**上:脚本阶段读什么,锚表就得在什么里面。
+// 幂等(带过抬头就不再拼接)是为了"补缺模式重跑""已有集回填"都不会叠两份。
+func episodeSourceWithSheet(src, sheet string) string {
+	sheet = strings.TrimSpace(sheet)
+	if sheet == "" || src == "" || strings.Contains(src, characterSheetHeader) {
+		return src
+	}
+	// 放在标题/全局风格之后、【前情提要】与【本集剧情】之前:硬约束要早于剧情出现,
+	// 但又不能顶掉"这是什么剧的第几集"这条抬头(它是分集上下文的第一句)。
+	if i := strings.Index(src, "\n\n"); i > 0 {
+		return src[:i+2] + characterSheetHeader + sheet + "\n\n" + src[i+2:]
+	}
+	return characterSheetHeader + sheet + "\n\n" + src
+}
 
 // readCharacterSheet 读 <书名>/设定集/ 下的「人物外形锚表」。
 //

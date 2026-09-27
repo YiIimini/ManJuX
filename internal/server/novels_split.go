@@ -17,7 +17,12 @@ import (
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
 
-func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, artStyle string, onEps func(series string, newEps []string)) (string, []string, error) {
+// splitNovelToProjects 把一本小说拆成"一集一个项目"。
+//
+// sheet 是技能侧写的「人物外形锚表」(可为空):它由 createSeg 拼进**每一集**的 source.txt ——
+// 脚本阶段读什么,锚表就得在什么里面(见 episodeSourceWithSheet 的真机实证说明)。
+// 传空串 = 本书没有锚表,行为与接入之前完全一致。
+func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, artStyle, sheet string, onEps func(series string, newEps []string)) (string, []string, error) {
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 	// 拆集参数从设置读取(0=默认值;2026-09-11 用户定调:灵活配置)
@@ -190,6 +195,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			}
 			src := fmt.Sprintf("《%s》系列短视频 第%02d 集《%s》\n全局风格:%s%s\n\n【本集剧情】%s",
 				series, ep.Ep, ep.Title, globalStyle, prev, ep.Brief)
+			// 外形锚表拼在**这一集**的 source 上(而不是拆集输入上):脚本阶段读的就是它,
+			// 拼错地方 = 角色卡照旧现编(2026-09-27 真机实证,见 episodeSourceWithSheet)。
+			src = episodeSourceWithSheet(src, sheet)
 			// 原文:平台按章切片直接给(不依赖 LLM 写的 chapters 字符串);旧路径仅作兜底
 			orig := ep.Orig
 			if orig == "" {
