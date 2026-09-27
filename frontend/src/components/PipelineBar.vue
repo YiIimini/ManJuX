@@ -12,6 +12,19 @@ const project = computed(() => G.project?.project)
 const stageList = computed(() => phases())
 
 // 数据推断:该阶段是否已产出完整结果(不依赖运行 phase,all/续跑时兜底)
+// 资产阶段的"该有多少张 / 已有多少张"。
+//
+// 三处（dataDone / partial / 进度标签）必须问**同一个函数** —— 它们原先各写一遍
+// `characters.length + scenes.length`，2026-09-27 资产阶段开始出**道具图**之后，
+// 分母漏了道具、分子（assets 表里的键）却带着道具 ⇒ 进度会显示成 "7/5" 这种不可能的数。
+// 排除 `_chibi`：Q 版形象是附赠素材，不算资产阶段的目标。
+function assetCounts(pj) {
+  const p = pj.plan || {}
+  const total = (p.characters || []).length + (p.scenes || []).length + (p.props || []).length
+  const have = Object.keys(pj.assets || {}).filter(k => !k.includes('_chibi')).length
+  return { total, have }
+}
+
 function dataDone(id) {
   const pj = G.project
   if (!pj) return false
@@ -20,8 +33,7 @@ function dataDone(id) {
     case 'assets': {
       if (!pj.plan) return false
       if (pj.project.params?.assets?.source === 'skip') return true
-      const total = pj.plan.characters.length + pj.plan.scenes.length
-      const have = Object.keys(pj.assets || {}).length
+      const { total, have } = assetCounts(pj)
       return total > 0 && have >= total
     }
     case 'render': {
@@ -44,8 +56,7 @@ function partial(id) {
   const pj = G.project
   if (!pj || !pj.plan) return false
   if (id === 'assets') {
-    const total = pj.plan.characters.length + pj.plan.scenes.length
-    const have = Object.keys(pj.assets || {}).filter(k => !k.includes('_chibi')).length
+    const { total, have } = assetCounts(pj)
     return total > 0 && have > 0 && have < total
   }
   if (id === 'render') {
@@ -89,8 +100,7 @@ function countOf(id) {
     case 'assets': {
       if (!pj.plan) return { label: '待定妆', pct: 0 }
       if (pj.project.params?.assets?.source === 'skip') return { label: '已跳过', pct: 100 }
-      const total = pj.plan.characters.length + pj.plan.scenes.length
-      const have = Object.keys(pj.assets || {}).filter(k => !k.includes('_chibi')).length
+      const { total, have } = assetCounts(pj)
       return { label: have + '/' + total + ' 定妆', pct: total ? Math.min(100, Math.round(have * 100 / total)) : 0 }
     }
     case 'render': {

@@ -214,6 +214,16 @@ const sceneName = computed(() => {
   const plan = pj.value?.plan
   return plan?.scenes?.find(s => s.id === props.shot.scene)?.name || ''
 })
+// 本镜用到的道具名（2026-09-27：技能侧的 `prop_ids` 到位后，镜头才知道自己要用哪件道具）。
+// 标出来是为了让人一眼看到"这一镜有道具参与" —— 道具图只做人审、不进参考图，
+// 所以这是**唯一的**镜级线索；没有 prop_ids 的老方案退化为不显示（不猜）。
+const propNames = computed(() => {
+  const plan = pj.value?.plan
+  if (!plan?.props) return []
+  return (props.shot.prop_ids || [])
+    .map(pid => plan.props.find(p => p.id === pid)?.name)
+    .filter(Boolean)
+})
 </script>
 
 <template>
@@ -257,6 +267,7 @@ const sceneName = computed(() => {
           </el-tooltip>
           <el-tooltip v-if="sceneName" :content="`场景:${sceneName}`" placement="top">
             <span class="cast-chip scene"><el-icon :size="10"><Location /></el-icon>{{ sceneName }}</span>
+        <span v-for="pn in propNames" :key="pn" class="cast-chip" :title="'本镜用到的道具:' + pn"><el-icon :size="10"><Suitcase /></el-icon>{{ pn }}</span>
           </el-tooltip>
         </div>
         <div><b style="color:var(--mx-cyan)">{{ shot.shot_size }}</b> · {{ shot.camera }}</div>

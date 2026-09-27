@@ -196,7 +196,8 @@ func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Proje
 	if !boardStale(masterPath, out) {
 		return
 	}
-	w, h := assetImageSize(proj)
+	// 三视图板是按**角色**那张定妆照派生的，取"角色"那一档尺寸（板子本身另走 BoardSize）。
+	w, h := assetImageSize(proj, "characters")
 	bw, bh := BoardSize(w, h)
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0,
 		"生成:「%s」三视图细节板（人审一致性 / 建模向参考，%d×%d 横版）…", name, bw, bh)

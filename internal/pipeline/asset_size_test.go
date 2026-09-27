@@ -37,7 +37,7 @@ func TestAssetImageSizeFollowsRenderCanvas(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			w, h := assetImageSize(tc.proj)
+			w, h := assetImageSize(tc.proj, "characters")
 			if w != tc.wantW || h != tc.wantH {
 				t.Fatalf("assetImageSize = %d×%d,期望 %d×%d", w, h, tc.wantW, tc.wantH)
 			}
@@ -46,10 +46,40 @@ func TestAssetImageSizeFollowsRenderCanvas(t *testing.T) {
 	// 与成片同一口径:改了成片画幅,资产尺寸必须跟着改(不是各写各的常量)
 	a := projWithRender(768, 1344)
 	b := projWithRender(1344, 768)
-	aw, ah := assetImageSize(a)
-	bw, bh := assetImageSize(b)
+	aw, ah := assetImageSize(a, "characters")
+	bw, bh := assetImageSize(b, "characters")
 	if aw == bw && ah == bh {
 		t.Error("成片画幅改了而资产尺寸没变 —— 参考图与成片又会不同比例")
+	}
+}
+
+// TestPropAssetIsSquare 道具图是**方幅**：这条是"跟随成片画幅"那条口径的**明确例外**。
+//
+// 理由（2026-09-27 补道具图那轮）：技能侧那张卡的规范是「1:1 白底单件」，
+// 而道具图不进 H3 参考图集合（官方：道具只写文字）—— 竖幅里画一件居中静物等于大半张白纸。
+// 断言写在这里，是为了让下一个人看到"角色/场景跟画幅、道具不跟"时知道这是**定的**，不是漏改。
+func TestPropAssetIsSquare(t *testing.T) {
+	for _, tc := range []struct{ w, h, want int }{
+		{768, 1344, 768}, // 出厂竖幅 → 取短边
+		{1344, 768, 768}, // 横幅 → 同样取短边
+		{1024, 1024, 1024},
+		{1080, 1920, 1072}, // 1080 不是 16 的倍数 → 向下对齐
+	} {
+		p := projWithRender(tc.w, tc.h)
+		w, h := assetImageSize(p, "props")
+		if w != h {
+			t.Errorf("道具图必须是正方形，实际 %d×%d（项目 %d×%d）", w, h, tc.w, tc.h)
+		}
+		if w != tc.want {
+			t.Errorf("道具图边长应为短边向下对齐 16 的倍数（期望 %d），实际 %d", tc.want, w)
+		}
+	}
+	// 方形项目里两者应当一致（别为了道具又引一套系数）
+	p := projWithRender(768, 768)
+	cw, ch := assetImageSize(p, "characters")
+	pw, ph := assetImageSize(p, "props")
+	if cw != pw || ch != ph {
+		t.Errorf("方幅项目里角色与道具应同尺寸，实际 角色 %d×%d / 道具 %d×%d", cw, ch, pw, ph)
 	}
 }
 

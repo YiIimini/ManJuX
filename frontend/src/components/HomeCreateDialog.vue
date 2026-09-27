@@ -98,7 +98,7 @@ function onPickFile(ev) {
         const plan = j.plan && Array.isArray(j.plan.shots) ? j.plan : (Array.isArray(j.shots) ? j : null)
         if (plan) {
           pickedFile.value = { name: f.name, text, kind: 'plan', plan,
-            preview: `《${plan.title || '未命名'}》${plan.shots.length} 镜 / ${(plan.characters || []).length} 角色 / ${(plan.scenes || []).length} 场景` }
+            preview: `《${plan.title || '未命名'}》${plan.shots.length} 镜 / ${(plan.characters || []).length} 角色 / ${(plan.scenes || []).length} 场景 / ${(plan.props || []).length} 道具` }
           return
         }
       } catch { /* 非 JSON 或结构不完整 → 当源文本 */ }

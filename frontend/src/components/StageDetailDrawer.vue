@@ -23,6 +23,9 @@ const titles = { script: '剧本分镜 · 详情', assets: '资产定妆 · 详�
 
 const charList = computed(() => (plan.value?.characters || []).map(c => ({ ...c, asset: assets.value['char:' + c.id] })))
 const sceneList = computed(() => (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
+// 道具清单（与角色/场景同一套 `prop:<id>` 键）。阶段抽屉也是"工作台里的资产"，
+// 2026-09-27 起资产阶段会出道具图，这里不列就等于生成了没入口。
+const propList = computed(() => (plan.value?.props || []).map(p => ({ ...p, asset: assets.value['prop:' + p.id] })))
 
 // 造型档归人(技能侧清单 §4.2):技能侧把"造型随剧情变"落成一角色多张卡
 // (「翻篇·收容所」「翻篇·归零」…,id 形如 char_01v1 / char_01v4)。按卡平铺,
@@ -179,7 +182,7 @@ function castOf(sh) {
           <div class="timecode mt-2" style="word-break:break-all">{{ plan.style }}</div>
         </div>
         <div class="flex items-center justify-between">
-          <span class="text-sm">{{ charPeople }} 角色<template v-if="plan.characters.length !== charPeople">({{ plan.characters.length }} 张造型卡)</template> · {{ plan.scenes.length }} 场景 · {{ plan.shots.length }} 镜头</span>
+          <span class="text-sm">{{ charPeople }} 角色<template v-if="plan.characters.length !== charPeople">({{ plan.characters.length }} 张造型卡)</template> · {{ plan.scenes.length }} 场景<template v-if="(plan.props || []).length"> · {{ plan.props.length }} 道具</template> · {{ plan.shots.length }} 镜头</span>
           <el-button size="small" type="primary" :disabled="pj.project.running" @click="runPhase('script')">
             <el-icon class="mr-1"><RefreshRight /></el-icon>重新生成方案
           </el-button>
@@ -192,7 +195,7 @@ function castOf(sh) {
     <!-- ▎资产定妆 -->
     <div v-else-if="phase === 'assets'" class="flex flex-col gap-3">
       <div class="flex items-center justify-between">
-        <span class="text-sm">{{ charList.length + sceneList.length }} 项资产<template v-if="charList.length !== charPeople">(角色 {{ charPeople }} 位 · 造型卡 {{ charList.length }} 张)</template></span>
+        <span class="text-sm">{{ charList.length + sceneList.length + propList.length }} 项资产<template v-if="charList.length !== charPeople">(角色 {{ charPeople }} 位 · 造型卡 {{ charList.length }} 张)</template><template v-if="propList.length"> · 道具 {{ propList.length }} 件</template></span>
         <el-button size="small" :disabled="pj.project.running" @click="runPhase('assets')"><el-icon class="mr-1"><Refresh /></el-icon>盘点/补齐</el-button>
       </div>
       <template v-for="row in charRows" :key="row._key">
@@ -243,6 +246,23 @@ function castOf(sh) {
         </div>
         <el-button size="small" text :loading="busy.regen==='scene:'+sc.id" @click="regen('scene:'+sc.id)"><el-icon><MagicStick /></el-icon></el-button>
         <el-button v-if="sc.asset" size="small" text @click="delAsset('scene:'+sc.id)"><el-icon><Delete /></el-icon></el-button>
+      </div>
+      <!-- 道具（2026-09-27：资产阶段开始出道具图 —— 1:1 白底单件、人审用，不进 H3 参考图） -->
+      <div v-for="pr in propList" :key="pr.id" class="panel p-3 flex items-center gap-3">
+        <div class="w-12 h-12 rounded-lg overflow-hidden flex-none cursor-zoom-in" style="background:var(--mx-bg2)" @click="viewAsset(pr.asset,'props',pr.name)">
+          <img v-if="pr.asset" :src="api.fileURL(pj.project.id, pr.asset.file)" class="w-full h-full object-cover" />
+        </div>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2"><b class="text-sm">{{ pr.name }}</b>
+            <el-tag size="small" effect="plain" type="info">道具</el-tag>
+            <el-tag size="small" effect="plain" :type="sourceTone(pr.asset?.source)">
+              {{ pr.asset ? sourceLabel(pr.asset.source) : '缺失' }}
+            </el-tag>
+          </div>
+          <div class="text-xs truncate mt-1" style="color:var(--mx-text3)">{{ pr.description || pr.en }}</div>
+        </div>
+        <el-button size="small" text :loading="busy.regen==='prop:'+pr.id" @click="regen('prop:'+pr.id)" title="重新生成道具图"><el-icon><MagicStick /></el-icon></el-button>
+        <el-button v-if="pr.asset" size="small" text @click="delAsset('prop:'+pr.id)"><el-icon><Delete /></el-icon></el-button>
       </div>
     </div>
 

@@ -41,6 +41,10 @@ const charsWithAsset = computed(() =>
   (plan.value?.characters || []).map(c => ({ ...c, asset: assets.value['char:' + c.id] })))
 const scenesWithAsset = computed(() =>
   (plan.value?.scenes || []).map(s => ({ ...s, asset: assets.value['scene:' + s.id] })))
+// 道具卡（2026-09-27 用户：「工作台中的资产也要展示道具」）。资产 id 用 `prop:<id>`，
+// 与角色/场景同一套命名；后端与资产库早就支持这一类（生成侧 2026-09-27 才补上出图）。
+const propsWithAsset = computed(() =>
+  (plan.value?.props || []).map(p => ({ ...p, asset: assets.value['prop:' + p.id] })))
 
 // ---------- 造型档归人(技能侧清单 §4.2) ----------
 //
@@ -445,6 +449,60 @@ const doneShots = computed(() =>
                   </div>
                   <div class="text-xs" style="color:var(--mx-text2)">{{ s.description }}</div>
                 </div>
+              </div>
+            </section>
+
+            <!-- 道具图（2026-09-27 用户：「工作台中的资产也要展示道具」）。
+                 口径要说清，否则用户会问"为什么这件道具没进参考图"：
+                 道具图是**人审资产**（1:1 白底单件，核对这件东西跨镜长得一不一样），
+                 **不进 H3 的参考图集合** —— 官方那句 "Props never get a picture; describe
+                 props in text only" 说的是参考图顺序，refs.go 也只带角色与场景。
+                 生成侧 2026-09-27 才补上出图（此前这一类只被读进方案、从没出过图）。 -->
+            <section>
+              <h3 class="text-sm font-bold mb-3 flex items-center gap-2">
+                <el-icon><Suitcase /></el-icon>道具图
+                <span class="text-xs font-normal" style="color:var(--mx-text2)">
+                  {{ propsWithAsset.length }} 件 · 1:1 白底单件 ·
+                  人审与跨镜一致性核对用<span style="color:var(--mx-text3)">（不进 H3 参考图：官方口径是道具只写文字）</span>
+                </span>
+              </h3>
+              <div v-if="propsWithAsset.length" class="grid gap-5"
+                   style="grid-template-columns:repeat(auto-fill,minmax(160px,1fr))">
+                <div v-for="p in propsWithAsset" :key="p.id" class="shot-card p-3 flex flex-col gap-2">
+                  <div class="flex items-center gap-2">
+                    <b class="text-sm truncate">{{ p.name }}</b>
+                    <el-tag v-if="p.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
+                    <el-tag v-else-if="p.asset" size="small" :type="sourceTone(p.asset?.source)" effect="plain">{{ sourceLabel(p.asset?.source) }}</el-tag>
+                    <i class="dot" :class="p.asset ? 'ok' : 'warn'"></i>
+                  </div>
+                  <div style="aspect-ratio:1/1;background:var(--mx-bg2);border-radius:8px;overflow:hidden"
+                       class="relative flex items-center justify-center cursor-pointer"
+                       :title="'点击上传「' + p.name + '」道具图(png/jpg/webp);同名资产自动复用库'"
+                       @click="upload('props', 'prop:'+p.id, p.name)">
+                    <img v-if="p.asset" :src="api.fileURL(pj.project.id, p.asset.file)"
+                         style="width:100%;height:100%;object-fit:cover" />
+                    <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
+                      <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传道具图</div>
+                    </div>
+                    <div v-if="p.asset" class="cover-acts">
+                      <button class="cover-act" title="预览大图" @click.stop="previewAsset(p.name, p.asset.file)">
+                        <el-icon :size="13"><ZoomIn /></el-icon>
+                      </button>
+                      <button class="cover-act" title="打开所在目录" @click.stop="openAssetDir(p.asset.file)">
+                        <el-icon :size="13"><FolderOpened /></el-icon>
+                      </button>
+                      <button class="cover-act danger" title="删除道具图" @click.stop="removeAsset('prop:'+p.id)">
+                        <el-icon :size="13"><Delete /></el-icon>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="text-xs" style="color:var(--mx-text2)">{{ p.description }}</div>
+                  <div v-if="p.en" class="text-xs timecode truncate" :title="p.en">{{ p.en }}</div>
+                </div>
+              </div>
+              <div v-else class="text-xs" style="color:var(--mx-text3)">
+                这份方案里没有道具卡（技能侧的结构化明细没给 props，或这是更早的方案）。
+                道具图也可以直接在「资产库 → 道具」里入库，新项目遇到同名道具会自动复用、免生成。
               </div>
             </section>
           </div>

@@ -121,3 +121,37 @@ func TestWantsPropScopedByPropIDs(t *testing.T) {
 		t.Error("整片渲染（不做范围限制）时道具全要")
 	}
 }
+
+// TestPropAssetResolversKnowProps 资产的**解析**三处都必须认得 `prop:` 前缀。
+//
+// 2026-09-27 核对时抓到的：资产阶段会出道具图之后，"重新生成"（coordinator.RegenAsset）
+// 与"上传即入库"（server/handlers_asset.go）两处的解析循环只扫了 characters 与 scenes ——
+// 用户对着道具图点「重新生成」只会得到「资产不存在于方案」（而资产明明在）；
+// 上传那条更隐蔽：**上传能成功、但入库元数据是空的**（后续项目按名字复用时拿到裸提示词）。
+//
+// 用源码扫描而不是跑真引擎：这三处的共同点就是「有没有那一支循环」，
+// 跑真链路要 ComfyUI 在跑（与 TestAssetStageIteratesProps 同一手法与前例）。
+func TestPropAssetResolversKnowProps(t *testing.T) {
+	coord, err := os.ReadFile("coordinator.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs := string(coord)
+	if !strings.Contains(cs, `"prop:"+pr.ID == assetID`) {
+		t.Error("RegenAsset 要认得 prop: 前缀，否则道具图点「重新生成」报「资产不存在于方案」")
+	}
+	if !strings.Contains(cs, "PropImagePrompt(proj, plan, pr)") {
+		t.Error("重生成道具图必须走唯一装配点 PropImagePrompt（否则白底单件的画面纪律就丢了）")
+	}
+	asset, err := os.ReadFile("../server/handlers_asset.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	as := string(asset)
+	if !strings.Contains(as, `kind == "props"`) {
+		t.Error("上传端点要按 props 分支写入库元数据（否则上传成功但库里是空描述/空提示词）")
+	}
+	if !strings.Contains(as, "pipeline.PropImagePrompt") {
+		t.Error("入库的道具提示词要过装配点 PropImagePrompt（与生成侧同一套约束）")
+	}
+}

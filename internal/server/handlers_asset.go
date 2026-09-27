@@ -145,6 +145,17 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 						desc, prompt = sc.Description, pipeline.SceneImagePrompt(proj, plan, sc)
 					}
 				}
+			} else if kind == "props" {
+				// 道具同理（2026-09-27 补道具图那轮）：入库的元数据必须是**过装配点**的那份
+				// （白底单件 + 全片风格 + 清汉字），否则后续项目按名字复用它时，
+				// 拿到的是裸提示词 —— 同一件道具在别的集里就成了"另一种画风的另一种东西"。
+				// 少了这一支的表现是"上传能成功、但入库元数据是空的"，最难看出来。
+				proj, _ := s.store.Get(id)
+				for _, pr := range plan.Props {
+					if "prop:"+pr.ID == assetID {
+						desc, prompt = pr.Description, pipeline.PropImagePrompt(proj, plan, pr)
+					}
+				}
 			}
 		}
 		if _, err := s.lib.Put(kind, name, desc, prompt, dest, id, "upload"); err == nil {

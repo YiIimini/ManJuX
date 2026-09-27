@@ -514,16 +514,35 @@ const (
 //
 // 场景不再单独"按项目方向翻转":项目的 Width/Height 本身就是成片方向,直接使用即可
 // (旧实现给横向项目翻出 1248×832,那是与 2:3 主图配套的历史写法)。
-func assetImageSize(proj *project.Project) (int, int) {
-	if proj == nil {
-		return DefaultAssetWidth, DefaultAssetHeight
-	}
-	rp := proj.Config.Params.Render
-	if rp.Width <= 0 || rp.Height <= 0 {
+// assetImageSize 资产图（定妆照 / 场景图 / 道具图）的生成尺寸。
+//
+// 口径分两类，**理由都在画面上**：
+//   - 角色 / 场景 = **项目的成片画幅**。它们是 H3 的参考图，形状必须与成片一致 ——
+//     旧实现写死的 832×1248(2:3) 拿给 9:16 的成片用，模型只能自行裁切/拉伸（人脸被拉宽、
+//     头顶被切）从第一帧就埋下了；这条是 asset_size_test.go 那个闸门钉住的。
+//   - 道具 = **正方形**（2026-09-27 补道具图那轮定的）。技能侧那张卡的规范就是
+//     「1:1 白底单件」（`PropImagePrompt` 的画面纪律也这么写），而道具图**不进 H3 参考图集合**
+//     （官方：道具只写文字）—— 竖幅画一件居中静物等于大半张白纸，白白多烧 43% 的像素。
+//     顺手还满足朝向自检的口径（正方形不判方向，见 sceneOrientationMismatch）。
+func assetImageSize(proj *project.Project, kind string) (int, int) {
+	w, h := DefaultAssetWidth, DefaultAssetHeight
+	if proj != nil {
 		// 老项目/技能端导入包可能没有 render 参数(读盘兜底见 project.ensureDefaultParams)
-		return DefaultAssetWidth, DefaultAssetHeight
+		if rp := proj.Config.Params.Render; rp.Width > 0 && rp.Height > 0 {
+			w, h = rp.Width, rp.Height
+		}
 	}
-	return rp.Width, rp.Height
+	if kind == "props" {
+		s := w
+		if h < s {
+			s = h
+		}
+		if s -= s % 16; s < 256 {
+			s = 256 // 极小画幅/异常配置的兜底，别生成一张 32×32 的"道具图"
+		}
+		return s, s
+	}
+	return w, h
 }
 
 // genAssetImage 资产阶段/渲染前补齐的**单张参考图生成**(打印播报 + 交给唯一出口)。
@@ -536,7 +555,7 @@ func assetImageSize(proj *project.Project) (int, int) {
 // 种子在名字锚定的基准上加 attempt×101,于是"同名必同图"在重出这一路被有意打破 ——
 // 重出要的正是"换一颗种子再抽一次"。同一颗种子重出等于画出同一张图,白烧一次 GPU。
 func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, ce engine.Engine, kind, id, name, imagePrompt string, assets map[string]project.Asset, ek EntityKind, attempt int) (string, error) {
-	w, h := assetImageSize(proj)
+	w, h := assetImageSize(proj, kind)
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
 	seed := nameSeed(kind, name) + int64(attempt)*101

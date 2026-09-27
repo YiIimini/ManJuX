@@ -170,6 +170,14 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 			kind, name, desc = "scenes", sc.Name, sc.Description
 		}
 	}
+	// 道具(2026-09-27 补):资产阶段开始出道具图,抽屉里也就有了「重新生成」这颗按钮 ——
+	// 少了这一支,点它只会得到"资产不存在于方案"(而资产明明在)。提示词同样**不在循环里取原值**,
+	// 走下面的 PropImagePrompt 装配点。
+	for _, pr := range plan.Props {
+		if "prop:"+pr.ID == assetID {
+			kind, name, desc = "props", pr.Name, pr.Description
+		}
+	}
 	if kind == "" {
 		// Q 版等派生资产:直接用资产表里存的提示词重生成(不入库)
 		if assets, err := c.store.LoadAssets(projectID); err == nil {
@@ -208,6 +216,16 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 				break
 			}
 		}
+	} else if kind == "props" {
+		// 道具同理走**道具装配唯一实现点**(PropImagePrompt,2026-09-27):白底单件那套画面纪律
+		// 只能有一个出口,漏掉它 = 用户点一次「重新生成」就把道具图打回裸提示词,
+		// 于是"人审用的白底单件"变成一张带场景的图,跨镜比对就无从谈起。
+		for _, pr := range plan.Props {
+			if "prop:"+pr.ID == assetID {
+				prompt = PropImagePrompt(proj, plan, pr)
+				break
+			}
+		}
 	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
@@ -221,7 +239,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	// 尺寸口径与产线一致:资产图 = 项目的成片画幅(见 stages_assets.go 的 assetImageSize)。
 	// 旧实现在这里也是写死的 832×1248 + 场景按方向翻转 —— "重新生成的那张"与产线那张
 	// 比例不同,同一个角色在参考图里就已经是两种构图。
-	w, h := assetImageSize(proj)
+	w, h := assetImageSize(proj, kind)
 	if isChibi {
 		w, h = 1024, 1024 // Q 版是方幅(与产线 Q 版同一口径)
 	}
