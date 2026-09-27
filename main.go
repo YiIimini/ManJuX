@@ -86,12 +86,13 @@ func main() {
 	fatalIf(err, "初始化资产库失败")
 	// ComfyUI 生命周期通知(启动成功/停止完成)→ 全局事件流:
 	// 前端底栏灯/首页 chip/管理页即时同步,不再等 15s 轮询或探测翻转
+	//
+	// 停止的来源只有两个:管理页手动「停止引擎」与退出平台 —— 空闲不再停进程
+	// (2026-09-27:空闲只卸载模型释放显存,见 comfyengine/idle.go 的说明)。
 	comfyengine.SetLifecycleNotice(func(alive bool, why string) {
 		msg := "ComfyUI 已停止(手动)"
 		if alive {
 			msg = "ComfyUI 已启动,渲染与抽卡可用"
-		} else if why == "空闲自动退出" {
-			msg = "ComfyUI 已停止(空闲自动退出,下次渲染自动重启)"
 		}
 		bus.Publish(pipeline.Event{Phase: "comfy", Level: "info", Message: msg})
 	})

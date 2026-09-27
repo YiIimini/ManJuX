@@ -55,12 +55,16 @@ func TestRenderRejectsMissingLength(t *testing.T) {
 	}
 }
 
-// TestShouldIdleStop 空闲看门狗判据(纯函数,便于把边界钉死)。
+// TestShouldIdleFree 空闲看门狗判据(纯函数,便于把边界钉死)。
+//
+// **动作已从"停引擎"改成"卸模型释放显存"**(2026-09-27 用户报障:「平台中停止项目,
+// ComfyUI 只需要释放显存,为什么要关闭它?只有退出平台进程才关闭 ComfyUI」)。
+// 判据本身不变,变的只是动作 —— 所以这里钉的仍是"什么时候可以动"。
 //
 // 回归(2026-09-26 渲染管线审查):判据只看"最近一次引擎调用",而管线在镜与镜之间
-// 不碰引擎 —— 单镜耗时一旦超过 IdleStopMin(默认 10 分钟,refine/quality 档与长镜
-// 都是),巡检落在镜间空档就会 taskkill 掉正在产线的引擎。
-func TestShouldIdleStop(t *testing.T) {
+// 不碰引擎 —— 单镜耗时一旦超过 IdleFreeMin(默认 10 分钟,refine/quality 档与长镜
+// 都是),巡检落在镜间空档就会把正在产线的权重卸掉。
+func TestShouldIdleFree(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
 		name      string
@@ -103,16 +107,16 @@ func TestShouldIdleStop(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		got := shouldIdleStop(c.lastBusy, now, c.idleMin, c.owned, c.queueBusy, c.alive)
+		got := shouldIdleFree(c.lastBusy, now, c.idleMin, c.owned, c.queueBusy, c.alive)
 		if got != c.want {
-			t.Errorf("%s: shouldIdleStop = %v, want %v(%s)", c.name, got, c.want, c.why)
+			t.Errorf("%s: shouldIdleFree = %v, want %v(%s)", c.name, got, c.want, c.why)
 		}
 	}
 }
 
 // TestLongRenderKeepsEngineBusy 长作业必须"进出都打点"。
 //
-// shouldIdleStop 只看 lastBusy,所以判据的另一半在**打点位置**:只在入口打点的话,
+// shouldIdleFree 只看 lastBusy,所以判据的另一半在**打点位置**:只在入口打点的话,
 // 单镜跑 20 分钟时 lastBusy 已经旧了 20 分钟,镜间空档必然落入"空闲"窗口。
 // 这类"调用位置"没有运行期观测面,只能对着源码钉。
 func TestLongRenderKeepsEngineBusy(t *testing.T) {
@@ -146,5 +150,40 @@ func TestRenderDoesNotFreeVRAMPerShot(t *testing.T) {
 		if strings.Contains(ln, "client().Free(") {
 			t.Errorf("engine.go:%d 渲染路径里出现了 /free(逐镜卸载模型会让下一镜重新加载 20GB 权重):%s", i+1, trimmed)
 		}
+	}
+}
+
+// TestIdleWatcherReleasesVRAMNotProcess 空闲治理**只卸模型、绝不碰进程**。
+//
+// 用户 2026-09-27 的批评:点了停止项目,过一会儿 ComfyUI 整没了 —— 而停项目/空闲本该
+// 只把显存交还,关进程的时机**只有**两个:退出平台(main.go 的 OnShutdown → StopAdmin)
+// 与管理页那颗手动「停止引擎」按钮(comfyAction 的 stop)。
+//
+// 这类"调用了什么"没有运行期观测面(要真引擎 + 真等待十分钟),只能对着源码钉。
+func TestIdleWatcherReleasesVRAMNotProcess(t *testing.T) {
+	src, err := readSourceFile("idle.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(src, "FreeVRAM(") {
+		t.Error("空闲治理必须走 /free 卸载模型释放显存")
+	}
+	for _, bad := range []string{"stopManagedOnly", "killTree", "taskkill"} {
+		// 注释里可以提(说明为什么不再用它),代码里不许出现 —— 与
+		// TestRenderDoesNotFreeVRAMPerShot 同一条规矩。
+		for i, ln := range strings.Split(src, "\n") {
+			trimmed := strings.TrimSpace(ln)
+			if strings.HasPrefix(trimmed, "//") {
+				continue
+			}
+			if strings.Contains(ln, bad) {
+				t.Errorf("idle.go:%d 空闲看门狗不得结束引擎进程(发现 %q)—— 关进程的时机只有退出平台与手动停止",
+					i+1, bad)
+			}
+		}
+	}
+	// 闲得够久也不许动进程:判据函数本身只返回 bool,动作在调用点上。
+	if !strings.Contains(src, "shouldIdleFree") {
+		t.Error("空闲判据函数名应与动作一致(shouldIdleFree)")
 	}
 }

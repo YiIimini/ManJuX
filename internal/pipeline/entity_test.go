@@ -200,7 +200,7 @@ func TestAnchorPromptObjectOnlyHasNoHumanLock(t *testing.T) {
 	if !strings.Contains(off, "ARTEFACT CLAUSE") {
 		t.Error("关闭画风开关不应丢掉反拟人化条款")
 	}
-	if strings.Contains(off, "MATTE ANIMATED LOOK") {
+	if strings.Contains(off, RenderMediumMarker) {
 		t.Error("关闭画风开关后不应再有画风块")
 	}
 }

@@ -32,67 +32,91 @@ import (
 // 一件器物被要求"简化五官、哑光粉质肤色"就是在逼模型给它长一张脸。类型条款见
 // entity_prompts.go 的 entityProfiles(每类各自的渲染方法)。
 
-// MediumMarker 动画介质块的唯一标记串。
+// MediumMarker 图像侧介质块的唯一标记串。
 //
-// 两处用途:① "已经带过就不再叠"的判据;② **反推一张定妆照走的是动画线还是写实线**
+// 两处用途:① "已经带过就不再叠"的判据;② **反推一张定妆照走的是电影线还是用户上传的写实图**
 // (RealisticForPrompt)—— 没有项目上下文的调用方(资产库「补全多视角」)只能这么判断。
-const MediumMarker = "ANIMATED MATTE RENDER"
+//
+// **口径迁移(2026-09-27 用户报障)**:用户问「平台端小说 LLM 解析渲染的内容贴合原文,
+// 但为什么是 2D 漫画风格」。查下来两块都在推 2D —— ① 本文件的介质块写死了
+// "2D/2.5D animation, hand-drawn clean line art, flat cel-shaded colour";② 平台 LLM 直出
+// 的提示词(director)明确要求"必须是动画风格(donghua/anime/cel-shaded),绝不写实"。
+// 而技能侧《立项.json》的「渲染风格串」要的是
+// "a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces … This is a Chinese period film,
+// not a western fantasy, not cyberpunk neon, not japanese anime" —— 两套打架,出图取折中,
+// 落在"2D 平涂漫画"。用户 2026-09-26 的规则是「一切创作产物的电影级画面风格必须是国风系」,
+// 所以介质块整体迁到**国风电影级 3D 写实 + 半风格化理想脸**(表面写实、脸理想化,
+// 既不是真人照片也不是日式 2D 卡通;不影射真人的法务约束原样保留)。
+const MediumMarker = "MATTE CINEMATIC RENDER"
+
+// legacyMediumMarker 迁移前的标记串。资产库里**已经存过**的定妆照提示词带的是它,
+// 反推判据必须同时认 —— 否则存量资产会被判成"用户上传的写实图",多视角补齐会走错介质。
+const legacyMediumMarker = "ANIMATED MATTE RENDER"
 
 // RenderMediumMarker **渲染侧**介质块的唯一标记串。
 //
 // 为什么和 MediumMarker 分开:两块内容不可互换(image 块是纯正面描述、一个否定词都
 // 不许有;render 块才允许写 NEGATIVE),标记串也必须分开 —— 否则"这张定妆照是不是
-// 动画线"会被渲染侧的标记误判成真。两侧的标记都由测试钉住(mediumMarker 一致性)。
+// 电影线"会被渲染侧的标记误判成真。两侧的标记都由测试钉住(mediumMarker 一致性)。
 //
 // 它的第二个用途是闸门:所有"会出像素"的路径(主渲染/单镜2K/成片2K/局部重绘/音频驱动)
 // 的提示词都必须含它 —— 成片 2K 曾用一句裸字面量绕过全部约束(见 final2k.go 的说明)。
-const RenderMediumMarker = "MATTE ANIMATED LOOK"
+const RenderMediumMarker = "CINEMATIC MATTE LOOK"
+
+// legacyRenderMediumMarker 迁移前的渲染侧标记串(同上,存量产物兼容)。
+const legacyRenderMediumMarker = "MATTE ANIMATED LOOK"
 
 // animatedMediumImageBlock Krea-2 侧的**通用介质块**(不含任何身体部位词)。
 //
-// 只能用"它是什么"来描述:手绘线稿 + 赛璐璐平涂 + 宽而软的平涂阴影 + 哑光暗哑质感 +
-// 柔和低对比散射光 + 原创设计。一个否定词都不写。
+// 只能用"它是什么"来描述:电影级 3D 写实表面 + 真实材质响应 + 柔和动机光 + 自然颗粒 +
+// 浅景深 + 哑光。**一个否定词都不写**(Krea-2 是 CFG 1.0 的蒸馏模型,否定词不生效,
+// 还会把名词当指令画出来 —— 见本文件顶部 uniformCivilianClarify 的实测记录)。
 func animatedMediumImageBlock() string {
-	return "\n\n" + MediumMarker + " (mandatory): 2D/2.5D animation — hand-drawn clean line art, " +
-		"flat cel-shaded colour with wide soft shadow shapes, a matte dull even finish across every surface, " +
-		"soft diffuse low-contrast light that falls gently across the form. " +
-		"The subject is an original animation design." +
-		"(中文对照:动画化渲染——手绘线稿 + 赛璐璐平涂与宽软的平涂阴影 + 整体哑光暗哑质感(均匀、不反光)+ " +
-		"柔和低对比散射光;主体为原创设计。)"
+	return "\n\n" + MediumMarker + " (mandatory): a cinematic photoreal 3D render — real materials with " +
+		"visible craft (aged timber, paper, silk, brocade, brass, lacquer, glazed clay, wet stone), true light " +
+		"response on every surface, soft motivated key light with a gentle falloff, natural film grain, " +
+		"shallow depth of field, and an overall matte finish whose highlights stay wide, dull and low in " +
+		"contrast. The subject is an original design." +
+		"(中文对照:电影级 3D 写实渲染——真实材质与工艺痕迹(旧木/纸/丝/锦/铜/漆/陶/湿石)、" +
+		"真实受光响应、柔和动机光与平缓衰减、自然胶片颗粒、浅景深,整体哑光、高光宽而暗哑;主体为原创设计。)"
 }
 
 // animatedFaceImageBlock Krea-2(人物定妆照/重抽)用的画风块 = 通用介质 + **人类专属条款**。
 //
-// 只能用"它是什么"来描述:手绘线稿 + 简化的图形化五官 + 赛璐璐平涂 + 宽而软的平涂
-// 阴影 + 哑光粉质肤色 + 柔和低对比散射光 + 原创动画设计。一个否定词都不写。
+// 只能用"它是什么"来描述:理想化的半风格化面孔 —— 结构清晰、五官简化可读(不是真人照片的
+// 毛孔级写实,也不是 2D 平涂线稿),皮肤为哑光均匀、与全片颗粒一致的质感。一个否定词都不写。
 func animatedFaceImageBlock() string {
-	return animatedMediumImageBlock() + "\n- Human faces are hand-drawn with simplified graphic facial features, and skin reads as a " +
-		"matte powdery complexion with a dull even finish." +
-		"(中文对照:人物:五官为手绘简化图形化处理,肤色哑光粉质、整体暗哑均匀。)"
+	return animatedMediumImageBlock() + "\n- Human faces are idealised and semi-stylised: a clean graphic facial " +
+		"structure with simplified, readable features, and skin that reads as a matte, even complexion with " +
+		"the same fine film grain as everything else." +
+		"(中文对照:人物:理想化半风格化面孔——结构清晰、五官简化可读;肤色哑光均匀,与全片同一层细颗粒。)"
 }
 
 // animatedMediumRenderBlock H3 侧的**通用介质块**:画风 + 质感 + 通用排除句。
 //
 // 通用排除句里保留"真人照片脸/演员/影射真实人物"三条 —— 它们对任何实体都成立
-// (一件器物也不该长着一张明星脸)。皮肤专属的排除项(油光/汗湿高光)放在人类条款里。
+// (一件器物也不该长着一张明星脸)。另外**显式排除 2D 卡通与手绘动画线稿**:
+// 这是 2026-09-27 那次"为什么是 2D 漫画风格"的直接对策 —— 不说清,模型会往
+// 训练集里最省事的平涂卡通回落。
 func animatedMediumRenderBlock() string {
 	return "\n\n" + RenderMediumMarker + " (mandatory, applies to every frame of this video):\n" +
-		"- The whole video is stylized 2D/2.5D animation (donghua): hand-drawn line art, flat cel-shaded colour with wide soft shadow shapes.\n" +
-		"- Every surface reads MATTE: flat even shading, with each highlight staying dull, wide and low in contrast.\n" +
-		"- Everything stays dry and powdery throughout: the finish remains dull and even.\n" +
-		"- Lighting is soft, even and low-contrast with a gentle falloff, so nothing ever carries a hard hot spot.\n" +
-		"- Every design in this video is ORIGINAL.\n" +
+		"- The whole video is a cinematic photoreal 3D render (guofeng period Chinese): real material response on every surface, " +
+		"a motivated key light with a gentle falloff, natural film grain, shallow depth of field and true-to-life surface detail.\n" +
+		"- Every surface reads MATTE: flat even shading, with each highlight staying wide, dull and low in contrast.\n" +
+		"- Everything stays dry and even throughout.\n" +
+		"- Lighting is soft and low-contrast with a gentle falloff, so nothing ever carries a hard hot spot.\n" +
+		"- Every design in this video is ORIGINAL, and the visual language is Chinese period cinema.\n" +
 		"NEGATIVE (must not happen): a photographic or 3D-scanned human face, a live-action actor's face, any resemblance to a real person, " +
-		"celebrity or public figure, and a glossy plastic or wax finish."
+		"celebrity or public figure, a glossy plastic or wax finish, flat cel-shaded cartoon rendering, and hand-drawn anime or manga line art."
 }
 
 // humanFaceRenderClause 人类专属的渲染条款(脸/皮肤),接在通用介质块之后。
 func humanFaceRenderClause() string {
-	return "\n- Every human face is a hand-drawn line-art face with simplified graphic features; skin reads as a flat matte complexion " +
-		"with a dull even finish.\n" +
-		"- Skin specifically: no oily or greasy skin, no wet or sweaty highlights, and no hard specular on the forehead, nose bridge or cheekbones.\n" +
-		"(中文对照:人物:手绘线稿脸、五官简化;肤色哑光均匀,额头/鼻梁/颧骨的高光宽而暗哑;" +
-		"全片不许出现油光、汗湿反光、塑料蜡质感、真人照片脸或任何影射真实人物/演员/公众人物的长相。)"
+	return "\n- Every human face is idealised and semi-stylised — a clean graphic facial structure with simplified, " +
+		"readable features — rendered with real skin texture and the same fine film grain as the rest of the frame.\n" +
+		"- Skin specifically: matte and even, with no oily or greasy skin, no wet or sweaty highlights, and no hard specular on the forehead, nose bridge or cheekbones.\n" +
+		"(中文对照:人物:理想化半风格化面孔(结构清晰、五官简化可读),皮肤有真实质感与与全片一致的细颗粒;" +
+		"肤色哑光均匀,额头/鼻梁/颧骨的高光宽而暗哑;全片不许出现油光、汗湿反光、塑料蜡质感、真人照片脸或任何影射真实人物/演员/公众人物的长相。)"
 }
 
 // animatedFaceRenderBlock H3(渲染出片/2K 重生成/局部重绘/音频驱动)用的画风块:
@@ -132,13 +156,19 @@ func TurnaroundMediumBlock(kind EntityKind, realistic bool) string {
 	}
 }
 
-// RealisticForPrompt 反推"这张定妆照该用写实介质还是动画介质" —— 给**没有项目
+// RealisticForPrompt 反推"这张定妆照该用电影介质还是用户自己上传的写实图介质" —— 给**没有项目
 // 上下文**的调用方用(资产库「补全多视角」拿不到项目的 stylized_faces)。
 //
-// 判据是定妆照提示词里有没有我们自己的介质标记串:有 = 它是 Krea-2 动画线画的;
-// 没有 = 多半是用户上传的真人照片/写实图(那种情况下强塞动画介质同样是错的)。
+// 判据是定妆照提示词里有没有我们自己的介质标记串:有 = 它是本应用画的;没有 = 多半是用户
+// 上传的真人照片/写实图(那种情况下强塞本应用的介质同样是错的)。
+//
+// **两个标记串都要认**:资产库里迁移前存下的卡带的是旧的 `ANIMATED MATTE RENDER`,
+// 只认新串会把存量资产判成"用户上传图",多视角补齐就会走错介质。
 func RealisticForPrompt(imagePrompt string) bool {
-	return !strings.Contains(imagePrompt, MediumMarker)
+	if strings.Contains(imagePrompt, MediumMarker) || strings.Contains(imagePrompt, legacyMediumMarker) {
+		return false
+	}
+	return true
 }
 
 // photorealRequested 风格文本里是否明确要真人/写实画风。

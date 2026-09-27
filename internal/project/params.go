@@ -293,12 +293,17 @@ func DefaultStageParams() StageParams {
 		// MaxShots=0:内容驱动(2026-09-11 用户定调「该多少就多少」)——LLM 看
 		// 原文自行决定镜头数,不人为钳制;Sanitize 上限 30 只作安全网
 		//
-		// Styles 默认国漫二维:2026-09-24 用户定调「角色不要真人脸,动漫化,避免侵权」
-		// —— 二维赛璐璐既是用户要的画风,也顺带解决"人物油腻"(平涂肤色没有皮脂高光),
-		// 且与现实人物天然拉开距离。要真人剧的项目自己把风格换成 live_action 并关掉
-		// script.stylized_faces。
+		// Styles 默认**国风电影级**(2026-09-27 改):原默认是 `guoman_2d`(国漫二维动画),
+		// 而平台 LLM 直出的提示词(director)当时也明文要求"必须是动画风格" —— 两层叠起来,
+		// 用户看到的就是「平台端 LLM 解析渲染的内容贴合原文,但为什么是 2D 漫画风格」。
+		// 新默认与技能侧《立项.json》的「渲染风格串」同源(用户 2026-09-26 规则:
+		// 「一切创作产物的电影级画面风格必须是国风系」),这样两条产品线的默认画风一致:
+		// 同一部剧走平台直出或走技能端脚本,出来的画风不会变成两种。
+		// 仍然保留"非真人照片脸"的法务底线(半风格化理想脸 —— 见 pipeline/artstyle.go);
+		// 要真人实拍的项目自己换成 live_action 并关掉 script.stylized_faces,
+		// 要二维动画的自己换回 guoman_2d(预设表里都还在)。
 		Script: ScriptParams{MaxShots: 0, TotalSeconds: 0, StyleHint: "",
-			Styles: []string{"guoman_2d"}, StylizedFaces: Bool(true)},
+			Styles: []string{"guofeng_cinematic"}, StylizedFaces: Bool(true)},
 		// "krea2" 是**资产获取方式**的历史取值(含义:本地模型自动定妆),
 		// 与实际用哪个图像模型无关 —— 模型由 settings.comfy.image_family 决定
 		// (见 comfyengine/imagefamily.go)。资产文件上记录的 Source 才是"谁生成的"。

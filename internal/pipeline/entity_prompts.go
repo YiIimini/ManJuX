@@ -448,10 +448,11 @@ func (p entityProfile) TurnaroundPrompt(name, imagePrompt, medium string) string
 		sb.WriteString("- " + r + "\n")
 	}
 	if medium != "" {
-		sb.WriteString("- RENDERING MEDIUM IS PART OF THE IDENTITY: <Picture 1> is stylized 2D/2.5D animation. " +
-			"Do NOT re-render the subject as a photographed human or as a realistic 3D/plastic model; the line art, " +
-			"the flat cel shading, the flat colour fields and the matte finish must stay identical in every frame " +
-			"(see MEDIUM LOCK above).\n")
+		sb.WriteString("- RENDERING MEDIUM IS PART OF THE IDENTITY: <Picture 1> is a cinematic photoreal 3D render " +
+			"with IDEALISED, SEMI-STYLISED faces. Do NOT re-render the subject as a flat cel-shaded cartoon or a " +
+			"hand-drawn anime/manga figure, and do NOT turn it into a photographed real person or a glossy plastic " +
+			"model; the real material response, the matte finish and the fine film grain must stay identical in every " +
+			"frame (see MEDIUM LOCK above).\n")
 	}
 	sb.WriteString("\ndetailed_description:\n")
 	sb.WriteString(p.TurnDetail + "\n")

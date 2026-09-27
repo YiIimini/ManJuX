@@ -31,7 +31,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 {
   "title": "剧名(中文,≤12字)",
   "logline": "一句话故事(中文,≤40字)",
-  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series. It must be an ANIMATION style (donghua / anime / cel-shaded illustration), never photorealistic live-action.",
+  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series. It must be a CINEMATIC GUOFENG (Chinese period) style with a photoreal 3D surface and IDEALISED, SEMI-STYLISED faces — e.g. 'GUOFENG ANIMATED-FEATURE ART DIRECTION … a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces; muted celadon-grey and ink-wash palette; real materials with visible craft; soft motivated key light; matte finish, natural film grain, shallow depth of field; a Chinese period film, not a western fantasy, not cyberpunk neon, not japanese anime'. Write it as ENGLISH prose, never as a 2D cartoon / cel-shaded / hand-drawn-anime style, and never as photorealistic live-action with real actors.",
   "characters": [
     {"id":"char_xiaofan","name":"小凡","kind":"human","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt, IDENTITY FIRST per CAST DISTINCTNESS: [distinctive physical identity: age, face shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style field above EXACTLY — same art style as the series]' then 'plain background, upper-body framing, front-facing'. NEVER open with style words; NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
   ],
@@ -173,18 +173,26 @@ const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same se
 - image_prompt STRUCTURE (identity first): open with this character's distinctive physical identity (age, face shape, build, hair, eyes, skin, signature marker), then costume, then "in [COPY the global style EXACTLY]", end with "plain background, upper-body framing, front-facing". Do NOT open the portrait prompt with style words — identity traits must LEAD the prompt so they dominate the render.
 - HAIR MUST BE UNAMBIGUOUS — three things, every time (2026-09-25 事故): the **TIE** (low ponytail / high ponytail / bun / loose), the **LENGTH** (to the jaw / shoulder / waist), and the **FOREHEAD STATE** (combed back and clear, or exactly how many wisps fall where). Never write just "ponytail", "hair tied up" or "short hair": an unstated forehead is what the image model fills in with invented strands over the face, and the video model then amplifies those strands into long flowing hair — the character's hair visibly changes from one shot to the next. If the design does cover the forehead, say how; if it does not, write "combed back, forehead clear, no strands over the face". Put the same three facts in the character's "description" field so both the sheet and every shot prompt agree.
 - If the source states a character's appearance (age, build, hair color, scars...), follow it EXACTLY; never beautify or average it away. A fat character stays fat, an old character stays old, a scarred character keeps the scar.
-- Faces are ORIGINAL ANIMATION DESIGNS (avoid infringing anyone's likeness): never model a character on a real person, actor, singer, celebrity or public figure, never name a character after one, and never write "looks like <real person>" in any field.`
+- Faces are ORIGINAL DESIGNS (avoid infringing anyone's likeness): never model a character on a real person, actor, singer, celebrity or public figure, never name a character after one, and never write "looks like <real person>" in any field.`
 
 // animeFaceLock 角色画风锁(注入到用户附加要求最前面)。
 //
 // 三个"必须"对应三件不同的事:①`style` 字段与每张 image_prompt、每镜 H3 提示词
-// 用同一种动画画风(否则定妆照与视频又是两套);②脸必须是动画脸(平涂 + 线稿 +
-// 哑光,不是照片里的皮脂高光);③原创设计,不影射任何真实人物 —— 这一条是避免侵权
-// 的落点,必须写在分镜层,不能只靠画图模型自觉。
+// 用同一种画风(否则定妆照与视频又是两套);②脸必须是**理想化的半风格化电影脸**
+// (结构与五官可读、皮肤有真实质感但不油不亮,不是 2D 平涂卡通、也不是真人照片);
+// ③原创设计,不影射任何真实人物 —— 这一条是避免侵权的落点,必须写在分镜层,
+// 不能只靠画图模型自觉。
+//
+// **口径迁移(2026-09-27 用户报障)**:原话是"必须是 2D/2.5D donghua 动画风格
+// (clean line art, cel-shaded flat colour, matte powdery skin)" —— 这条**明文要求 LLM
+// 写 2D 漫画风**,是"平台端小说 LLM 解析渲染出来是 2D 漫画风格"的直接原因;
+// 而技能侧《立项.json》要的是 photoreal 3D + 国风电影,两套打架。用户 2026-09-26 规则
+// 「一切创作产物的电影级画面风格必须是国风系」→ 统一到国风电影级 3D 写实 + 半风格化脸。
+// 变量名保留(调用点与测试都在用),语义已从"动画脸锁"变成"电影脸锁"。
 const animeFaceLock = `CHARACTER STYLE LOCK (MANDATORY, highest priority):
-- The 'style' field, EVERY character image_prompt and EVERY shot h3_prompt must use the SAME stylized ANIMATION art style (2D/2.5D donghua look: clean line art, cel-shaded flat colour, simplified graphic facial features, matte powdery skin with a dull even finish).
-- Never write or imply a photorealistic human face, live-action actor, photographic skin texture, glossy or oily skin, wet highlights, or a plastic/wax finish anywhere in the plan.
-- Every face is an ORIGINAL animation design: never describe a character as looking like a real person, actor, singer, celebrity or public figure, and never use such a name as a character name.`
+- The 'style' field, EVERY character image_prompt and EVERY shot h3_prompt must use the SAME cinematic GUOFENG (Chinese period) art style: a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces, real materials with visible craft, soft motivated key light, matte finish, natural film grain and shallow depth of field. It is a Chinese period film — not a western fantasy, not cyberpunk neon, not japanese anime.
+- Faces are idealised and semi-stylised: a clean graphic facial structure with simplified, readable features, rendered with real skin texture and fine grain. Never write a flat cel-shaded cartoon or hand-drawn manga/anime look, and never write a photorealistic live-action actor, a photographic face, glossy or oily skin, wet highlights, or a plastic/wax finish.
+- Every face is an ORIGINAL design: never describe a character as looking like a real person, actor, singer, celebrity or public figure, and never use such a name as a character name.`
 
 // SystemPrompt 单轮直出(完整 schema + 全部规则)。
 //

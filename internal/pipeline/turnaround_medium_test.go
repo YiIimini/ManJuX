@@ -20,7 +20,7 @@ import (
 func TestTurnaroundMediumLock(t *testing.T) {
 	// ① 人:通用介质 + 人脸条款
 	human := TurnaroundMediumBlock(KindHuman, false)
-	for _, want := range []string{"MATTE ANIMATED LOOK", "2D/2.5D animation", "hand-drawn line-art face"} {
+	for _, want := range []string{RenderMediumMarker, "cinematic photoreal 3D render", "idealised and semi-stylised"} {
 		if !strings.Contains(human, want) {
 			t.Errorf("人类转身介质锁缺少 %q:\n%s", want, human)
 		}
@@ -32,10 +32,10 @@ func TestTurnaroundMediumLock(t *testing.T) {
 	// 对器物同样成立,所以判据不能是"含 face 字样",而是"没有人类的正面脸部条款"。
 	for _, k := range []EntityKind{KindObject, KindSpiritPet, KindBeast, KindIncorporeal} {
 		got := TurnaroundMediumBlock(k, false)
-		if !strings.Contains(got, "MATTE ANIMATED LOOK") {
+		if !strings.Contains(got, RenderMediumMarker) {
 			t.Errorf("%s 缺少通用介质块:\n%s", k, got)
 		}
-		for _, banned := range []string{"Every human face is a hand-drawn line-art face", "Skin specifically"} {
+		for _, banned := range []string{"Every human face is idealised and semi-stylised", "Skin specifically"} {
 			if strings.Contains(got, banned) {
 				t.Errorf("%s 的介质锁混进了人类专属条款 %q(会逼非人实体长脸)", k, banned)
 			}
@@ -44,7 +44,7 @@ func TestTurnaroundMediumLock(t *testing.T) {
 	// 人类反过来必须带这两条;Q 版同样有脸,走同一支
 	for _, k := range []EntityKind{KindHuman, KindChibi} {
 		got := TurnaroundMediumBlock(k, false)
-		for _, want := range []string{"Every human face is a hand-drawn line-art face", "Skin specifically"} {
+		for _, want := range []string{"Every human face is idealised and semi-stylised", "Skin specifically"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s 介质锁缺少人类专属条款 %q", k, want)
 			}
@@ -62,7 +62,7 @@ func TestTurnaroundMediumLock(t *testing.T) {
 	for _, want := range []string{
 		"MEDIUM LOCK (highest priority)",
 		"MEDIUM IS PART OF THE IDENTITY",
-		"MATTE ANIMATED LOOK",
+		RenderMediumMarker,
 		"RENDERING MEDIUM IS PART OF THE IDENTITY",
 		"a photographic or 3D-rendered version of the subject",
 	} {
@@ -101,7 +101,7 @@ func TestMediumMarkerMatchesBlock(t *testing.T) {
 	if !strings.Contains(animatedMediumImageBlock(), MediumMarker) {
 		t.Fatalf("介质块里找不到标记串 %q", MediumMarker)
 	}
-	if !strings.Contains(animatedMediumRenderBlock(), "MATTE ANIMATED LOOK") {
+	if !strings.Contains(animatedMediumRenderBlock(), RenderMediumMarker) {
 		t.Fatal("H3 侧介质块的标题串变了,标注/判定要一起改")
 	}
 }

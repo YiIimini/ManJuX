@@ -217,7 +217,7 @@ async function testConn(target) {
           <el-form-item label="未运行时自动代管启动">
             <el-switch v-model="form.comfy.auto_start" />
           </el-form-item>
-          <el-form-item label="空闲自动退出(分钟;管线结束后无任务自动停引擎释放显存,0=常驻)">
+          <el-form-item label="空闲释放显存(分钟;管线结束后无任务则卸载模型把显存让出去,引擎进程常驻 —— 关进程只发生在退出平台或手动停止时,0=不释放)">
             <el-input-number v-model="form.comfy.idle_stop_min" :min="0" :max="240" :step="5" style="width:100%" />
           </el-form-item>
           <el-form-item label="显存预留(GB;引擎启动时留给系统/浏览器,防渲染时整机卡顿,0=自定)">

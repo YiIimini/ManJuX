@@ -5,7 +5,6 @@
 package comfyengine
 
 import (
-	"fmt"
 	"log"
 	"os"
 	"os/exec"
@@ -123,24 +122,7 @@ func (e *Engine) killAllComfy(why string) int {
 	return len(pids)
 }
 
-// stopManagedOnly 仅停代管进程树(空闲自动退出用;外部同安装实例不碰)。
-func (e *Engine) stopManagedOnly() error {
-	p := e.ownedProc()
-	if p == nil && !e.adoptFromPidFile() {
-		return fmt.Errorf("ComfyUI 非本应用启动,不做空闲退出接管")
-	}
-	// 认领成功后进程句柄已重新写入,必须再取一次 —— 沿用上面的 nil 快照会空指针
-	if p = e.ownedProc(); p == nil {
-		return fmt.Errorf("ComfyUI 代管进程句柄丢失,无法停止")
-	}
-	pid := p.Pid
-	killTree(pid)
-	deadline := time.Now().Add(6 * time.Second)
-	for time.Now().Before(deadline) && procAlive(pid) {
-		time.Sleep(120 * time.Millisecond)
-	}
-	e.setOwnedProc(nil)
-	clearPidFile(e.cfg())
-	notifyLifecycle(false, "空闲自动退出")
-	return nil
-}
+// stopManagedOnly(只停代管进程树、不碰外部同安装实例)已随空闲看门狗的语义变更删除:
+// 空闲治理现在只**卸载模型释放显存**(idle.go),不再关进程 —— 关进程的时机只有退出平台
+// (main.go 的 OnShutdown 走 StopAdmin)与管理页的手动「停止引擎」。
+// 认领能力(adoptFromPidFile)仍被 idle.go 的看门狗与 admin.go 的代管状态使用。

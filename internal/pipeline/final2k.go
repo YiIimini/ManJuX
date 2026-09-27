@@ -45,15 +45,19 @@ func final2KPrompt(proj *project.Project, plan *project.Plan) string {
 		"Keep every subject, face, costume, colour, motion, timing, dialogue and the audio track identical — " +
 		"this is a resolution pass, not a re-shoot.\n")
 	if facesOn {
-		// 关键的一句:把"增强细节"翻译成动画语境下的"锐化线稿与平涂边缘",
-		// 而不是"补皮肤毛孔/高光"。旧文案里的 enhance ... skin detail 正是把
-		// 动画脸改成油光写实脸的指令源。
-		sb.WriteString("REFINE, DO NOT REDESIGN (mandatory): keep the flat cel-shaded fills and the hand-drawn line art " +
-			"exactly as they are; sharpen the line art and the cel edges, keep large flat areas clean, even and matte. " +
-			"Never add pores, oily or greasy highlights, specular shine, photographic micro-texture or film grain, " +
-			"and never turn a character into a photographed human being.\n" +
-			"(中文对照:本次是分辨率提升,不是重画 —— 保持赛璐璐平涂与手绘线稿不变,只锐化线稿与平涂边缘;" +
-			"严禁补毛孔、油光高光、镜面反光、照片级微纹理或胶片颗粒,严禁把角色画成被拍摄的真人。)\n")
+		// 关键的一句:把"增强细节"限定在**分辨率**语义上,不许改介质。
+		// 旧文案把"增强皮肤细节"译成了动画语境的"锐化线稿与平涂边缘";介质迁移到电影级 3D
+		// 之后(2026-09-27)要防的变成**回落成 2D 卡通**:所以既要禁止油光写实脸,也要
+		// 显式禁止平涂卡通与手绘动画线稿 —— 两头都是"这一次重生成换了介质"。
+		sb.WriteString("REFINE, DO NOT REDESIGN (mandatory): keep the existing render medium exactly as it is — " +
+			"the true material response, the IDEALISED, SEMI-STYLISED faces, the matte surfaces and the fine film grain. " +
+			"Recover fine detail and edge definition naturally at the higher resolution and keep broad areas clean and even. " +
+			"Never repaint the frame: never flatten it into a cel-shaded cartoon or a hand-drawn anime look, " +
+			"never add pores-worth of oily or greasy highlights or specular shine, and never turn a character into a " +
+			"photographed real person.\n" +
+			"(中文对照:本次是分辨率提升,不是重画 —— 保持原有介质不变:真实材质响应、理想化半风格化面孔、哑光表面与细颗粒;" +
+			"只自然恢复细节与边缘,大面积区域保持干净均匀。严禁把画面压成 2D 平涂卡通或手绘动画线稿;" +
+			"严禁补油光高光、镜面反光,严禁把角色画成被拍摄的真人。)\n")
 	} else {
 		sb.WriteString("REFINE, DO NOT REDESIGN: improve sharpness and clarity naturally, keeping the source's own " +
 			"look, grading and grain character; do not stylise, do not repaint.\n")

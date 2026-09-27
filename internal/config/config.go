@@ -24,10 +24,14 @@ const DefaultComfyBaseURL = "http://127.0.0.1:8190"
 
 // ComfySettings 本地 ComfyUI 引擎设置。
 type ComfySettings struct {
-	BaseURL     string `json:"base_url"`      // 例如 http://127.0.0.1:8190(默认见 DefaultComfyBaseURL)
-	RootDir     string `json:"root_dir"`      // ComfyUI 环境根目录(含 ComfyUI/ 与 standalone-env/)
-	AutoStart   bool   `json:"auto_start"`    // 渲染前未运行时自动启动
-	IdleStopMin int    `json:"idle_stop_min"` // 空闲自动退出(分钟):管线结束后无任务则停掉代管引擎释放显存;0=常驻
+	BaseURL     string `json:"base_url"`   // 例如 http://127.0.0.1:8190(默认见 DefaultComfyBaseURL)
+	RootDir     string `json:"root_dir"`   // ComfyUI 环境根目录(含 ComfyUI/ 与 standalone-env/)
+	AutoStart   bool   `json:"auto_start"` // 渲染前未运行时自动启动
+	IdleFreeMin int    `json:"idle_stop_min"`
+	// ↑ 空闲**释放显存**(分钟):管线结束后无任务则 /free 卸载模型把显存让出去,进程常驻;
+	//   0=不释放。**动作是卸模型不是关进程**(2026-09-26 用户报障修正):关进程的时机只有
+	//   退出平台,空闲关进程会多付一次 20GB 权重的冷启动。
+	//   json key 保留历史的 `idle_stop_min` 以免旧配置丢值(语义已变,名称不改)。
 	// 模型文件名(须与 ComfyUI 实际文件名完全一致,大小写敏感)
 	UNetRef2VA      string `json:"unet_ref2va"`       // 有角色参考图镜头用
 	UNetFL2VA       string `json:"unet_fl2va"`        // 空镜/首帧镜头用
@@ -159,7 +163,7 @@ func Default() *Settings {
 			BaseURL:         DefaultComfyBaseURL,
 			RootDir:         "", // 由 Manager 自动探测填充
 			AutoStart:       true,
-			IdleStopMin:     10,
+			IdleFreeMin:     10,
 			UNetRef2VA:      "MiniMax_H3_ref2va_pruned_int8_convrot.safetensors",
 			UNetFL2VA:       "MiniMax_H3_fl2va_pruned_int8_convrot.safetensors",
 			TurboLoRARef2VA: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",

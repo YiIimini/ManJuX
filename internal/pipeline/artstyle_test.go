@@ -15,14 +15,24 @@ import (
 // 只能正面描述"它是什么";"不要油光/不要真人脸"这类排除句只能进 H3 那头。
 func TestAnimatedFaceImageBlockIsPositiveOnly(t *testing.T) {
 	b := strings.ToLower(animatedFaceImageBlock())
+	// photoreal / photorealistic 是**正向**的渲染质感描述(电影级写实表面),与"照片"这个实体
+	// 名词不是一回事:前者说"怎么渲染",后者会让模型去画一张照片。先剔掉它们再查"照片类名词"。
+	probe := strings.NewReplacer("photorealistic", "", "photoreal", "").Replace(b)
 	for _, bad := range []string{"no ", "not ", "never ", "without ", "avoid ", "photo", "pore", "oily", "greasy", "plastic", "wax", "sweat"} {
-		if strings.Contains(b, bad) {
+		if strings.Contains(probe, bad) {
 			t.Errorf("Krea-2 画风块不应出现「%s」(否定词/照片类名词会被照着画):%s", bad, b)
 		}
 	}
-	for _, want := range []string{"line art", "cel-shaded", "matte", "powdery", "original animation design"} {
+	// 介质迁移(2026-09-27):正向画风词从"线稿/平涂"改成电影级写实表面 —— 但**仍然只描述
+	// 渲染方式与质感**,一个 2D 卡通词都不许留(留了就是往回拉)。
+	for _, want := range []string{"photoreal 3d", "real materials", "matte", "film grain", "idealised", "original design"} {
 		if !strings.Contains(b, want) {
 			t.Errorf("Krea-2 画风块缺少正向画风词「%s」", want)
+		}
+	}
+	for _, bad := range []string{"line art", "cel-shaded", "cel shading", "anime", "manga", "cartoon", "donghua"} {
+		if strings.Contains(b, bad) {
+			t.Errorf("Krea-2 画风块不得再出现 2D 卡通用词「%s」:%s", bad, b)
 		}
 	}
 	// 绝不许写五官**形状**类词汇(2026-09-12 那次"风格块把所有角色画成圆脸大眼"的教训)
@@ -38,7 +48,7 @@ func TestAnimatedFaceImageBlockIsPositiveOnly(t *testing.T) {
 func TestAnimatedFaceRenderBlockHitsGreaseAndRealFaces(t *testing.T) {
 	b := animatedFaceRenderBlock()
 	for _, want := range []string{
-		"MATTE ANIMATED LOOK",
+		RenderMediumMarker,
 		"oily or greasy skin",
 		"wet or sweaty highlights",
 		"glossy plastic or wax finish",
@@ -48,6 +58,14 @@ func TestAnimatedFaceRenderBlockHitsGreaseAndRealFaces(t *testing.T) {
 	} {
 		if !strings.Contains(b, want) {
 			t.Errorf("视频侧画风块缺少「%s」", want)
+		}
+	}
+	// 介质迁移(2026-09-27)新增的一半:必须**显式排除 2D 卡通/手绘动画** ——
+	// 用户问「为什么是 2D 漫画风格」,而只说清"要什么"不够,模型会往训练集里
+	// 最省事的平涂卡通回落,所以两面都要写死。
+	for _, want := range []string{"cel-shaded cartoon", "hand-drawn anime"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("视频侧画风块必须显式排除 2D 卡通,缺少「%s」", want)
 		}
 	}
 	// 必须点明"全片每一帧"都适用:只对首帧生效等于没生效
@@ -76,7 +94,7 @@ func TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn(t *testing.T) {
 	if !strings.Contains(real, "3D CG character render") {
 		t.Errorf("上游的 3D 风格词应被翻译成 3D 渲染约束:%s", real)
 	}
-	if strings.Contains(real, "ANIMATED MATTE RENDER") {
+	if strings.Contains(real, MediumMarker) {
 		t.Errorf("上游点名写实/3D 时不许再塞平台动画介质块(两个介质打架,模型只会糊):%s", real)
 	}
 	for _, want := range []string{"PHOTOREAL 3D CINEMATIC WORLD", "IDENTITY FIDELITY", "never make a character resemble a real person"} {
@@ -95,7 +113,7 @@ func TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn(t *testing.T) {
 	}
 	// 开关关掉时行为不变(真人剧是合法路线)
 	off := styleExpand("真人实拍质感", false, KindHuman)
-	if !strings.Contains(off, "photorealistic cinematic portrait") || strings.Contains(off, "ANIMATED MATTE RENDER") {
+	if !strings.Contains(off, "photorealistic cinematic portrait") || strings.Contains(off, MediumMarker) {
 		t.Errorf("关闭开关的写实风格不该被动画化:%s", off)
 	}
 }
@@ -104,7 +122,7 @@ func TestStyleExpandKeepsUpstreamPhotorealWhenFacesOn(t *testing.T) {
 // 决定兜底画风 —— 改上一条时不许把用户 2026-09-24 的"不要真人脸"一起改掉。
 func TestStyleExpandAnimeFallbackStillApplies(t *testing.T) {
 	got := styleExpand("", true, KindHuman)
-	if !strings.Contains(got, "ANIMATED MATTE RENDER") {
+	if !strings.Contains(got, MediumMarker) {
 		t.Errorf("没有上游风格 + 动漫化开 → 必须给平台的动画兜底画风块:%s", got)
 	}
 	if strings.Contains(got, "photorealistic cinematic portrait") {
@@ -163,12 +181,12 @@ func TestCharacterImagePromptIsSingleAssemblyPoint(t *testing.T) {
 	if !strings.Contains(got, "RENDER STYLE") || !strings.Contains(got, "CAST DISTINCTNESS") {
 		t.Error("装配点必须同时带上风格块与同剧对比块")
 	}
-	if !strings.Contains(got, "ANIMATED MATTE RENDER") {
+	if !strings.Contains(got, MediumMarker) {
 		t.Error("默认(未表态)应开启动画哑光画风")
 	}
 	// 关闭开关后不得带画风块
 	proj.Config.Params.Script.StylizedFaces = project.Bool(false)
-	if strings.Contains(characterImagePrompt(proj, plan, plan.Characters[0]), "ANIMATED MATTE RENDER") {
+	if strings.Contains(characterImagePrompt(proj, plan, plan.Characters[0]), MediumMarker) {
 		t.Error("显式关闭后不得注入动画画风块")
 	}
 }
@@ -241,7 +259,7 @@ func TestShotRenderPromptIsSingleSourceForAllRenderPaths(t *testing.T) {
 	if !strings.Contains(off, "【全片视觉风格】photorealistic cinematic") {
 		t.Errorf("关闭开关后风格段应原样保留:%s", off)
 	}
-	if strings.Contains(off, "MATTE ANIMATED LOOK") || strings.Contains(off, "MEDIUM OVERRIDE") {
+	if strings.Contains(off, RenderMediumMarker) || strings.Contains(off, "MEDIUM OVERRIDE") {
 		t.Error("关闭开关后不得注入画风硬约束与介质覆盖")
 	}
 }
@@ -280,7 +298,7 @@ func TestRealWorldStyleStringStillGetsMediumOverride(t *testing.T) {
 func TestLibraryPortraitPromptIsIdempotent(t *testing.T) {
 	base := "slim young man, grey work shirt"
 	once := LibraryPortraitPrompt("小凡", "十七岁少年", base)
-	if !strings.Contains(once, "ANIMATED MATTE RENDER") || !strings.Contains(once, base) {
+	if !strings.Contains(once, MediumMarker) || !strings.Contains(once, base) {
 		t.Fatalf("应保留原提示词并补上画风块:%s", once)
 	}
 	if twice := LibraryPortraitPrompt("小凡", "十七岁少年", once); strings.Count(twice, "IDENTITY FIDELITY") != 1 {
@@ -306,14 +324,22 @@ func TestCharactersFromLibraryShareHouseStyle(t *testing.T) {
 }
 
 // TestDefaultProjectIsAnimeFaced 新建项目的默认值必须就是用户要的那套:
-// 国漫二维 + 角色动漫化开(否则"新建一个项目试一下"仍然会得到真人油腻脸)。
+// 国风**电影级** + 角色半风格化(否则"新建一个项目试一下"仍然会得到真人油腻脸、
+// 或者 2026-09-27 那次报障里的 2D 漫画风)。
 func TestDefaultProjectIsAnimeFaced(t *testing.T) {
 	d := project.DefaultStageParams()
 	if !d.Script.FacesOn() {
-		t.Error("默认应开启角色动漫化(非真人脸)")
+		t.Error("默认应开启角色动漫化(非真人照片脸)")
 	}
-	if len(d.Script.Styles) == 0 || d.Script.Styles[0] != "guoman_2d" {
-		t.Errorf("默认风格应为国漫二维,实际 %v", d.Script.Styles)
+	// 2026-09-27 改:默认从 `guoman_2d`(国漫二维)换成 `guofeng_cinematic`(国风电影级)——
+	// 用户问「平台端 LLM 解析渲染的内容贴合原文,但为什么是 2D 漫画风格」,根因之一就是
+	// 这个默认值 + 当时 director 提示词里"必须是动画风格"那句。
+	if len(d.Script.Styles) == 0 || d.Script.Styles[0] != "guofeng_cinematic" {
+		t.Errorf("默认风格应为国风电影级,实际 %v", d.Script.Styles)
+	}
+	// 预设表里那条必须是**能渲染的实串**,不是占位符
+	if p, ok := StylePresets["guofeng_cinematic"]; !ok || !strings.Contains(p.Prompt, "photoreal 3D") {
+		t.Errorf("默认预设必须在 StylePresets 里且写明电影级口径,实际 %q (exists=%v)", p.Prompt, ok)
 	}
 	if !d.Assemble.DenoiseOn() {
 		t.Error("默认应开启音频净化(用户报「有杂音」)")

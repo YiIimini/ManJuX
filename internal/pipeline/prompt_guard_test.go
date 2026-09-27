@@ -23,8 +23,8 @@ func TestVideoPromptDropsAnimatedRenderLookWhenStyleIsPhotoreal(t *testing.T) {
 
 	animated := &project.Plan{Style: "国漫二维动画,赛璐璐平涂", Characters: chars}
 	gotAnimated := anchorPrompt(animated, &shot, true)
-	if !strings.Contains(gotAnimated, "hand-drawn line-art face") {
-		t.Errorf("动漫化项目必须保留人物渲染条款:\n%s", gotAnimated)
+	if !strings.Contains(gotAnimated, "idealised and semi-stylised") {
+		t.Errorf("开启动漫化(默认)时必须保留人物渲染条款:\n%s", gotAnimated)
 	}
 
 	photoreal := &project.Plan{
@@ -32,20 +32,25 @@ func TestVideoPromptDropsAnimatedRenderLookWhenStyleIsPhotoreal(t *testing.T) {
 		Characters: chars,
 	}
 	gotPhotoreal := anchorPrompt(photoreal, &shot, true)
-	if strings.Contains(gotPhotoreal, "hand-drawn line-art face") {
-		t.Errorf("上游点名写实/3D 时不得再要求「手绘线稿脸」(同段提示词两个介质打架):\n%s", gotPhotoreal)
+	// 介质迁移(2026-09-27)之后,判据从"有没有手绘线稿脸"换成"有没有 2D 卡通用词":
+	// 平台的人物条款现在只说"理想化半风格化脸"(写实与卡通两头都不站),所以**两侧都不该**
+	// 出现平涂/线稿这类把画面拽向 2D 的词 —— 那才是"同一段里两个介质打架"的可检测形态。
+	for _, bad := range []string{"hand-drawn", "cel-shaded", "cel shading", "line art"} {
+		if strings.Contains(gotPhotoreal, bad) {
+			t.Errorf("上游点名写实/3D 时不得出现 2D 卡通用词 %q(同段提示词两个介质打架):\n%s", bad, gotPhotoreal)
+		}
 	}
 	// 风格段与 STYLE AUTHORITY 仍在(风格归上游),类型形态条款也不受影响
 	if !strings.Contains(gotPhotoreal, "STYLE AUTHORITY") {
 		t.Error("写实风格下仍要保留风格权威段")
 	}
 	// 关掉动漫化开关时本来就不加(旧行为不变)
-	if got := anchorPrompt(photoreal, &shot, false); strings.Contains(got, "hand-drawn line-art face") {
-		t.Error("facesOn=false 时不该出现动画人脸条款")
+	if got := anchorPrompt(photoreal, &shot, false); strings.Contains(got, "idealised and semi-stylised") {
+		t.Error("facesOn=false 时不该出现人脸渲染条款")
 	}
 	// 否定式写法("NO PHOTOREAL DETAIL")不算要写实 —— 否则会把技能端指定的画风术语丢掉
 	negated := &project.Plan{Style: "国漫二维动画, NO PHOTOREAL DETAIL, MATTE POWDERY SKIN", Characters: chars}
-	if !strings.Contains(anchorPrompt(negated, &shot, true), "hand-drawn line-art face") {
+	if !strings.Contains(anchorPrompt(negated, &shot, true), "idealised and semi-stylised") {
 		t.Error("风格串里的否定式写实字样不该触发守卫(那是纯误报)")
 	}
 }

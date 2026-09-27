@@ -319,7 +319,7 @@ function pushEvent(ev) {
   if (G.logs.length > 800) G.logs.splice(0, G.logs.length - 800)
   G.eventsOpen = true
   if (ev.phase === 'comfy') {
-    // 引擎启停/空闲自动退出事件:底栏灯、首页 chip、管理页即时同步,不等 15s 轮询
+    // 引擎启停事件(手动启停/退出):底栏灯、首页 chip、管理页即时同步,不等 15s 轮询
     refreshStatus()
     G.tick.comfy++
   }
