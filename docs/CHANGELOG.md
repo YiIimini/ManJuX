@@ -10,6 +10,42 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## ComfyUI 升级后的同步核对 + 管理页节点清单补齐（2026-09-27 晚）
+
+**起因**：用户「ComfyUI 我升级了，你看看你自身有没有需要同步完善优化的」。
+
+**核对结论：本机 ComfyUI 版本没变** —— `D:\Ai\ComfyUI\ComfyUI` 仍是 **v0.37.4**（`git status` 干净、
+`backup_before_*` 只到 v0.37.4、盘上没有第二个安装、也没有取到未切换的新 tag）。
+近一小时实际发生的是 **ComfyUI 侧装了 OpenVDN DMD**（`shared/models/diffusion_models/OpenVDN/vdn-minimax-h3/`，
+6.16 GiB，18:45–18:47）并跑了 `bench-vdn.ps1`：A–D 有结果，**最后一路 `E-stock-vdn8` 是 `status=error`**（36.2 s）。
+
+**平台侧实测核对（起真引擎比对，不是读代码猜）**：
+
+- 版本 `0.37.4` / Python 3.13.12；
+- 平台会提交的 **41 个节点类全部存在** ✓（逐个查 `/object_info`）；
+- 参考图 autogrow 输入 `ref_images` / `ref_videos` / `ref_video_audios` / `ref_audios` **都在** ✓
+  —— 09-27 那个"聚合数组被静默丢弃"的点号键修复（`ref_images.ref_image_0`）在这个版本继续成立；
+- 启动器口径复核：平台 `launch`（`engine.go`）**已设** `PYTHONUTF8/PYTHONIOENCODING`，
+  手动启动器 `start-comfyui.cmd` 与 ComfyUI 侧的 `bench-vdn.ps1` 也都设了 ✓。
+  （我第一次起服务时忘设 → 当场撞 `UnicodeEncodeError: 'gbk' codec can't encode '\U0001f389'` 崩溃，
+  正好复现了这条老坑：**任何新写的启动方式都必须带这两个变量**，否则 vrgamedevgirl 包打印横幅 emoji 就会崩。）
+
+**顺手补的真缺口（这次升级正好暴露它）**：管理页的节点核对表原先**只查两个可选节点**
+（条件缓存 / 镜间接缝）—— 它们缺了会降级，所以"缺了也不致命"；而**渲染必用的根节点**
+（Ref2V / I2V / 双流 sigma 偏移）只有按下渲染那一刻的 `Preflight` 才查。于是"升级后少了个自定义节点"
+在管理页上**看不出来**，要等第一镜跑到一半由 ComfyUI 抛原始报文 —— 正是 `Preflight` 注释里说要消灭的体验。
+
+改动：抽 `adminNodeChecks` 清单（**与 `Preflight` 共用同一批常量**，两侧不会走散），必用根节点标
+`required`，每项标签写明后果（"缺则渲染直接失败" / "缺则自动退回内联编码" / "缺则跳过接缝"）；
+`NodeCheck` 加 `required` 字段（前端不必改：后果已写在 label 里）。两条守卫测试：
+`TestAdminNodeChecksCoverRenderPath`（必用项在且标 required、可选项不许误标 required、标签必须说明后果）、
+`TestPreflightAndAdminShareRenderClasses`（两侧引用同一批常量，改用字面量就红）。
+
+**记一笔不在平台路径上的观察**（供 ComfyUI 侧参考，平台不受影响）：升级后的
+`comfyui-vrgamedevgirl v9.1.1` 启动时报 **3 个失败子模块** —— `.nodes` 与 `.GeneralVideoNodes`
+缺 `librosa`、`.VRGDG_LTXLoopingSampler` 缺 `ComfyUI-LTXVideo`。平台用到的 41 个类**都不来自这些子模块**
+（实测全在），所以渲染路径完好；但那几个子模块的节点在当前环境里是不可用的。
+
 ## N5 裁定 A：主视角"该有时必须有"（2026-09-27 晚）
 
 **依据**：`docs/技能侧追补-平台侧整改建议-2026-09-27.md`（**订正版**，技能侧撤回 N1/N2 两条误报后，

@@ -40,9 +40,33 @@ type ModelCheck struct {
 
 // NodeCheck 自定义节点检测。
 type NodeCheck struct {
-	Label string `json:"label"`
-	Class string `json:"class"`
-	OK    bool   `json:"ok"`
+	Label    string `json:"label"`
+	Class    string `json:"class"`
+	OK       bool   `json:"ok"`
+	Required bool   `json:"required,omitempty"` // 缺了会**直接失败**（false = 缺了会自动降级）
+}
+
+// adminNodeChecks 管理页要核对的节点清单（**唯一真源**，见下）。
+//
+// 2026-09-27（用户「ComfyUI 我升级了」之后的同步核对）：此前这里只查 2 个**可选**节点
+// （条件缓存 / 镜间接缝）—— 它们缺了会降级，所以"缺了也不致命"；而**渲染必用的根节点**
+// 只有 `Preflight`（按下渲染那一刻）才查。
+// 后果：升级后少了某个自定义节点，**在管理页上看不出来**，要等第一镜跑到一半由 ComfyUI
+// 抛原始报文才发现 —— 正是 `Preflight` 注释里说要消灭的那种体验。
+//
+// 现在把必用根节点也搬到这里，并且**与 Preflight 共用同一批常量**
+// （`classRef2V` / `classI2V` / `classSigmaShift`），两侧不会走散：
+//   - required=true：缺则**渲染直接失败**（提前看见比跑到一半好）；
+//   - required=false：缺则**自动降级/退回**（不阻断生产，但列出来让人知道当前能力少了一块）。
+//
+// 判据口径与 Preflight 保持一致：只列"根节点"（生成链入口 + sigma 偏移）与两个可选降级项，
+// 不把每个中间节点都列出来 —— 列全了反而没人看。
+var adminNodeChecks = []NodeCheck{
+	{Label: "参考生视频 · ReferenceToVideo（缺则渲染直接失败）", Class: classRef2V, Required: true},
+	{Label: "图生视频 · ImageToVideo（缺则渲染直接失败）", Class: classI2V, Required: true},
+	{Label: "双流 sigma 偏移 · SigmaShift（缺则渲染直接失败）", Class: classSigmaShift, Required: true},
+	{Label: "条件缓存 · ConditioningCache（缺则自动退回内联编码）", Class: classCondSave},
+	{Label: "镜间接缝 · MotionContext（缺则跳过接缝）", Class: classMotionCtx},
 }
 
 // Admin 聚合管理状态(不触发代管启动)。
@@ -153,12 +177,9 @@ func (e *Engine) Admin(ctx context.Context) (*AdminStatus, error) {
 		}
 		st.Models = append(st.Models, mc)
 	}
-	// H3 关键节点检测
-	for _, ncd := range []struct{ label, class string }{
-		{"条件缓存 · ConditioningCache", classCondSave},
-		{"镜间接缝 · MotionContext", classMotionCtx},
-	} {
-		nc := NodeCheck{Label: ncd.label, Class: ncd.class}
+	// H3 关键节点检测（清单见 adminNodeChecks：必用根节点 + 两个可选降级项）
+	for _, np := range adminNodeChecks {
+		nc := np
 		nc.OK = e.client().HasNode(ctx, nc.Class)
 		st.Nodes = append(st.Nodes, nc)
 	}
