@@ -553,10 +553,50 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 		frameW, frameH = DefaultSheetFrameW, DefaultSheetFrameH
 	}
 	prompt += PortraitFramingClause(kind, frameW, frameH)
+	// **最后一句**再钉一次"这张脸是谁"（最高注意力位，与比例锚点同一条设计）。
+	// 2026-09-27 用户报「周廷和主角脸相似」：画风块里的 "idealised… simplified features"
+	// 是往**一个模板**上拉的力，而身份锁在提示词中段、被稀释掉了 —— 所以在这一段里
+	// 把该角色自己的外形锁逐字重述，并点名"不许像谁"。
+	if kind == KindHuman || kind == KindChibi {
+		prompt += PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.Name))
+	}
 	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
 	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
 	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
 	return prompt
+}
+
+// castFaceIDs 同剧其他人的**外形摘要**（供 PortraitFaceIDClause 点名"不许像谁"）。
+//
+// 与 castContrastBlock 取同一份东西（IDENTITY LOCK 优先、description 兜底），
+// 但**不带人名**：FACE ID 段是"这一帧是某一个具体的人"的收尾纪律，塞进一串人名会
+// 把注意力引到"要不要画别人"上（本段是单人帧）。人名在对比块里已经出现过一次了。
+func castFaceIDs(plan *project.Plan, selfName string) []string {
+	if plan == nil {
+		return nil
+	}
+	self := strings.TrimSpace(selfName)
+	var out []string
+	for _, ch := range plan.Characters {
+		if strings.TrimSpace(ch.Name) == "" || strings.TrimSpace(ch.Name) == self {
+			continue
+		}
+		d := identityLockExcerpt(ch.ImagePrompt)
+		if d == "" {
+			d = strings.TrimSpace(ch.Description)
+		}
+		if d == "" {
+			continue
+		}
+		if r := []rune(d); len(r) > 150 {
+			d = string(r[:150]) + "…"
+		}
+		out = append(out, d)
+		if len(out) >= 3 {
+			break
+		}
+	}
+	return out
 }
 
 // PortraitHairClause 定妆照的**发型纪律**(人类 / Q 版)。
@@ -1159,9 +1199,16 @@ func castContrastBlock(plan *project.Plan, selfName string, kind EntityKind) str
 		if n == "" || n == self {
 			continue
 		}
-		d := strings.TrimSpace(ch.Description)
-		if r := []rune(d); len(r) > 60 {
-			d = string(r[:60]) + "…"
+		// 外形优先（2026-09-27 修）：IDENTITY LOCK 那句才是"这个人长什么样"；
+		// description 可能整段是剧情 —— 用户报「周廷和主角脸相似」时查到的实况就是
+		// 周廷那条 description 是一段剧情表行（含章号「1／8／31」「被亲父交出顶罪」），
+		// 塞进对比块之后模型读到的是剧情而不是五官，"要跟别人不一样"这句就完全落空了。
+		d := identityLockExcerpt(ch.ImagePrompt)
+		if d == "" {
+			d = strings.TrimSpace(ch.Description)
+		}
+		if r := []rune(d); len(r) > 160 {
+			d = string(r[:160]) + "…"
 		}
 		parts = append(parts, fmt.Sprintf("%s(%s)", n, d))
 		if len(parts) >= 6 {
@@ -1171,8 +1218,10 @@ func castContrastBlock(plan *project.Plan, selfName string, kind EntityKind) str
 	if len(parts) == 0 {
 		return ""
 	}
-	traits := "different face shape, age, build, skin tone and unique markers; these identity traits MUST dominate the image; " +
-		"never average them into a generic handsome/pretty face"
+	traits := "their FACE must read as a different person at a glance — different face shape and bone structure, " +
+		"different age read, different eye and brow shape, different skin tone, different hairline and markers; " +
+		"these identity traits MUST dominate the image; never average them into a generic handsome/pretty face, " +
+		"and never reuse one face template across the cast"
 	one := "exactly ONE person appears in the frame"
 	switch NormalizeEntityKind(string(kind)) {
 	case KindObject:
@@ -1237,4 +1286,66 @@ func composeStyleHint(styles []string, freeHint string) string {
 		out += strings.TrimSpace(freeHint)
 	}
 	return out
+}
+
+// identityLockExcerpt 从一份定妆/提示词里取 **IDENTITY LOCK 那句**（逐项外形：年龄/脸型/
+// 眼型/肤色/记号/发型），供"同剧对比"用；取不到返回空串。
+//
+// 为什么要专挑这句（2026-09-27）：同剧对比要说的是"你**长什么样**，别和这些人一样"，
+// 而 plan 里的 `description` 常常不是外形 —— 实测《求你们骂我》周廷那条是一整段剧情
+// （含章号与"被亲父交出顶罪"）。拿剧情当特征，模型只能退回自己的先验：一张通用帅哥脸。
+// 这正是用户报「周廷和主角脸相似」的两条成因之一（另一条是画风块里的"五官简化"）。
+func identityLockExcerpt(prompt string) string {
+	const marker = "IDENTITY LOCK"
+	i := strings.Index(prompt, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := prompt[i:]
+	// 到下一个段落/换行为止（卡里 IDENTITY LOCK 是一整句/一整段）
+	if j := strings.IndexAny(rest, "\r\n"); j > 0 {
+		rest = rest[:j]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// PortraitFaceIDClause 定妆照**最后一句**（最高注意力位）再钉一次"这张脸是谁"。
+//
+// 为什么放最后（与比例锚点同一条设计，见 proportion_clause.go）：模型对提示词末尾的
+// 约束最敏感，而中途那些"风格/介质/理想化"的措辞会把它往**一个模板**上拉 ——
+// 平台自己的 `humanFaceRenderClause` 就写着 "idealised… simplified, readable features"，
+// 对"19 岁瘦长脸 vs 31 岁方脸"这种差别来说是反向的力。
+// 所以这里不删风格块（那是画风，该留），而是**用自己的身份锁压住它**：
+// 年龄感、骨相、眼型、肤色必须逐项读出来，理想化不等于同一张脸。
+//
+// selfLock 传该角色自己的 IDENTITY LOCK 原句（逐字重述，不改写）；others 是其他角色的
+// 外形摘要（可空）。两者都空时返回空串（没有可钉的东西，不硬造）。
+func PortraitFaceIDClause(selfLock string, others []string) string {
+	selfLock = strings.TrimSpace(selfLock)
+	if selfLock == "" && len(others) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	sb.WriteString("\nFACE ID (final check, mandatory): ")
+	sb.WriteString("this frame shows ONE specific person — not a face template. ")
+	sb.WriteString("The age read, the bone structure (face shape, jaw, cheekbones, brow ridge), the eye shape, " +
+		"the brow shape, the skin tone and the fixed markers below must ALL be visible in this single image: \n")
+	if selfLock != "" {
+		sb.WriteString("  SELF: " + selfLock + "\n")
+	}
+	for i, o := range others {
+		if i >= 3 {
+			break
+		}
+		sb.WriteString("  NOT: " + o + "\n")
+	}
+	if len(others) > 0 {
+		sb.WriteString("Anyone listed under NOT must be recognisable as a DIFFERENT person in a side-by-side comparison ")
+		sb.WriteString("(different face shape and features, not just different clothes).\n")
+	}
+	sb.WriteString("idealised does NOT mean interchangeable: do not fall back to a generic good-looking young face.\n")
+	sb.WriteString("(中文对照:这一帧是**某一个具体的人**,不是一张通用脸模板 —— 年龄感、骨相(脸型/下颌/颧骨/眉骨)、" +
+		"眼型、眉形、肤色与固定记号都必须在这一张里看得出来;标 NOT 的那些人必须一眼就能看出是**别人**" +
+		"(是脸不一样,不是衣服不一样)。理想化不等于可以互换,不许退回通用帅哥脸。)\n")
+	return sb.String()
 }

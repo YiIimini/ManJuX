@@ -71,6 +71,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 记账放在调用方(而不是共享实现里):"一次运行只提醒一次"是**本次运行**的性质,
 	// 而共享实现也被「单资产重新生成」那条路用(那次是一次用户动作,每次都该提醒)。
 	propNoCapWarned := false
+	castNoCapWarned := false // 撞脸自检没能力验的提醒也按**本次运行**记一次账（与比例自检同一政策）
 	checkProportion := func(ek EntityKind, imagePrompt, name, path string) *qc.ProportionReport {
 		rep, outcome := c.checkPortraitProportion(ctx, proj, ek, imagePrompt, name, path)
 		if outcome == proportionNoCapability && !propNoCapWarned {
@@ -185,6 +186,16 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				if kind == "characters" {
 					if rep := checkProportion(ek, imagePrompt, name, path); rep != nil {
 						path = c.regenerateOnBadFacing(ctx, proj, assets, kind, id, name, imagePrompt, ek, path, rep, genAsset)
+					}
+					// 撞脸自检（2026-09-27 用户报「周廷和主角脸相似」）：
+					// 提示词把两个人的外形锁写得很开（19 岁瘦长脸 vs 31 岁方脸），出图却是两个
+					// 瘦长脸的年轻人 —— **读提示词的检查看不见这种失败，只能看图**。
+					// 与已生成的其他角色定妆照逐张比一次；判成"同一个人"就带上分离指令换种子重出一次。
+					var castNoCap bool
+					path, castNoCap = c.checkCastDistinctness(ctx, proj, assets, kind, id, name, imagePrompt, ek, path, genAsset)
+					if castNoCap && !castNoCapWarned {
+						castNoCapWarned = true
+						c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", CastSkipNoCapability)
 					}
 				}
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
