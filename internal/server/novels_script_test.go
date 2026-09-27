@@ -39,6 +39,98 @@ func epName(i int) string {
 	return "第" + string(rune('0'+i/10)) + string(rune('0'+i%10)) + "集"
 }
 
+// TestNovelScriptListsSkillDeliverables 技能侧**新交付物**（素材三卡 / 分镜 markdown）必须可见。
+//
+// 2026-09-27 用户：「技能侧的脚本重新输出了，小说库里的剧本创作功能回归」。
+// 技能侧 v2.14 把交付面换成 markdown（`素材/{角色卡,场景卡,道具卡}.md`、
+// `分镜/{第NN集.md,H3-提示词.md,…}`），而本页签原先**只认渲染包** —— 盘上明明有新产物，
+// 界面却只说"没有技能端脚本包"，功能看起来没了。这条钉住三种形态：
+//
+//	① 只有新交付物 → found=true + 列出文件（不再谎报"什么都没有"）；
+//	② 交付物 + 渲染包 → 两者都返回，且包的"已废弃"标记如实带上；
+//	③ 两者都没有 → found=false。
+func TestNovelScriptListsSkillDeliverables(t *testing.T) {
+	s, _ := newHiddenTestServer(t)
+
+	write := func(book, rel, body string) {
+		full := filepath.Join(book, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func(book string) map[string]any {
+		t.Helper()
+		code, m := doReq(t, s, "GET", "/api/novels/script?path="+urlEnc(book), nil)
+		if code != 200 {
+			t.Fatalf("读脚本页签应 200，实际 %d：%v", code, m)
+		}
+		return m
+	}
+	namesOf := func(m map[string]any, group string) []string {
+		dl, _ := m["deliverables"].(map[string]any)
+		items, _ := dl[group].([]any)
+		out := make([]string, 0, len(items))
+		for _, it := range items {
+			if mm, ok := it.(map[string]any); ok {
+				out = append(out, mm["name"].(string))
+			}
+		}
+		return out
+	}
+
+	// ① 只有交付物
+	only := filepath.Join(s.novelRoot(), "只有交付物")
+	write(only, "素材/角色卡.md", "# 角色卡\n")
+	write(only, "分镜/第01集.md", "| 镜头编号 |\n")
+	write(only, "分镜/第02集.md", "| 镜头编号 |\n")
+	write(only, "分镜/H3-提示词.md", "…\n")
+	m := get(only)
+	if found, _ := m["found"].(bool); !found {
+		t.Fatalf("有交付物时必须 found=true（否则界面谎报「什么都没有」）：%v", m)
+	}
+	if got := namesOf(m, "assets"); len(got) != 1 || got[0] != "角色卡.md" {
+		t.Errorf("素材交付物应列出角色卡.md，实际 %v", got)
+	}
+	// 分镜按集号排（第02集不能排到第10集前面那种错法在这里就被挡住）
+	if got := namesOf(m, "storyboard"); len(got) != 3 || got[0] != "第01集.md" || got[1] != "第02集.md" {
+		t.Errorf("分镜交付物应按集号排序，实际 %v", got)
+	}
+
+	// ② 交付物 + 渲染包（且包被技能侧标成废弃）
+	both := mkBookWithScript(t, s, "交付物加包", "漫剧脚本", 2)
+	write(both, "素材/场景卡.md", "# 场景卡\n")
+	write(both, "漫剧脚本/_已废弃-说明.md", "已废弃\n")
+	m = get(both)
+	if got := namesOf(m, "assets"); len(got) != 1 {
+		t.Errorf("应同时列出素材交付物，实际 %v", got)
+	}
+	if eps, _ := m["episodes"].([]any); len(eps) != 2 {
+		t.Errorf("应同时返回集清单（2 集），实际 %v", m["episodes"])
+	}
+	pkg, _ := m["package"].(map[string]any)
+	if pkg == nil || pkg["present"] != true {
+		t.Errorf("package.present 应为 true，实际 %v", m["package"])
+	}
+	if dep, _ := m["deprecated"].(bool); !dep {
+		t.Errorf("技能侧放了 _已废弃 说明文件时，必须如实带上废弃标记：%v", m["package"])
+	}
+	if bs := s.findBookScript(both); bs == nil || !bs.Deprecated || bs.DeprecatedHint == "" {
+		t.Errorf("书卡上的脚本信息也要带废弃标记与说明，实际 %+v", bs)
+	}
+
+	// ③ 什么都没有
+	empty := filepath.Join(s.novelRoot(), "空书")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if found, _ := get(empty)["found"].(bool); found {
+		t.Error("既没有包也没有交付物时必须 found=false")
+	}
+}
+
 // TestFindBookScriptDetects 三种形态:书目录本身就是单集包 / 子目录里有多集包 / 什么都没有。
 func TestFindBookScriptDetects(t *testing.T) {
 	s, _ := newHiddenTestServer(t)

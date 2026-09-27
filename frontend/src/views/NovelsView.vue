@@ -204,6 +204,54 @@ async function readChapter(ch) {
   } catch (e) { ElMessage.error(e.message) } finally { readBusy.value = false }
 }
 
+// 脚本创作:直接导入技能端已产出的**渲染脚本包**(manifest.json + plan/plan.json),
+// **不走 LLM 拆集** —— 平台侧那一步单集 2-6 分钟深度推理,token 与时间全省。
+// 与「视频制作」是两个人**口**:这个入口找不到包就明确报错,不悄悄回落到 LLM。
+//
+// 2026-09-27 沿革:当天先按用户要求隐藏(技能侧停了渲染包产出),当晚技能侧恢复产出脚本
+// 相关的交付物后按用户要求**回归**。回归时多了一句诚实提示:若技能侧已把盘上这些包标成
+// 废弃(`漫剧脚本/_已废弃-说明.md`),导入的是**历史包**,正式渲染仍建议走「视频制作」。
+async function produceScript(n) {
+  const ep = n.script?.episodes || 0
+  const dep = n.script?.deprecated ? `\n⚠ 技能侧已把这本书的渲染包标为废弃（只留查看）——导入的是历史包；正式渲染建议走「视频制作」（平台 LLM 直出）。` : ''
+  try {
+    await ElMessageBox.confirm(
+      `将把《${n.name}》目录里已产出的脚本包直接导入（${ep} 集）并**自动开始批量产线**（资产定妆→渲染→质检→成片），不再跑 AI 拆集。` +
+      dep +
+      `\n导入后到「项目」页即可开始资产与渲染；包不合契约会被整批拒收，不会留下半成品。`,
+      '脚本创作(跳过 AI 拆集)', { confirmButtonText: '导入并开始生产', cancelButtonText: '取消', type: 'info' })
+  } catch { return }
+  try {
+    const r = await api.novelProduceScript(n.path)
+    const cnt = Array.isArray(r?.results) ? r.results.length : ep
+    ElMessage.success(r?.message || `已导入 ${cnt} 集脚本，批量产线已启动`)
+    await refresh()
+    await refreshProjects()
+    G.view = 'home'
+  } catch (e) {
+    ElMessage.error(e.message) // 契约拒收 / 找不到包:原样展示后端那句话
+  }
+}
+
+// deliverables 技能侧交付物（素材三卡 + 分镜 markdown）拍平成一条清单：
+// 页签上直接渲染成一排标签，点开即读。两类的排序由后端给（分镜按集号，素材按名字）。
+const deliverables = computed(() => {
+  const d = script.value?.deliverables
+  if (!d) return []
+  return [...(d.assets || []), ...(d.storyboard || [])]
+})
+
+// openDeliverable 读技能侧交付物(素材三卡 / 分镜 markdown)。
+// 复用 /api/novels/read —— 它已经带"必须落在小说库内"的范围守卫,不必再开一个读文件端点。
+const deliverable = ref(null)   // {name, text, truncated}
+async function openDeliverable(d) {
+  readBusy.value = true
+  try {
+    const r = await api.novelRead(d.path)
+    deliverable.value = { name: d.rel || d.name, ...r }
+  } catch (e) { ElMessage.error(e.message) } finally { readBusy.value = false }
+}
+
 // 一键视频创作(带重复验证,后端 409)
 const producing = ref(false)
 async function produce(n) {
@@ -378,8 +426,9 @@ function viewCover(n) {
 
 // 卡片右上菜单的命令出口。收成一个出口而不是三个 @click:
 // 以后再加动作只改这里 + 菜单项,卡片模板不必再堆@click.stop。
-// (`script` 那条分支随技能端脚本导入入口一起于 2026-09-27 移除,见模板里的说明。)
+// (`script` 分支 2026-09-27 先随入口隐藏而移除,同日按用户要求随入口一起回归。)
 function onCardCmd(cmd, n) {
+  if (cmd === 'script') return produceScript(n)
   if (cmd === 'produce') return produce(n)
   if (cmd === 'cover') return openCoverDialog(n)
   if (cmd === 'hide') return toggleHidden(n)
@@ -449,11 +498,18 @@ function onCardCmd(cmd, n) {
             </button>
             <template #dropdown>
               <el-dropdown-menu>
-                <!-- 「脚本创作」(导入技能端已产出的脚本包)已于 2026-09-27 按用户要求隐藏:
-                     用户定调「技能侧独立输出小说内容,不出脚本了,还是平台侧走 LLM 合理点」,
-                     这个入口随之作废(盘上不会再有技能端脚本包可导)。
-                     后端能力仍保留(POST /api/novels/produce-script + store 的 novelProduceScript),
-                     要恢复只需把下面这一项加回来。 -->
+                <!-- 「脚本创作」:导入技能端已产出的**渲染脚本包**(manifest.json + plan/plan.json)
+                     并自动开始批量产线。2026-09-27 沿革:当天按用户要求隐藏(技能侧停产出),
+                     当晚技能侧恢复脚本交付后按用户要求**回归**。没有包时禁用(不给"点了才报错")。 -->
+                <el-dropdown-item command="script" :disabled="!n.script"
+                                  :title="n.script
+                                    ? (n.script.deprecated
+                                        ? '这本书的渲染包已被技能侧标为废弃(只留查看)——导入的是历史包,正式渲染建议走「视频制作」'
+                                        : '直接导入技能端已产出的脚本包并自动开始批量产线(不再跑 AI 拆集)')
+                                    : '这本书目录里没有技能端渲染脚本包(需要 manifest.json + plan/plan.json)'">
+                  <el-icon><Document /></el-icon>脚本创作{{ n.script ? `（${n.script.episodes} 集）` : '' }}
+                  <el-tag v-if="n.script?.deprecated" size="small" type="info" effect="plain" style="margin-left:6px">历史包</el-tag>
+                </el-dropdown-item>
                 <el-dropdown-item command="produce" :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
                 </el-dropdown-item>
@@ -617,7 +673,23 @@ function onCardCmd(cmd, n) {
             <div v-else-if="!script?.found" class="text-xs py-6 text-center" style="color:var(--mx-text3)">
               {{ script?.hint || '这本书目录里没有技能端脚本包' }}
             </div>
-            <div v-else class="flex gap-3" :style="{ height: dlgH - 150 + 'px' }">
+            <div v-else class="flex flex-col gap-2" :style="{ height: dlgH - 150 + 'px' }">
+              <!-- 技能侧**交付物**(素材三卡 / 分镜 markdown):技能侧 v2.14 起的主交付面。
+                   只读展示 —— 它们是给人读的,渲染输入仍是 plan.json 或平台 LLM 直出。 -->
+              <div v-if="deliverables.length" class="panel px-3 py-2 flex items-center gap-2 flex-wrap flex-none">
+                <b class="text-xs">技能侧交付</b>
+                <el-tag v-for="d in deliverables" :key="d.path" size="small" effect="plain"
+                        style="cursor:pointer" @click="openDeliverable(d)"
+                        :title="`${d.rel} · ${d.mtime}`">{{ d.name }}</el-tag>
+                <span class="text-xs" style="color:var(--mx-text3)">点开即读（不跑 LLM）</span>
+              </div>
+              <!-- 没有渲染包(只有上面的交付物):说明为什么不给分镜明细,别留一片空白 -->
+              <div v-if="!(script.episodes || []).length"
+                   class="text-xs py-6 text-center panel flex-1 flex items-center justify-center px-6"
+                   style="color:var(--mx-text3)">
+                {{ script.hint || '这本书没有渲染脚本包（manifest.json + plan/plan.json），所以没有结构化分镜明细' }}
+              </div>
+              <div v-else class="flex gap-3 flex-1" style="min-height:0">
               <!-- 集清单 -->
               <div class="nav-tree flex flex-col" style="width:190px;flex:none">
                 <div class="flex items-center gap-2 px-3 py-2 flex-none" style="border-bottom:1px solid var(--mx-line)">
@@ -654,6 +726,7 @@ function onCardCmd(cmd, n) {
                   </div>
                   <div v-if="!scriptShots.length" class="text-xs py-6 text-center" style="color:var(--mx-text3)">选一集看分镜</div>
                 </div>
+              </div>
               </div>
             </div>
           </el-tab-pane>
@@ -743,5 +816,16 @@ function onCardCmd(cmd, n) {
     <el-image-viewer v-if="viewer" :url-list="viewer.list" :initial-index="viewer.index"
                      :z-index="4000" teleported hide-on-click-modal show-progress
                      @close="viewer = null" />
+    <!-- 技能侧交付物阅读(素材三卡 / 分镜 markdown):纯文本展示,与「正文」同一套观感 -->
+    <el-dialog :model-value="!!deliverable" :title="deliverable ? deliverable.name : ''"
+               width="900px" top="6vh" append-to-body @close="deliverable = null">
+      <div v-if="deliverable" class="flex flex-col gap-2">
+        <div class="text-xs" style="color:var(--mx-text3)">
+          {{ deliverable.chars }} 字{{ deliverable.truncated ? '（过大已截断）' : '' }} · 技能侧产物，只读
+        </div>
+        <pre class="text-xs overflow-y-auto tree-scroll p-3"
+             style="white-space:pre-wrap;max-height:70vh;background:var(--mx-panel2);border-radius:8px">{{ deliverable.text }}</pre>
+      </div>
+    </el-dialog>
   </div>
 </template>

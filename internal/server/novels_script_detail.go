@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -62,6 +63,98 @@ type scriptPropView struct {
 	In     int    `json:"in"` // 出现在几集里
 }
 
+// scriptDeliverableView 技能侧**新交付物**的一条（`素材/*.md`、`分镜/*.md`）。
+//
+// 为什么要它（2026-09-27 用户：「技能侧的脚本重新输出了，小说库里的剧本创作功能回归」）：
+// 技能侧 v2.14 把交付面改成了 markdown —— `素材/{角色卡,场景卡,道具卡}.md` 与
+// `分镜/{第NN集.md,H3-提示词.md,分镜脚本.md,分镜-通用.md}`（六列内核 ＋ H3 六段式），
+// 而本页签**只认渲染脚本包**（`manifest.json + plan/plan.json`）。于是盘上明明有新产物，
+// 界面却只说"没有技能端脚本包" —— 功能看起来"没了"。这里把新产物也列出来（只列与读，
+// 不解析成数据：它们是给人读的，渲染输入仍走 plan.json / 平台 LLM 直出）。
+type scriptDeliverableView struct {
+	Name  string `json:"name"`
+	Rel   string `json:"rel"`  // 相对书目录（界面显示）
+	Path  string `json:"path"` // 绝对路径（交给 GET /api/novels/read 读）
+	Size  int64  `json:"size"`
+	MTime string `json:"mtime"`
+}
+
+// scriptPackageView 渲染脚本包的存在性（含"技能侧是否已把它标为废弃"）。
+type scriptPackageView struct {
+	Present    bool   `json:"present"`
+	Count      int    `json:"count,omitempty"`
+	Deprecated bool   `json:"deprecated,omitempty"`
+	Hint       string `json:"hint,omitempty"`
+}
+
+// collectNovelDeliverables 列出一本书目录里技能侧的**新交付物**与渲染包状态。
+//
+// 只认技能侧明确定义的两个目录（`素材/`、`分镜/`），**不递归**：这两个目录的产物是
+// 技能侧脚本写的（`asset_cards.py` / `storyboard_export.py`），深度固定；扫太深会把
+// `素材/_llm/*.json` 缓存、备份目录里的旧文件当成交付物列出来。
+func collectNovelDeliverables(book string) (assets, storyboard []scriptDeliverableView, pkg scriptPackageView) {
+	pick := func(sub string, sortByEpisode bool) []scriptDeliverableView {
+		dir := filepath.Join(book, sub)
+		ents, err := os.ReadDir(dir)
+		if err != nil {
+			return nil
+		}
+		out := make([]scriptDeliverableView, 0, len(ents))
+		for _, e := range ents {
+			if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".md") {
+				continue // 只收 markdown：_llm/*.json 是缓存，图片另有页签
+			}
+			full := filepath.Join(dir, e.Name())
+			fi, err := os.Stat(full)
+			if err != nil {
+				continue
+			}
+			out = append(out, scriptDeliverableView{
+				Name: e.Name(), Rel: filepath.ToSlash(filepath.Join(sub, e.Name())), Path: full,
+				Size: fi.Size(), MTime: fi.ModTime().Format("2006-01-02 15:04"),
+			})
+		}
+		// 分镜目录按集号排（`第02集.md` 不能排到 `第10集.md` 后面），其余按名字
+		sort.Slice(out, func(i, j int) bool {
+			if sortByEpisode {
+				ni, nj := epNumOf(out[i].Name), epNumOf(out[j].Name)
+				if ni != nj {
+					return ni < nj
+				}
+			}
+			return out[i].Name < out[j].Name
+		})
+		return out
+	}
+	assets = pick("素材", false)
+	storyboard = pick("分镜", true)
+
+	// 渲染包是否已被技能侧标为"废弃/别当渲染输入"。
+	// 与 findBookScript 用**同一个判据函数**（两处各写一份，将来技能侧改标记文件名时必漏一处）。
+	if dep, hint := scriptPackagesDeprecated(filepath.Join(book, "漫剧脚本"), filepath.Join(book, "脚本")); dep {
+		pkg.Deprecated = true
+		pkg.Hint = hint
+	}
+	return assets, storyboard, pkg
+}
+
+func dirExists(p string) bool {
+	fi, err := os.Stat(p)
+	return err == nil && fi.IsDir()
+}
+
+// epNumOf 从 `第NN集.md` 里取集号（取不到给一个大数，排到最后）。
+func epNumOf(name string) int {
+	s := epNoOf(name)
+	s = strings.TrimPrefix(s, "第")
+	s = strings.TrimSuffix(s, "集")
+	n, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil {
+		return 1 << 20
+	}
+	return n
+}
+
 // handleNovelScript GET /api/novels/script?path=<书目录>[&episode=<包目录>]
 //
 // 小说库详情弹窗的「剧本脚本 / 角色 / 场景」数据源(2026-09-26 用户要求:
@@ -80,10 +173,28 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 403, fmt.Errorf("路径超出小说库范围"))
 		return
 	}
+	// 技能侧的**新交付物**（素材三卡 / 分镜 markdown）先收集：它们与渲染包是两条线，
+	// 一本书可能只有其中之一（技能侧 v2.14 起就常常只有新产物）。
+	assets, storyboard, pkgView := collectNovelDeliverables(book)
+	hasDeliverables := len(assets) > 0 || len(storyboard) > 0
+
 	bs := s.findBookScript(book)
 	if bs == nil {
+		// 没有渲染包，但盘上有技能侧新产物 → **仍然算"有东西可看"**。
+		// 这是本页签 2026-09-27 之前的一个真缺口:技能侧把交付面换成 markdown 之后,
+		// 界面只会说"没有技能端脚本包",用户以为功能没了。
+		if hasDeliverables {
+			writeJSON(w, 200, map[string]any{
+				"found": true, "kind": "deliverables", "episodes": []any{},
+				"deliverables": map[string]any{"assets": assets, "storyboard": storyboard},
+				"package":      pkgView,
+				"hint": "这本书没有**渲染脚本包**（manifest.json + plan/plan.json），" +
+					"但技能侧已经产出了下面的交付物；渲染请走「视频制作」（平台 LLM 直出）",
+			})
+			return
+		}
 		writeJSON(w, 200, map[string]any{"found": false,
-			"hint": "这本书目录里没有技能端脚本包(需要 manifest.json + plan/plan.json)"})
+			"hint": "这本书目录里既没有渲染脚本包(manifest.json + plan/plan.json)，也没有技能侧交付物(素材/*.md、分镜/*.md)"})
 		return
 	}
 	pkgs, err := collectPackages(bs.Root)
@@ -146,6 +257,15 @@ func (s *Server) handleNovelScript(w http.ResponseWriter, r *http.Request) {
 		"found": true, "root": bs.Root, "kind": bs.Kind, "book": bs.Book, "version": bs.Version,
 		"episodes": eps, "characters": orderChars(chars, order), "scenes": orderScenes(scenes, scOrder),
 		"props": orderProps(props, prOrder),
+	}
+	// 技能侧交付物 + 渲染包状态：与上面的集清单并列返回（新产物那半与渲染包无关，
+	// 只影响"界面能不能看见/读它们"）。
+	pkgView.Present = true
+	pkgView.Count = len(eps)
+	out["deliverables"] = map[string]any{"assets": assets, "storyboard": storyboard}
+	out["package"] = pkgView
+	if bs.Deprecated {
+		out["deprecated"] = true
 	}
 	// 按需取某一集的镜头明细
 	if want := strings.TrimSpace(r.URL.Query().Get("episode")); want != "" {

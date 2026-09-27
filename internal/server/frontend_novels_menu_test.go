@@ -218,31 +218,46 @@ func cssBlockOf(t *testing.T, css, selector string) string {
 	return rest[:end]
 }
 
-// TestNovelsCoverMenuHidesScriptEntry 小说库「脚本创作」入口**已移除**(2026-09-27 用户要求隐藏)。
+// TestNovelsMenuHasScriptEntry 小说库「脚本创作」入口**必须在**（2026-09-27 晚按用户要求回归）。
 //
-// 沿革:2026-09-26 用户要求新增它(技能端已直出脚本,平台解析到就导包,**省掉 LLM 拆集**);
-// 2026-09-27 用户改主意并拍板:「技能侧独立输出小说内容,不出脚本了,还是平台侧走 LLM 合理点」
-// —— 盘上不会再有人**技能端脚本包**可导,这个入口随之作废。
+// 沿革:2026-09-26 新增它（技能端已直出脚本 → 平台解析到就导包，省掉 LLM 拆集）；
+// 2026-09-27 白天按用户要求隐藏（技能侧停了渲染包产出）；**当晚技能侧恢复脚本交付
+// （v2.14：素材三卡 ＋ 分镜 markdown）后，用户要求这个功能回归**。
 //
-// 钉三件事:①菜单里**不再有**它;②「视频制作」(LLM 直出那条路)必须还在;
-// ③**后端能力不许一起删**(`/api/novels/produce-script` 由 TestStoreWiresProduceScript 钉)
-// —— 将来若又走脚本线,加回一个菜单项即可,不必重写接口。
-func TestNovelsCoverMenuHidesScriptEntry(t *testing.T) {
+// 钉四件事：①菜单里有它、带集数、没有包时禁用；②技能侧把包标废弃时界面要说清"历史包"；
+// ③「视频制作」（LLM 直出，正式渲染那条路）必须还在；④页签要能列出并点开技能侧**新交付物**
+// （`素材/*.md`、`分镜/*.md`）—— 这正是"功能看起来没了"的那个缺口（原先只认渲染包）。
+func TestNovelsMenuHasScriptEntry(t *testing.T) {
 	vuePath := filepath.Join("..", "..", "frontend", "src", "views", "NovelsView.vue")
 	vue, err := os.ReadFile(vuePath)
 	if err != nil {
 		t.Fatalf("读不到 %s: %v", vuePath, err)
 	}
-	// 判据只看**代码**:注释里允许写沿革(那里当然会出现被移除入口的名字)。
+	// 判据只看**代码**：注释里写着沿革，那里当然也会出现这些名字。
 	src := stripVueComments(string(vue))
-	for _, gone := range []string{`command="script"`, "脚本创作", "function produceScript(", "api.novelProduceScript("} {
-		if strings.Contains(src, gone) {
-			t.Errorf("「脚本创作」入口应已移除,却仍有 %q", gone)
+	for _, want := range []string{
+		`command="script"`, "脚本创作", "function produceScript(", "api.novelProduceScript(",
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("「脚本创作」入口应已回归，却缺少 %q", want)
 		}
 	}
-	// 「视频制作」必须还在(它是 LLM 直出那条路,现在也是唯一那条)
+	// 没有包时禁用（不给"点了才报错"），有废弃标记时给"历史包"提示
+	if !strings.Contains(src, `:disabled="!n.script"`) {
+		t.Error("没有脚本包时该入口必须禁用")
+	}
+	if !strings.Contains(src, "deprecated") || !strings.Contains(src, "历史包") {
+		t.Error("技能侧把包标废弃时，界面必须如实提示「导入的是历史包」")
+	}
+	// 「视频制作」必须还在（它是 LLM 直出那条路，也是现在的正式渲染入口）
 	if !strings.Contains(src, `command="produce"`) || !strings.Contains(src, "视频制作") {
 		t.Error("「视频制作」入口必须保留")
+	}
+	// 技能侧新交付物（素材/分镜 markdown）必须在页签里可见、可读
+	for _, want := range []string{"deliverables", "openDeliverable(", "novelRead("} {
+		if !strings.Contains(src, want) {
+			t.Errorf("剧本脚本页签缺少技能侧交付物的展示/阅读接线：%q", want)
+		}
 	}
 }
 

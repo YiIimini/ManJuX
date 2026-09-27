@@ -29,6 +29,28 @@ type bookScript struct {
 	Episodes int    `json:"episodes"` // 找到几个包(界面用它显示"已有脚本 N 集")
 	Book     string `json:"book,omitempty"`
 	Version  string `json:"version,omitempty"` // 契约版本(与平台 PlanContractVersion 对照)
+
+	// Deprecated 技能侧是否已把这个渲染包目录标为废弃(2026-09-27 起技能侧不再产出渲染包,
+	// 只在 `漫剧脚本/` 留一份 `_已废弃-说明.md`)。界面据此把"导入历史包"这件事说清楚 ——
+	// 判据用技能侧自己放的说明文件，平台不猜内容。
+	Deprecated     bool   `json:"deprecated,omitempty"`
+	DeprecatedHint string `json:"deprecated_hint,omitempty"`
+}
+
+// scriptPackagesDeprecated 这些目录里有没有技能侧的"已废弃"说明文件。
+//
+// 判据是**文件的存在性**（`_已废弃*`），不是内容匹配：技能侧换措辞不该让平台这边失效，
+// 而不放这个文件 = 没标废弃（老包在停用前就是这个状态，照旧可导）。
+func scriptPackagesDeprecated(dirs ...string) (bool, string) {
+	for _, d := range dirs {
+		if strings.TrimSpace(d) == "" || !dirExists(d) {
+			continue
+		}
+		if m, _ := filepath.Glob(filepath.Join(d, "_已废弃*")); len(m) > 0 {
+			return true, "技能侧已把该目录标为废弃（只留查看，不再更新）：渲染输入请走「视频制作」（平台 LLM 直出）"
+		}
+	}
+	return false, ""
 }
 
 // findBookScript 在一本书的目录里找技能端脚本包。
@@ -89,6 +111,7 @@ func (s *Server) findBookScript(bookPath string) *bookScript {
 	}
 	bs := &bookScript{Root: bestRoot, Kind: kind, Episodes: len(bestPkgs)}
 	bs.Book, bs.Version = readPackageIdentity(bestPkgs[0])
+	bs.Deprecated, bs.DeprecatedHint = scriptPackagesDeprecated(bestRoot, filepath.Dir(bestRoot))
 	return bs
 }
 
@@ -155,10 +178,15 @@ func (s *Server) handleNovelProduceScript(w http.ResponseWriter, r *http.Request
 	bs := s.findBookScript(book)
 	if bs == nil {
 		writeErr(w, 400, fmt.Errorf(
-			"《%s》目录里没有技能端脚本包:需要 manifest.json + plan/plan.json(系列根另有 series.json)。"+
-				"先在技能端跑 manju_plan.py build --out <书目录>/脚本,再回来点这里",
+			"《%s》目录里没有技能端渲染脚本包:需要 manifest.json + plan/plan.json(系列根另有 series.json)。"+
+				"注意技能侧自 2026-09-27 起**默认不再产出该包**(manju_plan.py build 会拒绝执行,要考古加 --legacy-force)；"+
+				"正常渲染请走「视频制作」——平台读小说正文 LLM 直出分镜与每镜 H3 提示词",
 			filepath.Base(book)))
 		return
+	}
+	if bs.Deprecated {
+		s.opLog("⚠ 《%s》的渲染包已被技能侧标为废弃:%s —— 仍按你的点击导入(%s, %d 集)",
+			orDefault(bs.Book, filepath.Base(book)), bs.DeprecatedHint, bs.Root, bs.Episodes)
 	}
 	prefix := orDefault(bs.Book, filepath.Base(book))
 	s.opLog("📜 脚本创作:《%s》 → 导入 %s(%d 集,契约 %s)",
