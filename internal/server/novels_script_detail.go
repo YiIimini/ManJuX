@@ -38,6 +38,13 @@ type scriptShotView struct {
 	Landmarks string `json:"landmarks,omitempty"`  // 场景地标（连续性锚点）
 	Light     string `json:"light,omitempty"`      // 光态
 	SceneName string `json:"scene_name,omitempty"` // 场景名（明细里是中文名）
+
+	// Unbound 画面里有人、但**刻意**不绑卡也不给脸（技能侧 09-27 §9 的机器可读字段）。
+	// 页签据此显示一枚提示标签：no_card = 群演/一次性角色（要露脸得先建卡）；
+	// faceless_by_design = 刻意背影/局部/群像。**它不是缺陷**，所以不标红。
+	Unbound       bool   `json:"unbound,omitempty"`
+	UnboundReason string `json:"unbound_reason,omitempty"`
+	UnboundHint   string `json:"unbound_hint,omitempty"` // 技能侧写的中文说明（挂 tooltip）
 }
 
 type scriptEpView struct {
@@ -393,6 +400,7 @@ func detailShotViews(shots []scriptDetailShot, want string) []scriptShotView {
 			ID: s.ID, Size: s.ShotSize, Duration: s.Duration, Mode: s.Mode,
 			Action: s.Action, Narration: s.Narration, Chars: s.Characters,
 			View: s.View, ViewNote: s.ViewNote, AngleZH: s.AngleZH,
+			Unbound: s.Unbound, UnboundReason: s.UnboundReason, UnboundHint: s.UnboundHint,
 			HookType: s.HookType, EndState: s.EndState,
 			Landmarks: landmarksText(s.SceneLandmarks), Light: s.Light, SceneName: s.Scene,
 		}

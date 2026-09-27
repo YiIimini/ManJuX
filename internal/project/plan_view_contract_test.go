@@ -339,19 +339,40 @@ func TestValidatePlanCloseUpWithoutCard(t *testing.T) {
 	if hasIssue(ValidatePlan(p), "warn", "却没有出场角色") {
 		t.Errorf("prose 兜底也该认：%v", PlanIssuesText(ValidatePlan(p)))
 	}
-	// 但**不许**让它变成静默例外：门要在别的镜命中时说明"另外 N 镜已排除"
+	// 但**不许**让它变成静默例外：门要在别的镜命中时说明"另有 N 镜已排除"，且**按 reason 分支**
+	// （技能侧 §9 的明确要求：no_card = 要露脸就得先建卡；faceless_by_design = 刻意不给脸）
 	p2 := viewShotPlan(4, true)
 	p2.Shots[0].ShotSize = "近景"
 	p2.Shots[0].Characters = nil
 	p2.Shots[0].Unbound = true
+	p2.Shots[0].UnboundReason = UnboundNoCard
 	p2.Shots[1].ShotSize = "特写"
 	p2.Shots[1].Characters = nil // 这一镜是"忘了绑卡"
 	issues = ValidatePlan(p2)
 	if !hasIssue(issues, "warn", "却没有出场角色") {
 		t.Fatalf("真有没绑卡的镜时必须报：%v", PlanIssuesText(issues))
 	}
-	if !hasIssue(issues, "warn", "已排除") {
-		t.Errorf("报的时候要说明另有 N 镜是刻意不露脸、已排除（别让人以为门漏判）：%v", PlanIssuesText(issues))
+	txt = strings.Join(PlanIssuesText(issues), "；")
+	for _, want := range []string{"不算漏绑", "no_card 1", "faceless_by_design 0"} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("提示里应说明这是刻意未绑卡并**按 reason 分支**（缺 %q）：%s", want, txt)
+		}
+	}
+	// 两个 reason 同时出现时都要数出来
+	p3 := viewShotPlan(4, true)
+	p3.Shots[0].ShotSize = "近景"
+	p3.Shots[0].Characters = nil
+	p3.Shots[0].Unbound = true
+	p3.Shots[0].UnboundReason = UnboundNoCard
+	p3.Shots[1].ShotSize = "近景"
+	p3.Shots[1].Characters = nil
+	p3.Shots[1].Unbound = true
+	p3.Shots[1].UnboundReason = UnboundFaceless
+	p3.Shots[2].ShotSize = "特写"
+	p3.Shots[2].Characters = nil
+	txt3 := strings.Join(PlanIssuesText(ValidatePlan(p3)), "；")
+	if !strings.Contains(txt3, "no_card 1") || !strings.Contains(txt3, "faceless_by_design 1") {
+		t.Errorf("两个 reason 都要数出来：%s", txt3)
 	}
 }
 

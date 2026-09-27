@@ -748,6 +748,12 @@ function onCardCmd(cmd, n) {
                       <el-tag v-else-if="s.view_note" size="small" effect="plain" :title="s.view_note">视角留空</el-tag>
                       <el-tag v-if="s.hook_type" size="small" type="success" effect="plain" title="官方受控钩子类型">{{ s.hook_type }}</el-tag>
                       <el-tag v-if="s.characters?.length" size="small" effect="plain" title="出场角色（决定参考图）">{{ s.characters.join('、') }}</el-tag>
+                      <!-- 刻意不绑卡/不给脸：技能侧显式标了 unbound。**不是缺陷**，所以用素色标签，
+                           并把 reason 翻成人话；详细说明在 unbound_hint 里（挂 tooltip） -->
+                      <el-tag v-if="s.unbound" size="small" type="info" effect="plain"
+                              :title="s.unbound_hint || (s.unbound_reason === 'no_card' ? '画面里的人不在本集角色表（群演/一次性角色）：要让他露脸就得先建卡' : '刻意不给脸（背影/局部/群像）')">
+                        {{ s.unbound_reason === 'no_card' ? '群演未建卡' : (s.unbound_reason === 'faceless_by_design' ? '刻意无脸' : '未绑卡') }}
+                      </el-tag>
                       <el-tag v-if="s.size && !s.characters?.length && (s.size.includes('特写') || s.size.includes('近景'))"
                               size="small" type="danger" effect="dark" title="特写/近景却没有出场角色：这一档画面里几乎只有一张脸，没有卡就每次换一张新脸">
                         无卡露脸

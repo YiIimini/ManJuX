@@ -532,7 +532,7 @@ func ValidatePlan(p *Plan) []Issue {
 		// 与上面「建立镜头不许特写」形状一致（同样聚合报一条），但两者**不是一回事**：
 		// 那条管"小景别当建立镜头"，这条管"有人脸却没卡"。
 		var closeNoChar []string
-		unbound := 0
+		unbound, unboundNoCard, unboundByDesign := 0, 0, 0
 		for _, sh := range p.Shots {
 			if !IsCloseUpShot(sh.ShotSize) {
 				continue
@@ -542,8 +542,20 @@ func ValidatePlan(p *Plan) []Issue {
 				// 那种镜是"刻意不露脸"，与"忘了绑卡"是两回事，后者才是每次换一张脸的缺陷。
 				// 判据优先用**字段**（`unbound` + `unbound_reason`，技能侧 09-27 §9 给的），
 				// 再退回早先的 prose 写法（PlanUnboundFaceMarker）—— 字段是稳的，prose 会随措辞漂。
+				//
+				// **按 reason 分支**（技能侧 §9 的明确要求，两个 token 已进他们的契约）：
+				//   `no_card`           画面里的人不在本集角色表（群演/一次性角色）→ 要露脸就得先建卡；
+				//   `faceless_by_design` 刻意不给脸（背影/局部/群像）→ 无需建卡。
+				// 分支不是为了放行（两者都不算漏绑），而是为了让**读日志的人知道自己在看哪种情况**：
+				// 前者是"可以考虑建卡"的信息，后者是"本来就该这样"。
 				if sh.Unbound || strings.Contains(sh.H3Prompt, PlanUnboundFaceMarker) {
 					unbound++
+					switch sh.UnboundReason {
+					case UnboundNoCard:
+						unboundNoCard++
+					case UnboundFaceless:
+						unboundByDesign++
+					}
 					continue
 				}
 				closeNoChar = append(closeNoChar,
@@ -553,10 +565,18 @@ func ValidatePlan(p *Plan) []Issue {
 		if len(closeNoChar) > 0 {
 			extra := ""
 			if unbound > 0 {
-				// 别让例外静默：明确说出"另外 N 镜是刻意写清不绑卡/不露脸的，已排除"，
-				// 否则读日志的人会以为门漏判了。
-				extra = fmt.Sprintf("（另有 %d 镜在提示词里显式写了「%s」，属刻意不露脸，已排除）",
-					unbound, PlanUnboundFaceMarker)
+				// 别让例外静默：按 reason 分支说明"另有哪些镜是刻意不露脸的，已排除"。
+				// 分支口径见技能侧契约（tokens 写进他们的 §2.3）：no_card = 要露脸就得先建卡；
+				// faceless_by_design = 刻意不给脸、无需建卡。
+				// 没给 reason 的（老明细/handmade 方案）如实说"未标原因"，别把它算进任一分支。
+				nor := unbound - unboundNoCard - unboundByDesign
+				tail := ""
+				if nor > 0 {
+					tail = fmt.Sprintf("；另有 %d 镜标了 unbound 但没给 reason", nor)
+				}
+				extra = fmt.Sprintf("（另有 %d 镜显式标了 unbound：no_card %d / faceless_by_design %d —— "+
+					"前者是「画面里的人不在本集角色表」，要让他露脸就得先建卡；后者是「刻意不给脸」；两者都不算漏绑%s）",
+					unbound, unboundNoCard, unboundByDesign, tail)
 			}
 			add("warn", "plan.shots",
 				"%d 镜是特写/近景却没有出场角色（%s）—— 这一档画面里几乎只有一张脸，而没有角色就没有参考图，"+
