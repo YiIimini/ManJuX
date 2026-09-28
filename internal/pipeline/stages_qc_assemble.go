@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/YiIimini/ManJuX/internal/library"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
-
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/compose"
 	"github.com/YiIimini/ManJuX/internal/fsutil"
+	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
@@ -206,6 +206,15 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	if textAlert != nil {
 		c.emit(proj.ID, PhaseQC, 0, "warn", 100, "⚠ %s", textAlert.Msg)
 	}
+	// **人脸一致性测量**（2026-09-28）：把主角的定妆照与它在几镜里的画面比一遍，把数字摆出来。
+	//
+	// 第一版**只测量、不拦人**：阈值 0.85 来自开源参考实现，但在本平台画风上还没做跨镜标定
+	// （实测只标定了两头：同一张脸 1.000、同一画面里不同的人 0.329）。判据不成熟就拦人只会
+	// 制造假告警。攒够真实数据再定阈值 —— 见 qc/face.go 的说明。
+	//
+	// 预算：最多 3 个角色 × 每人最多 3 帧，一次 Python 调用（模型加载约 5 秒），不随镜头数线性膨胀。
+	c.measureFaceConsistency(ctx, proj, plan, manifest)
+
 	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, textAlert)
 	if v.Msg != "" {
 		c.emit(proj.ID, PhaseQC, 0, v.Level, 100, "%s", v.Msg)
@@ -549,4 +558,104 @@ func joinShotIDs(ids []int, n int) string {
 		parts = append(parts, "#"+strconv.Itoa(id))
 	}
 	return strings.Join(parts, "、")
+}
+
+// measureFaceConsistency 人脸一致性测量（只测量、只播报，不阻断）。
+//
+// 为什么值得单独做一条：平台此前判断"是不是同一个人"只有 VLM 判定（有随机性）与"撞脸自检"
+// （比的是资产卡之间，不是成片镜头）—— 缺一个**确定性**的数字。这条给出"定妆照 vs 各镜画面"
+// 的余弦相似度，把"这一镜是不是换了张脸"从感觉变成可比较的量。
+//
+// 【预算与取样】最多 3 个角色（按出场镜头数排序）× 每人最多 3 镜（均匀取样），一次 Python 调用。
+// 为什么要限：模型加载约 5 秒，逐镜调用会让质检阶段慢到没人愿意开；均匀取样已经能看出漂移。
+//
+// 【没验过就说没验过】环境不齐（没 Python / 没装 buffalo_l / 抽帧失败）一律如实播报，
+// 不沉默（沉默会被读成通过）。
+func (c *Coordinator) measureFaceConsistency(ctx context.Context, proj *project.Project, plan *project.Plan, manifest map[string]project.ClipManifest) {
+	if plan == nil || len(plan.Shots) == 0 {
+		return
+	}
+	assets, err := c.store.LoadAssets(proj.ID)
+	if err != nil {
+		return
+	}
+	cfg := qc.FaceConfigFromComfyRoot(c.cfg.Get().Comfy.RootDir)
+	if ok, why := cfg.Ready(); !ok {
+		c.emit(proj.ID, PhaseQC, 0, "info", 100, "人脸一致性未验（%s）—— 不当作通过", why)
+		return
+	}
+	// 统计出场镜头：角色 → 镜号列表（按出场次数取前 3 个角色）
+	byChar := map[string][]project.Shot{}
+	order := []string{}
+	for _, sh := range plan.Shots {
+		for _, cid := range sh.Characters {
+			if _, seen := byChar[cid]; !seen {
+				order = append(order, cid)
+			}
+			byChar[cid] = append(byChar[cid], sh)
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool { return len(byChar[order[i]]) > len(byChar[order[j]]) })
+	if len(order) > 3 {
+		order = order[:3]
+	}
+	frameDir := filepath.Join(c.store.Dir(proj.ID), "qc", "frames")
+	for _, cid := range order {
+		shots := byChar[cid]
+		a, ok := assets[cid]
+		if !ok || strings.TrimSpace(a.File) == "" {
+			continue
+		}
+		ref := filepath.Join(c.store.Dir(proj.ID), a.File)
+		if _, err := os.Stat(ref); err != nil {
+			continue
+		}
+		// 均匀取样最多 3 镜
+		picks := pickEvenly(len(shots), 3)
+		var frames []string
+		for _, i := range picks {
+			sh := shots[i]
+			m, ok := manifest[itoa(sh.ID)]
+			if !ok || m.File == "" {
+				continue
+			}
+			clip := filepath.Join(c.store.Dir(proj.ID), m.File)
+			at := float64(sh.Duration) / 2
+			if at < 0.4 {
+				at = 0.4
+			}
+			fp, ferr := qc.SampleFrameAt(ctx, c.ff, clip, at, frameDir,
+				fmt.Sprintf("face-%s-%d.jpg", strings.TrimPrefix(cid, "char_"), sh.ID))
+			if ferr != nil {
+				continue
+			}
+			frames = append(frames, fp)
+		}
+		if len(frames) == 0 {
+			continue
+		}
+		rep := qc.MeasureFaceConsistency(ctx, cfg, ref, frames)
+		if msg := qc.FaceSummary(rep, a.Name); msg != "" {
+			c.emit(proj.ID, PhaseQC, 0, "info", 100, "%s", msg)
+		}
+	}
+}
+
+// pickEvenly 从 n 个里均匀取最多 k 个下标（n<=k 时全取）。
+func pickEvenly(n, k int) []int {
+	if n <= 0 {
+		return nil
+	}
+	if n <= k {
+		out := make([]int, n)
+		for i := range out {
+			out[i] = i
+		}
+		return out
+	}
+	out := make([]int, 0, k)
+	for i := 0; i < k; i++ {
+		out = append(out, i*(n-1)/(k-1))
+	}
+	return out
 }
