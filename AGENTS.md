@@ -29,3 +29,12 @@
 一律在装配点（或唯一读取边界 `project.LoadPlan`）补上，并**如实播报**改了什么。
 自愈逻辑只写**一个入口**（`project.HealPlan`），因为预检/渲染/人审三个消费方必须看到同一份方案
 （2026-09-28 实测：只挂在生成链上导致预检报了 5 条假 fail）。
+## 自检现在是**七门**（2026-09-28 起）
+
+`scripts/check.ps1` 的闸门：gofmt → go vet → go build → go test → **go test -race** → vite build → go-webview2 补丁在位。
+
+- 第 5 门是竞态检测，需要 cgo ⇒ 本机装了 C 工具链 **`D:\Ai\Tools\mingw64`**（winlibs gcc，免安装解压即用）。
+  没装的机器上这道门会**如实跳过**并说明原因（不假装验过）。
+- 只跑两个并发最重的包（`internal/pipeline`、`internal/server`，合计约 19 秒）—— 全量 -race 会明显拖慢自检。
+- 改 `scripts/check.ps1` 时必须**保留 UTF-8 BOM**：Windows PowerShell 5.1 依赖 BOM 才按 UTF-8 解析，
+  丢 BOM 会让中文变乱码、脚本直接语法崩（2026-09-28 栽过一次）。
