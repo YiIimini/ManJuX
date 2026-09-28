@@ -63,14 +63,26 @@ type Shot struct {
 	ID         int      `json:"id"`
 	Scene      string   `json:"scene"`      // 场景 id
 	Characters []string `json:"characters"` // 出场角色 id
-	ShotSize   string   `json:"shot_size"`  // 景别:远景/全景/中景/近景/特写
-	Camera     string   `json:"camera"`     // 运镜描述
-	Action     string   `json:"action"`     // 画面动作概述(中文)
-	Dialogue   []Line   `json:"dialogue"`   // 台词(逐字保留进 H3 提示词)
-	Narration  string   `json:"narration"`  // 旁白(画外音)
-	Duration   int      `json:"duration"`   // 秒(4-10)
-	Mode       string   `json:"mode"`       // ref2va(有参考图) / t2va(纯文生)
-	H3Prompt   string   `json:"h3_prompt"`  // 完整六段式/三段式提示词(LLM 直出)
+	// Positions 本镜每个出场角色在**画面里**的位置（键=角色 id，值=如「画面左三分之一、前景、面朝右」）。
+	//
+	// 来源：官方 `shot-table-spec.md` STEP 5 要求每行的 Reference Anchors 含四个子字段，
+	// 其中 `Character Positions (camera view)`（左/中/右·上/中/下·前/中/后景＋朝向＋初始姿态）
+	// 与 `Exited Character Status` 平台此前**根本没有字段** —— 位置只写在散文里，
+	// 于是"人物凭空出现/凭空消失"没有任何判据可查。
+	Positions map[string]string `json:"positions,omitempty"`
+	// Offscreen 上一镜在场、本镜不在场的角色的**离屏状态**（键=角色 id，值=离屏位置与原因）。
+	//
+	// 官方纪律：已离屏角色至少保留 1 镜，连续 2 镜明确不在场后才移除 ——
+	// 这条纪律让"人不见了"变成显式信息，而不是靠观众自己脑补。
+	Offscreen map[string]string `json:"offscreen,omitempty"`
+	ShotSize  string            `json:"shot_size"` // 景别:远景/全景/中景/近景/特写
+	Camera    string            `json:"camera"`    // 运镜描述
+	Action    string            `json:"action"`    // 画面动作概述(中文)
+	Dialogue  []Line            `json:"dialogue"`  // 台词(逐字保留进 H3 提示词)
+	Narration string            `json:"narration"` // 旁白(画外音)
+	Duration  int               `json:"duration"`  // 秒(4-10)
+	Mode      string            `json:"mode"`      // ref2va(有参考图) / t2va(纯文生)
+	H3Prompt  string            `json:"h3_prompt"` // 完整六段式/三段式提示词(LLM 直出)
 
 	// View 本镜的**主视角/机位角度**(英文,逐字来自官方 9 视角词表,见 view_vocab.go)。
 	//

@@ -91,6 +91,8 @@ func TestValidatePlanCJKSubtractsSubjectNames(t *testing.T) {
 		}
 	}
 	p.Shots[0].Characters = []string{"char_" + names[0]}
+	// 夹具照真实形态写：出场角色必须有画面位置（官方分镜表 Character Positions 子字段）
+	p.Shots[0].Positions = map[string]string{"char_" + names[0]: "画面中央、中景、面朝镜头"}
 	// 台词一并清掉：本用例只测汉字门，而样例台词「阿甲」不在我刚换上的角色表里，
 	// 会额外报一条无关 warn（说话人不在角色表），把"零 issue"的判据搅浑。
 	p.Shots[0].Dialogue = nil

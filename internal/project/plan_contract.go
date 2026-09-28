@@ -1335,6 +1335,49 @@ func ValidatePlan(p *Plan) []Issue {
 				len(withMusic), strings.Join(firstN(withMusic, 6), "、"))
 		}
 	}
+	// ── 人物位置与退场状态（官方 `shot-table-spec.md` STEP 5：Reference Anchors 四个子字段全必填）──
+	//
+	// 平台此前只有"地标"与"光态"两个子字段，`Character Positions (camera view)` 与
+	// `Exited Character Status` **连字段都没有** ⇒ 位置只散在散文里，"人物凭空出现/凭空消失"
+	// 没有任何判据。两条门：
+	//   ① 出场角色必须在 positions 里有位置（缺了等于让模型自己摆人）；
+	//   ② 上一镜在场、本镜不在场的角色必须写进 offscreen 且**至少保留一镜**（官方纪律：
+	//      连续 2 镜明确不在场后才可移除）—— 这条让"人不见了"变成显式信息。
+	if len(p.Shots) > 0 {
+		var noPos, noExit []string
+		for i, sh := range p.Shots {
+			for _, cid := range sh.Characters {
+				if strings.TrimSpace(sh.Positions[cid]) == "" {
+					noPos = append(noPos, fmt.Sprintf("#%d/%s", sh.ID, cid))
+				}
+			}
+			if i == 0 {
+				continue
+			}
+			prev := p.Shots[i-1]
+			for _, cid := range prev.Characters {
+				if hasString(sh.Characters, cid) {
+					continue // 本镜还在场
+				}
+				// 上一镜在场、本镜不在场 ⇒ 必须在 offscreen 里交代（官方：至少保留一镜）
+				if strings.TrimSpace(sh.Offscreen[cid]) == "" {
+					noExit = append(noExit, fmt.Sprintf("#%d→#%d/%s", prev.ID, sh.ID, cid))
+				}
+			}
+		}
+		if len(noPos) > 0 {
+			add("warn", "plan.shots",
+				"%d 处出场角色**没有写位置**（%s）—— 官方分镜表要求每行都有 `Character Positions (camera view)`"+
+					"（画面左/中/右、前/中/后景、朝向与初始姿态）；缺了等于让模型自己摆人，同一场戏两镜的站位就会漂",
+				len(noPos), strings.Join(firstN(noPos, 6), "、"))
+		}
+		if len(noExit) > 0 {
+			add("warn", "plan.shots",
+				"%d 处**人物凭空消失**（%s）—— 上一镜还在画面里的角色，这一镜既不在场、也没写离屏状态。"+
+					"官方纪律：已离屏角色至少保留一镜（写清去哪了、为什么），连续 2 镜明确不在场后才可移除",
+				len(noExit), strings.Join(firstN(noExit, 6), "、"))
+		}
+	}
 	// ── 核心提炼（用户 2026-09-28：「LLM 需要抓住文字内容中的重点总结输出核心分镜脚本，
 	// 而不是一味的照搬原文内容」）────────────────────────────────────────────────
 	//

@@ -46,7 +46,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
     {"id":"prop_xxx","name":"中文名","en":"ENGLISH look phrase for the picture model","description":"中文外观/材质/配色/尺寸/记号","image_prompt":"ENGLISH 1:1 white-background single-object prompt (see PROP CARDS)"}
   ],
   "shots": [
-    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"prop_ids":["prop_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
+    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"prop_ids":["prop_xxx"],"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{"char_yyy":"上一镜在场、本镜已出画，走向门洞（本镜保留一行）"},"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{},"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
   ]
 }`
 
@@ -179,7 +179,17 @@ H3 renders every shot independently and keeps no memory of the previous one, so 
 - **Relative staging when two or more people share the frame**: who is in the foreground, who is behind whom, how far apart, which side of frame each occupies: e.g. "he stands at the centre of the lane, the old woman three paces in front of him, the boy half a step to her right rear".
 - **Special effects: origin, shape, colour**: e.g. "a thin gold light leaves his knuckles in a spray and lights the right side of his face".
 - On a return to the same location within the same scene, restate that staging rather than saying "as before" (there is no "before" for this generation).
-- One main action per shot; the action is performed with the hands and body at ARM level, never at finger level (see THE SHOT MUST MOVE).`
+- One main action per shot; the action is performed with the hands and body at ARM level, never at finger level (see THE SHOT MUST MOVE).
+- **Two structured fields carry the anchors** (official shot-table-spec.md STEP 5 requires four sub-fields
+  in every row; the platform had landmarks and lighting but **no field at all** for these two, so "someone
+  appeared out of nowhere / vanished" had no judgement to catch it):
+  · 「positions」例：{"char_id": "画面左三分之一、前景、面朝右"} — EVERY on-screen character gets an entry:
+    which third of the frame, which depth layer (前景/中景/后景), and which way they face/stand at the start.
+    Camera-view wording, not story wording.
+  · 「offscreen」例：{"char_id": "上一镜在场、本镜已出画，走向门洞"} — a character who was on screen in the
+    PREVIOUS shot but is not in this one must be listed here with where they went and why.
+    Official discipline: keep that row for **at least one shot**; only drop it after two consecutive shots
+    clearly place them off screen. This is what turns "the person is gone" from an audience guess into data.`
 
 const sysContinuityRules = `## SHOT END STATE & CROSS-SHOT CONTINUITY
 
@@ -1053,7 +1063,7 @@ var batchSystemPrompt = sysHeader + `
 ## OUTPUT (THIS BATCH)
 Return STRICT JSON only (no markdown fences, no commentary):
 {"shots":[
-  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"prop_ids":["prop_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
+  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"prop_ids":["prop_xxx"],"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{"char_yyy":"上一镜在场、本镜已出画，走向门洞（本镜保留一行）"},"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{},"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
 ]}
 
 ` + sysShotRules + `

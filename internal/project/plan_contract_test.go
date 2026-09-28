@@ -46,7 +46,9 @@ func samplePlan() *Plan {
 		}},
 		Shots: []Shot{{
 			ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, PropIDs: []string{"prop_knife"},
-			ShotSize: "中景", Camera: "slow push-in", Action: "他把柴刀搁在供桌上，站起来",
+			// 夹具照真实形态写：官方分镜表要求每个出场角色都有画面位置（Character Positions）
+			Positions: map[string]string{"char_a": "画面右三分之一、前景、面朝门外"},
+			ShotSize:  "中景", Camera: "slow push-in", Action: "他把柴刀搁在供桌上，站起来",
 			View:     ViewAerial45,
 			EndState: "他站在供桌前，右手抬起指向门外，视线朝左前方，地面水渍未干",
 			HookType: "reveal",
