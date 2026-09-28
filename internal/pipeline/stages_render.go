@@ -354,7 +354,19 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 
 		var res *engine.Result
 		var err error
-		for attempt := 1; attempt <= 2; attempt++ {
+		// 重试阶梯（2026-09-28 按官方 `references/fallback-policy.md` 补全）。
+		//
+		// 官方原话是三级之后才问人：
+		//   ① 重试并把提示词**引用 Reference Anchors 块**加强（平台的锚定块本来就常驻正文，
+		//      所以这一级等价于"原样重试"，但**换种子**——同一颗种子重出等于画同一张图）；
+		//   ② **把镜头缩短到 ≤6 秒**，再出一次（实测这一级最有效：多数崩坏发生在长片段的尾巴上）；
+		//   ③ 三次都不行 ⇒ **如实标注**（官方："do not silently mix corrected and uncorrected
+		//      clips into assembly"）——平台的做法是标成 failed 并让成片阶段把缺口说出来。
+		//
+		// 第三级（切到另一个视频模型）在本机没有第二个视频引擎，故记为"不适用"而非跳过不提：
+		// 平台的等价物是引擎里的加速档位，但它属于 run 级参数、不是单镜参数（见 Start 的 engineOverride）。
+		shortened := false
+		for attempt := 1; attempt <= 3; attempt++ {
 			res, err = eng.Render(ctx, engine.Job{
 				ProjectID: proj.ID, ShotID: shot.ID,
 				Prompt: prompt, Mode: mode, RefImages: refs,
@@ -381,26 +393,47 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			if err == nil || ctx.Err() != nil {
 				break
 			}
-			// 超时类失败多为显存挤压导致的动态换页极慢(150s/步)甚至假死:
+			// 第一级：超时类失败多为显存挤压导致的动态换页极慢(150s/步)甚至假死 ——
 			// 先释放显存再原地重试一次,多数可恢复正常速度(2026-09-10)。
 			// 用哨兵判断而非匹配「超时」二字 —— 调整文案不该悄悄改掉重试行为。
-			if !errors.Is(err, engine.ErrRenderTimeout) || attempt == 2 {
-				break
+			if errors.Is(err, engine.ErrRenderTimeout) && attempt == 1 {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "⚠ 镜头 %d 超时,释放显存后重试一次:%v", shot.ID, err)
+				if caps.VRAM {
+					_ = eng.FreeVRAM(ctx)
+				}
+				seed += 101 // 换一颗种子：同种子重出等于画同一张图（与资产侧同一条纪律）
+				continue
 			}
-			c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "⚠ 镜头 %d 超时,释放显存后重试一次:%v", shot.ID, err)
-			if caps.VRAM {
-				_ = eng.FreeVRAM(ctx)
+			// 第二级：缩短到 ≤6 秒再出（官方 fallback-policy 第 2 级）。
+			if attempt == 2 && !shortened {
+				if shortPrompt, newDur, ok := project.ShortenShotPrompt(shot.H3Prompt, shot.Duration, planShortenSeconds); ok {
+					c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+						"⚠ 镜头 %d 第二次失败,按官方降级阶梯**缩短到 %d 秒**再出一次(原 %d 秒):%v",
+						shot.ID, newDur, shot.Duration, err)
+					prompt = shortPrompt
+					wantFrames = newDur * 24 // 与 shotFrames 同口径（H3 侧 24fps），此处只有时长、没有 Shot 结构
+					seed += 101
+					shortened = true
+					continue
+				}
 			}
+			break
 		}
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			// 单镜失败不中止:记录后继续后续镜头,阶段末汇总
+			// 单镜失败不中止:记录后继续后续镜头,阶段末汇总。
+			// 官方纪律：**不把修好的和没修的悄悄混进成片** —— 所以这里如实标 failed（成片阶段会把缺口说出来），
+			// 不把 one-take/缩短过的版本当成"正常镜头"混过去。
 			failed++
+			msg := err.Error()
+			if shortened {
+				msg = "官方阶梯已试到第二级(换种子 → 缩短到 " + strconv.Itoa(planShortenSeconds) + " 秒)，仍失败：" + msg
+			}
 			failures = append(failures, fmt.Sprintf("镜%d:%v", shot.ID, err))
-			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, err.Error())
-			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(继续下一镜):%v", shot.ID, err)
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, msg)
+			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(继续下一镜):%s", shot.ID, msg)
 			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
@@ -503,6 +536,10 @@ func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderP
 	}
 	return project.FingerprintText(prompt, mode, fmt.Sprint(rp.Width, "x", rp.Height, "s", rp.Steps, "seed", seed, seamTag, accelTag, "q1"), strings.Join(files, ","))
 }
+
+// planShortenSeconds 官方降级阶梯第二级的时长上限（`references/fallback-policy.md`：
+// "shorten the shot to ≤6s and split the dropped seconds into a new adjacent row"）。
+const planShortenSeconds = 6
 
 // shotFrames 镜头时长 → 帧数(H3 侧 24fps)。
 //
