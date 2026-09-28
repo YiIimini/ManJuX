@@ -43,13 +43,13 @@ func (e *Engine) Regenerate2K(ctx context.Context, baseVideo string, prompt stri
 			"role":      "reference_image",
 		})
 	}
-	videoURI, err := fileToVideoDataURI(baseVideo)
-	if err != nil {
-		return "", fmt.Errorf("源视频读取失败: %w", err)
-	}
+	// **源视频走流式**（2026-09-29 性能审计 #7）：原来这里是
+	// `fileToVideoDataURI` 整读 → base64 → 拼接 → 塞进 body → `json.Marshal`，
+	// 一份 50MB 成片的峰值 ≈ 250MB。现在把它登记成"要流式写出的大字段"，
+	// 序列化时那个位置上是占位串（详见 createStreaming 的说明）。
 	content = append(content, map[string]any{
 		"type":      "video_url",
-		"video_url": map[string]any{"url": videoURI},
+		"video_url": map[string]any{"url": ""},
 		"role":      "base_video",
 	})
 
@@ -59,7 +59,12 @@ func (e *Engine) Regenerate2K(ctx context.Context, baseVideo string, prompt stri
 		"content":    content,
 		"resolution": "2K",
 	}
-	taskID, err := e.create(ctx, c, body)
+	// 源视频是 `content` 的**最后一项**（前面是文本与各张参考图）—— 用具体下标，
+	// 因为数组里每一项是不同的字段（`[]` 通配会把同一个占位串配到多处，实现会直接拒绝）。
+	videoIdx := len(content) - 1
+	taskID, err := e.createStreaming(ctx, c, body, []blobRef{
+		{Path: fmt.Sprintf("content[%d].video_url.url", videoIdx), File: baseVideo},
+	})
 	if err != nil {
 		return "", err
 	}

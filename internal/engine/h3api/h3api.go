@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -314,15 +315,222 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 	}, nil
 }
 
+// blobRef 一个大字段：值是要当 data URI 发出去的那个**文件**，以及它在 body 里的路径。
+//
+// path 用点分表示法：数组下标写 `[N]`，`[]` 表示"该数组的每一个元素"。
+// 实盘形态是
+//
+//	content[].video_url.url      （再生成：源视频，数组里那一项）
+//	content[1].image_url.url     （参考图：数组第 1 项之后依次是各张参考图）
+//
+// 为什么要有 `[N]`：`content` 是一个**有序切片**（第 0 项是文本、后面依次是参考图
+// 与源视频），每一张参考图是**不同的元素**，用 `[]` 通配会把同一个占位串配到多处。
+type blobRef struct {
+	Path string // body 里的位置
+	File string // 本地文件
+}
+
+// dataURIPlaceholder 生成一个**在请求体里唯一**的占位串。
+//
+// 思路（2026-09-29 性能审计 #7 的实现）：不手写 JSON 序列化器（那要自己保证转义、
+// 嵌套、数组都对 —— 风险远大于收益），而是
+//
+//	① 把 body 里那几个大字段的值先换成占位串；
+//	② `json.Marshal(body)` —— 这一次的产物只有几十 KB（大字段的位置上是个占位串）；
+//	③ 按占位串把 raw 切开，逐块写出，**中间那段用流式 base64 写文件**。
+//
+// 转义与结构全由标准库保证，而降下来的正是那 67MB base64 + 67MB 拼接 + 70MB marshal。
+//
+// ⚠️ **占位串必须是 json.Marshal 不会改写的字符**：第一版用了 `\x00`，
+// 而 JSON 会把它转义成 `\u0000` —— 于是 `bytes.Index` 在 raw 里**找不到**那个串，
+// 请求体被原样发出去（带着字面占位串）。这个坑是被 `TestRegenerate2KSharesPollingPolicy`
+// 咬出来的（它断言"403 之后要取消远端"，而实际连创建阶段就失败了）。
+func dataURIPlaceholder(i int) string { return fmt.Sprintf("@@MJBLOB%d@@", i) }
+
+// setBlobPlaceholder 把 path 指向的值替换成占位串，并返回"值原本是什么类型"以便还原。
+//
+// 只支持一层 `[]`（该字段是数组的每个元素）—— 本文件两处用法都是这个形状，
+// 更深的嵌套若将来出现，这里会返回错误而不是**静默不替换**（那会让请求体里
+// 出现一个字面占位串，服务端报一个看不懂的错）。
+func setBlobPlaceholder(body map[string]any, ref blobRef, val string) error {
+	segs := strings.Split(ref.Path, ".")
+	cur := any(body)
+	for i, seg := range segs {
+		last := i == len(segs)-1
+		// 解析 `key` / `key[]` / `key[N]`
+		key, idx, hasIdx, all := parseSeg(seg)
+		if all {
+			return fmt.Errorf("blob 路径 %s 用了 [] 通配 —— 数组里的每一项是不同的字段，"+
+				"请写成 content[0] / content[1] 这样的下标（见 blobRef 的说明）", ref.Path)
+		}
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return fmt.Errorf("blob 路径 %s 的第 %d 段不是对象", ref.Path, i+1)
+		}
+		v, ok := m[key]
+		if !ok {
+			return fmt.Errorf("blob 路径 %s 在请求体里不存在（字段 %s）", ref.Path, key)
+		}
+		if hasIdx {
+			list, ok := v.([]map[string]any)
+			if !ok {
+				if anyList, ok2 := v.([]any); ok2 {
+					if idx < 0 || idx >= len(anyList) {
+						return fmt.Errorf("blob 路径 %s 的下标 %d 越界（数组长度 %d）", ref.Path, idx, len(anyList))
+					}
+					if last {
+						return fmt.Errorf("blob 路径 %s 不能以下标结尾（没有可替换的叶子字段）", ref.Path)
+					}
+					cur = anyList[idx]
+					continue
+				}
+				return fmt.Errorf("blob 路径 %s 的 %s 不是数组", ref.Path, key)
+			}
+			if idx < 0 || idx >= len(list) {
+				return fmt.Errorf("blob 路径 %s 的下标 %d 越界（数组长度 %d）", ref.Path, idx, len(list))
+			}
+			if last {
+				return fmt.Errorf("blob 路径 %s 不能以下标结尾（没有可替换的叶子字段）", ref.Path)
+			}
+			cur = list[idx]
+			continue
+		}
+		if last {
+			m[key] = val
+			return nil
+		}
+		cur = v
+	}
+	return nil
+}
+
+// parseSeg 解析一段路径：`key`、`key[]`、`key[3]`。
+func parseSeg(seg string) (key string, idx int, hasIdx, all bool) {
+	i := strings.IndexByte(seg, '[')
+	if i < 0 {
+		return seg, 0, false, false
+	}
+	key = seg[:i]
+	inner := strings.TrimSuffix(seg[i+1:], "]")
+	if strings.TrimSpace(inner) == "" {
+		return key, 0, false, true // `[]` 通配（上面会明确拒绝）
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(inner))
+	if err != nil {
+		return key, 0, false, true // 解析不了就按通配处理（同样会被拒绝并给出提示）
+	}
+	return key, n, true, false
+}
+
+// writeBodyWithBlobs 按占位串把请求体分块写出，中间的大字段流式 base64。
+//
+// ⚠️ **查找的是"带引号的占位串"**：`json.Marshal` 会把字符串值写成 `"@@MJBLOB0@@"`，
+// 而我们要替换的正是**整个 JSON 值**（含那对引号）—— `writeFileDataURI` 自己会写出
+// 首尾引号。只替换裸占位串会把引号留下来，产物变成 `"url":""data:...`（语法错）。
+// 这个坑是被 `TestStreamingBodyMatchesNaiveMarshal` 咬出来的（它逐字节比对两条路）。
+func writeBodyWithBlobs(w io.Writer, raw []byte, refs []blobRef) error {
+	for i, ref := range refs {
+		quoted, _ := json.Marshal(dataURIPlaceholder(i)) // 得到 "…" 形式（带引号）
+		idx := bytes.Index(raw, quoted)
+		if idx < 0 {
+			return fmt.Errorf("占位串 %d 没出现在请求体里（路径 %s）", i, ref.Path)
+		}
+		if _, err := w.Write(raw[:idx]); err != nil {
+			return err
+		}
+		if err := writeFileDataURI(w, ref.File); err != nil {
+			return err
+		}
+		raw = raw[idx+len(quoted):]
+	}
+	_, err := w.Write(raw)
+	return err
+}
+
+// writeFileDataURI 把 `"data:video/mp4;base64,<文件内容>"` 流式写出去。
+//
+// 峰值内存只有 base64 编码器的内部缓冲（几十 KB），而不是"整片 + base64 + 拼接"三份
+// —— 这是本次改动的全部目的。
+func writeFileDataURI(w io.Writer, path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := io.WriteString(w, `"data:video/mp4;base64,`); err != nil {
+		return err
+	}
+	enc := base64.NewEncoder(base64.StdEncoding, w)
+	if _, err := io.Copy(enc, f); err != nil {
+		return err
+	}
+	if err := enc.Close(); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, `"`)
+	return err
+}
+
+// create 通用请求（把 body 整体 marshal 成 JSON）。
+//
+// 带**大字段**（成片/参考图的 data URI）的调用请用 `createStreaming` —— 见那里的说明。
 func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[string]any) (string, error) {
-	raw, _ := json.Marshal(body)
+	return e.createStreaming(ctx, c, body, nil)
+}
+
+// createStreaming 发一次创建请求。
+//
+// ## blobs：让大字段**边读边写**，不整读进内存（2026-09-29 性能审计 #7）
+//
+// 原来的写法是 `fileToVideoDataURI` 先 `os.ReadFile` 整片 → base64 成 string →
+// 拼成 `data:video/mp4;base64,…` → 塞进 body → `json.Marshal(body)`。
+// 对一份 **50MB** 的成片，这条链的峰值是这样叠起来的（审计给的推算）：
+//
+//	读 50MB + base64 67MB + 拼接 67MB + marshal ≈70MB  ⇒ **峰值 200~260MB 单次分配**
+//
+// 在"系统只剩 8GB"的现场（本仓注释里记过那个数值）这是本进程最大的一次性分配。
+//
+// 做法见 `dataURIPlaceholder` 的说明：先把大字段的值换成占位串再 marshal（产物只有
+// 几十 KB），然后按占位串分块写出、中间那段用流式 base64。
+// **不带 blobs 时走原路**（`json.Marshal` + `bytes.Reader`），行为与从前完全一致。
+func (e *Engine) createStreaming(ctx context.Context, c config.MiniMaxSettings,
+	body map[string]any, blobs []blobRef) (string, error) {
+
+	var reader io.Reader
+	var raw []byte
+	if len(blobs) == 0 {
+		raw, _ = json.Marshal(body)
+		reader = bytes.NewReader(raw)
+	} else {
+		// ① 换占位串（改的是本地 map，调用方已经不再需要它）
+		for i, b := range blobs {
+			if err := setBlobPlaceholder(body, b, dataURIPlaceholder(i)); err != nil {
+				return "", err
+			}
+		}
+		// ② 序列化（产物只有几十 KB —— 大字段的位置上是占位串）
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return "", err
+		}
+		// ③ 边写边编码
+		pr, pw := io.Pipe()
+		go func() {
+			pw.CloseWithError(writeBodyWithBlobs(pw, raw, blobs))
+		}()
+		reader = pr
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		strings.TrimRight(c.BaseURL, "/")+"/v2/video_generation", bytes.NewReader(raw))
+		strings.TrimRight(c.BaseURL, "/")+"/v2/video_generation", reader)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if len(raw) > 0 {
+		req.ContentLength = int64(len(raw))
+	}
 	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("提交云端任务失败: %w", err)
