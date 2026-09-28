@@ -643,7 +643,35 @@ func ValidatePlan(p *Plan) []Issue {
 				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
 		}
 
-		// ── 场景板与道具卡的补充门（2026-09-28 用户问「道具和场景的呢」）──────────
+		// ── 契约门第二批（2026-09-28）────────────────────────────────────────
+		//
+		// 判据在 `contract_gates.go`，文案在这里（gatecat 扫字面格式串生成门目录）。
+		if ids := CutVerbIssues(p.Shots); len(ids) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜用了自创的切镜写法（%s）—— 官方 §4.2 给 CUTS 单列了词表，"+
+					"只认「%s」这五个（原句照抄，别改写）；自创写法 H3 不认，切镜会变成一句没用的形容",
+				len(ids), strings.Join(firstN(ids, 6), "、"), strings.Join(PlanCutVerbs, " / "))
+		}
+		if ids := ScreenTextQuoteIssues(p.Shots); len(ids) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的画面里有招牌/牌匾/碑文这类**要读的字**，但正文里没有成对引号包住的原文（%s）—— "+
+					"官方硬约束：屏幕可见文字必须**逐字加引号**并保持原语言。不引的实测后果是"+
+					"模型自己编一段伪汉字（引号是给渲染器的信号：引号里是要逐字出现的文字，不是画面形容）",
+				len(ids), strings.Join(firstN(ids, 6), "、"))
+		}
+		for _, iss := range SceneElementIssues(p.Scenes) {
+			add("warn", "plan.scenes",
+				"场景「%s」缺四大要素里的 %s —— 用户《四》§「四大要素：环境类型、具体时间、空间氛围、"+
+					"视觉主要特征」；少一项，板子就只能由模型自己补，而它补出来的每一集都不一样",
+				iss.Name, strings.Join(iss.Words, "、"))
+		}
+		if names := SceneViewIssues(p.Scenes); len(names) > 0 {
+			add("warn", "plan.scenes",
+				"%d 个场景卡没有任何九视角词（%s）—— 场景是**每一镜的空间底座**，建立镜头必须说清"+
+					"「从哪看」；一条都没有时渲染只能自己猜一个（且每集猜得不一样）。词表：%s",
+				len(names), strings.Join(firstN(names, 5), "、"), strings.Join(PlanViews, " / "))
+		}
+
 		//
 		// 判据在 `asset_gate.go`（返回**数据**），文案在这里 —— 理由同运镜那三条：
 		// `docs/门目录.md` 由 gatecat 用 AST 扫**字面格式串**生成，写成 `"%s", msg`

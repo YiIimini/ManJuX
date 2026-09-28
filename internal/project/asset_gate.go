@@ -49,8 +49,9 @@ var sceneEventTraceWords = []string{
 type SceneIssueKind string
 
 const (
-	SceneHasPeople SceneIssueKind = "people" // 板上有具体的人物名词
-	SceneHasEvent  SceneIssueKind = "event"  // 板上有事件痕迹名词
+	SceneHasPeople      SceneIssueKind = "people"  // 板上有具体的人物名词
+	SceneHasEvent       SceneIssueKind = "event"   // 板上有事件痕迹名词
+	SceneMissingElement SceneIssueKind = "element" // 缺用户《四》四要素里的某一项（见 contract_gates.go）
 )
 
 // SceneIssue 一条场景板问题（**只给数据**，文案在接线处 —— 理由同 camera_gate.go）。

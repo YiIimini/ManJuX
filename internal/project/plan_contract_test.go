@@ -35,8 +35,11 @@ func samplePlan() *Plan {
 				"straight-backed; narrow eyes, a small scar over the left brow.",
 		}},
 		Scenes: []Scene{{
-			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙", ImagePrompt: "ULTRA-WIDE 45-DEGREE AERIAL VIEW of an abandoned hill temple courtyard at dead-gold dusk: ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot; wet flagstones, a fallen ridge beam, distant blue-grey mountain ridges beyond the courtyard wall; the last sun lies in long bars across the wet stone, dusk running down the rough wall, cold light talking to damp moss; two groups of fixed furnishings — a stone censer and a leaning pillar base in the midground, scattered tiles and a dead cypress at the edge; pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath, no humans, empty, landscape only, UE5 render, 8k, ultimate detail",
-			Landmarks: "门槛与东侧立柱", LightState: "黄昏，主光从门洞斜射",
+			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙，空气里有股压抑的静",
+			// 夹具照真实形态写：用户《四》:63「四大要素：环境类型、具体时间、空间氛围、视觉主要特征」
+			// —— 场景卡缺了「空间氛围」时新门会（正确地）报它，所以这里照实写进去。
+			ImagePrompt: "ULTRA-WIDE 45-DEGREE AERIAL VIEW of an abandoned hill temple courtyard at dead-gold dusk: ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot; wet flagstones, a fallen ridge beam, distant blue-grey mountain ridges beyond the courtyard wall; a hush of damp air and an atmosphere of quiet dread; the last sun lies in long bars across the wet stone, dusk running down the rough wall, cold light talking to damp moss; two groups of fixed furnishings — a stone censer and a leaning pillar base in the midground, scattered tiles and a dead cypress at the edge; pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath, no humans, empty, landscape only, UE5 render, 8k, ultimate detail",
+			Landmarks:   "门槛与东侧立柱", LightState: "黄昏，主光从门洞斜射",
 		}},
 		// 关键道具：2026-09-28 起"一件道具都没有"会报警（实测那一集 25 镜提到器物、0 张卡 ⇒ 漂移）。
 		// 夹具照**真实形态**写：一部戏总有几件反复出现的器物，样本里也得有。
@@ -62,7 +65,7 @@ func samplePlan() *Plan {
 			Duration: 5, Mode: "ref2va",
 			H3Prompt: compliantH3("subject_definitions:\n<Subject 1> is 阿甲 ...\n\ndetailed_description:\n" +
 				SampleStyleSentence + "\n[Shot 1] he stands up under " + ViewAerial45 + "; " +
-				PlanEstablishingExtra + ".\n[Shot 2] At 00:02.500, the camera cuts tighter on the blade " +
+				PlanEstablishingExtra + ".\n[Shot 2] At 00:02.500, the camera pushes in tighter on the blade " +
 				"as he sets it down and straightens up; his hands stay readable..<d>[Chinese] 我准了。</d>"),
 		}},
 	}
@@ -88,7 +91,11 @@ func compliantH3(body string) string {
 		// 那不是门太严，是夹具不像真东西（这一周第四次栽在同一件事上）。
 		body += "\n\ndetailed_description:\n" + SampleStyleSentence + "\n[Shot 1] " +
 			ViewAerial45 + "; " + PlanEstablishingExtra + "." +
-			"\n[Shot 2] At 00:02.500, the camera cuts closer as he lifts the blade; a tighter frame on his hands."
+			// 基线也照官方 §4.2 写：只改距离/景别用**运镜**，不用 cut
+			// （规范原话：if only the distance or a slight angle needs to change, prefer CAMERA
+			//  MOTION over a cut）。原来写的 `the camera cuts closer` 不在五个切镜词里，
+			// 加了切镜白名单门之后当场被咬——咬得对。
+			"\n[Shot 2] At 00:02.500, the camera pushes in closer as he lifts the blade; a tighter frame on his hands."
 	}
 	if _, ok := PlanViewIn(body); !ok {
 		body += "\n" + ViewAerial45 + "."
