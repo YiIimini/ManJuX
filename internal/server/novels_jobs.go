@@ -245,11 +245,18 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 	return true
 }
 
-// epBriefMinRunes / epBriefMaxRunes 剧情 brief 的目标字数（与拆集默认 400–700 对齐；
-// 低于 minRunes 视为"没写过"，触发解析）。
+// epScriptMinRunes / epScriptMaxRunes 本集**剧本**的目标字数。
+//
+// 【2026-09-28 用户口径：这一步是「小说转剧本」，不是「写个 brief」】
+// 原来这里产出的是"剧情节拍 brief"（400-700 字，只列事件与台词要点）；作者要的是
+// **改编剧本** —— 按他的《一、网文小说转剧本提示词指令》：开篇 3 秒爆点、爽点密度、
+// 段段留钩、砍冗余、放大「绝境→逆袭」的反差。brief 只是事件清单，剧本才是分镜真正
+// 要拍的东西：分镜要知道"这句话怎么说、这个动作怎么演"，不是"这里发生了什么事"。
+//
+// 低于 minRunes 视为"没写过"，触发解析（判据与产物语义一起改，别只改一半）。
 const (
-	epBriefMinRunes = 400
-	epBriefMaxRunes = 700
+	epScriptMinRunes = 800
+	epScriptMaxRunes = 1600
 )
 
 // ensureEpisodeBrief 轮到这一集时**才**给它补写剧情 brief（流水线的一步）。
@@ -269,15 +276,15 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 		return
 	}
 	src := string(raw)
-	if brief, ok := episodeBriefOf(src); ok && len([]rune(brief)) >= epBriefMinRunes {
-		return // 已经有像样的剧情 brief
+	if brief, ok := episodeBriefOf(src); ok && len([]rune(brief)) >= epScriptMinRunes {
+		return // 已经有像样的本集剧本
 	}
 	orig := episodeOrigOf(src)
 	if len([]rune(orig)) < 200 {
 		return // 没有原文可解析（技能侧包/空壳），不硬造
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-		Message: fmt.Sprintf("🧭 轮到这一集了,先做它的 LLM 解析(剧情节拍 brief):%s", filepath.Base(dir))})
+		Message: fmt.Sprintf("🎬 轮到这一集了,先把原文**改编成剧本**(专职编剧会话):%s", filepath.Base(dir))})
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 	if !client.Configured() {
@@ -285,22 +292,52 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(g.LLM.Timeout)*time.Second)
 	defer cancel()
-	sys := fmt.Sprintf("你在为一集短视频写「剧情节拍 brief」(中文,%d-%d 字):按该集原文的先后顺序逐拍列出事件、出场人物、"+
-		"关键台词(逐字保留重要对白)、情绪转折与结尾悬念;只写这一集的内容,不要扩写、不要引用其它集。",
-		epBriefMinRunes, epBriefMaxRunes)
+	// 【2026-09-28 用户口径】这是**专职的「小说转剧本」会话**：先给它角色与规矩，
+	// 再给原文 —— 逐条口径来自作者的《一、网文小说转剧本提示词指令》，不是我自己编的清单。
+	// （作者的原话：每一步新建会话并先给到 LLM，让它知道接下来它该干什么。）
+	sys := fmt.Sprintf("你是爆款短视频(AI 漫剧)的**专职编剧**。把用户给的小说原文,改编成"+
+		"**可以直接拍成一集短视频的剧本**。\n"+
+		"\n"+
+		"一、爆款开篇(必执行)\n"+
+		"1. 开篇 3 秒爆点:第一句就必须抛出极致冲突/绝境/反转/悬念 —— 无铺垫、无旁白起手,"+
+		"直接切入高潮名场面(绝境受辱、生死危机、惊天揭秘、逆袭打脸、天降机缘)。\n"+
+		"2. 爽点密度:每 80 字左右一个小爽点,每 200 字左右一个大爽点;主角全程不憋屈、不拖沓,"+
+		"逆袭/打脸/揭秘/升阶的节奏拉满,给足即时快感。\n"+
+		"3. 段段留钩:每一段结尾必须留悬念/伏笔/反转预告,杜绝平淡收尾,让人看完这段必看下一段。\n"+
+		"4. 合规零风险:不写血腥、暴力、色情、恐怖、惊悚、低俗;冲突与惩戒一律用温和方式呈现。\n"+
+		"\n"+
+		"二、改编纪律\n"+
+		"1. 砍掉冗余铺垫、无关支线、冗长对话;保留原文核心主线,开篇直接切入核心冲突。\n"+
+		"2. 放大情绪反差:强化主角「绝境/屈辱」与「逆袭/碾压」的对比,让人瞬间共情。\n"+
+		"3. 反转密集不套路:每次冲突都给一个意外反转,全程高能。\n"+
+		"4. 段落结尾留终极钩子(惊天秘密、强敌来袭、逆天机缘、身世谜团)。\n"+
+		"\n"+
+		"三、人物与细节\n"+
+		"1. 主角气场拉满、智商在线、行动果决 —— 不要懦弱犹豫的人设。\n"+
+		"2. 对立角色标签化,冲突感强,反衬主角的逆袭爽感。\n"+
+		"3. 补上关键场景/道具/伏笔细节,贴合剧情、不冗余。\n"+
+		"\n"+
+		"四、写法(记住:这是给**分镜**用的稿子)\n"+
+		"短句为主、力道十足、画面感强;段落简短、逻辑清晰;"+
+		"每个事件都要能被拍成**一个动作或一句台词** —— 写「他把婚书摔在桌上」,"+
+		"而不是「气氛变得紧张」。重要对白逐字保留(分镜会原样进配音)。\n"+
+		"\n"+
+		"只写这一集的内容:不扩写、不引用其它集、不解释你在做什么、不要任何前言后语。\n"+
+		"直接输出改编后的剧本全文(中文,%d-%d 字)。",
+		epScriptMinRunes, epScriptMaxRunes)
 	user := "【本集原文】\n" + clampRunes(orig, 12000)
 	out, err := client.Chat(ctx, []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}, false)
 	if err != nil || strings.TrimSpace(out) == "" {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-			Message: fmt.Sprintf("⚠ 本集 brief 解析失败(%v),先用原文节拍继续(不阻断)", err)})
+			Message: fmt.Sprintf("⚠ 本集剧本改编失败(%v),先用原文继续(不阻断)", err)})
 		return
 	}
 	if err := os.WriteFile(srcPath, []byte(replaceEpisodeBrief(src, strings.TrimSpace(out))), 0o644); err != nil {
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: "⚠ brief 回写失败:" + err.Error()})
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: "⚠ 剧本回写失败:" + err.Error()})
 		return
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("✔ 本集 brief 已解析并回填(%d 字)", len([]rune(strings.TrimSpace(out))))})
+		Message: fmt.Sprintf("✔ 本集剧本已改编并回填(%d 字)", len([]rune(strings.TrimSpace(out))))})
 }
 
 // episodeBriefOf 取 source.txt 里【本集剧情】那一段。
