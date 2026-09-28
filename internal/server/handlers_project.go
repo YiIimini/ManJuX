@@ -629,6 +629,14 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getSource(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	// 【2026-09-29 审计 #8 附带修】原来是直接看 `LoadSource` 的 error —— 而它对
+	// **不存在的项目**不报错（返回空串），于是这个端点对不存在的项目回 **200 + 空正文**。
+	// "读不到"与"正文为空"是两件事：外部/技能端拿它核对"这一集喂给模型的是哪段原文"时，
+	// 会把"项目根本不在"读成"这个项目没有正文"。
+	if _, ok := s.store.Get(id); !ok {
+		writeErr(w, 404, fmt.Errorf("项目不存在"))
+		return
+	}
 	text, err := s.store.LoadSource(id)
 	if err != nil {
 		writeErr(w, 404, err)

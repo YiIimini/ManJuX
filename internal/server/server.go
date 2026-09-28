@@ -14,11 +14,13 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/library"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/version"
@@ -39,6 +41,12 @@ type Server struct {
 	mux   http.Handler  // 已套上来源守卫(见 guardAPI)
 	quit  func()        // 桌面模式注入的优雅退出
 	logs  runtimeLogger // 运行日志的清理口子(main 包的 teeWriter 注入;见 cleanup.go ⑨)
+
+	// LLM 用量累计（2026-09-29 审计 #9）：token 用量客户端早就在解析，但全平台没人读。
+	// 钩子挂在 `New` 里（包级，一处接、14 个创建点全生效），累计值在这里。
+	usageMu    sync.Mutex
+	usageCalls int
+	usageTotal llm.Usage
 
 	// startProdFn 是"拉起批量产线"的执行体,生产装配下为 nil(走真实 startBatch)。
 	//
@@ -84,6 +92,29 @@ func New(cfg *config.Manager, store *project.Store, reg *engine.Registry,
 	// 拆集任务状态落盘:此前纯内存,重启即丢 —— 首页占位卡会卡在「AI 拆集中」
 	// 直到 20 分钟孤儿清理兜底。落盘后重启可看到上次拆到哪、并明确标注"被中断"。
 	SetJobsPath(filepath.Join(cfg.Get().DataDir, "novel_jobs.json"))
+	// **LLM 用量落到事件流**（2026-09-29 审计 #9）。
+	//
+	// token 用量自 2026-09-24 起就被 `llm` 客户端解析出来了（当初是为了查"输出被
+	// max_tokens 截断"），但**全平台没有任何地方读它** —— 用户看不到"这一集花了多少"。
+	// 这里挂**包级**钩子（一处接、14 个创建点全部生效），把每次调用累计成一条
+	// 可读的日志：用户至少能在管线日志里看到这一次工作花了多少 token。
+	//
+	// 为什么不逐次播报：分镜一轮要调十几次 LLM，逐次刷屏等于没有信息。
+	// 这里按**调用次数**节流（每 5 次报一次累计），收尾由各阶段自己报总数。
+	llm.SetGlobalUsageHook(func(u llm.Usage) {
+		s.usageMu.Lock()
+		s.usageCalls++
+		s.usageTotal.PromptTokens += u.PromptTokens
+		s.usageTotal.CompletionTokens += u.CompletionTokens
+		s.usageTotal.TotalTokens += u.TotalTokens
+		n, tot := s.usageCalls, s.usageTotal
+		s.usageMu.Unlock()
+		if n%5 == 0 {
+			s.bus.Publish(pipeline.Event{Phase: "llm", Level: "info",
+				Message: fmt.Sprintf("💰 LLM 用量累计：%d 次调用 / %d tokens（输入 %d · 输出 %d）",
+					n, tot.TotalTokens, tot.PromptTokens, tot.CompletionTokens)})
+		}
+	})
 	s.routes()
 	return s
 }

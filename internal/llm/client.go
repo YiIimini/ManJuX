@@ -10,6 +10,8 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/textutil"
@@ -28,6 +30,75 @@ type Client struct {
 	model   string
 	timeout time.Duration
 	http    *http.Client
+
+	// onUsage 每次调用成功后回调一次 token 用量（可为 nil）。
+	//
+	// 【2026-09-29 审计 #9】`Usage` 从 2026-09-24 起就被解析出来了（当初是为了查
+	// "输出被 max_tokens 截断"），但**全平台没有任何地方读它** —— 用户看不到
+	// "这一集花了多少"。回调是唯一的收口点：调用方各自去读 `Result` 的话，
+	// 总有几条路径忘了记（而"漏记的那条"恰恰是花钱最多的长文本直出）。
+	onUsage func(Usage)
+	// usageMu 保护下面的累计量（同一 Client 会被多个会话/多个 goroutine 共用）。
+	usageMu sync.Mutex
+	usage   Usage
+	calls   int
+}
+
+// SetUsageHook 挂上用量回调并**清零累计**（每次"一轮工作"开始时调一次语义最清楚）。
+func (c *Client) SetUsageHook(fn func(Usage)) {
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	c.onUsage = fn
+	c.usage = Usage{}
+	c.calls = 0
+}
+
+// UsageTotal 到目前为止的累计用量与调用次数。
+func (c *Client) UsageTotal() (Usage, int) {
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	return c.usage, c.calls
+}
+
+// globalUsageHook 进程级用量回调（可空）。
+//
+// 【为什么是包级而不是每个 Client 一个】平台里有 **14 处** `llm.New(...)`
+// （分镜 / 编剧 / 拆集 / 资产 / 质检 / 视觉校验…），逐处挂钩子的下场是"总有一处忘了"——
+// 而忘了的那处往往正是花钱最多的长文本直出（规划轮、分批分镜）。
+// 包级让"记用量"与"在哪创建客户端"解耦：`SetGlobalUsageHook` 调一次，全部生效。
+//
+// 用 `atomic.Value` 而不是普通变量：它是**在启动时设、在多个 goroutine 里读**的
+// （分镜、拆集都会并发调 LLM），普通变量在 -race 下会被抓出来。
+var globalUsageHook atomic.Value // func(Usage)
+
+// SetGlobalUsageHook 设置进程级用量回调（传 nil 取消）。可在运行中随时改。
+func SetGlobalUsageHook(fn func(Usage)) {
+	if fn == nil {
+		globalUsageHook.Store(func(Usage) {})
+		return
+	}
+	globalUsageHook.Store(fn)
+}
+
+func emitGlobalUsage(u Usage) {
+	if fn, ok := globalUsageHook.Load().(func(Usage)); ok && fn != nil {
+		fn(u)
+	}
+}
+
+// recordUsage 记一次调用（内部用）。
+func (c *Client) recordUsage(u Usage) {
+	c.usageMu.Lock()
+	c.usage.PromptTokens += u.PromptTokens
+	c.usage.CompletionTokens += u.CompletionTokens
+	c.usage.TotalTokens += u.TotalTokens
+	c.calls++
+	fn := c.onUsage
+	c.usageMu.Unlock()
+	if fn != nil {
+		fn(u)
+	}
+	emitGlobalUsage(u)
 }
 
 // New 创建客户端。超时默认 600s:深度推理模型(deepseek-v4-flash 等)分镜
@@ -210,6 +281,11 @@ func (c *Client) do(ctx context.Context, body []byte) (Result, error) {
 	if cr.Usage != nil {
 		res.Usage = *cr.Usage
 	}
+	// **用量在这里收口**（审计 #9）：无论调用方是谁、走哪条路径，只要这一次调用
+	// 真的发生了就记一次 —— 放在返回点而不是各调用点，是因为"漏记的那条路径"
+	// 往往正是花钱最多的长文本直出（规划轮/分批分镜）。
+	// 空内容的失败调用也记：token 已经花掉了，只是结果不可用。
+	c.recordUsage(res.Usage)
 	if content == "" {
 		if ch.FinishReason == "length" {
 			return res, fmt.Errorf("输出被 max_tokens 截断(思考模型正文未生成):请在项目参数中减少镜头数,或更换非推理模型")
