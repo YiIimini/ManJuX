@@ -4,22 +4,36 @@ import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmGpuContention } from '../pipelineBusy'
 
-// 分类与后端 library.Kinds 一致(characters / scenes / props)。
-// props(道具)是 2026-09-26 用户要求新增的:「资产库 新增一个 道具 管理页面」。
-const lib = ref({ characters: [], scenes: [], props: [] })
+// 分类**由后端决定**，前端不再写死清单。
+//
+// 【为什么改成这样】（2026-09-28）此前这里是 `ref({characters:[],scenes:[],props:[]})` 加一句
+// 注释"与后端 library.Kinds 一致" —— 而后端新增 music（配乐进资产库）之后，那句注释**就是假的**：
+// 后端按 Kinds 遍历、接口照常返回 music 分组，而前端连分类都不认识 ⇒ 用户根本看不到自己的配乐。
+// 同类缺口当天还发现过一次（配乐参数界面上填不了）。修法不是"再同步一次清单"，而是**让它不需要同步**：
+// 分类取接口返回的键，缺的只在 kindLabel 里补中文名（漏了也只是显示成键名，不会消失）。
+const lib = ref({})
+const kinds = computed(() => Object.keys(lib.value))
 const kind = ref('characters')
 const loading = ref(false)
 
-// kindLabel 分类中文名(卡片、弹窗、提示语共用一处)
-const kindLabel = { characters: '角色', scenes: '场景', props: '道具' }
-const kindWord = computed(() => kindLabel[kind.value] || '资产')
+// kindLabel 分类中文名(卡片、弹窗、提示语共用一处)。**新分类必须在这里补一行** ——
+// 不补会显示成键名(music)，难看但不会像以前那样整类消失。
+const kindLabel = { characters: '角色', scenes: '场景', props: '道具', music: '配乐' }
+const kindWord = computed(() => kindLabel[kind.value] || kind.value)
+const isMusic = computed(() => kind.value === 'music')
 
 async function refresh() {
   loading.value = true
   try {
     const d = await api.library()
-    // 用后端给的分类清单兜底:缺哪一类就补空数组,免得新分类上线后界面因 undefined 崩掉
-    lib.value = { characters: d.characters || [], scenes: d.scenes || [], props: d.props || [] }
+    // 直接吃后端的分组（缺哪一类都无所谓：没返回就是没有），不再逐个列举
+    const out = {}
+    for (const k of Object.keys(d || {})) {
+      if (Array.isArray(d[k])) out[k] = d[k]
+    }
+    lib.value = out
+    // 当前选中的分类在新数据里不存在（例如清空后）⇒ 落回第一个可用分类
+    if (!out[kind.value] && kinds.value.length) kind.value = kinds.value[0]
   } catch (e) { ElMessage.error('资产库读取失败:' + e.message) }
   loading.value = false
 }
@@ -446,6 +460,26 @@ async function remove(e) {
       </div>
     </div>
 
+    <!-- 配乐(2026-09-28 用户要求 BGM 进资产库管理)：这里**没有"新建"** —— 曲子由产线生成
+         （或在「参数 → 合成」里指定现成文件）。这一栏只说明它从哪来、以及**怎么复用**，
+         免得用户在这一页找"上传配乐"找不到，以为功能坏了。 -->
+    <div v-else-if="kind === 'music'" class="panel p-4 mb-4 flex items-center gap-4 flex-wrap">
+      <div class="flex items-center gap-3 flex-1 min-w-[300px]">
+        <div class="stage-ico active" style="width:38px;height:38px">
+          <el-icon :size="18"><Microphone /></el-icon>
+        </div>
+        <div>
+          <div class="text-sm"><b>配乐</b> <span class="timecode">BGM</span></div>
+          <div class="text-xs" style="color:var(--mx-text3)">
+            按「需求描述」入库：同一份需求（换个标点写法也算）下次直接复用，不会重复生成
+          </div>
+        </div>
+      </div>
+      <div class="text-xs" style="color:var(--mx-text3);max-width:420px">
+        配乐在「参数 → 合成」里填需求描述，由产线生成后自动入库；也可以直接指定现成的曲子文件。
+      </div>
+    </div>
+
     <!-- 道具(用户 2026-09-26:「资产库 新增一个 道具 管理页面」):
          器物/机关/法宝这类静物。没有抽卡、没有多视角、不白底化 —— 那些都是为"角色要当
          锁脸参考"设计的;道具这边就一件事:传一张图进来、写清材质配色、按名复用。 -->
@@ -466,10 +500,12 @@ async function remove(e) {
     </div>
 
     <div class="flex items-center gap-3 mb-4">
+      <!-- 分类按钮**由后端分组生成**（新增分类自动出现，前端不必再同步清单 ——
+           2026-09-28 加 music 时就是因为这里写死，用户看不到自己的配乐） -->
       <el-radio-group v-model="kind">
-        <el-radio-button value="characters">角色({{ lib.characters?.length || 0 }})</el-radio-button>
-        <el-radio-button value="scenes">场景({{ lib.scenes?.length || 0 }})</el-radio-button>
-        <el-radio-button value="props">道具({{ lib.props?.length || 0 }})</el-radio-button>
+        <el-radio-button v-for="k in kinds" :key="k" :value="k">
+          {{ kindLabel[k] || k }}({{ lib[k]?.length || 0 }})
+        </el-radio-button>
       </el-radio-group>
       <div class="flex-1"></div>
       <template v-if="batch">
@@ -508,7 +544,19 @@ async function remove(e) {
           <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(row.name)">
             <el-checkbox :model-value="sel.has(row.name)" size="large" />
           </div>
-          <div class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="openDetail(row)">
+          <!-- 配乐条目用**播放器**，不是图：<img> 指向一个 mp3 只会一片空白 -->
+          <div v-if="row.kind === 'music'" class="relative p-3 rounded-lg flex flex-col gap-2"
+               style="background:var(--mx-bg2);border:1px solid color-mix(in srgb, var(--mx-amber) 18%, transparent)">
+            <div class="text-xs" style="color:var(--mx-text3);min-height:3.2em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">
+              {{ row.description || '(无描述)' }}
+            </div>
+            <audio :src="`/api/library/${row.kind}/${encodeURIComponent(row.name)}/image`"
+                   controls preload="none" style="width:100%;height:32px" />
+            <button class="cover-del" title="删除该库资产" @click.stop="remove(row)">
+              <el-icon :size="13"><Delete /></el-icon>
+            </button>
+          </div>
+          <div v-else class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="openDetail(row)">
             <img :src="`/api/library/${row.kind}/${encodeURIComponent(row.name)}/image`"
                  style="width:100%;height:100%;object-fit:cover" loading="lazy"
                  @error="$event.target.style.display='none'"
