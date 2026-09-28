@@ -1200,6 +1200,71 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 	}
 
+	// ── 三类卡片的**完备性**（2026-09-28 用户问「角色/场景/道具的提示词是完成了还是未完成」，
+	// 拿真方案逐项量过：**基本完成**，但有三处小缺口会一直静默存在，所以各立一道门）──────
+	//
+	// ① 人形角色卡缺**比例锚点**（实测 5 张里 1 张没有）。比例是用户点名的口径
+	//    （《二、人物道具提取指令》9 头身 /《【额外】人物道具场景提取》8.5 头身），缺了模型就自己定，
+	//    同一集里两个角色的头身比会互相打架。
+	// ② 道具卡不完整（缺 id/名/英文串/中文描述/出图提示词，或出图提示词没有 1:1 纯白底单件）：
+	//    道具图是拿卡当提示词单独出的（《二》：纯白背景、单独呈现无遮挡），缺项会出一张带场景的道具图，
+	//    之后跨镜锚定的外观就不干净。
+	// ③ 分镜引用了方案里没有的器物（RemapPropRefs 会尽量对号，对不上就丢）—— 丢弃必须**如实报**，
+	//    因为那件器物在这一镜又变成模型自己编的。
+	if len(p.Characters) > 0 {
+		var noProportion []string
+		for _, c := range p.Characters {
+			if IsChibiCard(c.Kind, c.ID) || strings.TrimSpace(c.ImagePrompt) == "" {
+				continue
+			}
+			if !containsAny(c.ImagePrompt, "head-tall", "heads tall", "proportion", "头身") {
+				noProportion = append(noProportion, c.Name)
+			}
+		}
+		if len(noProportion) > 0 {
+			add("warn", "plan.characters",
+				"%d 张人形角色卡没有**比例锚点**（%s）—— 比例是用户定的口径（8.5 头身／九头身），"+
+					"缺了模型就自己定，同一集里两个角色的头身比会互相打架；写进 image_prompt："+
+					"「eight and a half heads tall, lean, straight-backed」",
+				len(noProportion), strings.Join(firstN(noProportion, 6), "、"))
+		}
+	}
+	if len(p.Props) > 0 {
+		var badProp []string
+		for _, pr := range p.Props {
+			lack := ""
+			switch {
+			case strings.TrimSpace(pr.ID) == "":
+				lack = "缺 id"
+			case strings.TrimSpace(pr.Name) == "":
+				lack = "缺中文名"
+			case strings.TrimSpace(pr.EN) == "":
+				lack = "缺英文外观串"
+			case strings.TrimSpace(pr.Description) == "":
+				lack = "缺中文描述（材质/配色/尺寸/记号）"
+			case strings.TrimSpace(pr.ImagePrompt) == "":
+				lack = "缺出图提示词"
+			case !containsAny(pr.ImagePrompt, "1:1", "square", "white background", "纯白"):
+				lack = "出图提示词里没有 1:1 纯白底单件"
+			}
+			if lack != "" {
+				badProp = append(badProp, fmt.Sprintf("%s(%s)", pr.Name, lack))
+			}
+		}
+		if len(badProp) > 0 {
+			add("warn", "plan.props",
+				"%d 张道具卡不完整（%s）—— 道具图是拿卡当提示词单独出的（《二》：纯白背景、单独呈现无遮挡），"+
+					"缺项会出一张带场景的道具图，之后跨镜锚定的外观就不干净",
+				len(badProp), strings.Join(firstN(badProp, 6), "、"))
+		}
+	}
+	if n := countDanglingPropRefs(p); n > 0 {
+		add("warn", "plan.props",
+			"%d 处分镜的器物引用指向方案里**没有的道具卡**（对不上号会被丢弃）—— 那些镜头的器物又会变成"+
+				"模型自己编的。修法：把这几件器物真正收成道具卡（《一、网文小说转剧本提示词指令》："+
+				"关键场景、道具、伏笔细节要补齐）", n)
+	}
+
 	// ── 关键道具（2026-09-28 用户：「关键物品生成道具啊，前后镜都漂移了」）──────────
 	//
 	// 实测病根：某真实项目第一集的 plan **连 props 字段都没有**：25 个镜头提到碑刀/烙铁/名册，

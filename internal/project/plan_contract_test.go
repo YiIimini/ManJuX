@@ -21,7 +21,11 @@ func samplePlan() *Plan {
 		Style:   "PHOTOREAL 3D WORLD, SEMI-STYLISED FACES",
 		Characters: []Character{{
 			ID: "char_a", Name: "阿甲", Kind: "human",
-			Description: "二十岁男子", ImagePrompt: "a young man ...", Voice: "young male voice",
+			Description: "二十岁男子", Voice: "young male voice",
+			// 夹具照真实形态写：规范要求角色卡带比例锚点（8.5 头身），真实卡会有；
+			// 没有就会被"卡完备性"门抓住（不是门太严，是夹具不真）。
+			ImagePrompt: "IDENTITY LOCK (do not change): a young man, eight and a half heads tall, lean, " +
+				"straight-backed; narrow eyes, a small scar over the left brow.",
 		}},
 		Scenes: []Scene{{
 			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙", ImagePrompt: "ULTRA-WIDE 45-DEGREE AERIAL VIEW of an abandoned hill temple courtyard at dead-gold dusk: ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot; wet flagstones, a fallen ridge beam, distant blue-grey mountain ridges beyond the courtyard wall; the last sun lies in long bars across the wet stone, dusk running down the rough wall, cold light talking to damp moss; two groups of fixed furnishings — a stone censer and a leaning pillar base in the midground, scattered tiles and a dead cypress at the edge; pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath, no humans, empty, landscape only, UE5 render, 8k, ultimate detail",
@@ -31,7 +35,7 @@ func samplePlan() *Plan {
 		// 夹具照**真实形态**写：一部戏总有几件反复出现的器物，样本里也得有。
 		Props: []Prop{{
 			ID: "prop_knife", Name: "旧柴刀", EN: "a short worn chopping knife with a hemp-wrapped handle",
-			Description: "磨薄的旧柴刀，柄缠麻布", ImagePrompt: "a short worn chopping knife ...",
+			Description: "磨薄的旧柴刀，柄缠麻布", ImagePrompt: "a short worn chopping knife, 1:1 square, isolated on plain white background",
 		}},
 		Shots: []Shot{{
 			ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, PropIDs: []string{"prop_knife"},

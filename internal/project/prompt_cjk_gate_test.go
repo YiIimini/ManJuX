@@ -81,7 +81,9 @@ func TestValidatePlanCJKSubtractsSubjectNames(t *testing.T) {
 	sb.WriteString("<d>[Chinese]我准了。</d>\n")
 	for i, n := range names {
 		p.Characters = append(p.Characters, Character{
-			ID: "char_" + n, Name: n, Kind: "human", ImagePrompt: "a person", Voice: "voice",
+			// 夹具照真实形态写：规范要求人形卡带比例锚点（8.5 头身）——没有会被"卡完备性"门抓住
+			ID: "char_" + n, Name: n, Kind: "human", Voice: "voice",
+			ImagePrompt: "eight and a half heads tall, lean, straight-backed; " + n,
 		})
 		for k := 0; k < 8; k++ { // subject_definitions / retention_analysis / detailed_description 里反复点名
 			sb.WriteString("<Subject " + string(rune('1'+i)) + "> is " + n + " in <Picture " +

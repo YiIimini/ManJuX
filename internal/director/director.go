@@ -33,7 +33,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "logline": "一句话故事(中文,≤40字)",
   "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series. It must be a CINEMATIC GUOFENG (Chinese period) style with a photoreal 3D surface and IDEALISED, SEMI-STYLISED faces — e.g. 'GUOFENG ANIMATED-FEATURE ART DIRECTION … a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces; muted celadon-grey and ink-wash palette; real materials with visible craft; soft motivated key light; matte finish, natural film grain, shallow depth of field; a Chinese period film, not a western fantasy, not cyberpunk neon, not japanese anime'. Write it as ENGLISH prose, never as a 2D cartoon / cel-shaded / hand-drawn-anime style, and never as photorealistic live-action with real actors.",
   "characters": [
-    {"id":"char_xiaofan","name":"小凡","kind":"human","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt. It MUST contain the literal block "IDENTITY LOCK (do not change): " followed by the distinctive physical identity (age, face shape, brows/eyes, nose/lips, skin, hair, signature mark, costume) — the renderer reads THAT block to anchor identity across shots and to tell characters apart; a card without it silently loses both. Then:  shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style field above EXACTLY — same art style as the series]' then 'plain background' ONLY (never write framing, crop or camera angle — the renderer adds the framing that matches the kind and the project's aspect ratio). NEVER open with style words; NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
+    {"id":"char_xiaofan","name":"小凡","kind":"human","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt. It MUST contain the literal block "IDENTITY LOCK (do not change): " followed by the distinctive physical identity (age, face shape, brows/eyes, nose/lips, skin, hair, signature mark, costume) AND **the body-proportion anchor "eight and a half heads tall"** — the renderer reads THAT block to anchor identity across shots and to tell characters apart; a card without it silently loses both. Then:  shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style field above EXACTLY — same art style as the series]' then 'plain background' ONLY (never write framing, crop or camera angle — the renderer adds the framing that matches the kind and the project's aspect ratio). NEVER open with style words; NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
   ],
   "scenes": [
     {"id":"scene_inn","name":"悦来客栈","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向(如 黄昏,主光从西侧门洞斜射)"}
@@ -638,19 +638,21 @@ func normalizePlan(plan *project.Plan, opt Options) {
 	// 分镜里的器物引用**对号**（2026-09-28 实测：14 处 prop_ids 与卡片的 id 拼法不一致，
 	// 锚定落空 = 那几镜的刀又变成模型自己编的）。id 拼法是机械约定，平台有名字与英文串，
 	// 对号这件事它是唯一能确定做对的角色；对不上就丢引用，宁可不锚也不锚错。
-	if n := project.RemapPropRefs(plan); n > 0 && opt.OnNote != nil {
-		opt.OnNote("把 %d 处分镜里的器物引用**对上了卡片**（模型写的 id 与卡片 id 拼法不一致，"+
-			"对不上号的话那几镜的器物又会被重新发明）", n)
-	}
-	// 有计划台词、正文里却一个 <d> 都没有的镜：补上（否则成片里那几句会说成听不懂的话）。
-	// 只在"一个 <d> 都没有"时动手，台词逐字取自计划，不改写一个字。
-	if n := project.FillMissingDialogueTags(plan); n > 0 && opt.OnNote != nil {
-		opt.OnNote("给 %d 镜补上了缺失的台词标签（计划里有台词、正文里却没有 <d>）——"+
-			"不补的话成片会把那几句说成听不懂的话", n)
-	}
-	if n := project.FillVoiceoverAssets(plan); n > 0 && opt.OnNote != nil {
-		opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
-			"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", n)
+	// **自愈三件**（器物对号 / 补台词标签 / 补画外素材）走同一个入口，
+	// 与 project.LoadPlan、cmd/preflight 共用一份实现 —— 三个消费方必须看到同一份方案。
+	if hr := project.HealPlan(plan); opt.OnNote != nil {
+		if hr.PropRefs > 0 {
+			opt.OnNote("把 %d 处分镜里的器物引用**对上了卡片**（模型写的 id 与卡片 id 拼法不一致，"+
+				"对不上号的话那几镜的器物又会被重新发明）", hr.PropRefs)
+		}
+		if hr.Dialogue > 0 {
+			opt.OnNote("给 %d 镜补上了缺失的台词标签（计划里有台词、正文里却没有 <d>）——"+
+				"不补的话成片会把那几句说成听不懂的话", hr.Dialogue)
+		}
+		if hr.Voiceover > 0 {
+			opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
+				"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", hr.Voiceover)
+		}
 	}
 }
 
@@ -984,7 +986,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "logline": "一句话故事(中文,≤40字)",
   "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits",
   "characters": [
-    {"id":"char_xxx","name":"中文名","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt. It MUST contain the literal block "IDENTITY LOCK (do not change): " followed by the distinctive physical identity (age, face shape, brows/eyes, nose/lips, skin, hair, signature mark, costume) — the renderer reads THAT block to anchor identity across shots and to tell characters apart; a card without it silently loses both. Then:  shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style EXACTLY]' then 'plain background' ONLY (no framing or crop words — the renderer adds them)","voice":"ENGLISH voice description"}
+    {"id":"char_xxx","name":"中文名","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt. It MUST contain the literal block "IDENTITY LOCK (do not change): " followed by the distinctive physical identity (age, face shape, brows/eyes, nose/lips, skin, hair, signature mark, costume) AND **the body-proportion anchor "eight and a half heads tall"** — the renderer reads THAT block to anchor identity across shots and to tell characters apart; a card without it silently loses both. Then:  shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style EXACTLY]' then 'plain background' ONLY (no framing or crop words — the renderer adds them)","voice":"ENGLISH voice description"}
   ],
   "scenes": [
     {"id":"scene_xxx","name":"中文名","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向"}
