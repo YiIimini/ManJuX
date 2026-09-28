@@ -917,13 +917,55 @@ func IsFullWidthPunct(r rune) bool {
 func ValidProjectName(name string) bool { return validName(name) }
 
 // FingerprintFile 计算文件内容指纹(md5 前 16 位),用于资产变更检测。
+// FingerprintFile 文件内容指纹（md5 前 16 位十六进制）。
+//
+// ## 为什么要记忆化（2026-09-29 性能审计 #3）
+//
+// 调用点里有一处是**逐镜循环**（`stages_render.go` 拼参考图清单），而一张参考图
+// 1~8MB：每镜 3 张（定妆照 + 三视图板 + 场景）⇒ 每镜 5~25 ms 的纯重复劳动 + 每镜
+// 5~25 MB 的瞬时分配（实测：1MB 1.13 ms / 5MB 6.2 ms / 8MB 10.0 ms）。
+// 而**同一张图在一集里会被反复指纹**（每个用到该角色的镜头都要算一次），内容根本没变。
+//
+// 键取 `(路径, 大小, 修改时间)`：这三样任一变了就重算 —— 覆盖"文件被换掉"的所有现实形态
+// （重生成、上传、截帧、2K 定稿都会改 mtime），而 mtime 的精度足够（写盘时间不会相同）。
+//
+// 缓存的是**指纹字符串**（16 字符）而不是文件内容，所以内存占用可以忽略；
+// 仍然给了条数上限，超了整表清空（简单、无锁竞争陷阱；指纹是纯函数，清空只是下次重算）。
+var (
+	fpMu    sync.Mutex
+	fpCache = map[string]string{}
+)
+
+// fpCacheMax 缓存条数上限：一集几十镜×几张 = 几百条，4096 够几部剧的量。
+const fpCacheMax = 4096
+
 func FingerprintFile(path string) string {
+	st, statErr := os.Stat(path)
+	if statErr != nil {
+		return ""
+	}
+	key := fmt.Sprintf("%s\x1f%d\x1f%d", path, st.Size(), st.ModTime().UnixNano())
+	fpMu.Lock()
+	if v, ok := fpCache[key]; ok {
+		fpMu.Unlock()
+		return v
+	}
+	fpMu.Unlock()
+
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return ""
 	}
 	sum := md5.Sum(raw)
-	return hex.EncodeToString(sum[:])[:16]
+	fp := hex.EncodeToString(sum[:])[:16]
+
+	fpMu.Lock()
+	if len(fpCache) >= fpCacheMax {
+		fpCache = map[string]string{} // 整表清空：指纹是纯函数，重算即可
+	}
+	fpCache[key] = fp
+	fpMu.Unlock()
+	return fp
 }
 
 // FingerprintText 计算文本指纹。
