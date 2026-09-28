@@ -508,18 +508,30 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		p.Phase = run.Phase
 	}
 	out := map[string]any{"project": p}
-	if plan, err := s.store.LoadPlan(id); err == nil {
+	// **方案只读一次，三处共用**（2026-09-29 性能审计 #5）。
+	// 原来这里是 `if plan, err := LoadPlan(id); err == nil`，而下面
+	// `planCharKinds` / `planCharFamilies` 各自又读一遍 —— 同一个请求解析三遍，
+	// 每遍都跑全镜清洗 + HealPlan（实测 289KB/60 镜 1.59 ms/次，另加一份 plan 的分配）。
+	// 而前端每个成功/警告事件都会调一次这个接口（一集几十次）。
+	// 读一次、三处共用；**读不到要如实说**（不能像第一版那样写成 `plan, _ :=` ——
+	// 那被源码门 `TestNoSwallowedPersistenceErrors` 当场咬出来了，它是这道门该拦的形态）。
+	plan, planErr := s.store.LoadPlan(id)
+	if planErr != nil {
+		s.opLog("⚠ 项目「%s」的分镜方案读不出来（%v）—— 本次返回不含 plan / char_kinds / char_families，"+
+			"界面会看不到角色类型与分组", id, planErr)
+	}
+	if plan != nil {
 		out["plan"] = plan
 	}
 	// 每个角色的**生效实体类型**由后端下发(审计 P1-2):前端原先各自保留一份
 	// 关键词推断表,而那份表已经和后端漂移过 —— 界面显示"器物"、渲染按"人"走,
 	// 或者相反,用户看到的就是"改了类型没生效"。类型决定整套渲染方法
 	// (定妆照取景/多视角方式/镜头身份锁),不允许有两个真源。
-	out["char_kinds"] = planCharKinds(id, s)
+	out["char_kinds"] = planCharKinds(plan)
 	// 角色卡的**人的归属**同样由后端下发(§4.2):技能侧把造型档做成独立卡
 	// (`char_01v1` / `char_01v2` + 名字 `翻篇·收容所` / `翻篇·进城`),前端要按
 	// "一个人 + 他的 N 个造型档"分组显示,而不是 N 个新角色。判据只许有一份实现。
-	out["char_families"] = planCharFamilies(id, s)
+	out["char_families"] = planCharFamilies(plan)
 	if assets, err := s.store.LoadAssets(id); err == nil {
 		out["assets"] = assets
 	}
@@ -556,9 +568,13 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 // 为什么不把推断结果写回方案:方案里的 `kind` 是用户显式指定的东西,
 // "未指定则推断"是渲染时的兜底语义。把兜底结果持久化,等于把一次关键词命中
 // 固化成了用户的决定 —— 之后改描述也不会改变类型,反而更难理解。
-func planCharKinds(projectID string, s *Server) map[string]string {
-	plan, err := s.store.LoadPlan(projectID)
-	if err != nil {
+// 签名收 `plan` 而不是 projectID（2026-09-29 性能审计 #5）：
+// 它原来**自己 `LoadPlan` 一次**，而调用方（getProject）自己也读了一次 ⇒
+// **同一个请求里解析三遍**（`planCharKinds` + `planCharFamilies` + getProject 本体），
+// 每遍都在 `project.LoadPlan` 里跑全镜清洗 + `HealPlan`（实测 289KB/60 镜 1.59 ms/次）。
+// 收参数之后"读一次、三处共用"，调用点也一眼看得见数据是从哪来的。
+func planCharKinds(plan *project.Plan) map[string]string {
+	if plan == nil {
 		return nil
 	}
 	out := make(map[string]string, len(plan.Characters))
@@ -582,9 +598,8 @@ type charFamilyInfo struct {
 //
 // 判据只在 project.CharFamily* 一处实现(id 带 vK / 名字带「·档名」),不在这里另写一份:
 // 前端再抄一份必然与后端漂移(与上面 char_kinds 的同一条理由)。
-func planCharFamilies(projectID string, s *Server) map[string]charFamilyInfo {
-	plan, err := s.store.LoadPlan(projectID)
-	if err != nil {
+func planCharFamilies(plan *project.Plan) map[string]charFamilyInfo {
+	if plan == nil {
 		return nil
 	}
 	// 归族走**共用实现**（2026-09-28）：单卡口径（CharFamilyKey，id 优先）在

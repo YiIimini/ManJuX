@@ -496,9 +496,15 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 乙6:引擎回传的**实际帧数**必须记账,不能只留计划值。
 		// 清单长度(length)与"计划 / 实际"记录分别取(口径见 shotFrameRecord 的说明)。
 		length, frameNote := shotFrameRecord(wantFrames, res)
-		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", length, wantModel)
-		// 记下"这一镜用的是**哪批资产**"（官方重生成纪律：不得在成片里静默混用新旧资产）。
-		// 合成前会用当前方案重算一遍并核对 —— 详见 asset_fp.go 的说明。
+		// **先把三列补进清单，再落盘**（2026-09-29 性能审计 #9）。
+		//
+		// 原来这三段在 `setShotStatusLen`（它内部会 `SaveManifest`）**之后** —— 于是每镜
+		// 那次落盘里缺 `AssetFP` / `SeamFrom` / `TaskID`，只靠"下一镜的落盘"或阶段末
+		// 那一次兜。中途进程被杀/断电就会丢**最后几镜**的这三列，而它们的用途都是
+		// "事后核对"：AssetFP 用于合成前核对有没有静默混用新旧资产、SeamFrom 用于判断
+		// 上游重渲后这一镜要不要跟着重渲、TaskID 用于查云端任务。
+		//
+		// 顺序不影响性能（都是同一份内存 map），改的只是"哪一次落盘带上它们"。
 		if afp := shotAssetFP(shot, assets); afp != "" {
 			rec := manifest[strconv.Itoa(shot.ID)]
 			rec.AssetFP = afp
@@ -514,6 +520,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		if res.TaskID != "" {
 			manifest[strconv.Itoa(shot.ID)] = mergeTask(manifest[strconv.Itoa(shot.ID)], res.TaskID)
 		}
+		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", length, wantModel)
 		done++
 		doneMsg := fmt.Sprintf("✔ 镜头 %d 完成(%s)", shot.ID, rel)
 		if frameNote != "" {

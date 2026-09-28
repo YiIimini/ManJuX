@@ -56,6 +56,12 @@ watch(stageId, () => {
   // 把缺键读成开)。不在这里兜底,存量项目一开抽屉就会显示成"关着",而实际在跑;
   // 更糟的是"看着是关、一保存就真的把它关掉了"。它跑在资产阶段(每张新出定妆照一次视觉调用)。
   form.qc.enable_proportion_check = form.qc.enable_proportion_check !== false
+  // 两阶段渲染条件缓存(render.cond_cache):同一套「未表态即开」语义，而它此前**漏了兜底**
+  // （2026-09-29 数据完整性审计 #6）。后端 `CondCacheOn()` 把缺键读成**开**，
+  // 而这里不兜底就显示成 undefined → 开关看着是"关"、实际在跑 ——
+  // 正是上面那两条注释里写的同一个坑（"看着是关、其实在跑"）。它决定是否复用条件缓存 .pt，
+  // 影响的是渲染耗时与磁盘占用。
+  form.render.cond_cache = form.render.cond_cache !== false
   // 电影调色档(assemble.grade)与接缝重置间隔(render.seam_reset_every):
   // 这两个键是后加的,存量项目快照里没有 —— 不在这里兜底,下拉会显示空白、
   // 数字框会显示成空,而保存是**整份快照回写**,于是空值被写进项目参数,

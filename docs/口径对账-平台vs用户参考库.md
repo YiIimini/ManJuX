@@ -30,7 +30,7 @@ git clone --depth 1 https://github.com/MiniMax-AI/MiniMax-H3
 |---|---|---|
 | 片段时长（非末镜） | `PlanPreferredShotSeconds=7`、`PlanShotSecondsRef=8.5`、`PlanMinShotSeconds=4`、`PlanMaxShotSeconds=10` | 《【额外】仿真人10S分镜头指令》「非最后一个片段：时长在 **7秒、8秒、9秒或10秒** 中自由选择」（上限 10 秒是用户 2026-09-27 拍板） |
 | 片段内切镜 | 提示词要求 2-4 个小镜头、每镜 1.5-4 秒；门 `PlanOneTakeSeconds=5` | 同上「每个片段内拆成若干小镜头…每个镜头时长建议控制在 **1.5～4秒**」 |
-| 语速 | `PlanCharsPerSecond=4.5`（±停顿 `PlanSpeechPadSeconds=0.3`） | 同上「正常叙事/平静对话：约 **3.5~4.5 字/秒**」 |
+| 语速 | `PlanCharsPerSecond=4.1`（±停顿 `PlanSpeechPadSeconds=0.3`） | 同上「正常叙事/平静对话：约 **3.5~4.5 字/秒**」 |
 | 爽点密度 | `PlanPayoffMaxRunes=200` + 按秒的三道门（`PlanOpeningSetupSeconds=10`／`PlanFirstPayoffSeconds=30`／`PlanBeatGapSeconds=30`） | 《一、网文小说转剧本提示词指令》「每 80 字 1 个小爽点，**每 200 字 1 个大爽点**」；秒级口径来自拆解 100+ 部破亿竖剧的行业拆解（见 `docs/` 引注） |
 | 场景命名 | `PlanMinSceneNameRunes=4` | 《【额外】人物道具场景提取》「场景名称必须在**[四个字以上]**，通过具体的修饰词增加辨识度」 |
 | 场景配套物件 | `PlanSceneFixedPropMin/Max = 2/4` | 《四、场景提示词指令》「每个场景总计控制在 **2-4 组**，前景 1-2 组、中景 1-2 组」 |
