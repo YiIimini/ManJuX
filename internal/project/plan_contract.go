@@ -1012,6 +1012,47 @@ func ValidatePlan(p *Plan) []Issue {
 			len(shortNames), PlanMinSceneNameRunes, strings.Join(firstN(shortNames, 6), "、"))
 	}
 
+	// ── 2026-09-28 实测驱动的两条（真渲 48 镜的最低四镜失败方式完全相同）──────────
+	//
+	// ① 小景别 ＋ 手部工具精细动作 = 生成必崩（实测最低四镜全部如此：手指融合、多指、
+	//    与刀柄粘成一团）。提示词里"手指细小动作不要写"那条**不够** —— 模型照写，所以要机检。
+	// ② 把**可读文字**写到皮肤/衣物/器物上（`scar reading "丙十七"`）= 必出伪汉字
+	//    （实测额头与碑面都糊成了无意义字形）。
+	if len(p.Shots) > 0 {
+		var handClose, bodyText []string
+		for _, sh := range p.Shots {
+			body := sh.Action + " " + sh.H3Prompt
+			if handToolCloseUp(sh.ShotSize, body) {
+				handClose = append(handClose, fmt.Sprintf("#%d(%s)", sh.ID, sh.ShotSize))
+			}
+			// 只扫**本镜自己的动作**：正文每镜都复述角色卡的身份锁，扫正文会得到同源误报一堆
+			if w := bodyReadableText(sh.Action); w != "" {
+				bodyText = append(bodyText, fmt.Sprintf("#%d「%s」", sh.ID, w))
+			}
+		}
+		// 卡片侧各报一次（真正要改的是那张卡：疤写着 `reading "丙十七"`）
+		for _, ch := range p.Characters {
+			if w := bodyReadableText(ch.ImagePrompt + " " + ch.BoardPrompt + " " + ch.Description); w != "" {
+				bodyText = append(bodyText, fmt.Sprintf("卡片「%s」命中「%s」", ch.Name, w))
+			}
+		}
+		if len(handClose) > 0 {
+			add("warn", "plan.shots",
+				"%d 个镜头是**小景别 ＋ 手部工具精细动作**（%s）—— 实测这一类**生成必崩**"+
+					"（第一集最低四镜全是它：手指融合、多指、手与刀柄粘成一团）。改法：工具活一律用**中景或更宽**，"+
+					"动作写到**手腕/手臂**层，别写哪根手指做哪个动作；要展示成果就把镜头对着**石面/器物本身**的变化",
+				len(handClose), strings.Join(firstN(handClose, 5), "、"))
+		}
+		if len(bodyText) > 0 {
+			add("warn", "plan.shots",
+				"%d 处把**可读文字**写到皮肤/衣物/器物上（%s）—— 文字进画面是 T2V 的老大难；"+
+					"实测同一集额头印记与碑面都被画成了伪汉字（例如「丙十十」这种无意义重复）。改法："+
+					"疤/烙印/纹样写成「磨损不可辨」；剧情非要读的**唯一**那处，按官方屏幕文字规则"+
+					"**用英文双引号逐字引一次**，其余面一律写明「风化无字」",
+				len(bodyText), strings.Join(firstN(bodyText, 5), "、"))
+		}
+	}
+
 	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
 	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
 	if len(p.Scenes) > 0 {
