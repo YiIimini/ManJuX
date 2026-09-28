@@ -189,9 +189,19 @@ async function saveMeta() {
   metaBusy.value = false
 }
 
+// libKey 拼库内地址时用**卡片 id**（审计 B13）。
+//
+// 为什么不用名字：同名不同人是合法数据（两个孩子都叫"老张"），而按名字访问
+// **只能到第一条** —— 第二条在界面上看不到自己的图，点删除还会落到第一条身上。
+// 后端 `Match` 已支持 id（只认 `char_`/`prop_`/`scene_` 前缀，中文名不会误判），
+// 老条目没有 id 时退回名字，行为与从前一致。
+function libKey(e) {
+  return e && e.id ? e.id : e.name
+}
+
 // imgURL 拼库内图片地址;file 为空取主图,否则取指定图(只传基名,后端会校验)
 function imgURL(e, file) {
-  const base = `/api/library/${e.kind}/${encodeURIComponent(e.name)}/image`
+  const base = `/api/library/${e.kind}/${encodeURIComponent(libKey(e))}/image`
   if (!file) return base
   return `${base}?file=${encodeURIComponent(String(file).split('/').pop())}`
 }
@@ -449,7 +459,7 @@ async function remove(e) {
       </el-tooltip>
       <div v-if="gachaResult" class="w-full flex items-center gap-2 text-xs p-2 rounded-lg"
            style="background:color-mix(in srgb, var(--mx-amber) 6%, transparent);border:1px solid color-mix(in srgb, var(--mx-amber) 25%, transparent)">
-        <img :src="`/api/library/characters/${encodeURIComponent(gachaResult.entry.name)}/image`"
+        <img :src="`/api/library/characters/${encodeURIComponent(libKey(gachaResult.entry))}/image`"
              style="width:34px;height:44px;object-fit:cover;border-radius:6px" />
         <div class="flex-1 min-w-0">
           <b style="color:var(--mx-amber-hi)">{{ gachaResult.entry.name }}</b>
@@ -550,14 +560,14 @@ async function remove(e) {
             <div class="text-xs" style="color:var(--mx-text3);min-height:3.2em;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">
               {{ row.description || '(无描述)' }}
             </div>
-            <audio :src="`/api/library/${row.kind}/${encodeURIComponent(row.name)}/image`"
+            <audio :src="`/api/library/${row.kind}/${encodeURIComponent(libKey(row))}/image`"
                    controls preload="none" style="width:100%;height:32px" />
             <button class="cover-del" title="删除该库资产" @click.stop="remove(row)">
               <el-icon :size="13"><Delete /></el-icon>
             </button>
           </div>
           <div v-else class="cursor-zoom-in relative" style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:10px;overflow:hidden" @click="openDetail(row)">
-            <img :src="`/api/library/${row.kind}/${encodeURIComponent(row.name)}/image`"
+            <img :src="`/api/library/${row.kind}/${encodeURIComponent(libKey(row))}/image`"
                  style="width:100%;height:100%;object-fit:cover" loading="lazy"
                  @error="$event.target.style.display='none'"
                  @load="$event.target.style.display=''" />

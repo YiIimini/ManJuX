@@ -24,6 +24,8 @@ const emptyForm = () => ({
   split: {
     chunk_size: 12000, concurrency: 3, max_orig_chars: 9000,
     prev_summary: 400, brief_min: 400, brief_max: 700, shot_limit: 0,
+    // 五步专职会话（用户 2026-09-28 架构）：默认关 = 一次调用出全部的老路。
+    five_sessions: false,
   },
 })
 const form = reactive(emptyForm())
@@ -345,6 +347,14 @@ async function testConn(target) {
             <el-input-number v-model="form.split.shot_limit" :min="0" :max="120" style="width:100%" />
             <div class="text-xs mt-1" style="color:var(--mx-text3)">
               超过上限的镜头会被**截断并告警**(方案结尾变短)。原文很长、需要更多镜头时把它调大,或填 0 让 LLM 按内容决定。
+            </div>
+          </el-form-item>
+          <el-form-item label="五步专职会话(②人物道具 / ④场景 / ⑤分镜 同时跑)">
+            <el-switch v-model="form.split.five_sessions" />
+            <div class="text-xs mt-1" style="color:var(--mx-text3)">
+              关(默认)= 一次调用出全部(经过验证的老路)。<br />
+              开 = 拆成五个专职会话：**每步只拿自己那一步的规则**，②④⑤**同时跑**(它们互不依赖)、
+              ③角色多视图随后补一轮。模型不再"每样写一点、每样都不够细"——实测老路下 6 个角色只解析出 1 个。
             </div>
           </el-form-item>
         </el-form>
