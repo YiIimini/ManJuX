@@ -102,7 +102,27 @@ func speakerTagOutsideDescription(h3 string) string {
 var (
 	// h3ShotTimeRe `[Shot N] At MM:SS.mmm`
 	h3ShotTimeRe = regexp.MustCompile(`\[Shot\s+(\d+)\]\s+At\s+(\d{1,2}):(\d{2})\.(\d{3})`)
+	// h3ShotHeadRe 行首的 `[Shot N]` 标题（`[Shot 1]` 不带时间戳也算一个镜头）
+	h3ShotHeadRe = regexp.MustCompile(`(?m)^\s*\[Shot\s+\d+\]`)
 )
+
+// H3ClipCuts 一个片段正文里**有几个小镜头**（内部切点）。
+//
+// 【为什么需要它】用户 2026-09-28：「难怪渲染的视频总感觉拖沓，都没有抓重点」。
+// 量出来的机制：平台的每镜正文里**只有一个 `[Shot 1]`** —— 一个 6–8 秒的片段从头到尾
+// 演一个连续动作 = 全程慢动作。而用户自己的《【额外】仿真人10S分镜头指令》写着
+// 「每个片段内拆成若干小镜头，每镜 1.5–4 秒」，H3 官方格式也支持一个片段里写多个
+// `[Shot N] At MM:SS.mmm`（Ref2VA §5.2 示例就是多镜）。**片段内切镜**才是"快"的来源。
+//
+// 只在 detailed_description 段内数：subject_definitions/retention_analysis 里会出现
+// `appears in [Shot 1]` 这种引用（第一版按全文数，得出"48/48 镜多段"的假结论，被自己推翻过）。
+func H3ClipCuts(h3 string) int {
+	seg, ok := sectionOf(h3, "detailed_description")
+	if !ok {
+		seg = h3
+	}
+	return len(h3ShotHeadRe.FindAllString(seg, -1))
+}
 
 // shotTimestamps 取出所有带时间戳的镜头（按出现顺序）。
 func shotTimestamps(h3 string) []timestampParts {

@@ -43,6 +43,26 @@ var PlanHookDensityTypes = []string{"reveal", "reversal", "callback"}
 // PlanHookStrongTypes 开篇镜与收尾镜必须带的强钩子（官方 STEP 5.5 检查 1 后半句）。
 var PlanHookStrongTypes = []string{"visual-joke", "reversal", "reveal", "suspense", "tender"}
 
+// PlanOneTakeSeconds 超过这个时长的片段**必须**在正文里切内部小镜头（否则报"一镜到底"）。
+//
+// 依据：用户《【额外】仿真人10S分镜头指令》「每个片段内拆成若干小镜头，每镜 1.5–4 秒」；
+// 5 秒是分界 —— 4 秒以内的单动作片段一镜到底不算拖，5 秒以上还只有一个 [Shot 1] 就是慢动作。
+const PlanOneTakeSeconds = 5
+
+// PlanPayoffMaxRunes 爽点密度上限（用户《一、网文小说转剧本提示词指令》：
+// 「每 80 字 1 个小爽点，每 200 字 1 个大爽点」）。按**台词字数**累计，
+// 连续超过这个数还没有强节拍 ⇒ 这一段是平的。
+const PlanPayoffMaxRunes = 200
+
+// isPayoffHook 这个钩子算不算"爽点级"强节拍（逆袭/打脸/揭秘/升阶）。
+func isPayoffHook(h string) bool {
+	switch strings.TrimSpace(h) {
+	case "reveal", "reversal", "climax":
+		return true
+	}
+	return false
+}
+
 // PlanHookDensityWindow 钩子密度的滑动窗口（官方：at least one of every three consecutive shots）。
 const PlanHookDensityWindow = 3
 

@@ -139,3 +139,26 @@ func TestUserInstructionFilesAdaptedIntoH3(t *testing.T) {
 		t.Error("场景板要按五步公式要求（光→主体→材质与光互动→画质后缀→物件），否则就是「简陋单一」")
 	}
 }
+
+// TestHighlightRulesReachAllPrompts 抓重点纪律必须进**三条**提示词（计划轮定 segments/brief，
+// 两条分镜轮写 shots）——2026-09-28 用户：「分镜脚本 LLM 解析是否按《一、网文小说转剧本提示词指令》
+// 来啊，抓重点啊」。只挂一半的话，计划轮会把"平淡的节拍"先写进 brief，分镜轮再忠实地拍出来。
+func TestHighlightRulesReachAllPrompts(t *testing.T) {
+	all := map[string]string{"计划轮": planSystemPrompt}
+	for k, v := range ShotPrompts() {
+		all[k] = v
+	}
+	for name, p := range all {
+		for _, want := range []string{
+			"抓重点纪律",
+			"开篇 3 秒爆点",
+			"每 80 字",
+			"段段留钩",
+			"砍掉所有冗余铺垫",
+		} {
+			if !strings.Contains(p, want) {
+				t.Errorf("%s 缺 %q —— 抓重点纪律没进这条提示词", name, want)
+			}
+		}
+	}
+}

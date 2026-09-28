@@ -672,6 +672,79 @@ func ValidatePlan(p *Plan) []Issue {
 		// 所以官方的强制自检可以直接落在契约上 —— "这一集是不是平/有没有一镜塞太多人"
 		// 从"靠感觉说"变成可判。
 		//
+		// ── 抓重点：《一、网文小说转剧本提示词指令》里**能量化的两条**（2026-09-28 用户：
+		// 「分镜脚本 LLM 解析是否按这个来啊，抓重点啊，咋那么纯啊」）────────────────────
+		//
+		// 那份文件把改编纪律写死了：开篇 3 秒爆点（**无任何铺垫、无多余旁白**）、
+		// 每 80 字 1 个小爽点 / 每 200 字 1 个大爽点、段段留钩、砍掉冗余铺垫支线。
+		// 钩子类型与密度平台已有官方门，这里补它**特有**的两条：
+		//   ① 开篇镜不许有旁白 —— "无多余旁白"是那份文件对首镜的硬要求（旁白＝铺垫）；
+		//   ② 爽点密度按**台词字数累计**：连续超过 PlanPayoffMaxRunes 字没有强节拍 ⇒ 这一段是平的。
+		//
+		// 为什么机器门只卡 200 字、不卡 80 字：80 字那条是提示词层面的引导（每 80 字一个小爽点），
+		// 而按台词字数硬卡 80 会在一句长台词上误报；200 字那条才是"这一段已经拖了"的可靠信号。
+		if len(p.Shots) > 0 {
+			if first := p.Shots[0]; strings.TrimSpace(first.Narration) != "" || first.VoKind == VoKindNarration {
+				add("warn", "plan.shots",
+					"开篇镜 #1 带了旁白（%q）—— 用户《一、网文小说转剧本提示词指令》第一条就是"+
+						"「第一句话必须抛出极致冲突/绝境/反转/悬念，**无任何铺垫、无多余旁白**，直接切入高潮名场面」；"+
+						"旁白是最典型的铺垫，首镜该用画面动作把人钉在屏幕上",
+					firstN([]string{strings.TrimSpace(first.Narration)}, 1)[0])
+			}
+			// 爽点密度：强节拍 = reveal / reversal / climax（逆袭、打脸、揭秘、升阶）
+			var flat []string
+			acc, from := 0, 0
+			for _, sh := range p.Shots {
+				if acc == 0 {
+					from = sh.ID
+				}
+				for _, ln := range sh.Dialogue {
+					acc += len([]rune(strings.TrimSpace(ln.Text)))
+				}
+				if isPayoffHook(hookTypeOf(sh)) {
+					acc = 0
+					continue
+				}
+				if acc > PlanPayoffMaxRunes {
+					flat = append(flat, fmt.Sprintf("#%d–#%d", from, sh.ID))
+					acc = 0
+				}
+			}
+			if len(flat) > 0 {
+				add("warn", "plan.shots",
+					"%d 段连续超过 %d 字没有强节拍（%s）—— 《一、网文小说转剧本提示词指令》要求"+
+						"「每 80 字 1 个小爽点、每 200 字 1 个大爽点」，主角全程不憋屈不拖沓；"+
+						"把这段里的逆袭/打脸/揭秘/升阶提前或加一个，别让台词堆成流水账",
+					len(flat), PlanPayoffMaxRunes, strings.Join(firstN(flat, 5), "、"))
+			}
+		}
+
+		// ── 片段内切镜：治"拖沓"的机制门（2026-09-28 用户：「难怪渲染的视频总感觉拖沓，都没抓重点」）──
+		//
+		// 量出来的事实：平台的每镜正文里**只有一个 `[Shot 1]`** —— 一个 6–8 秒片段从头到尾演一个
+		// 连续动作，观众感觉就是"全程慢动作"。用户自己的《【额外】仿真人10S分镜头指令》写着
+		// 「每片段内拆成若干小镜头，每镜 1.5–4 秒」，H3 官方 Ref2VA 也支持一个片段写多个
+		// `[Shot N] At MM:SS.mmm`。**切镜是节奏**：同样内容切三刀就是快，一镜到底就是拖。
+		if len(p.Shots) > 0 {
+			var oneTake []string
+			for _, sh := range p.Shots {
+				if sh.Duration < PlanOneTakeSeconds {
+					continue // 短片段一镜到底没问题
+				}
+				if H3ClipCuts(sh.H3Prompt) < 2 {
+					oneTake = append(oneTake, fmt.Sprintf("#%d(%ds)", sh.ID, sh.Duration))
+				}
+			}
+			if len(oneTake) > 0 {
+				add("warn", "plan.shots",
+					"%d 镜是**一镜到底的长片段**（%s）—— 一个 5 秒以上的片段里只有一个「[Shot 1]」，"+
+						"从头到尾演一个连续动作，观众感觉就是「全程慢动作」（用户原话：拖沓、没抓重点）。"+
+						"按《【额外】仿真人10S分镜头指令》：片段内要切 **2–4 个小镜头、每镜 1.5–4 秒**，"+
+						"用官方多镜形式「[Shot 2] At 00:03.500, …」写，时间戳严格递增且各镜之和 = 该片段时长",
+					len(oneTake), strings.Join(firstN(oneTake, 8), "、"))
+			}
+		}
+
 		// 检查 1：钩子密度。每镜都要有 hook_type；每连续三镜至少一个 reveal/reversal/callback；
 		// 开篇镜与收尾镜必须是强钩子。
 		var noHook, badHook []string
