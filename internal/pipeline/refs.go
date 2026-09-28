@@ -102,7 +102,10 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 	}
 	for _, cid := range shot.Characters {
 		a, ok := assets["char:"+cid]
-		if !ok || a.File == "" {
+		// **字段非空不等于盘上有图**（2026-09-28 全面审计）：资产表里一条指向不存在文件的
+		// 条目，用在这里就是"参考图没附上、静默降级纯文生"，用户看到的是同一角色逐镜换人。
+		// 判据与资产阶段的剔除、成片的交付判据共用同一个入口（project.FileOnDisk）。
+		if !ok || !project.FileOnDisk(dir, a.File) {
 			missing = append(missing, cid)
 			continue
 		}

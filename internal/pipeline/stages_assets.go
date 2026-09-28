@@ -377,8 +377,20 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		}
 	}
 
+	// **保存前把"指向不存在文件"的鬼条目剔掉**（2026-09-28 全面审计）。
+	//
+	// 为什么必须在这一步（而不是指望生成链自己保证）：资产表是渲染取参考图的**唯一来源**
+	// （refs.go 只查 `assets["char:"+id].File != ""`，不验文件在不在）。留一条鬼条目，
+	// 渲染就取不到参考图、静默降级纯文生 —— 用户看到的是"同一角色逐镜换人"，界面上却
+	// 只有一句"资产就绪 N/N"。
+	ghosts := dropMissingAssets(c.store.Dir(proj.ID), assets)
 	if err := c.store.SaveAssets(proj.ID, assets); err != nil {
 		return err
+	}
+	if len(ghosts) > 0 {
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+			"⚠ 资产表里有 %d 条**指向不存在的文件**（生成报了成功、文件却没落盘，或事后被删）—— "+
+				"已从表里剔除，渲染前会自动重新生成：%s", len(ghosts), strings.Join(ghosts, "、"))
 	}
 	if p.Source == "skip" {
 		c.emit(proj.ID, PhaseAssets, 0, "success", 100, "✔ 资产策略=跳过(全部镜头纯文生 t2va)")
@@ -405,6 +417,30 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 		c.emit(proj.ID, PhaseAssets, 0, "warn", pct, "提示:缺 %d 张参考图,对应镜头将以 t2va 纯文生渲染", missing)
 	}
 	return nil
+}
+
+// dropMissingAssets 剔除资产表里**指向不存在文件**的条目，返回被剔除条目的显示名（排序）。
+//
+// 为什么需要它（2026-09-28 全面审计）：资产阶段的"N/N 就绪"是**过程计数** —— 生成函数返回
+// nil 就算数，文件到底有没有落盘、是不是 0 字节，从头到尾没验过。而资产表是渲染取参考图的
+// **唯一来源**（refs.go 只看 File 字段非空），一条鬼条目就够让那一镜静默降级纯文生。
+//
+// 判据落到**盘上事实**：存在、不是目录、大小 > 0（0 字节 = 写到一半）。
+// File 为空的条目不动：它本来就代表"这张还没有图"，渲染不会带它（由渲染前的补齐链负责）。
+func dropMissingAssets(projDir string, assets map[string]project.Asset) []string {
+	var ghosts []string
+	for id, a := range assets {
+		if strings.TrimSpace(a.File) == "" {
+			continue
+		}
+		if project.FileOnDisk(projDir, a.File) {
+			continue
+		}
+		ghosts = append(ghosts, a.Name)
+		delete(assets, id)
+	}
+	sort.Strings(ghosts)
+	return ghosts
 }
 
 // proportionCheckPlan 一张定妆照的比例自检该怎么走(纯函数,便于穷举)。

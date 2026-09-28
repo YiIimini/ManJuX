@@ -9,17 +9,41 @@ import (
 	"testing"
 )
 
+// mkAssetsOnDisk 把夹具里声明的资产**真的写到盘上**。
+//
+// 【为什么必须这样写（2026-09-28）】参考图判据现在是"盘上真的有这份文件"
+// （`project.FileOnDisk`），而不是"File 字段非空"—— 字段写着有、盘上没有的条目，用在这里
+// 就是"参考图没附上、静默降级纯文生"。夹具照真实形态写，判据测的才是真行为；
+// 之前这些夹具传的是假目录 `"proj"`、文件也不存在，等于把判据测成了"字段非空"。
+func mkAssetsOnDisk(t *testing.T, dir string, assets map[string]project.Asset) {
+	t.Helper()
+	for _, a := range assets {
+		if strings.TrimSpace(a.File) == "" {
+			continue
+		}
+		p := filepath.Join(dir, filepath.FromSlash(a.File))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte("png"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
 // TestAssembleShotRefsOrder 顺序即契约:<Picture 1..N> = characters 数组顺序,
 // <Picture N+1> = 场景。director 的 sysH3Format 按这个顺序给 LLM 编号,
 // 两侧一旦漂移就会出现「LLM 以为是角色甲、实际指向角色乙」的错位。
 func TestAssembleShotRefsOrder(t *testing.T) {
+	dir := t.TempDir()
 	shot := project.Shot{Scene: "scene_inn", Characters: []string{"char_a", "char_b"}}
 	assets := map[string]project.Asset{
 		"char:char_a":     {File: "assets/characters/a.png"},
 		"char:char_b":     {File: "assets/characters/b.png"},
 		"scene:scene_inn": {File: "assets/scenes/inn.png"},
 	}
-	refs, missing := AssembleShotRefs("proj", shot, assets, true)
+	mkAssetsOnDisk(t, dir, assets)
+	refs, missing := AssembleShotRefs(dir, shot, assets, true)
 	if len(missing) != 0 {
 		t.Fatalf("不应有缺失,实际 %v", missing)
 	}
@@ -35,12 +59,14 @@ func TestAssembleShotRefsOrder(t *testing.T) {
 // 缺首角色时剩下的 <Picture 1> 实际是第二个角色,而提示词仍按 characters
 // 顺序描述,必然指错图 —— 这正是调用方必须告警而非静默降级的原因。
 func TestAssembleShotRefsMissingCharacter(t *testing.T) {
+	dir := t.TempDir()
 	shot := project.Shot{Scene: "scene_inn", Characters: []string{"char_a", "char_b"}}
 	assets := map[string]project.Asset{
 		"char:char_b":     {File: "assets/characters/b.png"},
 		"scene:scene_inn": {File: "assets/scenes/inn.png"},
 	}
-	refs, missing := AssembleShotRefs("proj", shot, assets, true)
+	mkAssetsOnDisk(t, dir, assets)
+	refs, missing := AssembleShotRefs(dir, shot, assets, true)
 	if len(missing) != 1 || missing[0] != "char_a" {
 		t.Fatalf("应报出缺失角色 char_a,实际 %v", missing)
 	}
@@ -51,9 +77,11 @@ func TestAssembleShotRefsMissingCharacter(t *testing.T) {
 
 // TestAssembleShotRefsSingleCharacter 单角色镜:场景落在 <Picture 2>。
 func TestAssembleShotRefsSingleCharacter(t *testing.T) {
+	dir := t.TempDir()
 	shot := project.Shot{Scene: "s", Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: "a.png"}, "scene:s": {File: "s.png"}}
-	refs, missing := AssembleShotRefs("proj", shot, assets, true)
+	mkAssetsOnDisk(t, dir, assets)
+	refs, missing := AssembleShotRefs(dir, shot, assets, true)
 	if len(refs) != 2 || len(missing) != 0 {
 		t.Fatalf("单角色 + 场景应为 2 张且无缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -62,9 +90,10 @@ func TestAssembleShotRefsSingleCharacter(t *testing.T) {
 // TestAssembleShotRefsEmptyFileTreatedMissing File 为空的资产等同缺失,
 // 不能把空路径塞进参考图列表。
 func TestAssembleShotRefsEmptyFileTreatedMissing(t *testing.T) {
+	dir := t.TempDir()
 	shot := project.Shot{Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: ""}}
-	refs, missing := AssembleShotRefs("proj", shot, assets, true)
+	refs, missing := AssembleShotRefs(dir, shot, assets, true)
 	if len(refs) != 0 || len(missing) != 1 {
 		t.Fatalf("空 File 应视为缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -106,9 +135,11 @@ func TestTurnaroundPath(t *testing.T) {
 
 // TestAssembleShotRefsNoScene 没有场景的镜头不应被误报缺失。
 func TestAssembleShotRefsNoScene(t *testing.T) {
+	dir := t.TempDir()
 	shot := project.Shot{Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: "a.png"}}
-	refs, missing := AssembleShotRefs("proj", shot, assets, true)
+	mkAssetsOnDisk(t, dir, assets)
+	refs, missing := AssembleShotRefs(dir, shot, assets, true)
 	if len(refs) != 1 || len(missing) != 0 {
 		t.Fatalf("无场景不应报缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}

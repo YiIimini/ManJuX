@@ -3,6 +3,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // 成片路径的**唯一真源**。
@@ -23,6 +24,21 @@ import (
 // FinalNames 成片的两种出口。768P 在前：它先产出，2K 是它的升级版。
 var FinalNames = []string{"final.mp4", "final_2k.mp4"}
 
+// FileOnDisk 这个相对路径在项目里**真的有一份可用文件**吗（存在、不是目录、大小 > 0）。
+//
+// 这是"判据落到**盘上事实**"的统一入口（2026-09-28 全面审计）：资产表里的 File、成片路径、
+// 镜头 mp4 —— 凡是要拿它去**做事**的（当参考图、当交付物、当续跑依据），都必须先过这一道。
+// 只看字段非空是不够的：项目里反复出现过"字段写着有、盘上没有"，而消费方一律照用，
+// 症状是静默降级（参考图没了 → 纯文生 → 同一角色逐镜换人）或假完成（没成片却结案）。
+func FileOnDisk(projDir, rel string) bool {
+	rel = strings.TrimSpace(rel)
+	if rel == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(projDir, filepath.FromSlash(rel)))
+	return err == nil && !st.IsDir() && st.Size() > 0
+}
+
 // DeliveredFinal 项目里是否已有成片；返回命中的文件（相对项目根，slash 分隔）与是否存在。
 //
 // 判据：存在、不是目录、且**大小 > 0**。0 字节的 final.mp4 是"合成写到一半就没了"，
@@ -30,8 +46,7 @@ var FinalNames = []string{"final.mp4", "final_2k.mp4"}
 func DeliveredFinal(dir string) (string, bool) {
 	for _, name := range FinalNames {
 		rel := filepath.Join("output", name)
-		st, err := os.Stat(filepath.Join(dir, rel))
-		if err == nil && !st.IsDir() && st.Size() > 0 {
+		if FileOnDisk(dir, rel) {
 			return filepath.ToSlash(rel), true
 		}
 	}
