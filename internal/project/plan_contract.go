@@ -1307,6 +1307,35 @@ func ValidatePlan(p *Plan) []Issue {
 				len(crowd), strings.Join(firstN(crowd, 6), "、"))
 		}
 	}
+	// ── 角色卡 / 道具卡 / 三视图板的补充判据（2026-09-28 欠账小项）──────────────
+	//
+	// 判据在 `asset_card_gates.go`，文案在这里（gatecat 扫字面格式串生成门目录）。
+	if names := AgeIssues(p.Characters); len(names) > 0 {
+		add("warn", "plan.characters",
+			"%d 个角色的卡片里**没有年龄锚**（%s）—— 模型的默认审美是年轻化，不把年龄写成硬锚，"+
+				"它每次都往年轻里画（用户报过「中年人渲染出来跟个小年轻一样」）",
+			len(names), strings.Join(firstN(names, 6), "、"))
+	}
+	if names := BoardWhiteBackdropIssues(p.Characters); len(names) > 0 {
+		add("warn", "plan.characters",
+			"%d 张卡的三视图板没写**纯白无缝底**（%s）—— 板子是**规格书**（3 全身＋6 头＋6 细节）："+
+				"带上场景之后模型把精力用在画环境上，15 格的身份信息被摊薄，而且底不一致就没法当角度参考用",
+			len(names), strings.Join(firstN(names, 6), "、"))
+	}
+	if names := MaterialIssues(p.Props); len(names) > 0 {
+		add("warn", "plan.props",
+			"%d 件道具的材质过于单一（%s）—— 《二》对服装要求「材质对撞至少 4 种高级材质」，"+
+				"道具没有这条；而道具图是拿卡当提示词单独出的，材质单薄就是「一块塑料」的来源",
+			len(names), strings.Join(firstN(names, 6), "、"))
+	}
+	if names := ScenePropGroupIssues(p.Scenes); len(names) > 0 {
+		add("warn", "plan.scenes",
+			"%d 个场景卡一处环境配套物件都没提（%s）—— 用户《四》§4.6：「每个场景总计控制在 2-4 组，"+
+				"前景 1-2 组、中景 1-2 组」。这条只判**下限方向**（一处都没提必然错），"+
+				"不猜够不够：平台数不出「组」——要数得准得让技能侧先给 `fixed_props` 字段",
+			len(names), strings.Join(firstN(names, 6), "、"))
+	}
+
 	// 角色卡的敏感词与场景命名（卡片侧）
 	var cardBanned, shortNames []string
 	for _, ch := range p.Characters {

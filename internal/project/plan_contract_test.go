@@ -29,6 +29,10 @@ func samplePlan() *Plan {
 		Characters: []Character{{
 			ID: "char_a", Name: "阿甲", Kind: "human",
 			Description: "二十岁男子", Voice: "young male voice",
+			// #21/#24 的门要求：角色卡带**年龄锚**、三视图板写**纯白无缝底**（用户《三》
+			// 「白底」，以及"中年人渲染成小年轻"那条）。夹具照真实形态写。
+			Age:         "20",
+			BoardPrompt: "a character production reference sheet on a pure white seamless backdrop: three full-body views, six head angles, six detail tiles",
 			// 夹具照真实形态写：规范要求角色卡带比例锚点（8.5 头身），真实卡会有；
 			// 没有就会被"卡完备性"门抓住（不是门太严，是夹具不真）。
 			ImagePrompt: "IDENTITY LOCK (do not change): a young man, eight and a half heads tall, lean, " +
@@ -48,7 +52,9 @@ func samplePlan() *Plan {
 			// 用户《二》要求**八项**，「功能作用」与「独有特征」是其中两项 ——
 			// 合规样本必须写全，否则新的"道具八项"门会（正确地）报它不完整。
 			Description: "磨薄的旧柴刀，柄缠麻布；功能作用：劈柴与防身，砍不动硬木；独有特征：刀背有一道豁口",
-			ImagePrompt: "a short worn chopping knife with a chipped spine, 1:1 square, isolated on plain white background",
+			// #23：道具图是拿卡当提示词单独出的，材质单薄就是"一块塑料" —— 夹具写够 3 种材质
+			ImagePrompt: "a short worn chopping knife: aged iron blade with a chipped spine, hemp-wrapped wooden handle, " +
+				"worn leather cord binding, 1:1 square, isolated on plain white background",
 		}},
 		Shots: []Shot{{
 			ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, PropIDs: []string{"prop_knife"},
