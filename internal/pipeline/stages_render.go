@@ -475,6 +475,23 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(已写占位，继续下一镜):%s", shot.ID, msg)
 			continue
 		}
+		// **引擎说成功不等于文件真的在**（2026-09-29 代码健康审计 P0-1，由接线测试抓出）。
+		//
+		// 这里是"报成功但成片里没这一段"的直接来源：清单里写着 done、播放时那一段是黑的。
+		// 引擎侧有五种可能返回 nil error 却没落成品的路径：云端 task 状态竞态、
+		// 本地进程退出码 0 但 ffmpeg 半途失败、产物路径被引擎自己改写、下载截断、
+		// 以及我们刚写的 fake 引擎模拟的那种"成功了但什么都没写"。
+		//
+		// 判据只要一条：**Bytes>0**（与 `shotArtifactValid` 里"已有产物能否复用"同一口径）。
+		// 走到这里没有产物 = 这一镜没完成，交给上面那条重试阶梯/占位逻辑处理。
+		if !shotOutputUsable(res.VideoPath) {
+			msg := fmt.Sprintf("引擎返回成功但没有产物文件(%s)", filepath.Base(res.VideoPath))
+			c.emit(proj.ID, PhaseRender, shot.ID, "error", base,
+				"✕ 镜头 %d %s —— 不能算完成，否则成片里这一段是黑的", shot.ID, msg)
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, msg)
+			failed++
+			continue
+		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
 		// 乙6:引擎回传的**实际帧数**必须记账,不能只留计划值。
 		// 清单长度(length)与"计划 / 实际"记录分别取(口径见 shotFrameRecord 的说明)。
@@ -769,6 +786,22 @@ func charactersIntersect(a, b []string) bool {
 		}
 	}
 	return false
+}
+
+// shotOutputUsable 引擎交回来的那个文件**真的是一份可用产物**吗。
+//
+// 只判"存在且非空"：这是**廉价且必要**的一道（更细的判据交给 `shotArtifactValid`，
+// 那个是断点续跑用的重判据，要算指纹与帧数）。这里要挡的是"引擎说成功、文件根本没写"
+// —— 2026-09-29 的接线测试用 fake 引擎模拟出这条路径，`runRender` 当时直接把它标成 done。
+func shotOutputUsable(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	st, err := os.Stat(path)
+	if err != nil || st.IsDir() {
+		return false
+	}
+	return st.Size() > 0
 }
 
 // shotArtifactValid 判定**已有产物能否复用**(断点续跑的核心判据),抽成纯函数以便穷举。
