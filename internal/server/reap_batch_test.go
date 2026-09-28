@@ -1,9 +1,34 @@
 package server
 
 import (
+	"os"
+	"strings"
 	"testing"
 	"time"
 )
+
+// 【2026-09-28 审计实测】回收守卫的判据**不许按下标算**。
+//
+// 原写法 `batch.projects[batch.cur]` 而 cur 是 1 基 ⇒ 检查的是**下一集**：产线跑第 1 集时
+// 守卫读到"下一集没在跑"，就把活跃批次当死批次回收（并播报"旧批次已让位"这种假消息），
+// 随后两个批次一起遍历 projects 调 Start ⇒ 两集并发抢一张显卡
+// （2026-09-12「定妆照整批失败、单镜 20+ 分钟」的形态）。
+//
+// 这里做源码级钉住：真把产线拉起来在测试进程里会走到 quitApp(os.Exit)（见下条用例的说明）。
+func TestReapStaleBatchGuardDoesNotIndexByCur(t *testing.T) {
+	raw, err := os.ReadFile("novel_split.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	if strings.Contains(src, "batch.projects[batch.cur]") {
+		t.Error("回收判据又在按 batch.cur 取下标了 —— cur 是 1 基，取到的是**下一集**，" +
+			"产线跑第 1 集时守卫会读到「下一集没在跑」，把活跃批次当死批次回收")
+	}
+	if !strings.Contains(src, "for _, pid := range projects {") {
+		t.Error("回收守卫要按「这一批**任一一集**在跑」判（不依赖 cur 的基），否则改成别的写法时又会静默失效")
+	}
+}
 
 // TestReapStaleBatchFreesSingleton 死批次必须被自动回收 —— 这是本应用自己的 bug:
 // 批量产线是单例,失败/停下来的那批 `batch.running` 仍是 true,于是之后谁点都起不来,

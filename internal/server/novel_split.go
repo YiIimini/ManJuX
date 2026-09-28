@@ -220,15 +220,28 @@ func (s *Server) reapStaleBatch() {
 		return
 	}
 	prefix := batch.prefix
-	id := ""
-	if batch.cur >= 0 && batch.cur < len(batch.projects) {
-		id = batch.projects[batch.cur]
-	}
+	projects := append([]string(nil), batch.projects...)
 	batch.mu.Unlock()
 
-	// 真在跑:绝不许抢(同一条产线共用一张显卡,并发只会互相拖死)
-	if id != "" && s.pipe != nil && s.pipe.Running(id) != nil {
-		return
+	// 真在跑:绝不许抢(同一条产线共用一张显卡,并发只会互相拖死)。
+	//
+	// 【2026-09-28 审计实测 · 判据原来差一个基】原写法是"按 **cur 直接索引** projects，
+	// 取出那一集问它在不在跑"，而 cur 是 **1 基**（见 runNovelBatch 里 `batch.cur = i+1`）
+	// —— 取到的是**下一集**。
+	// 后果：产线跑第 1 集时用户再点一次「批量产线」，或导入另一本书（autoStartBatch 也会来），
+	// 这道守卫读到"下一集没在跑" ⇒ 把**活跃批次**当死批次回收掉并播报"旧批次已让位"（假消息），
+	// 随后两个 goroutine 同时遍历 projects 调 Start ⇒ 两集并发抢一张卡（2026-09-12
+	// 「定妆照整批失败、单镜 20+ 分钟」的形态）；另一条岔路是旧循环先看见 stop，
+	// 把**正在跑**的那一集 Stop 掉。
+	//
+	// 现在改成"**这一批还有任何一集在跑就不许抢**"：不依赖 cur 的基（它将来再改也不会静默
+	// 失效），代价是几十次 map 查找，可忽略。
+	if s.pipe != nil {
+		for _, pid := range projects {
+			if s.pipe.Running(pid) != nil {
+				return
+			}
+		}
 	}
 
 	batch.mu.Lock()

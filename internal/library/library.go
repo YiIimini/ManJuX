@@ -36,7 +36,15 @@ type Entry struct {
 	// 以及无 ID 条目（手动上传、存量）的兜底键。
 	//
 	// 空 = 这条没有 ID，仍走原来的名字路径（不迁移老库，也不强迫上传路径先造 ID）。
-	ID          string `json:"id,omitempty"`
+	ID string `json:"id,omitempty"`
+	// Dir 这条条目**自己的目录名**（`<库根>/<kind>/<Dir>/`）。
+	//
+	// 为什么必须记下来（2026-09-28 审计实测）：目录名一直是从 Name 推出来的，而同名不同 ID 时
+	// PutCard 会**故意**另起 `名字__ID` —— 于是每一个"按名字重推目录"的入口（重抽、删除、
+	// 清角度图、别名回写、详情取图）都会落到**别人那条**上：给 B 换脸写进 A 的目录、点删 B
+	// 删掉 A。记下来，所有入口一律用它，谁都不许再自己推。
+	// 老条目没有这个字段 → 退回按显示名推（与过去一致，不做迁移）。
+	Dir         string `json:"dir,omitempty"`
 	Description string `json:"description"`
 	ImagePrompt string `json:"image_prompt"`
 	Image       string `json:"image"` // 主图相对库根路径(characters/x/portrait.png)
@@ -307,6 +315,82 @@ func (l *Library) entryDir(kind, key string) (string, error) {
 	return filepath.Join(l.root, kind, sn), nil
 }
 
+// entryDirOfLocked 条目**自己**的目录（调用方须持锁）。优先用它记的 Dir；
+// 老条目（没有 Dir 字段）才按显示名推 —— 与过去行为一致。
+func (l *Library) entryDirOfLocked(e *Entry) (string, error) {
+	key := strings.TrimSpace(e.Dir)
+	if key == "" {
+		key = safeName(e.Name)
+	}
+	return l.entryDir(e.Kind, key)
+}
+
+// matchByNameLocked 按**显示名或别名**找条目（调用方须持锁）。扫目录，不走目录名。
+func (l *Library) matchByNameLocked(kind, name string) (*Entry, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" || !validKind(kind) {
+		return nil, false
+	}
+	dirs, err := os.ReadDir(filepath.Join(l.root, kind))
+	if err != nil {
+		return nil, false
+	}
+	for _, de := range dirs {
+		if !de.IsDir() {
+			continue
+		}
+		raw, rerr := os.ReadFile(filepath.Join(l.root, kind, de.Name(), "asset.json"))
+		if rerr != nil {
+			continue
+		}
+		var e Entry
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		hit := strings.TrimSpace(e.Name) == name
+		if !hit {
+			for _, al := range e.Aliases {
+				if strings.TrimSpace(al) == name {
+					hit = true
+					break
+				}
+			}
+		}
+		if !hit {
+			continue
+		}
+		e.Dir = de.Name() // 目录以**盘上事实**为准（条目里记的可能是旧值）
+		e.fillFamily()
+		return &e, true
+	}
+	return nil, false
+}
+
+// locateByNameLocked 按**名字**（界面/接口给的）定位条目目录（调用方须持锁）。
+//
+// 顺序：① 目录名恰好就是它 → 直接用（老库、以及"名字即目录"的条目，零成本）；
+// ② 否则扫条目按显示名/别名认，用条目**自己记的 Dir** 定位。
+//
+// 为什么必须这样（2026-09-28 审计实测）：同名不同 ID 时 PutCard 会另起 `名字__ID` 目录，
+// 而"按名字重推目录"的每一个入口（重抽、删除、清角度图、别名回写、详情取图）都会落到
+// **别人那条**上 —— 给 B 换脸写进 A 的目录、点删 B 删掉 A。界面按名字访问天然有歧义，
+// 但绝不能因此写到别人家里。
+func (l *Library) locateByNameLocked(kind, name string) (string, error) {
+	if dir, err := l.entryDir(kind, safeName(name)); err == nil {
+		if _, serr := os.Stat(filepath.Join(dir, "asset.json")); serr == nil {
+			return dir, nil
+		}
+	}
+	if e, ok := l.matchByNameLocked(kind, name); ok && e != nil {
+		if dir, derr := l.entryDirOfLocked(e); derr == nil {
+			log.Printf("[library] 按名字「%s」定位到条目目录 %s（同名不同卡时目录会带 ID 后缀）",
+				name, filepath.Base(dir))
+			return dir, nil
+		}
+	}
+	return "", fmt.Errorf("库资产不存在: %s", name)
+}
+
 // ImagePathByName 取库内某张图片的绝对路径;file 为空时返回主图。
 //
 // file 只接受**基名**并限定图片扩展名:挡住 ../ 目录穿越,也避免误取 asset.json。
@@ -325,7 +409,7 @@ func (l *Library) ImagePathByName(kind, name, file string) (string, error) {
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	dir, err := l.entryDir(kind, name)
+	dir, err := l.locateByNameLocked(kind, name)
 	if err != nil {
 		return "", err
 	}
@@ -342,7 +426,9 @@ func (l *Library) ImagePathByName(kind, name, file string) (string, error) {
 func (l *Library) ClearRelated(kind, name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.entryDir(kind, name)
+	// **按名字定位到条目自己的目录**（不是重推）：同名不同卡时目录可能叫 `名字__ID`，
+	// 重推会把别人的角度图清掉（2026-09-28 审计实测）。
+	dir, err := l.locateByNameLocked(kind, name)
 	if err != nil {
 		return
 	}
@@ -467,6 +553,7 @@ func (l *Library) put(kind, key, cardID, name, description, imagePrompt, imgPath
 	// 保留已有 UsedCount 与指纹
 	used := 0
 	prevFP := ""
+	prevID := ""
 	var overwrote []string
 	overwriteNote := ""
 	if prev, err := os.ReadFile(filepath.Join(dir, "asset.json")); err == nil {
@@ -474,6 +561,7 @@ func (l *Library) put(kind, key, cardID, name, description, imagePrompt, imgPath
 		if json.Unmarshal(prev, &p) == nil {
 			used = p.UsedCount
 			prevFP = p.Fingerprint
+			prevID = strings.TrimSpace(p.ID)
 			overwrote = append(overwrote, p.OverwroteProjects...)
 			// **跨项目覆盖必须留痕**（2026-09-28 全面审计）：库按 kind+name 精确匹配、Put 同名覆盖，
 			// 于是"B 项目生成同名角色「林昭」"会把 A 项目的条目改成 B 的脸，A 此后重渲就拿到 B 的脸，
@@ -493,8 +581,15 @@ func (l *Library) put(kind, key, cardID, name, description, imagePrompt, imgPath
 			}
 		}
 	}
+	// **ID 不许被"无 ID 路径"抹掉**（2026-09-28 审计实测）：库详情的「重抽」、渲染前补齐写回、
+	// 上传替换主图走的都是 Put（不带 ID）—— 照 cardID 直接写，这些日常操作会把条目的 ID
+	// 清空，于是 FindForCard 的 ID 分支永久空转，名字一漂就又重出一张脸。
+	// 规则：显式给了 ID 以它为准；没给就**沿用条目原有的 ID**。
+	if id := strings.TrimSpace(cardID); id != "" {
+		prevID = id
+	}
 	e := Entry{
-		Kind: kind, Name: strings.TrimSpace(name), ID: strings.TrimSpace(cardID),
+		Kind: kind, Name: strings.TrimSpace(name), ID: prevID, Dir: key,
 		Description: description, ImagePrompt: imagePrompt,
 		Image:         filepath.ToSlash(filepath.Join(kind, safeName(key), imgName)),
 		SourceProject: sourceProject, Source: source,
@@ -571,7 +666,7 @@ func clearRelatedFiles(dir string) {
 func (l *Library) EntryDir(kind, name string) (string, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.entryDir(kind, name)
+	return l.locateByNameLocked(kind, name)
 }
 
 // RelatedFiles 条目目录内已存在的多视角图与转台图绝对路径(按主图在前之外的
@@ -591,7 +686,7 @@ func (l *Library) RelatedFiles(kind, name string) []string {
 func (l *Library) SetMeta(kind, name, description, imagePrompt string) (*Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.entryDir(kind, name)
+	dir, err := l.locateByNameLocked(kind, name)
 	if err != nil {
 		return nil, err
 	}
@@ -631,7 +726,7 @@ func (l *Library) SetEntityKind(kind, name, ek string) (*Entry, error) {
 		}
 		return nil, fmt.Errorf("库资产不存在")
 	}
-	dir, err := l.entryDir(kind, name)
+	dir, err := l.locateByNameLocked(kind, name)
 	if err != nil {
 		return nil, err
 	}
@@ -709,6 +804,7 @@ func (l *Library) matchByIDLocked(kind, cardID string) (*Entry, string, bool) {
 		if _, serr := os.Stat(img); serr != nil {
 			continue // 条目没有图 = 不可复用，当作没命中（与 Match 同一口径）
 		}
+		e.Dir = de.Name() // 目录以**盘上事实**为准（调用方要靠它写回/清图，不许按名字重推）
 		e.fillFamily()
 		return &e, img, true
 	}
@@ -812,7 +908,22 @@ func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 	if nn != normName(best.entry.Name) && strings.TrimSpace(name) != "" {
 		best.entry.Aliases = append(best.entry.Aliases, strings.TrimSpace(name))
 		out, _ := json.MarshalIndent(best.entry, "", "  ")
-		_ = fsutil.WriteFileAtomic(filepath.Join(base, safeName(best.entry.Name), "asset.json"), append(out, '\n'))
+		// 写回**条目自己的目录**，不是按名字重推（2026-09-28 审计实测）：同名不同卡时目录会带
+		// ID 后缀，名字推出来的那个目录可能是**别人**的 —— 覆盖过去等于把对方的条目整份换掉
+		// （连它的 ID 与图片路径一起），两边都不报错。
+		// 定位顺序：条目记的 Dir → 按 ID 再扫一遍（ID 是唯一不漂的键）→ 最后才退回按名字推。
+		dirKey := strings.TrimSpace(best.entry.Dir)
+		if dirKey == "" {
+			if id := strings.TrimSpace(best.entry.ID); id != "" {
+				if e2, _, ok2 := l.matchByIDLocked(kind, id); ok2 && e2 != nil && strings.TrimSpace(e2.Dir) != "" {
+					dirKey = e2.Dir
+				}
+			}
+		}
+		if dirKey == "" {
+			dirKey = safeName(best.entry.Name)
+		}
+		_ = fsutil.WriteFileAtomic(filepath.Join(base, dirKey, "asset.json"), append(out, '\n'))
 		log.Printf("[library] 角色「%s」判定为已有条目「%s」的同一人(相似度 %.2f),已登记别名", name, best.entry.Name, best.score)
 	}
 	return best.entry, best.img, true
@@ -896,7 +1007,7 @@ func familyRank(name string) int {
 func (l *Library) BumpUsed(kind, name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.entryDir(kind, name)
+	dir, err := l.locateByNameLocked(kind, name)
 	if err != nil {
 		return
 	}
@@ -952,7 +1063,7 @@ func (l *Library) List() map[string][]Entry {
 func (l *Library) Delete(kind, name string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.entryDir(kind, name)
+	dir, err := l.locateByNameLocked(kind, name)
 	if err != nil {
 		return err
 	}

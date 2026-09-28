@@ -3,6 +3,7 @@ package library
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -90,6 +91,64 @@ func TestPutCardSameNameDifferentIDDoesNotOverwrite(t *testing.T) {
 	eb, _, ok := l.FindForCard("characters", "char_linzhao_b", "林昭", "")
 	if !ok || eb == nil || eb.Description != "四十岁刀客，络腮胡" {
 		t.Fatalf("B 的条目不对：%+v", eb)
+	}
+}
+
+// 【2026-09-28 审计实测】无 ID 路径（Put）**不许把条目的 ID 抹掉**。
+//
+// 触发路径很日常：库详情点「重抽」、渲染前补齐写回、上传替换主图 —— 走的都是 Put。
+// ID 一旦被抹掉，FindForCard 的 ID 分支就永久空转，名字一漂就又重出一张脸。
+func TestPutKeepsExistingCardID(t *testing.T) {
+	root, src := t.TempDir(), t.TempDir()
+	l, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	img := mkImg(t, src, "a.png")
+	if _, err := l.PutCard("characters", "char_bingsheng", "碑生（丙十七）", "石场少年", "P", img, "ep01", "krea2"); err != nil {
+		t.Fatal(err)
+	}
+	// 用户在库详情点「重抽」：这条路走的是无 ID 的 Put
+	if _, err := l.Put("characters", "碑生（丙十七）", "石场少年", "P2", img, "ep01", "krea2"); err != nil {
+		t.Fatal(err)
+	}
+	e, _, ok := l.MatchCard("characters", "char_bingsheng", "碑生（丙十七）")
+	if !ok || e == nil || strings.TrimSpace(e.ID) != "char_bingsheng" {
+		t.Fatalf("Put 之后 ID 被抹掉了：%+v —— 这条条目从此再也按 ID 命中不了", e)
+	}
+	if strings.TrimSpace(e.Dir) == "" {
+		t.Error("条目必须记下自己的目录（Dir）：否则每个按名字重推目录的入口（重抽/删除/清角度图）都会写到别人家里")
+	}
+}
+
+// 【2026-09-28 审计实测】同名不同 ID：各占一个目录，按 ID 各自命中，谁也不覆盖谁。
+func TestSameNameDifferentIDStaysSeparate(t *testing.T) {
+	root, src := t.TempDir(), t.TempDir()
+	l, err := New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := mkImg(t, src, "a.png")
+	b := mkImg(t, src, "b.png")
+	ea, err := l.PutCard("characters", "char_linzhao_a", "林昭", "十八岁少女，杏眼", "P-A", a, "projA", "krea2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	eb, err := l.PutCard("characters", "char_linzhao_b", "林昭", "四十岁刀客，络腮胡", "P-B", b, "projB", "krea2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ea == nil || eb == nil || ea.Dir == "" || eb.Dir == "" {
+		t.Fatalf("两条都要落自己的目录：A=%+v B=%+v", ea, eb)
+	}
+	if ea.Dir == eb.Dir {
+		t.Fatalf("同名不同 ID 必须各占一个目录，实际都落在 %q", ea.Dir)
+	}
+	// 按 ID 各自命中（这是自动化链路唯一会用的路径）
+	ga, _, okA := l.FindForCard("characters", "char_linzhao_a", "林昭", "")
+	gb, _, okB := l.FindForCard("characters", "char_linzhao_b", "林昭", "")
+	if !okA || !okB || ga.Description != "十八岁少女，杏眼" || gb.Description != "四十岁刀客，络腮胡" {
+		t.Fatalf("按 ID 必须各回各家：A=%+v B=%+v", ga, gb)
 	}
 }
 
