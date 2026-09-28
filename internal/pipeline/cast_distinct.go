@@ -232,6 +232,15 @@ func (c *Coordinator) castCollision(ctx context.Context, proj *project.Project, 
 		if ctx.Err() != nil {
 			return false, "", ""
 		}
+		// **兜底：同一张图跟自己比，永远没有意义。**
+		//
+		// 2026-09-28 实证：上游 id 口径写错（资产 id 又被拼了一次 "char:"），自己进了 peers，
+		// 于是"碑生与自己长得像同一个人" —— 白烧一次视觉调用，还按"要和碑生不像"的指令
+		// 重出了一张碑生的脸（产物反而更糟）。上游的口径已经修了（normalizeCardID + cardID），
+		// 这道保险放在**比对点上**：将来任何一处拼法再写错，最多是少比一个人，不会自伤。
+		if filepath.Clean(p.path) == filepath.Clean(path) {
+			continue
+		}
 		// 按**图片指纹**记账：同一对脸问过一次就不再问（用户为了修一张脸会反复重跑同一段，
 		// 每次从头再问一遍 = 接口被压到限流的主因之一，见 vlm_guard.go 的说明）。
 		if e, ok := cache.lookup(path, p.path); ok {

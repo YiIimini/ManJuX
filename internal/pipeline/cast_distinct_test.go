@@ -256,3 +256,18 @@ func TestCastPeersSurvivesAssetIDPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestCastCollisionNeverComparesImageToItself 比对点上的**最后一道保险**。
+//
+// 上游的口径已经修了（normalizeCardID + cardID），但这条保险更靠下：万一还有哪一处拼法写错，
+// 让"自己"混进了 peers，也绝不能拿同一张图跟自己比 —— 2026-09-28 的代价是白烧一次视觉调用，
+// 外加按「要和碑生不像」的指令重出一张**碑生**的脸（产物反而更糟，且会当参考图用下去）。
+func TestCastCollisionNeverComparesImageToItself(t *testing.T) {
+	src, err := os.ReadFile("cast_distinct.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(src), "filepath.Clean(p.path) == filepath.Clean(path)") {
+		t.Error("castCollision 里必须有「同一张图不自比」的兜底（2026-09-28 碑生跟自己比的报障）")
+	}
+}

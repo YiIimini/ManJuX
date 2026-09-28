@@ -32,6 +32,9 @@ char:char_bingsheng）」**长得像同一个人**」—— 两边连卡 id 都�
 
 **修法**：`check()` 里显式分开 `assetID` / `cardID` 两个口径，下游要裸卡 id 的一律传 `cardID`；
 `castPeers` 的 `selfID` 一律过 `normalizeCardID` 归一（去干净重复前缀），不再假设调用点给的是哪种形态。
+**另加一道兜底**：`castCollision` 的比对点上，同一张图（`filepath.Clean` 后相同）直接跳过 ——
+口径万一再写错，最多是少比一个人，不会自伤（那次的代价是白烧一次视觉调用 + 按「要和碑生不像」
+的指令重出一张碑生的脸）。
 
 **守卫**：新增 `TestCastPeersSurvivesAssetIDPrefix` —— 夹具照**真实故障形态**写（裸 id / 单前缀 /
 双前缀三种都喂，都必须挑出"真正的别人"），已做负向验证（把归一化退回单次 `TrimPrefix`，
