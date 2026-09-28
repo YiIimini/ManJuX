@@ -37,6 +37,72 @@ const reversed = computed(() => {
   return arr
 })
 
+// ---- 按**管线节点**分组（2026-09-29 用户要求：「运行日志一眼看明白、分类配色、
+//      可收起展开、成功的分类自动收起」）----
+//
+// 为什么要分组：一条管线跑一集会产生**几百条**事件（每 30 秒一条进度 + 每镜若干条），
+// 平铺成一列时"这一集现在走到哪、哪一步出过问题"要靠人自己扒。
+// 分组口径 = **同一项目 + 同一阶段**的连续事件（阶段是后端事件自带的 phase 字段，
+// 与界面上的五阶段一致），跨项目运行也分得清。
+//
+// 配色按阶段给（见 PHASE_TONE），与左侧阶段栏同一套色，扫一眼就知道是哪一步在说话。
+//
+// 【自动收起】默认规则不是"记住用户点过什么"，而是**按状态算**：
+//   · 最新的那一组（正在跑的那一步）默认展开；
+//   · 出过 warn/error 的组默认展开（问题要一直看得见）；
+//   · 其余（已经顺利完成、被后来者顶下去的阶段）默认收起。
+// 于是"成功的分类自动收起"是**自然结果**，不需要任何 watcher 去监听"阶段完成"事件。
+// 用户手动展开/收起过的那一组，以他点过的为准（manual 表）。
+const PHASE_TONE = {
+  script: 'var(--mx-cyan)',
+  assets: 'var(--mx-purple)',
+  render: 'var(--mx-yellow)',
+  qc: 'var(--mx-green)',
+  assemble: 'var(--mx-green)',
+  novel: 'var(--mx-cyan)',
+  llm: 'var(--mx-purple)',
+  pipeline: 'var(--mx-text2)',
+  system: 'var(--mx-text3)',
+  comfy: 'var(--mx-text2)',
+}
+// 严重度排序:分组头按**组内最严重**的那条着色(info < success < warn < error)。
+const LEVEL_RANK = { info: 0, success: 1, warn: 2, error: 3 }
+function worstLevel(a, b) {
+  return (LEVEL_RANK[b] ?? 0) > (LEVEL_RANK[a] ?? 0) ? b : a
+}
+const manual = ref({}) // groupId → bool(用户点过的那一组以他为准)
+
+const groups = computed(() => {
+  const out = []
+  for (const l of reversed.value) {
+    const key = (l.project_id || '') + '|' + (l.phase || '')
+    const cur = out[out.length - 1]
+    if (cur && cur.key === key) {
+      cur.events.push(l)
+      cur.level = worstLevel(cur.level, l.level)
+      continue
+    }
+    out.push({
+      key,
+      // 组 id 取**最旧**那条的 seq:一组在长（新事件从头部插入），最旧的 seq 不变，
+      // 手动展开状态不会每来一条事件就被重置
+      id: key + '#' + l.seq,
+      phase: l.phase || '',
+      project: l.project_id || '',
+      events: [l],
+      level: l.level,
+    })
+  }
+  return out.map((g, i) => {
+    const hasProblem = g.level === 'warn' || g.level === 'error'
+    const open = manual.value[g.id] !== undefined ? manual.value[g.id] : (i === 0 || hasProblem)
+    return { ...g, count: g.events.length, open, tone: PHASE_TONE[g.phase] || 'var(--mx-text2)', hasProblem }
+  })
+})
+function toggleGroup(g) {
+  manual.value = { ...manual.value, [g.id]: !g.open }
+}
+
 // ---- 弹窗:标题栏拖动 + 右下角调大小(非模态,不挡主界面) ----
 const root = ref(null)
 const pos = ref(null) // null = 默认右下角锚定;拖动后为 {left, top}
@@ -118,18 +184,33 @@ onBeforeUnmount(() => {
       </div>
       <div class="flex-1 overflow-y-auto py-1.5">
         <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="tl-dot"></span><span class="body"><span class="m" style="color:var(--mx-text3)">等待管线事件…(运行任意阶段后实时输出)</span></span></div>
-        <!-- key 必须用**稳定标识**（`l.seq`），不能用数组下标（2026-09-29 性能审计 #4）。
-             这一列是**倒序**渲染的（见 reversed），来一条新事件整列都往后挪一位 ——
-             用下标当 key 时 Vue 会认为"每一行都变了"，把最多 800 行全部重新 patch。
-             渲染期每 30 秒至少一条进度事件，一集几百次全量重排。 -->
-        <div v-for="l in reversed" :key="l.seq" class="log-line" :class="l.level">
-          <span class="t">{{ fmtTime(l.at) }}</span>
-          <span class="tl-dot"></span>
-          <span class="body">
-            <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
-            <span class="ph" v-if="l.phase">[{{ phaseLabel(l.phase) }}]</span>
-            <span class="m">{{ l.message }}</span>
-          </span>
+        <!-- 分组渲染（2026-09-29 用户要求：一眼看明白 / 分类配色 / 可收起 / 成功的自动收起）。
+             每组 = 同一项目 + 同一阶段的连续事件；组头点一下收起/展开。
+             key 必须用**稳定标识**（组 id 由最旧那条的 seq 拼成），不能用数组下标 ——
+             这条列表是**倒序**的，来一条新事件整列都往后挪一位，用下标当 key 会让 Vue
+             认为"每一行都变了"，把最多 800 行全部重新 patch（2026-09-29 性能审计 #4）。 -->
+        <div v-for="g in groups" :key="g.id" class="log-group">
+          <div class="log-ghead" :class="g.level" :style="{ '--tone': g.tone }"
+               :title="g.open ? '收起这一组' : '展开这一组'" @click="toggleGroup(g)">
+            <el-icon :size="12" class="chev" :class="{ open: g.open }"><ArrowRight /></el-icon>
+            <span class="gdot" :class="g.level"></span>
+            <span class="gname">{{ phaseLabel(g.phase) || '系统' }}</span>
+            <span class="pj" :class="{ cur: g.project === curProj() }" v-if="g.project">[{{ projName(g.project) }}]</span>
+            <span class="gcount">{{ g.count }} 条</span>
+            <span class="gprev" v-if="!g.open">{{ g.events[0].message }}</span>
+            <div class="flex-1"></div>
+            <span class="gflag" v-if="g.hasProblem">有问题</span>
+          </div>
+          <template v-if="g.open">
+            <div v-for="l in g.events" :key="l.seq" class="log-line" :class="l.level">
+              <span class="t">{{ fmtTime(l.at) }}</span>
+              <span class="tl-dot"></span>
+              <span class="body">
+                <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id && !g.project">[{{ projName(l.project_id) }}]</span>
+                <span class="m">{{ l.message }}</span>
+              </span>
+            </div>
+          </template>
         </div>
       </div>
       <div class="log-rsz" title="拖动调大小" @mousedown="onRszDown"></div>
@@ -141,4 +222,31 @@ onBeforeUnmount(() => {
 .pj.cur { color: var(--mx-amber); }
 .logbar-ico { padding: 4px 7px !important; }
 .logbar-ico:hover { color: var(--mx-amber-hi) !important; background: color-mix(in srgb, var(--mx-amber) 10%, transparent) !important; }
+
+/* ---- 分组头（2026-09-29）：一行看清"哪一步、多少条、有没有问题"，点一下收起 ---- */
+.log-group { border-bottom: 1px solid color-mix(in srgb, var(--mx-line) 55%, transparent); }
+.log-group:last-child { border-bottom: none; }
+.log-ghead {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 10px 3px 6px; cursor: pointer; user-select: none;
+  background: color-mix(in srgb, var(--tone) 7%, transparent);
+  border-left: 2px solid color-mix(in srgb, var(--tone) 65%, transparent);
+}
+.log-ghead:hover { background: color-mix(in srgb, var(--tone) 13%, transparent); }
+.log-ghead.warn { border-left-color: var(--mx-yellow); background: color-mix(in srgb, var(--mx-yellow) 9%, transparent); }
+.log-ghead.error { border-left-color: var(--mx-red); background: color-mix(in srgb, var(--mx-red) 10%, transparent); }
+.log-ghead .chev { color: var(--mx-text3); transition: transform .12s ease; }
+.log-ghead .chev.open { transform: rotate(90deg); }
+.log-ghead .gdot { width: 6px; height: 6px; border-radius: 50%; flex: none; background: var(--tone); }
+.log-ghead .gdot.warn { background: var(--mx-yellow); }
+.log-ghead .gdot.error { background: var(--mx-red); }
+.log-ghead .gdot.success { background: var(--mx-green); }
+.log-ghead .gname { color: var(--tone); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.log-ghead .gcount { color: var(--mx-text3); font-size: 11px; }
+.log-ghead .gprev {
+  color: var(--mx-text3); font-size: 11px; max-width: 46%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.log-ghead .gflag { color: var(--mx-yellow); font-size: 11px; }
+.log-ghead.error .gflag { color: var(--mx-red); }
 </style>
