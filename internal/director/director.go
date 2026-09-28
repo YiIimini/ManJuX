@@ -607,6 +607,12 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 	}
 	enforceStyleLock(plan, sourceText)
 	normalizePlan(plan, opt)
+	// **自纠一轮**（2026-09-28 实测驱动）：散文规则模型不照做 —— 真章节那一跑 35 镜
+	// 全都还是一镜到底（提示词里明明写着"5 秒以上必须内部切 2-4 个小镜头"）。
+	// 所以把机器能判定的违规**连同原文**回给它改一次，只改被点名的镜，改坏了退回原文。
+	if n, note := RepairPlan(ctx, client, plan, opt); n > 0 && opt.OnNote != nil {
+		opt.OnNote("%s", note)
+	}
 	return plan, nil
 }
 
@@ -629,6 +635,19 @@ func normalizePlan(plan *project.Plan, opt Options) {
 	// 契约于是 fail，用户看到的是"又说不能渲"）。口径是"字段标了不算，素材必须真在"，
 	// 所以这里按该镜出场角色**确定性地**补出 Q版 / 系统素材 id：素材本来就会按角色自动生成
 	// （见资产阶段的 Q 版生成），补 id 只是把双方对上号，不改任何创作内容。
+	// 分镜里的器物引用**对号**（2026-09-28 实测：14 处 prop_ids 与卡片的 id 拼法不一致，
+	// 锚定落空 = 那几镜的刀又变成模型自己编的）。id 拼法是机械约定，平台有名字与英文串，
+	// 对号这件事它是唯一能确定做对的角色；对不上就丢引用，宁可不锚也不锚错。
+	if n := project.RemapPropRefs(plan); n > 0 && opt.OnNote != nil {
+		opt.OnNote("把 %d 处分镜里的器物引用**对上了卡片**（模型写的 id 与卡片 id 拼法不一致，"+
+			"对不上号的话那几镜的器物又会被重新发明）", n)
+	}
+	// 有计划台词、正文里却一个 <d> 都没有的镜：补上（否则成片里那几句会说成听不懂的话）。
+	// 只在"一个 <d> 都没有"时动手，台词逐字取自计划，不改写一个字。
+	if n := project.FillMissingDialogueTags(plan); n > 0 && opt.OnNote != nil {
+		opt.OnNote("给 %d 镜补上了缺失的台词标签（计划里有台词、正文里却没有 <d>）——"+
+			"不补的话成片会把那几句说成听不懂的话", n)
+	}
 	if n := project.FillVoiceoverAssets(plan); n > 0 && opt.OnNote != nil {
 		opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
 			"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", n)
