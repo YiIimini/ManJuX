@@ -238,6 +238,23 @@ func GenerateBoard(ctx context.Context, ce engine.Engine, o BoardOptions) (strin
 	}, out)
 }
 
+// scaleImageExact 把图片**归一化到精确像素**（就地覆盖）。用于板子：编辑链只保证画幅比例，
+// 不保证像素数（实测要 2048×1152、给 1376×768）。
+//
+// 为什么交给 ffmpeg：本仓唯一的媒体工具就是它，且这条路已有同一套调用方式（见 boardCanvas）。
+func scaleImageExact(ctx context.Context, f *ff.FF, path string, w, h int) error {
+	if f == nil || w <= 0 || h <= 0 {
+		return fmt.Errorf("缺少 ffmpeg 或目标尺寸非法")
+	}
+	tmp := path + ".scale" + filepath.Ext(path)
+	args := []string{"-y", "-i", path, "-vf", fmt.Sprintf("scale=%d:%d:flags=lanczos", w, h), tmp}
+	if _, err := f.Run(ctx, args...); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 // assetGenerator 生成一张资产图的回调（资产阶段把它传给朝向自检、撞脸自检等"换种子重出"的路径）。
 //
 // 为什么立成命名类型：这套参数已经长到 7 个，两处各写一遍完整签名，加一个参数就要改两处；
@@ -307,6 +324,22 @@ func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Proje
 	if err != nil {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "三视图板生成失败（不影响定妆照与渲染）:%v", err)
 		return
+	}
+	// 出图后**归一化到规格尺寸**（2026-09-28 实测）：编辑链只保证"画幅比例跟着第一张参考图"，
+	// **不保证像素数** —— 本机要求 2048×1152，实测产物是 1376×768（链内部缩了 1.5 倍）。
+	// 规格书说是 16:9·2K，就得真的是 2048×1152：否则人审/建模参考/库条目拿到的尺寸
+	// 与日志里那句承诺对不上。失败只告警，不丢产物。
+	if c.ff != nil {
+		bw, bh := BoardSize(0, 0)
+		if w, h := imagePixelSizeOrZero(p); w > 0 && (w != bw || h != bh) {
+			if err := scaleImageExact(ctx, c.ff, p, bw, bh); err != nil {
+				c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+					"三视图板尺寸归一化失败(%d×%d → %d×%d):%v（保留原图，不影响渲染）", w, h, bw, bh, err)
+			} else {
+				c.emit(proj.ID, PhaseAssets, 0, "info", 0,
+					"三视图板尺寸已归一化:%d×%d → %d×%d（编辑链只保证比例，不保证像素）", w, h, bw, bh)
+			}
+		}
 	}
 	c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 三视图板已生成:%s", filepath.Base(p))
 }

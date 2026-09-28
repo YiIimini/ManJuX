@@ -209,14 +209,23 @@ func (s *Server) handleNovelJobs(w http.ResponseWriter, r *http.Request) {
 // 真实的 startBatch 会拉起整条产线(读项目、跑 ComfyUI、结束调 quitApp),那是进程级副作用,
 // 不该在单元测试里发生(原因详见 Server.startProdFn 字段注释)。
 func (s *Server) startProd(prefix string, eps []string) bool {
+	return s.startProdMode(prefix, eps, false)
+}
+
+// startProdSingle 单集模式：只跑入队的那几集，跑完收工（导入自动开跑走这条 —— 用户 2026-09-28 指示）。
+func (s *Server) startProdSingle(prefix string, eps []string) bool {
+	return s.startProdMode(prefix, eps, true)
+}
+
+func (s *Server) startProdMode(prefix string, eps []string, single bool) bool {
 	if s.startProdFn != nil {
 		return s.startProdFn(prefix, eps)
 	}
-	return s.startBatch(prefix, eps)
+	return s.startBatch(prefix, eps, single)
 }
 
 // startBatch 启动批量产线(供 produce 与手动接口共用)。
-func (s *Server) startBatch(prefix string, eps []string) bool {
+func (s *Server) startBatch(prefix string, eps []string, single bool) bool {
 	if len(eps) == 0 {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
 			Message: "✕ 批量产线未启动:《" + prefix + "》没有可处理的分集(拆集 0 集,见上方日志)"})
@@ -233,7 +242,7 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
 			Message: fmt.Sprintf("⚠ 批量产线启动去重:丢弃 %d 个重复的集", dropped)})
 	}
-	batch.prefix, batch.projects, batch.cur, batch.stop, batch.running = prefix, uniq, 0, false, true
+	batch.prefix, batch.projects, batch.cur, batch.stop, batch.running, batch.single = prefix, uniq, 0, false, true, single
 	batch.mu.Unlock()
 	go s.runNovelBatch(prefix, uniq)
 	return true

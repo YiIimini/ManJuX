@@ -228,10 +228,13 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 	s.autoStartBatch(bookPrefix)
 }
 
-// autoStartBatch 导入成功后为**这一本**书启动批量产线。
+// autoStartBatch 导入成功后启动产线 —— **只启动第 1 集**（单集模式）。
 //
-// 只开一本:产线是**单例**(一张显卡),同时开多本只会互相拖死;用户一次导入多本时,
-// 先跑第一本,其余到首页点「开始」即可(界面会显示产线正在跑哪本)。
+// 【2026-09-28 用户指示】「LLM 一集一集地去解析，不要直接一上来就全解析了，太慢了」。
+// 此前这里把**整本书的集**一次性入队（且拆集边跑边入队），于是点一次「导入」= 排了
+// 几十集的队：每集 ~20 分钟解析 + 数小时渲染，用户想看的第 1 集反而排在最后面。
+// 现在：导入只把**第 1 集**端出来，跑完就收；其余集到首页点那张卡的「开始」再逐集跑
+// （产线仍是单例、仍逐集串行，只是不再自动排满整本）。
 func (s *Server) autoStartBatch(prefix string) {
 	if strings.TrimSpace(prefix) == "" {
 		return
@@ -241,9 +244,10 @@ func (s *Server) autoStartBatch(prefix string) {
 		return
 	}
 	s.reapStaleBatch() // 先请走死批次,否则单例被占着永远起不来
-	if s.startProd(prefix, eps) {
+	if s.startProdSingle(prefix, eps[:1]) {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-			Message: fmt.Sprintf("📜 已导入并启动批量产线:《%s》%d 集(资产定妆→渲染→质检→成片)", prefix, len(eps))})
+			Message: fmt.Sprintf("📜 已导入并启动第 1 集:《%s》共 %d 集 —— 本次只跑第 1 集(%s),"+
+				"其余集到首页点那张卡的「开始」再逐集跑(避免一上来就把整本排满)", prefix, len(eps), filepath.Base(eps[0]))})
 		return
 	}
 	batch.mu.Lock()

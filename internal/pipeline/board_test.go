@@ -3,12 +3,14 @@ package pipeline
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -218,4 +220,32 @@ func (stubBoardEngine) GenerateImage(context.Context, string, string, int64, int
 }
 func (stubBoardEngine) Upscale(context.Context, string, engine.UpscaleOptions, int, float64, string, string, time.Duration) (string, error) {
 	return "", nil
+}
+
+// TestScaleImageExact 板子尺寸归一化（2026-09-28 实测驱动）。
+//
+// 依据：编辑链只保证"画幅比例跟着第一张参考图"，**不保证像素数** —— 本机要求 2048×1152，
+// 实测产物 1376×768（链内部缩了 1.5 倍），日志写着 16:9·2K 而盘上是别的尺寸。
+// 这条测试真跑一次 ffmpeg：缩放后尺寸必须**精确等于**目标。
+func TestScaleImageExact(t *testing.T) {
+	f, err := ff.New("", "") // 空路径 = 走 PATH 解析（本机 PATH 上有 ffmpeg，AGENTS.md 记过）
+	if err != nil {
+		t.Skipf("本机没有 ffmpeg，跳过:%v", err)
+	}
+	_ = err
+	dir := t.TempDir()
+	src := filepath.Join(dir, "board.png")
+	// 造一张 1376×768 的图（正是实测产物尺寸）
+	cmd := exec.Command("ffmpeg", "-v", "error", "-y", "-f", "lavfi",
+		"-i", "color=c=white:s=1376x768", "-frames:v", "1", src)
+	if err := cmd.Run(); err != nil {
+		t.Skipf("造图失败(跳过):%v", err)
+	}
+	bw, bh := BoardSize(0, 0)
+	if err := scaleImageExact(context.Background(), f, src, bw, bh); err != nil {
+		t.Fatalf("归一化失败:%v", err)
+	}
+	if w, h := imagePixelSizeOrZero(src); w != bw || h != bh {
+		t.Errorf("归一化后应精确为 %d×%d，实际 %d×%d", bw, bh, w, h)
+	}
 }
