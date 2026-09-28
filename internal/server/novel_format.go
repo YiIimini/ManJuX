@@ -10,6 +10,7 @@ package server
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -167,6 +168,99 @@ func chapterHeadFromFilename(base string) string {
 		return ""
 	}
 	return m[1] + " " + m[2]
+}
+
+// chapterNumFromFilename 从分章文件名解析章号:「第001章_样本八号.md」→ 1;解析不出返回 0。
+//
+// 【为什么要它:合并正文的排序不能按路径】(2026-09-29 真机实测)
+// 小说库的规范布局是「正文/卷X_卷名/第NNN章_标题.md」,而卷名前缀的**字节序**是乱的:
+// 卷八 < 卷二 < 卷十(UTF-8 下按第二个汉字排,与卷序无关)。旧实现把走到的文件
+// `sort.Strings(paths)` 后直接拼成一本书,于是《名册之外，八万零一号》的 88 章被拼成
+// 「卷一卷七卷三卷九卷二卷五卷四卷八卷六十」的顺序 —— 拆集按这个顺序编号,
+// 实测**第 11 集是第 49 章、第 19 集是第 17 章**,整本书的集序与故事顺序脱钩
+// (集名看着都对,只有把"集号 vs 章号"并排比对才发现;用户拿到的是乱序的 90 集)。
+// 章号在文件名里本来就是确定的(见 ChapterTitlesFromFiles),排序就该用它。
+func chapterNumFromFilename(base string) int {
+	base = strings.TrimSuffix(base, filepath.Ext(base))
+	m := regexp.MustCompile(`^第\s*([0-9零〇一二三四五六七八九十百千两]+)\s*[章回节]`).
+		FindStringSubmatch(strings.TrimSpace(base))
+	if m == nil {
+		return 0
+	}
+	return chineseNum(m[1])
+}
+
+// collectManuscript 收集一本书目录下的**正文册路径**,返回(按顺序的路径, 章号册数)。
+//
+// 两件事在这里收口(它们必须有唯一实现,因为"哪些算正文""按什么顺序"直接决定拆集结果):
+//
+//  1. **哪些算正文**:书目录下有「正文」子树就只收它(本仓小说库的规范布局:
+//     正文/卷X_卷名/第NNN章_标题.md);没有才回落到"走遍书目录"。回落到全目录时
+//     排除非正文目录(素材/设定/docs/封面/全本/research/tools…)与 README 本身 ——
+//     2026-09-28 实测《名册之外，八万零一号》的 README.md 第 34 行
+//     「第 1 章内有当场兑现…」正好是一行章头,于是第 01 集的【本集原文】成了
+//     这本书自己的目录结构说明,88 章的书写出 90 集。
+//  2. **按什么顺序**:章号册一律按**章号**排序。卷名的字节序与卷序无关
+//     (卷八 < 卷二 < 卷十),旧实现按路径排,实测把 88 章拼成乱卷序 ——
+//     第 11 集是第 49 章、第 19 集是第 17 章,整本书的集序与故事顺序脱钩。
+//
+// 章号册不足 8 册时返回"全收 + 路径序"(旧形态:整本/文件名不带章号,行为不变)。
+func collectManuscript(bookDir string) ([]string, int) {
+	manuscript := bookDir
+	if fi, err := os.Stat(filepath.Join(bookDir, "正文")); err == nil && fi.IsDir() {
+		manuscript = filepath.Join(bookDir, "正文")
+	}
+	type chapFile struct {
+		path string
+		num  int
+	}
+	var chaps []chapFile
+	var rest []string
+	walk := func(root string) {
+		_ = filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
+			if err != nil || e.IsDir() || !hasTxtExt(p) {
+				return nil
+			}
+			rel := strings.ToLower(filepath.ToSlash(p))
+			for _, seg := range strings.Split(rel, "/") {
+				switch seg {
+				case "素材", "素材包", "设定", "设定集", "docs", "doc", "封面", "全本", "research", "研究", "tools", "tool", "node_modules", ".git", ".github":
+					return nil
+				}
+			}
+			base := strings.ToLower(filepath.Base(p))
+			if strings.HasPrefix(base, "readme") {
+				return nil // 书的自述文档,永远不是正文册
+			}
+			if n := chapterNumFromFilename(filepath.Base(p)); n > 0 {
+				chaps = append(chaps, chapFile{path: p, num: n})
+				return nil
+			}
+			rest = append(rest, p)
+			return nil
+		})
+	}
+	walk(manuscript)
+	if len(chaps)+len(rest) == 0 && manuscript != bookDir {
+		walk(bookDir) // 正文子树是空的:退回整本书目录
+	}
+	// 章号册按章号排(章号相同按路径排,保证结果稳定)
+	sort.Slice(chaps, func(i, j int) bool {
+		if chaps[i].num != chaps[j].num {
+			return chaps[i].num < chaps[j].num
+		}
+		return chaps[i].path < chaps[j].path
+	})
+	sort.Strings(rest)
+	paths := make([]string, 0, len(chaps)+len(rest))
+	for _, c := range chaps {
+		paths = append(paths, c.path)
+	}
+	if len(chaps) < 8 {
+		paths = append(paths, rest...)
+		sort.Strings(paths)
+	}
+	return paths, len(chaps)
 }
 
 // ensureChapterHead 分章文件内容若开头无章头行,从文件名注入:

@@ -296,8 +296,50 @@ type libEntry struct {
 	E   Entry
 }
 
-// bumpLocked 标记"库变了"（调用方须持写锁）。所有写操作都要调它。
+// bumpLocked 标记"库变了"（调用方须持写锁）。整份失效——只在拿不准该不该逐条更新时用。
 func (l *Library) bumpLocked() { l.gen++ }
+
+// reindexLocked 把**一个条目**的最新状态同步进索引（调用方须持写锁）。
+//
+// 【为什么不是"整份失效"】(2026-09-29 真机实测)
+// 库的读与写在**资产阶段是交替的**：每张卡先 `FindForCard` 查库，再 `PutCard` 入库
+// 或 `BumpUsed` 记一次复用。一次写就让整张索引作废的话，下一次查要重读全库 ——
+// 实测 600 条、一集 15 张卡：「整份失效」648 ms/集，而**从来不加索引、每次全扫**
+// 也才 195 ms/集 —— 加了索引反而更慢（这正是"索引没覆盖热路径"之外的第二种坑）。
+// 只重读**这一个** asset.json（几十微秒）就既不整份重建、也不必背"永久脏数据"的风险。
+//
+// 与"手工增量维护"的区别：不是"记得在 N 个写点上标记一下"，而是每个写操作
+// **写完盘就照着刚写下去的那份文件重建这一条** —— 一致性由这次自查保证，
+// 不靠调用者的记性。删条目（盘上已无 asset.json）时它会把这一条从索引里摘掉。
+func (l *Library) reindexLocked(kind, dir string) {
+	if l.idx == nil || l.idxGen != l.gen {
+		return // 索引本来就不新鲜了：下一次读会整份重建，这里不必忙
+	}
+	base := filepath.Base(dir)
+	list := l.idx[kind]
+	out := make([]libEntry, 0, len(list)+1)
+	for _, it := range list {
+		if it.Dir != base {
+			out = append(out, it)
+		}
+	}
+	if raw, err := os.ReadFile(filepath.Join(dir, "asset.json")); err == nil {
+		var e Entry
+		if json.Unmarshal(raw, &e) == nil {
+			out = append(out, libEntry{Dir: base, E: e})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Dir < out[j].Dir })
+	l.idx[kind] = out
+}
+
+// readDirFn 目录枚举的**唯一入口**。
+// 收成一个变量只有一个理由：让"读路径到底扫了几次盘"变成可机检的事实
+// （见 index_scan_guard_test.go）—— 「读走索引」这件事的失败方式是**静默**的
+// （代码照跑、结果也对，只是每次调用都白读一遍全库），2026-09-29 真机实测就是这么
+// 漏掉 matchByIDLocked 的：那次改动把三个读入口改走索引，唯独最热的那个没改，
+// 而没有任何测试会因此变红。
+var readDirFn = os.ReadDir
 
 // entriesLocked 取某个 kind 的条目列表（调用方须持锁；必要时重建索引）。
 func (l *Library) entriesLocked(kind string) []libEntry {
@@ -310,7 +352,7 @@ func (l *Library) entriesLocked(kind string) []libEntry {
 	// 重建（整库一次；读齐所有 asset.json 比"每次查都扫"便宜得多）
 	l.idx = map[string][]libEntry{}
 	for _, k := range Kinds {
-		dirs, err := os.ReadDir(filepath.Join(l.root, k))
+		dirs, err := readDirFn(filepath.Join(l.root, k))
 		if err != nil {
 			continue
 		}
@@ -741,7 +783,7 @@ func (l *Library) put(kind, key, cardID, name, description, imagePrompt, imgPath
 	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
 		return nil, err
 	}
-	l.bumpLocked() // 索引失效
+	l.reindexLocked(kind, dir) // 只更新这一条（整份失效会让交替的读写退化成"每次全扫"）
 	return &e, nil
 }
 
@@ -798,7 +840,7 @@ func (l *Library) SetMeta(kind, name, description, imagePrompt string) (*Entry, 
 	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
 		return nil, err
 	}
-	l.bumpLocked() // 索引失效
+	l.reindexLocked(kind, dir)
 	return &e, nil
 }
 
@@ -834,7 +876,7 @@ func (l *Library) SetEntityKind(kind, name, ek string) (*Entry, error) {
 	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
 		return nil, err
 	}
-	l.bumpLocked() // 索引失效
+	l.reindexLocked(kind, dir)
 	return &e, nil
 }
 
@@ -873,22 +915,15 @@ func (l *Library) matchByIDLocked(kind, cardID string) (*Entry, string, bool) {
 	if cardID == "" || !validKind(kind) {
 		return nil, "", false
 	}
-	dirs, err := os.ReadDir(filepath.Join(l.root, kind))
-	if err != nil {
-		return nil, "", false
-	}
-	for _, de := range dirs {
-		if !de.IsDir() {
-			continue
-		}
-		raw, rerr := os.ReadFile(filepath.Join(l.root, kind, de.Name(), "asset.json"))
-		if rerr != nil {
-			continue
-		}
-		var e Entry
-		if json.Unmarshal(raw, &e) != nil {
-			continue
-		}
+	// 【2026-09-29 真机实测修】这里原来自己 `os.ReadDir` + 读遍该 kind 的所有 asset.json
+	// —— 而它正是**资产阶段最热的那个调用**：`FindForCard(kind, cardID, …)`
+	// （stages_assets.go 每张卡第一步就问库）先落到 matchByID，于是"库索引"
+	// 那次改动漏掉的恰好是收益最大的那一路。实测（600 条真实卡片、按卡 ID 查）：
+	// 单次 25~30 ms、一集 15 张卡 ≈ 210 ms 的纯白烧 —— 与审计推算的 1.6~2.6 秒/集同量级，
+	// 只是发生在"按 ID 查"而不是"按名字查"上（按名字查同名目录直接命中，本来就快）。
+	// 现在一律走 entriesLocked（进程内索引，见那里的版本号 + 懒重建说明）。
+	for _, it := range l.entriesLocked(kind) {
+		e := it.E
 		if strings.TrimSpace(e.ID) != cardID {
 			continue
 		}
@@ -896,7 +931,7 @@ func (l *Library) matchByIDLocked(kind, cardID string) (*Entry, string, bool) {
 		if _, serr := os.Stat(img); serr != nil {
 			continue // 条目没有图 = 不可复用，当作没命中（与 Match 同一口径）
 		}
-		e.Dir = de.Name() // 目录以**盘上事实**为准（调用方要靠它写回/清图，不许按名字重推）
+		e.Dir = it.Dir // 目录以**盘上事实**为准（调用方要靠它写回/清图，不许按名字重推）
 		e.fillFamily()
 		return &e, img, true
 	}
@@ -1038,7 +1073,7 @@ func (l *Library) findWith(kind, name, description, selfID string) (*Entry, stri
 			dirKey = safeName(best.entry.Name)
 		}
 		_ = fsutil.WriteFileAtomic(filepath.Join(l.root, kind, dirKey, "asset.json"), append(out, '\n'))
-		l.bumpLocked() // 索引失效（这次别名回写改了条目）
+		l.reindexLocked(kind, filepath.Join(l.root, kind, dirKey))
 		log.Printf("[library] 角色「%s」判定为已有条目「%s」的同一人(相似度 %.2f),已登记别名", name, best.entry.Name, best.score)
 	}
 	return best.entry, best.img, true
@@ -1088,24 +1123,12 @@ func (l *Library) findInFamily(kind, selfID, name string) (*Entry, string, bool)
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	dirs, err := os.ReadDir(filepath.Join(l.root, kind))
-	if err != nil {
-		return nil, "", false
-	}
+	// 走进程内索引（同 matchByIDLocked 的说明）：家族查找也在资产阶段的每张卡上跑，
+	// 每次全库读一遍 asset.json 是同一笔白烧。
 	var best *Entry
 	var bestImg string
-	for _, de := range dirs {
-		if !de.IsDir() {
-			continue
-		}
-		raw, rerr := os.ReadFile(filepath.Join(l.root, kind, de.Name(), "asset.json"))
-		if rerr != nil {
-			continue
-		}
-		var e Entry
-		if json.Unmarshal(raw, &e) != nil {
-			continue
-		}
+	for _, it := range l.entriesLocked(kind) {
+		e := it.E
 		if project.CharFamilyBaseName(e.Name) != fam {
 			continue
 		}
@@ -1165,7 +1188,7 @@ func (l *Library) BumpUsed(kind, name string) {
 	if err := fsutil.WriteFileAtomic(filepath.Join(dir, "asset.json"), append(out, '\n')); err != nil {
 		log.Printf("[library] 复用计数写入失败(%s/%s):%v", kind, name, err)
 	} else {
-		l.bumpLocked() // 索引失效（UsedCount 变了）
+		l.reindexLocked(kind, dir) // UsedCount 变了：只更新这一条
 	}
 }
 
@@ -1201,12 +1224,13 @@ func (l *Library) Delete(kind, name string) error {
 	if err != nil {
 		return err
 	}
-	// **索引失效要自己管**（不能用 defer）：`os.RemoveAll` 成功才该失效，
+	// **索引更新要自己管**（不能用 defer）：`os.RemoveAll` 成功才该同步，
 	// 而"先 defer 再 return"的写法让它变成不可达代码 —— 这次改动的第一版就写错了，
 	// 是 `go build` 之后逐处核对落点才发现的。
+	// reindexLocked 发现盘上已无 asset.json 时会把这一条从索引里摘掉。
 	rmErr := os.RemoveAll(dir)
 	if rmErr == nil {
-		l.bumpLocked()
+		l.reindexLocked(kind, dir)
 	}
 	return rmErr
 }

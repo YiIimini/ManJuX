@@ -38,8 +38,11 @@ func TestReadCharacterSheet(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readCharacterSheet(dir)
-	if !strings.HasPrefix(got, "【人物外形锚表 · 硬约束】") {
-		t.Errorf("应带硬约束抬头(它是「逐项照抄」的依据,不是参考资料):\n%s", got)
+	// 【2026-09-29 实测修正】读回来的是**表体**,不带抬头:抬头只在
+	// episodeSourceWithSheet 那一处加。这里原来断言"带抬头",而两个函数各拼一遍,
+	// 结果是每集 source.txt 里印两份抬头(见 novels_sheet_test.go 的 "只许一份")。
+	if strings.HasPrefix(got, "【人物外形锚表 · 硬约束】") {
+		t.Errorf("表体不该自带抬头(抬头由 episodeSourceWithSheet 唯一注入,否则每集会印两份):\n%s", got)
 	}
 	for _, want := range []string{"瘦长脸", "左眉尾一道短疤", "额前全部向后梳净"} {
 		if !strings.Contains(got, want) {
@@ -53,8 +56,7 @@ func TestReadCharacterSheet(t *testing.T) {
 		t.Fatal(err)
 	}
 	got2 := readCharacterSheet(dir)
-	body := strings.TrimPrefix(got2, characterSheetHeader)
-	if n := len([]rune(body)); n != characterSheetMaxRunes {
+	if n := len([]rune(got2)); n != characterSheetMaxRunes {
 		t.Errorf("超长应截断到 %d 字,实得 %d", characterSheetMaxRunes, n)
 	}
 	if !strings.Contains(got2, "甲") {

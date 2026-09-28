@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -50,6 +51,33 @@ func TestEpisodeSourceCarriesCharacterSheet(t *testing.T) {
 	// ③ 幂等:补缺模式重跑 / 已有集回填都会再走一次这条路,叠两份就是 token 白烧 + 口径重复
 	if twice := episodeSourceWithSheet(got, sheet); twice != got {
 		t.Error("重复拼接会叠第二份锚表(幂等判据是抬头,不许绕开它)")
+	}
+}
+
+// 硬约束抬头**恰好一份**(2026-09-29 实测:每集 source.txt 里印着两份)。
+//
+// 成因是两处各拼一遍抬头:readCharacterSheet 自己拼一份,而它的唯一消费方
+// episodeSourceWithSheet 的幂等判据正是"src 里有没有抬头" —— 判据看不到
+// 刚从函数里出来的那份,于是又拼一份。读 source.txt 的人(以及分镜 LLM)
+// 看到的是"这段硬约束被强调了两遍",而它本来就是靠"只讲一次、讲清楚"生效的。
+func TestEpisodeSourceHasSingleSheetHeader(t *testing.T) {
+	dir := t.TempDir()
+	sd := filepath.Join(dir, "设定集")
+	if err := os.MkdirAll(sd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sd, "人物外形锚表.md"),
+		[]byte("沈砚:瘦长脸,肩背挺直,低束发、及肩胛。\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sheet := readCharacterSheet(dir)
+	src := "《名册之外，八万零一号》系列短视频 第01 集《重新检测到生命反应》\n全局风格:G\n\n【本集剧情】节拍…\n\n【本集原文】正文…"
+	got := episodeSourceWithSheet(src, sheet)
+	if n := strings.Count(got, characterSheetHeader); n != 1 {
+		t.Errorf("硬约束抬头应恰好一份,实得 %d 份:\n%s", n, got)
+	}
+	if !strings.Contains(got, "低束发、及肩胛") {
+		t.Errorf("锚表正文没拼进去:\n%s", got)
 	}
 }
 

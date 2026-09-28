@@ -41,21 +41,12 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		it := s.scanNovelDir(in.Path, filepath.Base(in.Path))
 		name, coverSrc = it.Name, it.Cover
 		// 合并正文章节(分册文件);内容无章头的册从文件名注入章头,
-		// 保证章界(切块/CHAPTERS/【本集原文】附着全依赖章头)
+		// 保证章界(切块/CHAPTERS/【本集原文】附着全依赖章头)。
+		// 「哪些算正文册」与「按什么顺序」由 collectManuscript 唯一决定 ——
+		// 2026-09-29 实测这里原来按路径全收,同时踩了 README 混入与卷序打乱两个坑
+		// (详见 collectManuscript 的说明)。
+		paths, _ := collectManuscript(in.Path)
 		readMerged := func() (string, int) {
-			var paths []string
-			_ = filepath.WalkDir(in.Path, func(p string, e os.DirEntry, err error) error {
-				if err != nil || e.IsDir() || !hasTxtExt(p) {
-					return nil
-				}
-				rel := strings.ToLower(p)
-				if strings.Contains(rel, "素材") || strings.Contains(rel, "设定") || strings.Contains(rel, "docs") || strings.Contains(rel, "封面") || strings.Contains(rel, "全本") {
-					return nil
-				}
-				paths = append(paths, p)
-				return nil
-			})
-			sort.Strings(paths)
 			var sb strings.Builder
 			read := 0
 			var unread []string
@@ -371,7 +362,12 @@ func episodeSourceWithSheet(src, sheet string) string {
 	return characterSheetHeader + sheet + "\n\n" + src
 }
 
-// readCharacterSheet 读 <书名>/设定集/ 下的「人物外形锚表」。
+// readCharacterSheet 读 <书名>/设定集/ 下的「人物外形锚表」,**只返回表体**。
+//
+// 抬头由 episodeSourceWithSheet 统一加(唯一注入点)。这里原来自己拼了一遍抬头,
+// 而它的唯一消费方 episodeSourceWithSheet 的幂等判据正是"src 里有没有抬头" ——
+// 于是每集的 source.txt 里都印着**两份抬头**(实测《名册之外，八万零一号》第 01 集),
+// 白烧 token 之外,还把"硬约束"这件事说成了两遍、看起来像拼接坏了。
 //
 // 找不到就返回空串(不报错):绝大多数存量书还没有这张表,没有它走原来的路 ——
 // 由 LLM 从正文提炼(质量会差,但不该让整个生产流程失败)。
@@ -405,5 +401,5 @@ func readCharacterSheet(dir string) string {
 	if rs := []rune(s); len(rs) > characterSheetMaxRunes {
 		s = string(rs[:characterSheetMaxRunes])
 	}
-	return characterSheetHeader + s
+	return s
 }

@@ -484,9 +484,15 @@ var (
 
 // projectSummary 取项目摘要（命中缓存则零解析）。
 func (s *Server) projectSummary(p *project.Project) projSummary {
-	dir := s.store.Dir(p.ID)
-	planPath := filepath.Join(dir, "plan.json")
-	mfPath := filepath.Join(dir, "manifest.json")
+	// 【2026-09-29 真机实测修】缓存键的两个路径必须走 Store 的**唯一真源**：
+	// 这里原来写的是 `filepath.Join(Dir(id), "plan.json")` 与 `"manifest.json"`，
+	// 而盘上的真实位置是 `plan/plan.json` 与 `clips/manifest.json`（见 Store.PlanPath
+	// / Store.ManifestPath）—— 两个 os.Stat 永远失败、mtime 永远是零值，
+	// 于是**第一次解析出来的摘要会被永久命中**：真实跑第 01 集时,方案已经从"没有"
+	// 变成 13 镜 112KB,首页列表面板仍一直显示 `has_plan=false, shots_total=0`，
+	// 直到重启应用为止。这正是这条缓存自己的注释里说要避免的那类"永久脏数据"。
+	planPath := s.store.PlanPath(p.ID)
+	mfPath := s.store.ManifestPath(p.ID)
 	var sum projSummary
 	if st, err := os.Stat(planPath); err == nil {
 		sum.planMod = st.ModTime()
