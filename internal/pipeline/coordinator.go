@@ -49,6 +49,15 @@ type Coordinator struct {
 	bus    *Bus
 	lib    *library.Library // 跨项目资产库(可为 nil=禁用)
 
+	// musicGen 配乐生成器的**注入点**（nil = 走真实引擎）。
+	//
+	// 为什么放在实例上而不是包级变量（2026-09-28 并发审计）：包级可变状态是"测试写、产线读"，
+	// 一旦有测试并行跑就会互相踩（而且这正是 Go 竞态检测会报的那一类）。放实例上，每个
+	// Coordinator 各用各的，测试之间天然隔离。
+	// 需要它的原因：配乐生成依赖 13.68 GB 的本地模型，测试机不一定有；而"生成→入库→复用"
+	// 这条链**本身**的逻辑（入库名字、来源标记、失败措辞）与此无关、必须能测。
+	musicGen func(ctx context.Context, tags string, seconds float64) (string, error)
+
 	// vlm 视觉调用的闸门（限流熔断 + 调用预算，见 vlm_guard.go）。
 	// 进程级：限流是同一份 key 的全局状态，换项目重来照样会被拒。
 	vlm vlmGuard

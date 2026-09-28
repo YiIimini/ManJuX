@@ -564,12 +564,6 @@ func (c *Coordinator) bgmPathOf(proj *project.Project, plan *project.Plan) (stri
 	return "", fmt.Sprintf("资产库没有这份配乐需求「%s」，且%s", name, gnote)
 }
 
-// musicGenHook 生成器的注入点（测试用；nil = 走真实引擎）。
-//
-// 为什么要留这个口子：配乐生成依赖 13.68 GB 的本地模型，测试机不一定有；而"生成→入库→复用"
-// 这条链**本身**的逻辑（入库名字、来源标记、失败时的措辞）与此无关、必须能测。
-var musicGenHook func(ctx context.Context, tags string, seconds float64) (string, error)
-
 // generateMusic 现场生成配乐并入库，返回(项目内绝对路径, 说明)。失败时返回("", 原因)。
 //
 // 时长取"成片的 1/3 且不超过 180 秒"：铺底会自动循环（compose/bgm.go），
@@ -591,7 +585,7 @@ func (c *Coordinator) generateMusic(proj *project.Project, plan *project.Plan, n
 	// tags 里必须钉住"纯器乐"：H3 片段自带同期声与台词，配乐带唱词会打架（与官方 STEP 8 同一口径）
 	tags := strings.TrimSpace(brief) + ", instrumental only, no vocals, background score"
 	ctx := context.Background()
-	gen := musicGenHook
+	gen := c.musicGen
 	if gen == nil {
 		if c.reg == nil {
 			// 裸造 Coordinator（测试/离线工具）没有引擎注册表：如实说"没有能力"，不 panic。

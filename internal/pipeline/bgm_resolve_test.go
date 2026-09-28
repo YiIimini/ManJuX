@@ -31,7 +31,7 @@ func TestBGMGenerateThenReuse(t *testing.T) {
 
 	// 生成器：造一个真文件（Put 只校验非空，不解码 —— 这正是音频能进同一个库的原因）
 	calls := 0
-	musicGenHook = func(ctx context.Context, tags string, seconds float64) (string, error) {
+	c.musicGen = func(ctx context.Context, tags string, seconds float64) (string, error) {
 		calls++
 		if !strings.Contains(tags, "instrumental") || !strings.Contains(tags, "no vocals") {
 			t.Errorf("tags 必须钉住纯器乐（H3 片段自带同期声，配乐带唱词会打架），实际 %q", tags)
@@ -45,7 +45,6 @@ func TestBGMGenerateThenReuse(t *testing.T) {
 		}
 		return p, nil
 	}
-	defer func() { musicGenHook = nil }()
 
 	name := library.MusicEntryName(brief)
 
