@@ -928,6 +928,28 @@ func styleFallbackNotice(proj *project.Project, plan *project.Plan) string {
 // 镜头间角色稳定(定妆照锚定有效),但每集分镜由 LLM 独立撰写,同一角色的
 // 形象描述措辞漂移(穿着/毛色/年龄细节不一致),文字把画面拉离定妆照
 // (2026-09-09 用户实证「貅兜兜跨集飘逸」)。单集项目返回空。
+// settingBookForProject 找这个项目对应的**设定集**（用户口径：`data/小说/<作品>/设定集/`）。
+//
+// 怎么定位：项目 id 形如「书名·第01集·标题」（见 `project.SeriesBookName`），书名就是前缀；
+// 而项目目录是 `data/projects/<id>`，设定集在 `data/小说/<书名>/设定集/` ——
+// 从项目目录反推出 `data` 根即可，不依赖任何配置项（配置项会漂，目录结构是既有约定）。
+//
+// **找不到就返回 nil，不是错误**：老包、纯原创、技能侧还没产出的中间态都没有设定集，
+// 那时照旧走"只喂正文"的老路（`LoadSettingBook` 自己也是这个纪律）。
+func (c *Coordinator) settingBookForProject(projID string) *project.SettingBook {
+	dir := c.store.Dir(projID) // <data>/projects/<id>
+	root := filepath.Dir(filepath.Dir(dir))
+	book := project.SeriesBookName(projID)
+	if book == "" {
+		book = projID // 不是系列分集（单集项目 / 手工建的）：按项目名当书名试一次
+	}
+	sb, err := project.LoadSettingBook(filepath.Join(root, "小说", book, "设定集"))
+	if err != nil {
+		return nil
+	}
+	return sb
+}
+
 func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	epDir := c.store.Dir(projectID)
 	series := filepath.Dir(epDir)

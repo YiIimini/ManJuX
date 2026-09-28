@@ -463,6 +463,17 @@ func (s *Store) Rescan() (added []string, total int) {
 }
 
 // Dir 返回项目目录。
+// SeriesBookName 从系列分集 id（「书名·第01集·标题」）里取**书名**；不是分集时返回空串。
+//
+// 用途（2026-09-28）：把设定集接进各会话 —— 设定集按用户约定放在
+// `data/小说/<书名>/设定集/`，而项目侧只有 id，得先把书名取出来。
+func SeriesBookName(id string) string {
+	if m := seriesRe.FindStringSubmatch(strings.TrimSpace(id)); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
 // seriesRe 「书名·第N集·标题」系列分集命名。
 var seriesRe = regexp.MustCompile(`^(.+)·第\d+集`)
 

@@ -76,10 +76,28 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 		hint += roster
 		c.emit(proj.ID, PhaseScript, 0, "info", 10, "🔁 系列角色锚定:沿用本书已确立角色名 %d 个(跨集不换脸)", nChars)
 	}
-	plan, err := director.Generate(ctx, client, text, director.Options{
+	// 设定集（用户口径：`data/小说/<作品>/设定集/`）——**接进会话**。
+	//
+	// 【2026-09-28 用户架构】读取器早就有了，但没有任何会话消费它 —— 那些锚白白躺在磁盘上，
+	// 模型每次自己编：「现在是哪一年」集集不同、角色的年龄与疤痕每集漂、
+	// 道具的功能边界（"托不起人"这种情节钥匙）被忽略，而锚表里逐项写着。
+	settingBrief := ""
+	if sb := c.settingBookForProject(proj.ID); sb != nil && sb.HasContent() {
+		settingBrief = sb.SettingBrief(false) // 风格卡不进这里：画风另有 styleHint 的专门通道
+		c.emit(proj.ID, PhaseScript, 0, "info", 10,
+			"📌 已接入设定集：%d 个外形锚 / %d 件道具 / %d 条数字锚（**硬锚**，模型不得另编）",
+			len(sb.Characters), len(sb.Props), len(sb.Numbers))
+	}
+	if hint != "" && settingBrief != "" {
+		// 设定集放**提示词最前**（在 hint 之前由 Options.SettingBrief 注入），
+		// 这里只保证两者不互相吞掉。
+		hint += "\n"
+	}
+	dopt := director.Options{
 		MaxShots: p.MaxShots, TotalSeconds: p.TotalSeconds,
 		ExtraHint: hint, Chibi: p.Chibi,
-		AnimeFaces: p.FacesOn(),
+		AnimeFaces:   p.FacesOn(),
+		SettingBrief: settingBrief,
 		// 镜头数安全网(设置页 split.shot_limit):此前只在界面上存在、没有读取点,
 		// 内容驱动模式下上限永远是代码里的常量(审计 P1-1)。
 		ShotLimit: c.cfg.Get().Split.ShotLimit,
@@ -91,7 +109,18 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 		OnNote: func(format string, args ...any) {
 			c.emit(proj.ID, PhaseScript, 0, "warn", 15, format, args...)
 		},
-	})
+	}
+	// **选路**：五步专职会话（用户 2026-09-28 架构）或单轮直出（老路）。
+	//
+	// 老路保留：它是经过验证的那条，新路要用户主动切（设置页 split.five_sessions）。
+	var plan *project.Plan
+	if c.cfg.Get().Split.FiveSessions {
+		c.emit(proj.ID, PhaseScript, 0, "info", 12,
+			"🧩 五步专职会话：小说转剧本 → ②人物道具 / ④场景 / ⑤分镜 **同时跑** → ③角色多视图")
+		plan, err = director.GenerateSessions(ctx, client, text, settingBrief, dopt)
+	} else {
+		plan, err = director.Generate(ctx, client, text, dopt)
+	}
 	hbStop()
 	<-hbDone
 	if err != nil {

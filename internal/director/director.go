@@ -205,6 +205,12 @@ type Options struct {
 	// OnNote 非致命提示(降级/兜底时用)。用于把"方案不完整但我们继续了"这类
 	// 事实说给用户听 —— 静默降级等于骗人,直接报错又会让整条产线停在一集上。
 	OnNote func(format string, args ...any)
+	// SettingBrief 设定集摘要（`project.SettingBook.SettingBrief`，2026-09-28）。
+	//
+	// 为什么放在这里而不是只在会话层：**两条路都要吃它** —— 单轮/分批直出（老路）
+	// 同样需要那些硬锚（数字锚、外形锚），否则"现在是哪一年"照样集集不同。
+	// 传空串就是"这部戏没有设定集"，行为与从前完全一致。
+	SettingBrief string
 }
 
 // segment 分批切分计划(轮1 产物,不落盘)。
@@ -424,8 +430,12 @@ var contentDrivenPromptFmt = promptText("contentDrivenPromptFmt__SOURCE_TEXT_CHI
 
 // buildSingleUserPrompt 组装单批直出的用户提示词。contentDriven 时不预设镜头
 // 数;secondsGiven 决定要不要给时长约束(用户没给时长则连时长也交给内容决定)。
+//
+// opt.SettingBrief 非空时**前置**到 user 段最前面（设定集是硬锚：数字锚/外形锚/
+// 道具的功能边界都在里面，"前置"是为了让它压过正文里的自由描述）。
 func buildSingleUserPrompt(sourceText string, opt Options, contentDriven, secondsGiven bool) string {
 	hint := styleHint(opt)
+	sourceText = withSettingBrief(sourceText, opt.SettingBrief)
 	if !contentDriven {
 		return fmt.Sprintf(UserPromptFmt, sourceText, opt.TotalSeconds, opt.MaxShots, hint)
 	}
@@ -434,6 +444,15 @@ func buildSingleUserPrompt(sourceText string, opt Options, contentDriven, second
 		target = fmt.Sprintf("- Target: short video, total duration about %d seconds. Decide the shot count YOURSELF from the source text's natural story beats.", opt.TotalSeconds)
 	}
 	return fmt.Sprintf(contentDrivenPromptFmt, sourceText, target, hint)
+}
+
+// withSettingBrief 把设定集摘要拼在正文**之前**（空摘要原样返回，行为与从前一致）。
+func withSettingBrief(sourceText, brief string) string {
+	b := strings.TrimSpace(brief)
+	if b == "" {
+		return sourceText
+	}
+	return b + "\n\n【本集原文】\n" + sourceText
 }
 
 func generateSingle(ctx context.Context, client *llm.Client, sourceText string, opt Options, contentDriven, secondsGiven bool) (*project.Plan, error) {
@@ -726,6 +745,7 @@ func ScenePrompts() map[string]string {
 // 复现失败时最怕提示词与线上不一致(改一处漏一处,复现出来的是另一个问题)。
 func buildPlanUserPrompt(sourceText string, opt Options, contentDriven bool) string {
 	hint := styleHint(opt)
+	sourceText = withSettingBrief(sourceText, opt.SettingBrief)
 	if contentDriven {
 		// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,
 		// 只保留「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出)。
