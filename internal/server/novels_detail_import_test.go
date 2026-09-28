@@ -148,8 +148,13 @@ func TestImportFromShotDetail(t *testing.T) {
 	if len(*started) != 1 || (*started)[0].Prefix != "明细书" {
 		t.Errorf("导入后应为这一本启动产线，实际 %v", *started)
 	}
-	// ⑤ 第 2 集也建出来了，而且**标题里的全角逗号被清洗成 `·`**（合法项目名）
-	ep2 := "明细书·第02集·骂人一处·现钱五文"
+	// ⑤ 第 2 集也建出来了，而且**标题里的全角逗号原样保留**。
+	//
+	// 【2026-09-28 改期望】技能侧通知统一了符号规定：章名/书名**只准全角标点，禁 ASCII 标点与空格**
+	// （`docs/技能侧通知-章名书名符号规定-2026-09-28.md`），并明确要求平台**不要静默替换**
+	// —— 章名就是集名，改字会让成片与集号记录对不上。平台据此放行全角（`project.IsFullWidthPunct`），
+	// 所以这一集的名字是「骂人一处，现钱五文」（原来的期望是清洗成 `·`，那是旧口径）。
+	ep2 := "明细书·第02集·骂人一处，现钱五文"
 	if !project.ValidProjectName(ep2) {
 		t.Fatalf("夹具自身有问题：%s 不是合法项目名", ep2)
 	}
@@ -164,8 +169,15 @@ func TestImportFromShotDetail(t *testing.T) {
 // "前几集已经建好了"的半批状态（2026-09-27 用户实测：ep01 建成、ep02 因名字失败）。
 func TestImportRefusesWhenNameImpossible(t *testing.T) {
 	s, _ := newHiddenTestServer(t)
-	// 书目录名带全角逗号（NTFS 允许，但平台的项目名规则不允许）⇒ 前缀就无法出合法名
-	book := mkBookDetail(t, s, "坏书，带逗号")
+	// 【2026-09-28 换夹具】原文用的是带全角逗号的书名（`坏书，带逗号`）当"名字不可能合法"的例子 ——
+	// 但技能侧已把符号规定统一为"只准全角标点"，平台也随之放行全角 ⇒ 这个例子**现在是合法的**，
+	// 那条"名字不可能"的路已不可达（safeSeries + 全角放行后，任何标题都能得到合法项目名）。
+	// 所以这里换成**真正不可能**的字符：半角尖括号（ASCII 标点，技能侧与平台都禁，且会被清洗成 `·`
+	// 而清洗后仍带书名里的 `<>`? —— 不，清洗会把它们换成 `·`；所以真正的判据落在"书名前缀本身"）。
+	// 判据因此改为：**书名里带 ASCII 标点时，导入必须如实拒收或改名并播报**（不再静默）。
+	// 用**半角逗号**：NTFS 允许（`<` `>` 连目录都建不出来，测不到平台这一层），
+	// 而技能侧与平台都禁 ASCII 标点 —— 正好落在"平台能判到"的区间里。
+	book := mkBookDetail(t, s, "坏书,带逗号")
 	code, out := doReq(t, s, "POST", "/api/novels/produce-script", map[string]any{"path": book})
 	if code != 400 {
 		t.Fatalf("名字不可能合法时应整批拒收（400），实际 %d：%v", code, out)
@@ -179,7 +191,7 @@ func TestImportRefusesWhenNameImpossible(t *testing.T) {
 			}
 		}
 	}
-	if _, err := s.store.LoadPlan("坏书·带逗号·第01集·求你们骂我"); err == nil {
+	if _, err := s.store.LoadPlan("坏书,带逗号·第01集·求你们骂我"); err == nil {
 		t.Error("不该有任何一集落地")
 	}
 }
@@ -192,7 +204,9 @@ func TestImportRollsBackHalfBatch(t *testing.T) {
 	s, _ := newHiddenTestServer(t)
 	book := mkBookDetail(t, s, "半批书")
 	ep1 := "半批书·第01集·求你们骂我"
-	ep2 := "半批书·第02集·骂人一处·现钱五文"
+	// 【2026-09-28】全角逗号现在**原样保留**（技能侧规定只准全角、平台不静默改字），
+	// 所以挡路文件要放在新名字那条路径上，否则 MkdirAll 不会失败、测不到回滚。
+	ep2 := "半批书·第02集·骂人一处，现钱五文"
 	block := filepath.Join(s.store.Root(), "半批书", ep2)
 	if err := os.MkdirAll(filepath.Dir(block), 0o755); err != nil {
 		t.Fatal(err)

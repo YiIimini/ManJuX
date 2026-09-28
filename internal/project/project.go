@@ -739,15 +739,47 @@ func (s *Store) SaveAssets(id string, m map[string]Asset) error {
 
 func validName(name string) bool {
 	for _, r := range name {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		case r >= 0x4e00 && r <= 0x9fff: // CJK 统一表意
-		case r == '_', r == '-', r == '·': // 间隔号·(剧集命名「主名·第N集·标题」用)
-		default:
+		if !IsAllowedNameRune(r) {
 			return false
 		}
 	}
 	return true
+}
+
+// IsAllowedNameRune 项目名/集名里允许的字符（**唯一出处**：validName 与调用方共用它，
+// 免得"校验一套字表、清洗另一套字表"，一处松一处紧）。
+func IsAllowedNameRune(r rune) bool {
+	switch {
+	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		return true
+	case r >= 0x4e00 && r <= 0x9fff: // CJK 统一表意
+		return true
+	case r == '_', r == '-', r == '·': // 间隔号·(剧集命名「主名·第N集·标题」用)
+		return true
+	case IsFullWidthPunct(r): // 全角标点（技能侧 2026-09-28 规定只准全角）
+		return true
+	}
+	return false
+}
+
+// isFullWidthPunct 技能侧 2026-09-28 规定的**允许全角标点集**。
+//
+// 【为什么平台名里要放行全角标点】技能侧的通知（`docs/技能侧通知-章名书名符号规定-2026-09-28.md`）
+// 把章名/书名的符号统一为「**只准全角标点，禁一切 ASCII 标点与空格**」，理由是文件系统、
+// ASS 覆写块与导出分隔符三处会被半角打穿。而**平台此前只允许 中文/字母/数字/_/-/·** ——
+// 于是书名《补碑人改命，守钟女逆时》在盘上被静默改成 `补碑人改命·守钟女逆时`，
+// 章名「她替他挡账（二）」会被改成「她替他挡账·二」：**平台在替技能侧改字，而且不吭声**。
+//
+// 技能侧同时明确要求"不要静默替换"（章名就是集名，改字会让成片与集号记录对不上）。
+// 既然他们已保证章名/书名里**不会出现** ASCII 标点与空格，平台就该**照着放行全角**，
+// 而不是继续把合规字符改坏。放行只会让更多名字合法（旧目录名不受影响）。
+func IsFullWidthPunct(r rune) bool {
+	switch r {
+	case '，', '。', '！', '？', '；', '、', '：', '·', '—', '…',
+		'《', '》', '〈', '〉', '「', '」', '『', '』', '【', '】', '（', '）', '〔', '〕':
+		return true
+	}
+	return false
 }
 
 // ValidProjectName 项目名是否合法（规则与 Create 校验的**同一份**实现）。

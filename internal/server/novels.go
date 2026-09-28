@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 type novelItem struct {
@@ -216,6 +218,13 @@ func safeSeries(name string) string {
 			b = append(b, r)
 		case r == '_', r == '-', r == '·':
 			b = append(b, r)
+		case project.IsFullWidthPunct(r):
+			// 技能侧 2026-09-28 规定：章名/书名**只准全角标点**（禁 ASCII 标点与空格）。
+			// 盘上因此出现过平台替他们改字的情况：书名《补碑人改命，守钟英逆时》被改成
+			// `补碑人改命·守钟女逆时`、章名「她替他挡账（二）」被改成「她替他挡账·二」——
+			// **静默改字**，而技能侧明确要求不要这么做（章名就是集名，改字会让成片与集号对不上）。
+			// 他们的字符集既然已保证合规，平台就照原样保留。
+			b = append(b, r)
 		default:
 			b = append(b, '·')
 		}
@@ -362,3 +371,22 @@ func (s *Server) handleNovelRead(w http.ResponseWriter, r *http.Request) {
 
 // handleNovelProduce POST /api/novels/produce {path, max_episodes?}
 // 一键视频创作:读全本 → 查重 → 拆集建项目 → 封面复制 → 自动启动批量产线。
+// seriesNameProblem 名字里第一个**平台不接受**的字符（"" = 合规）。
+//
+// 【为什么要这条判据】技能侧 2026-09-28 通知统一了符号规定（章名/书名只准全角标点，
+// 禁一切 ASCII 标点与空格），并明确要求平台 **不要静默替换** —— 原话："旧作品若出现这类字符，
+// 请先报给我们改名，不要静默替换（章名是集名，静默替换会让成片与集号记录不一致）"。
+// 而平台此前是把非法字**换成 `·`** 再建项目的：盘上因此出现过 `坏书·带·尖括号` 这种
+// 谁也对不上的目录名。现在改成"**先报，不改**"：判到非法字就拒绝这一集/这一批，
+// 把原文与字符一起报出来，让技能侧改名后重跑。
+//
+// 判据用 project.ValidProjectName（**唯一出处**），不在这里另写一套字表 —— 两套字表
+// 迟早一处松一处紧，表现就是"这条入口拦了那条入口没拦"。
+func seriesNameProblem(name string) string {
+	for _, r := range name {
+		if !project.IsAllowedNameRune(r) {
+			return string(r)
+		}
+	}
+	return ""
+}

@@ -1065,7 +1065,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 			t = starts[i]
 		}
 		fmt.Fprintf(&sb, "Dialogue: 0,%s,%s,Caption,,0,0,0,,%s\n",
-			assTime(t+captionLeadIn), assTime(t+captionHold), caption)
+			assTime(t+captionLeadIn), assTime(t+captionHold), assEscape(caption))
 	}
 
 	for i, shot := range plan.Shots {
@@ -1095,8 +1095,9 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 			if p == "" {
 				continue
 			}
-			// 超宽行按画面宽度断行(标点处优先,避免生切;多行共用一个时间窗)
-			p = wrapAssText(strings.ReplaceAll(p, "\n", `\N`), maxRunes)
+			// **先转义再换行**：`{}` 在 ASS 里是覆写标签块，块内不识别的内容会被静默吞掉
+			// （技能侧 2026-09-28 通知带依据；平台这边是字幕唯一出口，所以在这一处收口）。
+			p = wrapAssText(strings.ReplaceAll(assEscape(p), "\n", `\N`), maxRunes)
 			fmt.Fprintf(&sb, "Dialogue: 0,%s,%s,%s,,0,0,0,,%s\n",
 				assTime(spans[j].Start), assTime(spans[j].End), style, p)
 		}

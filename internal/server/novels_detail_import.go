@@ -269,7 +269,23 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 		// 而项目名只允许 中文/字母/数字/`_`/`-`/`·` —— 直接拼会让**整批导入**失败在
 		// "项目名仅允许…"上（用户点一次导入是 40 集）。清洗口径与拆集那条路**同一份实现**
 		// （safeSeries：非法字换成 `·`、合并连续 `·`、去掉首尾 `·`）。
-		name := fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, orDefault(safeSeries(title), "未命名"))
+		// **先报，不改**（技能侧 2026-09-28 通知的明确要求）：集名里若含平台不接受的字
+		// （ASCII 标点 / 空格 / 控制字符 —— 技能侧的符号规定只准全角标点），
+		// 就拒收这一集并说清是哪个字符，让技能侧改名后重跑；**不做静默替换** ——
+		// 章名就是集名，改字会让成片与集号记录对不上（盘上已出现过 `坏书·带·尖括号` 这种谁也对不上的名字）。
+		if bad := seriesNameProblem(title); bad != "" && strings.TrimSpace(title) != "" {
+			results = append(results, result{
+				Package: fmt.Sprintf("%s·第%02d集", namePrefix, no),
+				ID:      fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, title),
+				Fails: []string{fmt.Sprintf(
+					"集标题含平台不接受的字符 %q：「%s」。技能侧的符号规定是章名/书名只准全角标点"+
+						"（禁一切 ASCII 标点与空格）—— 请让技能侧改名后重跑；平台不静默替换"+
+						"（改字会让成片与集号记录对不上）", bad, title)},
+			})
+			fails++
+			continue
+		}
+		name := fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, title)
 		if !project.ValidProjectName(name) {
 			// 兜底：真遇上没见过的情况也**只退这一集的名字**，不拖累整批。
 			s.opLog("⚠ 第%02d集标题 %q 清洗后仍不合规，本集退用「未命名」", no, title)
@@ -291,6 +307,12 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 		plan, _, _ := buildEpisodePlan(d, no, title, epShots)
 		issues := project.ValidatePlan(plan)
 		res := result{Package: fmt.Sprintf("%s·第%02d集", namePrefix, no), ID: name, Shots: len(plan.Shots)}
+		// 技能侧 2026-09-28 C4 的其余分项（长度/保留名）在平台侧按 **WARN** 报 ——
+		// 它们"能写但不好"（顶路径长度上限、撞 Windows 保留名），不像非法字符那样必然失败，
+		// 不该把能跑的集数拒掉。
+		for _, np := range project.ChapterNameProblems(title) {
+			res.Warns = append(res.Warns, "【名字规则·"+np.Kind+"】"+np.Msg)
+		}
 		if f := project.PlanFails(issues); len(f) > 0 {
 			res.Fails = project.PlanIssuesText(f)
 			res.Warns = warnsText(issues)
