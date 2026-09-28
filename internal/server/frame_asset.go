@@ -160,7 +160,12 @@ func (s *Server) handleAssetFrameApply(w http.ResponseWriter, r *http.Request) {
 	a.Source = "video-frame"
 	a.Fingerprint = project.FingerprintFile(dest)
 	assets[assetID] = a
-	if err := s.store.SaveAssets(id, assets); err != nil {
+	// **按 key 合并写**（2026-09-29 运行时审计 P1-3）：截帧要跑一次 ffmpeg（秒级），
+	// 期间管线可能正在写别的资产 —— 整体覆盖写会抹掉对方刚落的盘。
+	if err := s.store.UpdateAssets(id, func(cur map[string]project.Asset) error {
+		cur[assetID] = a
+		return nil
+	}); err != nil {
 		writeErr(w, 500, err)
 		return
 	}

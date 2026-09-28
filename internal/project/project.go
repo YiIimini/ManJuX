@@ -368,6 +368,12 @@ type Store struct {
 	mu       sync.Mutex
 	root     string // data/projects
 	projects map[string]*Project
+
+	// 资产表的**按项目写锁**（2026-09-29 运行时审计 P1-3）：`UpdateAssets` 用它把
+	// "重读 → 改 → 写回"变成原子操作，避免并发写方互相覆盖（见 UpdateAssets 注释）。
+	// 不同项目各一把，互不阻塞；map 本身由 assetLocksMu 保护。
+	assetLocksMu sync.Mutex
+	assetLocks   map[string]*sync.Mutex
 }
 
 // NewStore 创建项目仓库并扫描磁盘恢复项目列表。
@@ -771,9 +777,60 @@ func (s *Store) LoadAssets(id string) (map[string]Asset, error) {
 }
 
 // SaveAssets 保存资产映射。
+//
+// ⚠️ 这是一次**整体覆盖写**。当心"读一次 → 改 → 写回"的调用方（2026-09-29 运行时审计 P1-3）：
+// 资产表是**被允许并发写**的 —— 管线跑资产阶段（窗口几十分钟）的同时，用户可以点
+// 「重新生成」出图、截帧定妆、上传资产、2K 定稿，每个都是一次"读快照 → 干几分钟活 → 写回"。
+// 于是资产阶段收尾时会把它开场时那份**旧快照**整体写回，用户刚重生成的那张脸在盘上有、
+// 在表里被回滚成旧文件（渲染取参考图走 `assets[...]`，于是"刚重生成完，渲出来还是旧脸"），
+// 而两条链各自都报了成功。
+//
+// 修法不是在这里加锁就完（那样只能防"同时写"），而是**让写入变成按 key 合并**：
+// `UpdateAssets` 在同一把项目锁内"重读 → 改 → 写回"，所有写方都走它。
+// 直接调本函数的调用方要么是一次性全量重建（资产阶段就是这类，它本来就该覆盖），
+// 要么应当改走 `UpdateAssets`。
 func (s *Store) SaveAssets(id string, m map[string]Asset) error {
 	raw, _ := jsonMarshal(m)
 	return atomicWrite(s.AssetsPath(id), raw)
+}
+
+// UpdateAssets 原子地改资产表：**同一把项目锁内**重读 → 交给 mutate 改 → 写回。
+//
+// 所有"只改自己那几个 key"的写方都该走这里（重生成 / 截帧 / 上传 / 2K 定稿），
+// 这样并发写不会互相覆盖：后进来的会看到前一个已经落盘的结果。
+// mutate 返回错误则不写盘（原表保持不动）。
+//
+// 锁是**按项目**的（不同项目互不阻塞），存在 Store 上的一个 map 里。
+func (s *Store) UpdateAssets(id string, mutate func(map[string]Asset) error) error {
+	mu := s.assetsLock(id)
+	mu.Lock()
+	defer mu.Unlock()
+	cur, err := s.LoadAssets(id)
+	if err != nil {
+		return err
+	}
+	if cur == nil {
+		cur = map[string]Asset{}
+	}
+	if err := mutate(cur); err != nil {
+		return err
+	}
+	return s.SaveAssets(id, cur)
+}
+
+// assetsLock 取（必要时建）某个项目的资产写锁。
+func (s *Store) assetsLock(id string) *sync.Mutex {
+	s.assetLocksMu.Lock()
+	defer s.assetLocksMu.Unlock()
+	if s.assetLocks == nil {
+		s.assetLocks = map[string]*sync.Mutex{}
+	}
+	mu, ok := s.assetLocks[id]
+	if !ok {
+		mu = &sync.Mutex{}
+		s.assetLocks[id] = mu
+	}
+	return mu
 }
 
 // ---------- 工具 ----------

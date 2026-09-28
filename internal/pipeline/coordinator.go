@@ -297,13 +297,25 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	if r2, e2 := filepath.Rel(c.store.Dir(projectID), path); e2 == nil {
 		rel = filepath.ToSlash(r2)
 	}
+	// **按 key 合并写**（2026-09-29 运行时审计 P1-3）：这一步的 `assets` 是它进来时读的快照，
+	// 而出图要花几分钟 —— 期间资产阶段可能正好收尾，把它开场那份旧表整体写回。
+	// 走 `UpdateAssets` 就变成"在同一把项目锁内重读 → 只覆盖我这一个 key → 写回"，
+	// 阶段补的其它资产不会被这次重生成抹掉，反之亦然。
+	if err := c.store.UpdateAssets(projectID, func(cur map[string]project.Asset) error {
+		cur[assetID] = project.Asset{
+			ID: assetID, Kind: kind, Name: name,
+			File: rel, ImagePrompt: prompt,
+			Source: c.imageSourceKey(), Fingerprint: project.FingerprintFile(path),
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// 本地这份也要跟上（后面清派生图要用到新文件名）
 	assets[assetID] = project.Asset{
 		ID: assetID, Kind: kind, Name: name,
 		File: rel, ImagePrompt: prompt,
 		Source: c.imageSourceKey(), Fingerprint: project.FingerprintFile(path),
-	}
-	if err := c.store.SaveAssets(projectID, assets); err != nil {
-		return err
 	}
 	// 换脸后旧的角度图必须一并作废,并把新图写回资产库(2026-09-12 修):
 	//   ①项目侧:同名 <base>_view_*.png / <base>_turnaround.png 对应的是上一张脸,
