@@ -282,16 +282,22 @@ func PortraitFramingClause(kind EntityKind, width, height int) string {
 		return ""
 	}
 	if height > width {
+		// 【2026-09-28 用户要求「角色渲染需要纯白背景 + 人物形象」】原来只写 "stays plain background"
+		// —— "平背景"没有指明颜色，模型自由发挥成了**浅灰**（实测那一批定妆照全是灰底）。
+		// 改成明确的 "pure white seamless backdrop"：正向、具体，且与三视图板的背景口径一致
+		// （板子本来就要求 pure white seamless）。改措辞时**要同步** prompts.go 的取景剥离表，
+		// 否则板子装配时剥不掉这段旧取景、会与 BoardFraming 叠成两套背景要求。
 		return " FRAMING (mandatory): a front-facing chest-up portrait, shot STRAIGHT-ON from the front — the face " +
 			"looks directly into the camera, both eyes are visible at the same size and symmetric, the head is upright " +
 			"and squared to the lens with the nose and chin pointing at the camera, the WHOLE head is inside the " +
 			"picture with clear empty space above the hair, the shoulders fully inside the frame, and the area below " +
-			"the chest stays plain background."
+			"the chest stays a pure white seamless backdrop."
 	}
 	return " FRAMING (mandatory): a front-facing head-and-shoulders portrait, shot STRAIGHT-ON from the front — the " +
 		"face looks directly into the camera, both eyes are visible at the same size and symmetric, the head is " +
 		"upright and squared to the lens with the nose and chin pointing at the camera, the WHOLE head is inside the " +
-		"picture with clear empty space above the hair, and the shoulders are fully inside the frame."
+		"picture with clear empty space above the hair, and the shoulders are fully inside the frame " +
+		"against a pure white seamless backdrop."
 }
 
 // sceneCrowdItemPhrases 命中即**整项删除**的人群短语 —— 场景板必须是空场。

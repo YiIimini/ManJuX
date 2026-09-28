@@ -41,11 +41,24 @@ func TestBoardPromptReplacesPortraitFraming(t *testing.T) {
 	// 以卡片为准（见 BoardPromptWithCard），这段是卡里没有板串时的兜底。
 	for _, want := range []string{
 		"FRONT, LEFT PROFILE and BACK", "six head angles", "six detail tiles",
-		"plain pure white seamless background", "no text, no letters, no numerals, no watermark",
-		"no UI", "no social-media chrome",
+		"pure white seamless studio backdrop", "blank and unmarked",
+		"complete and fully inside the picture",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("版面清单缺 %q:\n%s", want, got)
+		}
+	}
+	// **版面清单与取景句里一个否定词都不许有**（2026-09-28 用户报「不要出现莫名的文字，咋还是有」）。
+	//
+	// 原来这里写的是 "no text, no letters, no numerals, no watermark, no logo, no UI, no
+	// like/save buttons, no social-media chrome, no screenshot framing" —— 看着在禁文字，
+	// 实际在**教模型画字**：图片侧是蒸馏模型（CFG 1.0），实测对否定词免疫、却会把名词当指令
+	// 画出来（"no epaulettes" 直接画出肩章）。"no text" 就画出 text —— 用户看到的乱码段落
+	// 正是这一串的产物。所以门从"必须有那串禁词"反转为"**不许有否定词**"。
+	lowBoard := strings.ToLower(BoardLayoutClause + " " + BoardFraming)
+	for _, bad := range []string{"no ", "not ", "never ", "without ", "avoid "} {
+		if strings.Contains(lowBoard, bad) {
+			t.Errorf("版面/取景句不许出现否定词 %q（会被照着画）:\n%s", bad, lowBoard)
 		}
 	}
 	// 人像取景必须被换掉：同一段提示词里既要求"半身胸像"又要求"多视图板"= 二选一地糊

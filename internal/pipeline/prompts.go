@@ -526,19 +526,6 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
 		return prompt // 已经是本类型的装配结果:不重复叠加
 	}
-	// **清汉字（2026-09-28 补，位置必须在幂等判据之后）**
-	//
-	// 为什么人物卡要清：场景板与道具图早就在装配时清掉输入里的汉字
-	// （SceneImagePrompt / PropImagePrompt 都调 StripCJK），**唯独人物卡没有** ——
-	// 于是角色卡里的中文注解被模型当成"要画的字"，定妆照与三视图板上就出现了乱码字形。
-	// 同一条机理，同一个修法。
-	//
-	// 为什么**必须放在判据之后**：本函数会被调用两次（资产阶段装配一次、渲染前补齐再一次），
-	// 第二次进来时 prompt 已经是**成品** —— 而画风块自带中英对照（含中文），
-	// 若在判据之前清，就会把成品的中文对照删掉，于是"第二次装配改变了结果"、幂等被打破。
-	// 2026-09-28 我加这条时正是按"预处理"的顺序写在前面，`TestPortraitPromptIsIdempotent`
-	// 当场咬住；场景侧（SceneImagePrompt）本来就是"先判幂等再清"，照它对齐。
-	prompt = project.StripCJK(prompt)
 	if prof.RewriteSheetFraming {
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
 	} else if kind == KindHuman || kind == KindChibi {
@@ -577,6 +564,13 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
 	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
 	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
+	//
+	// 【为什么这里**不**清汉字 —— 2026-09-28 试过，被三道门挡回来】
+	// 卡上的中文注解确实会被画成乱码，但**不能在本函数里一刀切**：本函数的输入是**卡原文**，
+	// 而卡原文里的结构化描述（器物结构、服装细节）在存量包与技能侧导入的数据里可能本来就是中文，
+	// 清掉会把有用信息一起删（`artstyle_test.go` 与 `entity_test.go` 当场挡回来：
+	// "原始 image_prompt 必须保留" / "器物结构描述不得丢失"）。
+	// 该清的是**派生物**，不是素材 —— 见 `BoardImagePrompt`（板子）那条。
 	return prompt
 }
 
@@ -695,7 +689,15 @@ func BoardImagePrompt(masterPrompt string) string {
 	if strings.Contains(masterPrompt, BoardMarker) {
 		return masterPrompt
 	}
-	return BoardMarker + " — " + BoardLayoutClause + "\n\n" + rewriteSheetFraming(masterPrompt, BoardFraming)
+	// **板子进模型前清汉字**（2026-09-28 用户报「不要出现莫名的文字，咋还是有」）：
+	// masterPrompt 是**已装配的定妆照提示词**，而画风/介质块自带中英对照 —— 中文是写给人看的，
+	// 对图片模型却只是"要画的字"。板上那块乱码段落与局部图上的中文小标签就是这么来的：
+	// 板子的输入跟着中文一起进了提示词，被照抄成画面上的文字。
+	//
+	// 只清**输入**（masterPrompt）与拼装结果，`BoardLayoutClause` / `BoardFraming` 本来就是英文；
+	// 这一刀不碰 `PortraitPrompt`（那里是卡原文，见它的注释：清素材会连有用描述一起删）。
+	return project.StripCJK(BoardMarker + " — " + BoardLayoutClause + "\n\n" +
+		rewriteSheetFraming(project.StripCJK(masterPrompt), BoardFraming))
 }
 
 func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scene) string {
@@ -813,6 +815,9 @@ const propPlateClause = "Single object only, centred, shot 1:1 square from a str
 // 剥干净再追加类型取景,才能保证"器物不会同时被要求半身正面"。
 var sheetFramingWords = []string{
 	"plain background", "plain seamless background", "plain pastel background", "dark background",
+	// 平台自己写的定妆取景尾巴（2026-09-28 起是 "a pure white seamless backdrop"）也要能被剥：
+	// 板子装配时若剥不掉它，就会与 BoardFraming 的背景要求叠成两套。
+	"pure white seamless backdrop",
 	"upper-body framing", "upper body framing", "upper-body", "upper body",
 	"front-facing", "front facing",
 	"full body", "full-body", "head and shoulders", "portrait",

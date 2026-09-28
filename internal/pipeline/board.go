@@ -56,12 +56,25 @@ const BoardMarker = "PRODUCTION REFERENCE SHEET"
 //
 // 逐条对应官方 STEP 3 的清单（3/4 视图 + 正侧背 + 表情/头角度 + 材质服装道具细节 + 身份锁），
 // 以及技能侧 §2.2 的三段式数量（3 全身 + 6 头角度 + 6 局部细节）。
-const BoardLayoutClause = "one single production reference sheet of this ONE character on a plain pure white " +
-	"seamless background under flat, even studio lighting — no scene, no other characters, no extra props other " +
-	"than this character's own signature prop, no text, no letters, no numerals, no watermark, no logo, no UI, no like/save buttons, no social-media chrome, no screenshot framing; generous margins so that every figure is complete and never cropped: " +
+//
+// 【2026-09-28 用户报「不要出现莫名的文字，咋还是有」—— 元凶就是这一串】
+// 这里原来写着 "no text, no letters, no numerals, no watermark, no logo, no UI, no like/save
+// buttons, no social-media chrome, no screenshot framing"。看着是在禁文字，**实际是在教模型画字**：
+// 图片侧跑的是蒸馏模型（CFG 1.0），实测**对否定词免疫、却会把名词当指令画出来** ——
+// "no epaulettes" 直接画出肩章（见 uniformCivilianClarify 与 artstyle_test.go 的回归口径）。
+// 于是 "no text" 画出 text、"no watermark" 画出 watermark —— 用户看到的乱码段落就是这么来的。
+//
+// 现在整段改写成**正向句**：pure white seamless / blank and unmarked / complete inside the picture /
+// clear unobstructed view / natural lifelike proportions。**本常量里一个否定词都不许有**，
+// 由 board_test.go 的门盯着。
+const BoardLayoutClause = "one single production reference sheet of this ONE character, standing on a pure " +
+	"white seamless studio backdrop under flat, even light; every surface stays blank and unmarked, and the " +
+	"sheet holds nothing but this character and its own signature prop; generous margins keep every figure " +
+	"complete and fully inside the picture: " +
 	"LEFT (main area): three full-body standing views — FRONT, LEFT PROFILE and BACK of the same character " +
-	"(identical face, hair, costume, build and height proportions), arms hanging naturally, eye-level, no " +
-	"occlusion, no exaggerated perspective, hair parting and strand direction clearly readable; " +
+	"(identical face, hair, costume, build and height proportions), arms hanging naturally, eye-level, " +
+	"a clear unobstructed view of each figure, natural lifelike proportions, hair parting and strand " +
+	"direction clearly readable; " +
 	"UPPER RIGHT: six head angles of the same character — front face, top-down view of the crown, back of the " +
 	"head, left silhouette, near-profile comparison, 3/4 face; " +
 	"LOWER RIGHT: six detail tiles — upper-garment fabric, lower-garment front, waist-and-hip tailoring, leg or " +
@@ -74,9 +87,12 @@ const BoardLayoutClause = "one single production reference sheet of this ONE cha
 // 为什么必须替换而不是追加：定妆照提示词的尾巴是"半身胸像、整个头在画面内"这类人像取景，
 // 与"一张含 3 个全身 + 12 个小图的多视图板"直接打架，模型只会二选一地糊
 // （与场景卡被追加"空场"却仍写着人群是同一条机理）。
+//
+// 同样**只用正向句**（原来结尾的 "no scene and no lettering" 已删，理由见 BoardLayoutClause）。
 const BoardFraming = "a complete character production reference sheet: a multi-view turnaround board " +
 	"containing full-body views, head studies and detail insets of the same character, " +
-	"plain neutral background, flat even studio lighting, no scene and no lettering"
+	"on a pure white seamless studio backdrop, flat even studio lighting, a clean empty set with " +
+	"plain unmarked surfaces"
 
 // BoardPrompt 把已装配好的定妆照提示词改写成**板子**的提示词。
 //
