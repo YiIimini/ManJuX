@@ -200,6 +200,23 @@ const statusTag = computed(() => {
     default: return { text: '待渲染', type: 'info' }
   }
 })
+
+// statusHint 失败镜的**把手**（鼠标停在状态标签上看得到）。
+//
+// 为什么必须说这一句（2026-09-28）：渲染失败之后，平台会按官方降级阶梯给这一镜写一个
+// **黑场静音占位**并标记 `placeholder: missing clip` —— 也就是说**这段已经进了成片**。
+// 而卡片上只显示"✕ 失败"时，看起来像"还没做完"，用户可能以为成片是完整的、直接交付；
+// 或者反过来以为整片都没出、白重渲一遍。两件事差别很大，必须让人一眼能分清。
+const statusHint = computed(() => {
+  const m = props.manifestItem
+  if (!m) return '尚未渲染'
+  if (m.status !== 'failed') return ''
+  const err = String(m.error || '')
+  if (err.includes('placeholder: missing clip')) {
+    return '这一镜已按官方降级阶梯写成**黑场占位**（保住时长与对位）—— 成片里这段是没有画面的，重渲后必须重合成。原因：' + err
+  }
+  return '渲染失败：' + (err || '未记录原因')
+})
 const dialogues = computed(() => (props.shot.dialogue || []).map(d => `${d.speaker}:${d.text}`).join('\n'))
 
 // 出场角色/场景名(分镜卡标注:id → 名称)
@@ -257,7 +274,10 @@ const propNames = computed(() => {
     <div class="p-3 flex flex-col gap-2">
       <div class="flex items-center gap-2 text-xs">
         <b>镜 {{ shot.id }}</b>
-        <el-tag size="small" :type="statusTag.type" effect="dark">{{ statusTag.text }}</el-tag>
+        <el-tooltip v-if="statusHint" :content="statusHint" placement="top" :show-after="200">
+              <el-tag size="small" :type="statusTag.type" effect="dark" style="cursor:help">{{ statusTag.text }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else size="small" :type="statusTag.type" effect="dark">{{ statusTag.text }}</el-tag>
         <span v-if="manifestItem?.engine" class="timecode">{{ manifestItem.engine === 'comfy' ? '本地' : '云端' }}</span>
       </div>
       <div class="text-xs leading-relaxed" style="color:var(--mx-text2)">
