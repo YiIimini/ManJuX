@@ -668,7 +668,12 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	w, h := assetImageSize(proj, kind)
 	// 名字锚定种子(fnv 全串哈希;曾用长度哈希易碰撞):同名资产重跑/跨集
 	// 补齐得到同一张图。换图走「重新生成」(随机 seed)或上传替换。
-	seed := nameSeed(kind, name) + int64(attempt)*101
+	//
+	// **锚定键：有卡片 id 就用 id，没有才用显示名**（2026-09-28 审计 B6）。
+	// 原来一律用显示名 —— 同一个角色在不同集/不同卡里名字写法漂一点（多一个括号注解、
+	// 繁简标点不同），种子就变，"同名必同图"这道跨集一致性的保险**静默失效**；
+	// 而卡片 id 本来就是平台里"同一个人"的稳定真源（与家族键同一套口径）。
+	seed := nameSeed(kind, cardSeedKey(id, name)) + int64(attempt)*101
 	c.emit(proj.ID, PhaseAssets, 0, "info", 0, "%s 生成:%s「%s」(%d×%d)…", c.imageSourceLabel(), kindLabel(kind), name, w, h)
 	path, err := c.genSheetImage(ctx, ce, sheetJob{
 		proj: proj, assets: assets, kind: kind, id: id, name: name,
@@ -1053,6 +1058,22 @@ func nameSeed(kind, name string) int64 {
 	h := fnv.New32a()
 	_, _ = h.Write([]byte(kind + "\x00" + name))
 	return int64(h.Sum32())
+}
+
+// cardSeedKey 出图种子的**锚定键**：有卡片 id 就用 id，没有才退回显示名。
+//
+// 【2026-09-28 审计 B6】种子原先一律按**显示名**锚定，而名字是最容易漂的东西
+// （同一角色换个集多一个「（丙十七）」注解、繁简标点不同、技能侧改一次名），
+// 一漂种子就变 —— "同名必同图"这道跨集一致性的保险**静默失效**，表现为同一角色
+// 跨集换脸，而日志与契约门都看不出问题（名字确实是"同一个名字"）。
+// 卡片 id 才是平台里"同一个人"的稳定真源（与 `CharFamilyKey` 同一套口径）。
+//
+// 没有 id 的卡（人工上传、老包）仍然按名字锚定 —— 与从前行为一致，不引入新风险。
+func cardSeedKey(id, name string) string {
+	if s := strings.TrimSpace(id); s != "" {
+		return s
+	}
+	return strings.TrimSpace(name)
 }
 
 // ShotSeed 镜头种子派生(fnv 锚定 + 镜号步进)。

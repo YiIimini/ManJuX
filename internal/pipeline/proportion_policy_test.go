@@ -137,8 +137,11 @@ func TestFacingRegenIsWired(t *testing.T) {
 		"c.regenerateOnBadFacing(",                            // 出图后按朝向下处置
 		"rep := checkProportion(ek, imagePrompt, name, path)", // 自检结果必须被接住(丢掉就等于没测)
 		"maxFacingRegen",                                      // 次数有上限(不然就是无限烧 GPU)
-		"nameSeed(kind, name) + int64(attempt)*101",           // 重出必须**换种子**:同种子重出 = 同一张图
-		"a.Fingerprint = project.FingerprintFile(next)",       // 重出写同一路径 → 指纹必须刷新
+		// 重出必须**换种子**:同种子重出 = 同一张图。
+		// 锚定键 2026-09-28 从显示名改成 `cardSeedKey(id, name)`（有 id 用 id）：名字一漂
+		// 种子就变、"同名必同图"静默失效，见 B6。这里跟着改成新表达式。
+		"nameSeed(kind, cardSeedKey(id, name)) + int64(attempt)*101",
+		"a.Fingerprint = project.FingerprintFile(next)", // 重出写同一路径 → 指纹必须刷新
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("资产阶段缺少朝向重出接线 %q —— 侧脸定妆照会一直存在且没人知道", want)
