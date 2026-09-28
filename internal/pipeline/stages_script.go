@@ -131,6 +131,17 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	for i := range plan.Shots {
 		plan.Shots[i].H3Prompt = EnsureChineseDialogue(plan.Shots[i].H3Prompt)
 	}
+	// **锚表对账**（2026-09-28 用户报「6 个角色，LLM 解析出来咋只有一个角色」）：
+	// 源文本里的【人物外形锚表 · 硬约束】列了几个角色，方案里就该有几个 —— 缺的用锚表原文补上。
+	// 放在**存盘前**：补出来的卡要跟着方案一起落盘，资产阶段才会给它们出定妆照。
+	// 为什么由平台补而不是让模型自觉：锚表本身就是硬约束、每个角色的外形描述都是现成的，
+	// 补一张卡是确定性的活；而模型实测会漏（那一集锚表 6 个、它只出了 1 个）。
+	if added := EnsureAnchorCast(plan, text); len(added) > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 15,
+			"⚠ 源文本的【人物外形锚表】列了 %d 个角色，方案里只出了 %d 个 —— 已按锚表原文补进：%s"+
+				"（锚表是硬约束、逐项照抄即可；这些卡同样会出定妆照并入库）",
+			len(ParseCastAnchor(text)), len(plan.Characters)-len(added), strings.Join(added, "、"))
+	}
 	if err := c.store.SavePlan(proj.ID, plan); err != nil {
 		return err
 	}
