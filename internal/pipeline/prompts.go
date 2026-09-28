@@ -542,35 +542,38 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	// 画风块由 styleExpandFor 注入,并把**已装配的提示词**带进去:卡里若已带技能侧的人体
 	// 比例锚点句,平台自己的比例措辞("cute chibi proportions" / Q 版二到三头身)让位
 	// —— 同一段里两套比例,模型只会取中值(技能侧清单 §5.1,见 proportion_clause.go)。
-	prompt += styleExpandFor(prompt, style, s.FacesOn, kind)
-	prompt += castContrastBlock(plan, s.Name, kind)
-	prompt += uniformCivilianClarify(s.Description)
-	prompt += PortraitHairClause(kind)
-	prompt += PortraitPoseClause(kind)
+	//
 	// 构图纪律按**成片画幅**算(竖幅 → 胸像 + 头顶留白;横幅 → 头肩):卡里那句写死的
 	// `upper-body framing` 在竖幅里会把头顶裁掉 —— 见 PortraitFramingClause 的说明。
 	frameW, frameH := s.FrameW, s.FrameH
 	if frameW <= 0 || frameH <= 0 {
 		frameW, frameH = DefaultSheetFrameW, DefaultSheetFrameH
 	}
-	prompt += PortraitFramingClause(kind, frameW, frameH)
-	// **最后一句**再钉一次"这张脸是谁"（最高注意力位，与比例锚点同一条设计）。
-	// 2026-09-27 用户报「周廷和主角脸相似」：画风块里的 "idealised… simplified features"
-	// 是往**一个模板**上拉的力，而身份锁在提示词中段、被稀释掉了 —— 所以在这一段里
-	// 把该角色自己的外形锁逐字重述，并点名"不许像谁"。
-	if kind == KindHuman || kind == KindChibi {
-		prompt += PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.Name))
-	}
 	// 忠实度与画风块由 styleExpand 按类型与开关注入(prof.SheetIdentity / SheetLook,
 	// 后者只在 FacesOn 时加)—— 这里**不再单独追加**,否则真人剧项目(开关关)会被
 	// 塞进动画介质块,而那是最难查的一类"两边都对、结果不对"。
 	//
-	// 【为什么这里**不**清汉字 —— 2026-09-28 试过，被三道门挡回来】
-	// 卡上的中文注解确实会被画成乱码，但**不能在本函数里一刀切**：本函数的输入是**卡原文**，
-	// 而卡原文里的结构化描述（器物结构、服装细节）在存量包与技能侧导入的数据里可能本来就是中文，
-	// 清掉会把有用信息一起删（`artstyle_test.go` 与 `entity_test.go` 当场挡回来：
-	// "原始 image_prompt 必须保留" / "器物结构描述不得丢失"）。
-	// 该清的是**派生物**，不是素材 —— 见 `BoardImagePrompt`（板子）那条。
+	// 【2026-09-28 用户报「一张定妆照还出现相同角色多人物」「有莫名的文字」—— 元凶在此】
+	// 这些**平台追加的块全都带中英对照**（"(中文对照:……)"）。中文是写给维护者看的，
+	// 而图片模型会把它当成"要画的字"**整段照抄到画面上**：实测那张定妆照左右两侧与底部
+	// 全是乱码中文段落，连"中文对照:"四个字都清晰可见；成片的文字块又把构图冲乱，
+	// 于是同一个角色被画成了两个人。
+	//
+	// 所以：追加块**统一清汉字后再拼**（`project.StripCJK`），**卡原文 `prompt` 不动** ——
+	// 存量包与技能侧导入的数据里，卡原文本身可能带中文的结构描述，清素材会连有用信息一起删
+	// （`artstyle_test.go`「原始 image_prompt 必须保留」与 `entity_test.go`「器物结构描述
+	// 不得丢失」三条断言就是挡这件事的；第一版我把 StripCJK 加在整个 prompt 末尾，被它们挡回来了）。
+	var added strings.Builder
+	added.WriteString(styleExpandFor(prompt, style, s.FacesOn, kind))
+	added.WriteString(castContrastBlock(plan, s.Name, kind))
+	added.WriteString(uniformCivilianClarify(s.Description))
+	added.WriteString(PortraitHairClause(kind))
+	added.WriteString(PortraitPoseClause(kind))
+	added.WriteString(PortraitFramingClause(kind, frameW, frameH))
+	if kind == KindHuman || kind == KindChibi {
+		added.WriteString(PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.Name)))
+	}
+	prompt += project.DropHanRunes(added.String())
 	return prompt
 }
 
@@ -696,8 +699,8 @@ func BoardImagePrompt(masterPrompt string) string {
 	//
 	// 只清**输入**（masterPrompt）与拼装结果，`BoardLayoutClause` / `BoardFraming` 本来就是英文；
 	// 这一刀不碰 `PortraitPrompt`（那里是卡原文，见它的注释：清素材会连有用描述一起删）。
-	return project.StripCJK(BoardMarker + " — " + BoardLayoutClause + "\n\n" +
-		rewriteSheetFraming(project.StripCJK(masterPrompt), BoardFraming))
+	return project.DropHanRunes(BoardMarker + " — " + BoardLayoutClause + "\n\n" +
+		rewriteSheetFraming(project.DropHanRunes(masterPrompt), BoardFraming))
 }
 
 func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scene) string {

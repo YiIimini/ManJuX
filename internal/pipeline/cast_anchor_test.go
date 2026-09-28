@@ -66,8 +66,8 @@ func TestParseCastAnchorReadsTheAnchorTable(t *testing.T) {
 		t.Fatalf("锚表应解析出 %v，实际 %v", want, names)
 	}
 	// 描述块要带上"逐项照抄"的原文（后面当角色卡描述用）
-	if !strings.Contains(got[0].Desc, "金色黄铜机械光环状发饰") {
-		t.Errorf("角色描述要保留锚表原文，实际 %q", got[0].Desc)
+	if !strings.Contains(got[0].Raw, "金色黄铜机械光环状发饰") {
+		t.Errorf("角色描述要保留锚表原文，实际 %q", got[0].Raw)
 	}
 	// 正文里的普通括号不许被当成角色小节
 	for _, n := range names {

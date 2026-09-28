@@ -324,8 +324,14 @@ func TestLibraryPortraitPromptIsIdempotent(t *testing.T) {
 // 否则一个写实脸的库资产被复用到动画项目里,又变成"两张脸"。
 func TestCharactersFromLibraryShareHouseStyle(t *testing.T) {
 	lib := LibraryPortraitPrompt("小凡", "十七岁少年", "mature young man in a coat")
-	if !strings.Contains(lib, animatedMediumImageBlock()) {
-		t.Error("库侧定妆照必须带项目侧同一份介质块(单一来源,不得各写一份)")
+	// 判据用**标记串**而不是整块文本：装配点现在会把中英对照整块清掉（`project.DropHanRunes`），
+	// 拿 `animatedMediumImageBlock()` 的完整文本去比，比的是"连中文对照都要在" ——
+	// 那与"中文不许进画面提示词"直接打架。标记串是英文、且是"这一段在不在"的唯一稳定凭据。
+	if !strings.Contains(lib, MediumMarker) {
+		t.Errorf("库侧定妆照必须带项目侧同一份介质块(单一来源,不得各写一份)，缺标记 %q:\n%s", MediumMarker, lib)
+	}
+	if project.CountCJK(lib) != 0 {
+		t.Errorf("库侧定妆照进模型前不得残留汉字（会被当成要画的字）:%s", lib)
 	}
 }
 

@@ -93,6 +93,48 @@ var reSpaceRun = regexp.MustCompile(`\s+`)
 // reLeadingJunk 结果开头的孤立标点/空白（整段中文被丢弃后会留下 " . ..." 这类残渣）。
 var reLeadingJunk = regexp.MustCompile(`^[\s.,;:、，。；：\-—)]+`)
 
+// reEmptyParens 删空括号（逐字删汉字后会留下 `(: )`、`( )` 这类残渣）。
+var reEmptyParens = regexp.MustCompile(`[（(]\s*[:：]?\s*[）)]`)
+
+// reCNMirror 平台提示词里的**中英对照块**：`(中文对照:……)`（半角/全角括号与冒号都认）。
+//
+// 【两处必须注意】
+//  1. **对照块自己带括号**：正文里就有 `(旧木/纸/丝/锦/铜/漆/陶/湿石)` 这种内层括号，所以
+//     不能写成"遇到第一个右括号就收"—— 那样只删掉一半，剩下的残渣（实测 `, ; **** ****, )`）
+//     既没信息、又白占注意力，还会**破坏幂等**（残渣里空格数每次压缩结果不同，
+//     `TestPortraitPromptIsIdempotent` 就是被这一个空格咬红的）。用 `[^\n]*[)）]` 贪婪取到
+//     **行内最后一个**右括号。
+//  2. **不跨行**（`[^\n]`）：对照块永远收在它那一行末尾，跨行会连下一段的英文一起吃进去。
+//
+// 【为什么整块删，而不是删掉里面的汉字】逐字删汉字同样会留符号垃圾，理由同上。
+var reCNMirror = regexp.MustCompile(`[（(]\s*中文对照\s*[:：][^\n]*[)）]`)
+
+// DropHanRunes 清掉"中英对照"，**保留其余全部字符**（只摘中文，英文一个字不动）。
+//
+// 【与 StripCJK 的分界 —— 2026-09-28 实测出来的】
+//   - `StripCJK` 是**按句丢弃**：一句里只要含汉字，整句都不留。它服务的是"卡原文里混进来的
+//     中文注释"—— 那种句子的英文部分通常也没有保留价值。
+//   - 本函数服务**平台追加的块**：它们一律写成 `英文句子(中文对照:……)`。
+//
+// 用错哪一个的后果是实打实的：中英对照里中文句号后**没有空格**、不构成句边界，用 `StripCJK`
+// 清会把**整段**（连同英文）一起丢掉 —— 定妆照提示词里的风格块、发型纪律、姿态纪律全部归零
+// （`portrait_assembly_test.go`「风格块应恰好 1 份,实际 0」就是这么红的）。
+func DropHanRunes(text string) string {
+	if CountCJK(text) == 0 {
+		return text
+	}
+	// ① 中英对照**整块删**（写给维护者的，一个字都不该进画面提示词）
+	out := reCNMirror.ReplaceAllString(text, " ")
+	// ② 剩下还带汉字的（卡原文里混着的中文注释）逐字删
+	if CountCJK(out) > 0 {
+		out = removeHanRunes(out)
+	}
+	out = reCJKPunct.ReplaceAllString(out, " ")
+	out = reEmptyParens.ReplaceAllString(out, " ")
+	out = reSpaceRun.ReplaceAllString(out, " ")
+	return strings.TrimSpace(out)
+}
+
 // StripCJK 把一段**画面提示词**里的汉字清干净，供图像模型直接使用。
 //
 // ## 为什么需要它（而不是只靠契约门）

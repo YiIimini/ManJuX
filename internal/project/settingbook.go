@@ -191,8 +191,14 @@ func readSettingFileAny(dir, prefix string) (string, string) {
 }
 
 var (
-	// reCharHead 人物外形锚表的小节标题：`### 祁七（定位：主角。……）`。
-	reCharHead = regexp.MustCompile(`(?m)^###\s+(.+?)\s*$`)
+	// reCharHead 人物外形锚表的小节标题。
+	//
+	// 同一张表有**两种出现形态**，都必须认（2026-09-28 统一解析器时踩到）：
+	//   · 设定集文件里带井号          → `### 祁七（定位：主角。……）`
+	//   · 被作者整段塞进 source.txt 时通常不带 → `祁七（定位：主角。……）`
+	// 所以井号写成"0–6 个"；并且**括号里的定位说明要一起收进匹配** —— 它是 `Note` 的来源
+	// （选角色 kind 时要用："机器人／机甲形态" 与 "工具人" 不是一类）。
+	reCharHead = regexp.MustCompile(`(?m)^#{0,6}\s*([^\r\n（(#]{1,14}（定位[:：][^\r\n]*）?)\s*$`)
 	// reField 锚表里的 `- 键：值`（半角/全角冒号都要认）。
 	reField = regexp.MustCompile(`(?m)^\s*[-*]\s*([^:：]+)[:：]\s*(.*)$`)
 	// rePropHead 道具小节标题：`### 1 记名链` 或 `### 记名链`。

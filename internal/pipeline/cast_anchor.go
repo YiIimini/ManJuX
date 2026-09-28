@@ -30,44 +30,17 @@ import (
 // 这样才不会把叙述文本里偶然的括号当成角色表。
 var anchorTitleRe = regexp.MustCompile(`(?m)^([^\r\n（(]{1,14})（定位[:：]`)
 
-// AnchorChar 锚表里的一个角色：名字 + 那一整块描述（逐项照抄用的原文）。
-type AnchorChar struct {
-	Name string
-	Desc string
-}
-
-// ParseCastAnchor 从源文本里解析【人物外形锚表】；没有这张表就返回 nil。
+// ParseCastAnchor 从**源文本**里解析【人物外形锚表】；没有这张表就返回 nil。
 //
-// 解析纪律：① 源文本里必须**出现"人物外形锚表"字样**（否则不认，避免把普通文本里
-// 偶然的"某某（定位：…）"当角色）；② 每个角色取"标题行 + 其后到下一个标题之前"的整块，
-// 那就是要逐项照抄的原文；③ 同名只保留第一次出现的那块。
-func ParseCastAnchor(src string) []AnchorChar {
-	if !strings.Contains(src, "人物外形锚表") {
-		return nil
-	}
-	hits := anchorTitleRe.FindAllStringSubmatchIndex(src, -1)
-	if len(hits) == 0 {
-		return nil
-	}
-	var out []AnchorChar
-	seen := map[string]bool{}
-	for i, m := range hits {
-		name := strings.TrimSpace(src[m[2]:m[3]])
-		if name == "" || seen[name] {
-			continue
-		}
-		end := len(src)
-		if i+1 < len(hits) {
-			end = hits[i+1][0]
-		}
-		block := strings.TrimSpace(src[m[0]:end])
-		if len([]rune(block)) < 20 {
-			continue // 太短的块不是角色小节（防误命中）
-		}
-		seen[name] = true
-		out = append(out, AnchorChar{Name: name, Desc: block})
-	}
-	return out
+// 解析本体与设定集读取**共用 `project.ParseCharAnchor`**：同一张表有两种出现位置 ——
+// 技能侧的 `设定集/人物外形锚表.md`，以及被作者整段塞进 `source.txt` 的那一份 ——
+// 两处格式相同，**不能再各写一套解析**（写两套的后果是改了一处、另一处静默失效；
+// 平台已经因为"两套口径"栽过好几次，见 docs/审计-2026-09-28）。
+//
+// 解析纪律（都在 project.ParseCharAnchor 里）：源文本必须**出现"人物外形锚表"字样**；
+// 只认 `名字（定位：…）` 这种小节标题，正文里的普通括号不算；同名只留第一次出现的那块。
+func ParseCastAnchor(src string) []project.SettingChar {
+	return project.ParseCharAnchor(src)
 }
 
 // AnchorCardID 锚表补出来的角色卡 id：`char_` + 名字哈希。
@@ -107,12 +80,103 @@ func EnsureAnchorCast(plan *project.Plan, src string) []string {
 		plan.Characters = append(plan.Characters, project.Character{
 			ID:          AnchorCardID(a.Name),
 			Name:        a.Name,
-			Description: a.Desc,
+			Description: a.Raw,
+			// **英文画图提示词**：没有它，出图时模型拿不到任何外貌依据（用户报的
+			// 「中年人渲染出来跟个小年轻一样」就是这么来的）。见 anchorImagePrompt 的说明。
+			ImagePrompt: anchorImagePrompt(a),
 		})
 		have[normCastName(a.Name)] = true
 		added = append(added, a.Name)
 	}
 	return added
+}
+
+// anchorImagePrompt 从锚表字段拼出**英文**画图提示词（确定性翻译，不调模型）。
+//
+// 【2026-09-28 用户报「中年人渲染出来跟个小年轻一样」—— 根因就在这里】
+// 上一版 `EnsureAnchorCast` 补出来的卡**只有中文 description**，`image_prompt` 是空的 ——
+// 而出图装配只吃英文提示词：模型拿不到任何外貌依据（年龄、头身比全没有），于是自由发挥，
+// 把 58–66 岁的老拾荒人画成了小年轻。同一份 plan.json 里两类卡一眼可分：
+//
+//	· LLM 直出的卡    → "a stocky man **in his forties**" ✓
+//	· 锚表补齐的卡    → image_prompt 空 ❌
+//
+// 锚表的这几个字段是**受控取值**（年龄给岁数区间、比例锚给"8 头身"），所以能确定性译成英文；
+// 余下的自由文本字段（脸型/眉眼/服装…）保留在中文 `description` 里，由后续的
+// 「②人物道具提取」专职会话译写 —— 那一步才是给它们做跨语言改写的地方，
+// 这里只保证"出图起码知道这个人多大、多高"。
+func anchorImagePrompt(ch project.SettingChar) string {
+	var parts []string
+	if name := strings.TrimSpace(ch.Name); name != "" {
+		parts = append(parts, "a Chinese period-film character")
+	}
+	if age := anchorAgePhrase(ch.Field("年龄")); age != "" {
+		parts = append(parts, age)
+	}
+	if ratio := strings.TrimSpace(ch.Field("比例锚_机器")); ratio != "" {
+		parts = append(parts, headsTallPhrase(ratio))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, ", ")
+}
+
+// reAgeRange 锚表里的年龄区间（"58–66 岁"、"17–19 岁"；连字符可能是 – — ~ -）。
+var reAgeRange = regexp.MustCompile(`(\d{1,3})\s*[–—~\-]\s*(\d{1,3})`)
+
+// reAgeSingle 单值年龄（"35 岁上下"、"四十上下"没有数字，那种走词表）。
+var reAgeSingle = regexp.MustCompile(`(\d{1,3})\s*岁`)
+
+// anchorAgePhrase 把锚表的"年龄"字段译成英文短语；取不到数字时退回年龄档位词。
+func anchorAgePhrase(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if m := reAgeRange.FindStringSubmatch(raw); m != nil {
+		return "aged " + m[1] + " to " + m[2]
+	}
+	if m := reAgeSingle.FindStringSubmatch(raw); m != nil {
+		return "aged about " + m[1]
+	}
+	// 没有数字（"中年偏青"、"老年"）：按档位词给一个**明确的年龄尺度**，
+	// 否则模型会按训练集里最省事的"年轻好看"回落 —— 那正是用户报的问题。
+	switch {
+	case strings.Contains(raw, "老年") || strings.Contains(raw, "花甲"):
+		return "an elderly person, clearly past sixty"
+	case strings.Contains(raw, "中年"):
+		return "a middle-aged person, around forty or older"
+	case strings.Contains(raw, "青年"):
+		return "a young adult in their twenties"
+	case strings.Contains(raw, "少年") || strings.Contains(raw, "少女"):
+		return "a teenager"
+	case strings.Contains(raw, "儿童") || strings.Contains(raw, "孩童"):
+		return "a child"
+	}
+	return ""
+}
+
+// reHeads 锚表比例锚的取值形态（"8 头身"、"7.5 头身"）。
+var reHeads = regexp.MustCompile(`(\d+(?:\.\d+)?)\s*头身`)
+
+// headsTallPhrase 把"7.5 头身"译成 "seven and a half heads tall" / "eight heads tall"。
+//
+// 保留中文原文里的**头身数**，不做四舍五入 —— 头身比是"这个人看起来多高"的硬指标，
+// 而锚表明写"全书统一用 7.5 / 8 两档，不许第三种"。
+func headsTallPhrase(raw string) string {
+	m := reHeads.FindStringSubmatch(raw)
+	if m == nil {
+		return ""
+	}
+	en := map[string]string{
+		"6": "six", "6.5": "six and a half", "7": "seven", "7.5": "seven and a half",
+		"8": "eight", "8.5": "eight and a half", "9": "nine",
+	}[m[1]]
+	if en == "" {
+		return m[1] + " heads tall"
+	}
+	return en + " heads tall"
 }
 
 // normCastName 名字归一（去空白与常见分隔标点），只用于"是不是同一个角色"的对账。
