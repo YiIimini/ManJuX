@@ -373,6 +373,9 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		// 而交付是 1080×1920。0/0 = 按画幅自动(compose.deliverSize 是唯一判据点)。
 		DeliverWidth: p.DeliverWidth, DeliverHeight: p.DeliverHeight,
 		Transition: p.Transition, BurnSubtitles: p.BurnSubtitles,
+		// 单条 BGM（项目参数 audio.bgm）：官方 qc-checklist STEP 8 要求成片一条连续配乐，
+		// 而不是每镜各带一段（平台此前恰是后者，30+ 片段拼起来每刀都在换调）。
+		BGM:          c.bgmPathOf(proj),
 		SubtitleSize: p.SubtitleSize, Loudness: p.Loudness, FadeSec: fade,
 		// 字幕下边距(避开平台底部 UI 安全区):吃的是**交付高度**,
 		// 因为字幕是在交付缩放之后烧的。
@@ -413,4 +416,19 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		}
 	}
 	return nil
+}
+
+// bgmPathOf 取该集的单条配乐路径（项目参数 audio.bgm；相对路径按项目目录解析）。
+//
+// 空 = 不铺配乐（compose 会如实播报"成片未铺 BGM"，见 compose.BGMNote）。
+// 相对路径按**项目目录**解析：用户把音乐文件丢进那一集的目录即可，不必写绝对路径。
+func (c *Coordinator) bgmPathOf(proj *project.Project) string {
+	raw := strings.TrimSpace(proj.Config.Params.Assemble.BGM)
+	if raw == "" {
+		return ""
+	}
+	if filepath.IsAbs(raw) {
+		return raw
+	}
+	return filepath.Join(c.store.Dir(proj.ID), raw)
 }

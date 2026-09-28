@@ -48,8 +48,11 @@ type Params struct {
 	// 项目走这条,行为与解耦之前完全一致)。
 	DeliverWidth, DeliverHeight int
 	Transition                  string // cut / fade / dissolve
-	BurnSubtitles               bool
-	SubtitleSize                int // 字号(屏高百分比)
+	// BGM 成片的**单条**配乐文件路径（项目参数 audio.bgm）。
+	// 空 = 不铺配乐（片段里也不再各带各的：这是官方 qc-checklist 的口径，见 bgm.go）。
+	BGM           string
+	BurnSubtitles bool
+	SubtitleSize  int // 字号(屏高百分比)
 	// SubtitleMarginV 字幕下边距(屏高百分比;0 = 默认 15%)。
 	//
 	// 为什么要抬到 15%(对标实测):抖音/红果在画面底部盖着一层平台 UI,创作者侧口径是
@@ -287,6 +290,21 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 
 	chain, _, note := prepareAudio(ctx, f, master, p)
 	res.AudioNotes = append(res.AudioNotes, note)
+	// 单条 BGM 铺底 + 人声闪避（官方 qc-checklist STEP 8：成片一条连续 BGM，片段里不各带配乐）。
+	// 独立成一步、只在设了 audio.bgm 时参与：没设就完全走原路（零风险）。
+	if strings.TrimSpace(p.BGM) != "" {
+		if mixed, bnote := mixBGMBed(ctx, f, master, p.BGM, total, master+".bgm.wav"); bnote != "" {
+			res.AudioNotes = append(res.AudioNotes, bnote)
+			if onProgress != nil {
+				onProgress(90, bnote)
+			}
+			if strings.HasPrefix(bnote, "🎵") {
+				master = mixed
+			}
+		}
+	} else {
+		res.AudioNotes = append(res.AudioNotes, BGMNote)
+	}
 	if onProgress != nil && note != "" {
 		onProgress(88, note)
 	}

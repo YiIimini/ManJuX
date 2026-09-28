@@ -302,6 +302,13 @@ const sysHard = `## HARD CONSTRAINTS
 - Consistency: same character keeps identical appearance words every shot; same scene name reused.
 - Sound: dialogue only via <d> tags; ambience in overall_soundscape; music in non_diegetic_music; never duplicate.
 - Music (official §4.7): non_diegetic_music describes music that only the audience can hear — instruments, tempo, rhythm, dynamic changes; write "N/A" when there is none. Do not use abstract mood words, do not explain the score's emotional function, and do not score every shot: continuous background music buries the dialogue and makes every episode sound the same. Singing/instruments/radio audible to the characters are DIEGETIC and belong in the multimodal description instead.
+- **MUSIC IS NOT WRITTEN PER SHOT (PLATFORM RULE, taken from the official qc-checklist STEP 8)**: write
+  「non_diegetic_music: N/A」for EVERY shot. Official wording: "Do not generate BGM per shot" — one
+  continuous BGM track is matched to the assembled film instead. Reason: every clip is generated
+  independently, so per-shot music means the finished film changes tune at every cut (30+ clips = 30+
+  tunes fighting each other). Ambience still belongs in 「overall_soundscape」— that one IS per shot and
+  should be written well. The platform beds ONE music track at compose time (project param audio.bgm),
+  ducked under the dialogue.
 - Soundscape discipline (the finished video must not sound noisy): stay at the LOW end of the official 1-4 sentence range — 1-2 short sentences describing a QUIET, low-level background bed (e.g. "distant street hum, faint wind") is usually right. Do not stack many simultaneous sound sources, do not ask for loud machinery, crowd chatter, alarms or continuous heavy noise: constant loud ambience buries the dialogue and reads as hiss in the final mix. Silence or near-silence is a perfectly good choice where it fits.
 - Screen-visible text must be quoted exactly and kept in original language.`
 

@@ -150,3 +150,32 @@ func containsAny(s string, subs ...string) bool {
 	}
 	return false
 }
+
+// musicSectionOf 取 `non_diegetic_music:` 段的**第一行有效内容**（官方六段之一）。
+//
+// 【为什么只取第一行】sectionOf 返回的是"标记之后到下一个段落标题"的整块 —— 里面还包括
+// 平台在正文末尾追加的排除句/亮度守卫句（那些不是配乐内容）。按整块判会把 N/A 判成"有配乐"，
+// 实测就是这么被自己的夹具咬住的。
+func musicSectionOf(h3 string) (string, bool) {
+	sec, ok := sectionOf(h3, "non_diegetic_music")
+	if !ok {
+		return "", false
+	}
+	sec = strings.TrimLeft(sec, ":： \t")
+	// 只取**第一个词**：实测配乐段与平台追加的守卫句常在同一行（"N/A No watermarks, …"），
+	// 按整行判会把 N/A 判成"有配乐"。
+	fields := strings.Fields(sec)
+	if len(fields) == 0 {
+		return "", true
+	}
+	return fields[0], true
+}
+
+// isNA 这一段是不是"没有"（N/A / n/a / 空 / 无）。
+func isNA(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.Trim(s, ".。"))) {
+	case "", "n/a", "na", "none", "无", "无配乐":
+		return true
+	}
+	return false
+}

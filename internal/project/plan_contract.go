@@ -1267,6 +1267,27 @@ func ValidatePlan(p *Plan) []Issue {
 	}
 	// ── 镜头数与片段时长（用户 2026-09-28：「为什么还是存在那么多的镜头？」）──────────────
 	//
+	// ── 片段里不许各带配乐（官方 qc-checklist STEP 8：「Do not generate BGM per shot」）────
+	//
+	// 平台此前每镜都要求写 non_diegetic_music —— 每个片段里 H3 自己生成一段曲子，30+ 个片段
+	// 拼起来就是 30+ 段各弹各的，每个接缝都在换调（听感"不对"的一大来源）。
+	// 现在口径：片段里一律 N/A，配乐由合片阶段铺**一条连续 BGM**（compose/bgm.go）。
+	// 环境声不在此列：overall_soundscape 本来就该逐镜写，那是画面里的声音。
+	if len(p.Shots) > 0 {
+		var withMusic []string
+		for _, sh := range p.Shots {
+			if sec, ok := musicSectionOf(sh.H3Prompt); ok && !isNA(sec) {
+				withMusic = append(withMusic, fmt.Sprintf("#%d", sh.ID))
+			}
+		}
+		if len(withMusic) > 0 {
+			add("warn", "plan.music",
+				"%d 镜在片段里写了配乐（%s）—— 官方终检要求「**Do not generate BGM per shot**」："+
+					"每个片段是独立生成的，逐镜配乐会让成片在每个接缝处换调；配乐应由合片阶段铺**一条连续 BGM**"+
+					"（项目参数 assemble.bgm 指向音乐文件）。片段里写 N/A，环境声照旧写 overall_soundscape",
+				len(withMusic), strings.Join(firstN(withMusic, 6), "、"))
+		}
+	}
 	// ── 核心提炼（用户 2026-09-28：「LLM 需要抓住文字内容中的重点总结输出核心分镜脚本，
 	// 而不是一味的照搬原文内容」）────────────────────────────────────────────────
 	//

@@ -166,6 +166,9 @@ func (q QCParams) ProportionCheckOn() bool {
 
 // AssembleParams 合成阶段(assemble)参数。
 type AssembleParams struct {
+	// BGM 这一集的**单条**配乐文件（相对项目目录或绝对路径；空 = 不铺配乐）。
+	// 官方 qc-checklist STEP 8：成片是一条连续 BGM，**片段里不各带各的**（见 compose/bgm.go）。
+	BGM           string  `json:"bgm"`
 	Transition    string  `json:"transition"`     // cut / fade / dissolve
 	BurnSubtitles bool    `json:"burn_subtitles"` // 烧录字幕
 	Loudness      int     `json:"loudness"`       // 目标响度 LUFS(默认 -16)
