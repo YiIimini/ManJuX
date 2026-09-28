@@ -619,6 +619,26 @@ func (c *Coordinator) generateMusic(proj *project.Project, plan *project.Plan, n
 		}
 		return "", "现场生成也不成：" + why
 	}
+	// **响度归一**（2026-09-28 实测驱动，别删）：ACE-Step 直出的曲子**极轻** ——
+	// 实测 60 秒的产物 mean_volume -63 dB / max_volume -53 dB（正常混音在 -30～-10），
+	// 也就是"文件是好的、听起来等于没有"。铺到成片里会被母轨彻底压住，等于没配乐。
+	// 这里按与母轨**同一套** loudnorm 口径拉齐（I=母轨目标、TP=-1.5、LRA=11），
+	// 并**测量前后响度**：拉不上来就如实报错，不把一个听不见的文件塞进成片。
+	if c.ff != nil {
+		before, after, nerr := normalizeBGM(ctx, c.ff, path)
+		if nerr != nil {
+			c.emit(proj.ID, PhaseAssemble, 0, "warn", 2,
+				"⚠ 配乐响度归一失败（该曲子可能极轻，铺进成片会像没有配乐）:%v", nerr)
+		} else {
+			c.emit(proj.ID, PhaseAssemble, 0, "info", 2,
+				"♪ 配乐响度已归一：%.1f dB → %.1f dB（ACE-Step 直出极轻，不归一等于没配乐）", before, after)
+			if after < -30 {
+				c.emit(proj.ID, PhaseAssemble, 0, "warn", 2,
+					"⚠ 配乐归一后仍然很轻（%.1f dB），铺进成片可能听不出来 —— 建议换一个配乐需求描述重生成", after)
+			}
+		}
+	}
+
 	// 入库（按需求命名，来源记成 ace-step，便于日后追它是谁生成的）
 	if c.lib != nil {
 		if _, perr := c.lib.Put("music", name, brief, tags, path, proj.ID, "ace-step"); perr != nil {

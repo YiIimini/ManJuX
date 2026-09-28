@@ -49,6 +49,11 @@ func TestEveryAssetSourceHasALabel(t *testing.T) {
 	// 只认"看起来像来源"的取值:小写、无空格、无路径分隔符 —— 避免把
 	// 提示词或路径误当来源。
 	re := regexp.MustCompile(`(?i)(?:source\s*[:=]\s*|,\s*)(?:")([a-z][a-z0-9-]{1,24})(?:")`)
+	// .Put(...) 这行的**最后一个**字符串才是来源（签名：(kind, name, desc, prompt, img, 项目名, 来源)）。
+	// 第一版把整行所有引号串都当来源，于是 `Put(..., "verify-project", "ace-step")` 里的
+	// **项目名**被误判成未登记的来源（2026-09-28 被 tools/musicverify 撞出来）。
+	// 守卫自己的注释早就写着"library.Put 的最后一个参数"——注释对、实现粗。
+	putLastArg := regexp.MustCompile(`\.Put\([^)]*,\s*"([a-z][a-z0-9-]{1,24})"\s*\)`)
 	known := map[string]bool{}
 	for _, e := range assetSourceNames {
 		known[e.Key] = true
@@ -70,6 +75,26 @@ func TestEveryAssetSourceHasALabel(t *testing.T) {
 			isSourceLine := strings.Contains(strings.ToLower(ln), "source:") || strings.Contains(strings.ToLower(ln), "source =") ||
 				strings.Contains(ln, ".Put(")
 			if !isSourceLine {
+				continue
+			}
+			// .Put(...) 这行只取**最后一个**字符串参数当来源（其余参数是 kind/名字/描述/提示词/图片/项目名）
+			if strings.Contains(ln, ".Put(") {
+				putSrc := ""
+				if m := putLastArg.FindStringSubmatch(ln); m != nil {
+					putSrc = m[1]
+				}
+				for _, m := range re.FindAllStringSubmatch(ln, -1) {
+					v := m[1]
+					if v != putSrc {
+						continue // 不是最后一个参数 ⇒ 是项目名之类，不是来源
+					}
+					if !known[v] {
+						if _, dup := seen[v]; !dup {
+							seen[v] = path
+							missing = append(missing, v+"  ("+path+":"+itoa4(i+1)+")")
+						}
+					}
+				}
 				continue
 			}
 			for _, m := range re.FindAllStringSubmatch(ln, -1) {
