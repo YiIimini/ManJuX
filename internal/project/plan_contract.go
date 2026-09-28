@@ -643,8 +643,26 @@ func ValidatePlan(p *Plan) []Issue {
 				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
 		}
 
+		// ── 「片段 → 小镜头」两层结构（2026-09-28 用户架构）────────────────────
+		//
+		// 判据在 cuts.go。用户原话：「一个分镜里可以包含多个小分镜，小分镜里包含运镜」——
+		// 此前小镜头只是正文里的字符串，**没有任何结构化字段**，于是"这一片段切了几刀"
+		// 这件事查不动、改不了、界面上也摆不出来，而它正是用户反复点的"拖沓"的成因。
+		if ids := CutCoverageIssues(p); len(ids) > 0 {
+			add("warn", "plan.shots",
+				"%d 个片段超过 4 秒却**没切小镜头**（%s）—— 用户文件（《【额外】仿真人10S分镜头指令》"+
+					"《五、最新豆包十秒指令》）要求片段内切 %d–%d 个小镜头、每镜 %.1f–%.1f 秒。"+
+					"一镜到底正是「全程慢动作」体感的来源：一个 5 秒片段从头演一个连续动作，中间没有切点",
+				len(ids), strings.Join(firstN(ids, 6), "、"), CutPlanMinCuts, CutPlanMaxCuts,
+				CutPlanMinSeconds, CutPlanMaxSeconds)
+		}
+		for _, msg := range CutIssues(p) {
+			add("warn", "plan.shots", "%s", msg)
+		}
+
 		// ── 契约门第二批（2026-09-28）────────────────────────────────────────
 		//
+		// 判据在 `contract_gates.go`，文案在这里（gatecat 扫字面格式串生成门目录）。		//
 		// 判据在 `contract_gates.go`，文案在这里（gatecat 扫字面格式串生成门目录）。
 		if ids := CutVerbIssues(p.Shots); len(ids) > 0 {
 			add("warn", "plan.shots",

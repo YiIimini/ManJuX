@@ -85,17 +85,43 @@ const SampleStyleSentence = "A cinematic GUOFENG period film, real materials, so
 // 之后，原先那些只有一两段的缩水夹具**全都会被抓**——这不是门太严，是夹具不像真东西
 // （本仓的老规矩：夹具必须照真实形态写，干净的夹具会给出假的绿灯）。
 func compliantH3(body string) string {
+	// **内部切镜必须无条件补**：原来这段只在"body 里还没有 detailed_description"时才生效，
+	// 而 `samplePlan` 恰好含 `detailed_description:` —— 于是那个 5 秒的夹具**一直是"一镜到底"**，
+	// 直到「片段 → 小镜头」两层结构的门把它咬出来（`CutCoverageIssues` 报「5 秒 0 刀」）。
+	// 夹具必须照真实形态写：用户文件要求 4 秒以上的片段切 2–4 刀、每刀 1.5–4 秒。
+	// 缺 `detailed_description` 时**插在第一个 `[Shot]` 之前**（官方六段顺序固定，
+	// 追加到末尾就是段序错）。这一项**独立判断**，与"有没有 [Shot 1]"无关 ——
+	// 嵌套进下面那个分支会让"自带 [Shot 1] 但缺段"的夹具漏补（当天就栽过）。
 	if !strings.Contains(body, "detailed_description:") && !strings.Contains(body, "integrated_multimodal_description:") {
-		// 夹具照**真实形态**写：超过单镜上限的片段必须带内部切镜（用户《仿真人10S分镜头指令》：
-		// 每片段 2–4 个小镜头、每镜 1.5–4 秒），否则会被"一镜到底"的节奏门抓住 ——
-		// 那不是门太严，是夹具不像真东西（这一周第四次栽在同一件事上）。
-		body += "\n\ndetailed_description:\n" + SampleStyleSentence + "\n[Shot 1] " +
-			ViewAerial45 + "; " + PlanEstablishingExtra + "." +
-			// 基线也照官方 §4.2 写：只改距离/景别用**运镜**，不用 cut
-			// （规范原话：if only the distance or a slight angle needs to change, prefer CAMERA
-			//  MOTION over a cut）。原来写的 `the camera cuts closer` 不在五个切镜词里，
-			// 加了切镜白名单门之后当场被咬——咬得对。
-			"\n[Shot 2] At 00:02.500, the camera pushes in closer as he lifts the blade; a tighter frame on his hands."
+		if i := strings.Index(body, "[Shot "); i >= 0 {
+			body = body[:i] + "detailed_description:\n" + body[i:]
+		} else {
+			body += "\n\ndetailed_description:"
+		}
+	}
+	// **内部切镜要分别检查两镜**：
+	//   · body 里一个 `[Shot]` 都没有 → 补两镜；
+	//   · body 已有 `[Shot 1]`（多数夹具就是）→ **只补 `[Shot 2]`**。
+	//
+	// 原来这段只检查"有没有 `detailed_description`"，于是 `samplePlan`（自带 detailed_description
+	// 与 [Shot 1]）从不补切镜，**一直是"一镜到底"的假夹具**；而按"只看 `[Shot 2]` 在不在"补的
+	// 第一版又会在已有 `[Shot 1]` 的夹具里补出**第二个 `[Shot 1]`**（两个都从 0 开始）——
+	// 两层结构的解析器判定"时间点不递增"，整份正文被弃，表现为所有夹具都读不出小镜头。
+	// 教训仍是同一条：夹具要照真实形态写，"补丁式的夹具"最容易在这上面骗过所有人。
+	if !strings.Contains(body, "[Shot 1]") {
+		// 风格句必须在第一个 `[Shot]` **之前**（官方 §5.2：写进首镜等于只有那一镜是这部片的画风）
+		if !strings.Contains(body, SampleStyleSentence) {
+			body += "\n" + SampleStyleSentence
+		}
+		body += "\n[Shot 1] " + ViewAerial45 + "; " + PlanEstablishingExtra + "."
+	}
+	if !strings.Contains(body, "[Shot 2]") {
+		// 基线也照官方 §4.2 写：只改距离/景别用**运镜**，不用 cut
+		// （规范原话：if only the distance or a slight angle needs to change, prefer CAMERA
+		//  MOTION over a cut）。原来写的 `the camera cuts closer` 不在五个切镜词里，
+		// 加了切镜白名单门之后当场被咬——咬得对。
+		body += "\n[Shot 2] At 00:02.000, the camera pushes in closer as he lifts the blade; " +
+			"a tighter frame on his hands."
 	}
 	if _, ok := PlanViewIn(body); !ok {
 		body += "\n" + ViewAerial45 + "."

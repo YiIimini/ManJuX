@@ -35,7 +35,15 @@ func cjkIssues(issues []Issue, sub string) []Issue {
 // 主视角/建立镜头串 —— 覆盖率类判据（§1.1）与本门无关，不该出现在这里的报告里。
 func cjkShotPlan(h3 string) *Plan {
 	p := samplePlan()
-	p.Shots[0].H3Prompt = compliantH3(h3)
+	// **以 `samplePlan` 那份已合规的正文为底**，只把要测的中文插进首镜。
+	//
+	// 为什么不再自己拼骨架（原来那版拼的是 subject_definitions + summary + retention_analysis
+	// + h3）：拼出来的东西**只覆盖到当天的门**，后来每加一道门（六段顺序、风格句位置、
+	// 保留标记、内部切镜…）它就被咬一次，而每次补都会牵动别处 —— 夹具比被测逻辑还难伺候。
+	// 本仓纪律是"一条规则一个击穿用例，别让别的规则混进来搅浑判据"：
+	// 拿一份**已经全绿**的正文当底，用例就只剩一个变量。
+	h3 = strings.ReplaceAll(h3, "[Shot 1]", "")
+	p.Shots[0].H3Prompt = strings.Replace(p.Shots[0].H3Prompt, "[Shot 1]", "[Shot 1] "+h3, 1)
 	return p
 }
 
