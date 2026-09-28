@@ -399,7 +399,31 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 渲染就取不到参考图、静默降级纯文生 —— 用户看到的是"同一角色逐镜换人"，界面上却
 	// 只有一句"资产就绪 N/N"。
 	ghosts := dropMissingAssets(c.store.Dir(proj.ID), assets)
-	if err := c.store.SaveAssets(proj.ID, assets); err != nil {
+
+	// **收尾不能用开场快照整体覆盖**（2026-09-29 数据完整性审计 #11）。
+	//
+	// 这个阶段要生成几十张图（几十分钟），而期间用户可以「重新生成定妆照」「上传资产」
+	// 「删除资产」—— 那几条 HTTP 路径**没有运行中护栏**（前端也只有部分按钮禁了），
+	// 而且它们已经改走按 key 合并写。如果这里拿开场那份 `assets` 整体覆盖回去：
+	//
+	//	· 用户刚重生成的脸被**回滚**成旧文件（渲染取参考图走 assets[...]，症状是"刚重生成完，
+	//	  渲出来还是旧脸"）；
+	//	· 用户**删掉**的条目会**复活**成鬼条目 —— 而且是在上面 `dropMissingAssets` 清理
+	//	  **之后**写进去的，那道保护直接失效。
+	//
+	// 所以改成：把本次**真正处理过/确实存在**的那些 key 合并进最新的表（`UpdateAssets`
+	// 在同一把项目锁内重读），而不是拿旧快照覆盖。删除的 key 不会被复活 —— 因为这里
+	// 只写"本次在手的条目"，不写"本次没见过的条目"。
+	written := map[string]project.Asset{}
+	for k, v := range assets {
+		written[k] = v
+	}
+	if err := c.store.UpdateAssets(proj.ID, func(cur map[string]project.Asset) error {
+		for k, v := range written {
+			cur[k] = v
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	if len(ghosts) > 0 {
