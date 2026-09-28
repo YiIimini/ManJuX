@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/YiIimini/ManJuX/internal/library"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -404,6 +405,17 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 			len(unknown))
 	}
 	p := proj.Config.Params.Assemble
+	// 配乐三级解析（显式文件 ＞ 资产库同需求条目 ＞ 无），并把结果**如实播报**：
+	// "用了哪来的配乐"必须让人看见 —— 配乐是最容易被静默忽略的一环（有成片 vs 没配乐，
+	// 听感差别巨大，而阶段日志此前不说这件事）。
+	bgm, bgmNote := c.bgmPathOf(proj, plan)
+	if bgmNote != "" {
+		lvl := "info"
+		if bgm == "" {
+			lvl = "warn"
+		}
+		c.emit(proj.ID, PhaseAssemble, 0, lvl, 2, "♪ 配乐:%s", bgmNote)
+	}
 	outDir := filepath.Join(c.store.Dir(proj.ID), "output")
 	_ = os.MkdirAll(outDir, 0o755)
 	// 转场时长:项目参数优先 → 设置页 render.fade_sec → 兜底 0.5(见 resolveFadeSec)
@@ -425,7 +437,7 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		Transition: p.Transition, BurnSubtitles: p.BurnSubtitles,
 		// 单条 BGM（项目参数 audio.bgm）：官方 qc-checklist STEP 8 要求成片一条连续配乐，
 		// 而不是每镜各带一段（平台此前恰是后者，30+ 片段拼起来每刀都在换调）。
-		BGM:          c.bgmPathOf(proj),
+		BGM:          bgm,
 		SubtitleSize: p.SubtitleSize, Loudness: p.Loudness, FadeSec: fade,
 		// 字幕下边距(避开平台底部 UI 安全区):吃的是**交付高度**,
 		// 因为字幕是在交付缩放之后烧的。
@@ -472,15 +484,39 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 //
 // 空 = 不铺配乐（compose 会如实播报"成片未铺 BGM"，见 compose.BGMNote）。
 // 相对路径按**项目目录**解析：用户把音乐文件丢进那一集的目录即可，不必写绝对路径。
-func (c *Coordinator) bgmPathOf(proj *project.Project) string {
-	raw := strings.TrimSpace(proj.Config.Params.Assemble.BGM)
-	if raw == "" {
-		return ""
+// bgmPathOf 解析这一集的配乐文件，按**三级优先级**：
+//
+//	① 显式文件 `assemble.bgm`（绝对路径，或相对**项目目录**的相对路径）—— 人指定的一律优先；
+//	② 资产库里**同需求**的配乐条目（`assemble.bgm_description` 归一后当条目名）——
+//	   这是 2026-09-28 用户要求的复用链：生成的配乐进库按需求管理，同样的需求直接拿现成的；
+//	③ 都没有 ⇒ 空（compose 会如实播报"成片未铺 BGM"，不假装有）。
+//
+// 【为什么复用放在②而不是"每次都重新生成"】配乐是**一次产出、反复可用**的东西：同一部戏的
+// 多集、同一系列的多个项目，需求描述往往一模一样。每次都重新生成既是浪费，又会让"同一部戏
+// 各集配乐不一样"—— 那恰恰是成片听感散掉的原因之一。
+//
+// 命中的来源会**如实播报**（复用 / 指定文件 / 无），不静默。
+func (c *Coordinator) bgmPathOf(proj *project.Project, plan *project.Plan) (string, string) {
+	p := proj.Config.Params.Assemble
+	if raw := strings.TrimSpace(p.BGM); raw != "" {
+		if filepath.IsAbs(raw) {
+			return raw, "项目参数指定的配乐文件"
+		}
+		return filepath.Join(c.store.Dir(proj.ID), raw), "项目参数指定的配乐文件"
 	}
-	if filepath.IsAbs(raw) {
-		return raw
+	brief := strings.TrimSpace(p.BGMDescription)
+	if brief == "" || c.lib == nil {
+		return "", ""
 	}
-	return filepath.Join(c.store.Dir(proj.ID), raw)
+	name := library.MusicEntryName(brief)
+	if name == "" {
+		return "", ""
+	}
+	if e, img, ok := c.lib.Match("music", name); ok && e != nil {
+		c.lib.BumpUsed("music", name)
+		return img, fmt.Sprintf("资产库复用配乐「%s」（同需求免重生成）", name)
+	}
+	return "", fmt.Sprintf("资产库没有这份配乐需求「%s」", name)
 }
 
 // shotEstablishesScene 这一镜是不是它所在场景的**建立镜**（该场景第一次出现的镜）。

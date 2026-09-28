@@ -198,7 +198,14 @@ func entryRelatedImages(dir string) []string {
 //	scenes     场景:一张场景图
 //	props      道具:器物/机关/法宝这类既不是角色、也不是场景的东西
 //	           (用户 2026-09-26:「资产库 新增一个 道具 管理页面」)
-var Kinds = []string{"characters", "scenes", "props"}
+//
+// Kinds 库里的分类。**music 是 2026-09-28 新增**（用户要求：生成的背景音乐也进资产库管理，
+// 后续遇到相同的配乐需求直接复用）。
+//
+// 为什么音乐要跟角色/场景放同一个库：它们的**生命周期一样** —— 都是"一次产出、跨集跨项目反复用"，
+// 而平台既有的库已经解决了复用计数、条目损坏排查、跨项目覆盖留痕这些事。
+// 单独再写一套音乐库等于把这些事重做一遍，还会让"资产"这个词在界面上分裂成两处。
+var Kinds = []string{"characters", "scenes", "props", "music"}
 
 // validKind 是否为已知分类。
 func validKind(kind string) bool {
@@ -222,6 +229,8 @@ func KindLabel(kind string) string {
 		return "场景"
 	case "props":
 		return "道具"
+	case "music":
+		return "配乐"
 	}
 	return "资产"
 }
@@ -374,6 +383,9 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 		imgName = "portrait" + ext
 	case "props":
 		imgName = "prop" + ext
+	case "music":
+		// 音乐条目的主文件叫 track.*（翻库时一眼能认出这是曲子，不是图）
+		imgName = "track" + ext
 	}
 	_ = os.MkdirAll(dir, 0o755)
 	// 清掉旧扩展图(换格式时避免双图)
@@ -831,4 +843,38 @@ func (l *Library) ImagePath(kind, name string) (string, error) {
 func md5hex(b []byte) string {
 	sum := md5.Sum(b)
 	return hex.EncodeToString(sum[:])[:16]
+}
+
+// MusicEntryName 把"配乐需求"归一成一个库条目名（音乐条目按**需求**存，名字就是需求本身）。
+//
+// 为什么用需求而不是"曲名"（2026-09-28 用户要求：生成的背景音乐进资产库管理、后续遇到
+// 相同的配乐需求直接复用）：配乐没有天然的"名字" —— 决定它能不能复用的是**这段需求**
+// （风格/情绪/乐器/节奏 + 项目画风）。同一份需求再出现时，直接命中同一条目、免重生成。
+//
+// 归一规则：去首尾空白、把连续空白与常见分隔符并成一个 "·"、截断到 60 字符。
+// 归一必须**稳定**：同一句需求在不同集、不同项目里要算出同一个名字，否则复用永远不命中。
+func MusicEntryName(brief string) string {
+	s := strings.TrimSpace(brief)
+	if s == "" {
+		return ""
+	}
+	// **先把所有分隔性标点换成空格，再按"词"合并**——不能把标点直接换成 "·"：
+	// 那样 "，x" 会产出两个分隔符（"··x"），导致"低沉竹笛与弦乐，压抑"与
+	// "低沉竹笛与弦乐, 压抑"归一成两个不同的名字 ⇒ **复用永远不命中**
+	// （测试 TestMusicEntryNameIsStable 就是为这条写的，第一版真被它咬住了）。
+	// 用循环而不是 NewReplacer：(k,v) 成对写容易数错，第一版就是这么 panic 的
+	// （strings.NewReplacer: odd argument count）。
+	for _, sep := range []string{
+		"，", "。", "、", "；", "：", "！", "？",
+		",", ".", ";", ":", "!", "?",
+		"\r", "\n", "\t",
+	} {
+		s = strings.ReplaceAll(s, sep, " ")
+	}
+	s = strings.Join(strings.Fields(s), "·")
+	r := []rune(s)
+	if len(r) > 60 {
+		s = string(r[:60])
+	}
+	return strings.Trim(s, "·")
 }

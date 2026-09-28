@@ -168,12 +168,19 @@ func (q QCParams) ProportionCheckOn() bool {
 type AssembleParams struct {
 	// BGM 这一集的**单条**配乐文件（相对项目目录或绝对路径；空 = 不铺配乐）。
 	// 官方 qc-checklist STEP 8：成片是一条连续 BGM，**片段里不各带各的**（见 compose/bgm.go）。
-	BGM           string  `json:"bgm"`
-	Transition    string  `json:"transition"`     // cut / fade / dissolve
-	BurnSubtitles bool    `json:"burn_subtitles"` // 烧录字幕
-	Loudness      int     `json:"loudness"`       // 目标响度 LUFS(默认 -16)
-	Peak          float64 `json:"peak"`           // 峰值归一(默认 0.92 → loudnorm 的 TP≈-0.72 dBTP)
-	SubtitleSize  int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 4)
+	BGM string `json:"bgm"`
+	// BGMDescription 这一集**配乐需求的自然语言描述**（风格/情绪/乐器/节奏，例：
+	// "低沉竹笛与弦乐，压抑，慢速，碑下独白段落"）。
+	//
+	// 用途（2026-09-28 用户要求："生成的背景音乐也要做成资产库里进行管理，后续存在相同的可以直接复用"）：
+	// 配乐按**需求**进资产库，同一份需求在不同集/不同项目里会算出同一个条目名，命中即免重生成。
+	// 解析优先级见 pipeline 的 bgmPathOf：显式文件 assemble.bgm ＞ 库内同需求条目 ＞（将来）现场生成。
+	BGMDescription string  `json:"bgm_description,omitempty"`
+	Transition     string  `json:"transition"`     // cut / fade / dissolve
+	BurnSubtitles  bool    `json:"burn_subtitles"` // 烧录字幕
+	Loudness       int     `json:"loudness"`       // 目标响度 LUFS(默认 -16)
+	Peak           float64 `json:"peak"`           // 峰值归一(默认 0.92 → loudnorm 的 TP≈-0.72 dBTP)
+	SubtitleSize   int     `json:"subtitle_size"`  // 字幕字号(屏高百分比,默认 4)
 	// SubtitleMarginV 字幕下边距(屏高百分比,默认 15)。
 	//
 	// 为什么是 15(红果/抖音对标 §1.7):平台在画面底部盖着 UI(进度条、账号信息条),
