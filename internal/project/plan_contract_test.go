@@ -52,6 +52,9 @@ func samplePlan() *Plan {
 			// 夹具照真实形态写：官方分镜表要求每个出场角色都有画面位置（Character Positions）
 			Positions: map[string]string{"char_a": "画面右三分之一、前景、面朝门外"},
 			ShotSize:  "中景", Camera: "slow push-in", Action: "他把柴刀搁在供桌上，站起来",
+			// 角度词必填（用户《五》：「角度**必填**」）—— 夹具照真实形态写，
+			// 缺这一栏时新的那条门会（正确地）报它。
+			AngleZH:  "平视，镜头缓缓推进",
 			View:     ViewAerial45,
 			EndState: "他站在供桌前，右手抬起指向门外，视线朝左前方，地面水渍未干",
 			HookType: "reveal",
@@ -138,6 +141,36 @@ func TestValidatePlanCleanSample(t *testing.T) {
 	if len(issues) != 0 {
 		t.Fatalf("合规样本不该有任何 issue(误拦比漏拦更糟),实际 %d 条:%v",
 			len(issues), PlanIssuesText(issues))
+	}
+}
+
+// 角度词**必填**（用户《五》：「运镜：[运动方式] + [角度词]（**角度必填**）」）。
+//
+// 【为什么要这条门】`AngleWordOK` 对空值直接放行（注释写"空值合法"），于是"角度必填"
+// 这条**从来没有机检** —— 分镜里这一栏大面积为空，契约一句话都不说。
+// 规范那句"按 WARN，不拒收"说的是**级别**（不判 fail），不是"不报"。
+func TestValidatePlanRequiresAngleWord(t *testing.T) {
+	p := samplePlan()
+	p.Shots[0].AngleZH = "" // 真实事故形态：这一栏空着
+	issues := ValidatePlan(p)
+	found := false
+	for _, is := range issues {
+		if strings.Contains(strings.Join(PlanIssuesText([]Issue{is}), " "), "没写机位角度词") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("镜头没写角度词时必须报出来（用户《五》要求必填），实际 issues：%v",
+			PlanIssuesText(issues))
+	}
+	// 反过来：写了合法角度词就不该报这一条
+	p2 := samplePlan()
+	p2.Shots[0].AngleZH = "低角度仰拍，镜头跟随"
+	for _, is := range ValidatePlan(p2) {
+		if strings.Contains(strings.Join(PlanIssuesText([]Issue{is}), " "), "没写机位角度词") {
+			t.Error("写了角度词还被报「没写」，是判据写反了")
+		}
 	}
 }
 

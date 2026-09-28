@@ -1209,9 +1209,18 @@ func ValidatePlan(p *Plan) []Issue {
 	// 三人同框不写前后关系则模型自己排（排出来的关系每一版都不一样）。
 	// 词表与判据在 spec_checks.go，这里只负责把它们接到契约上。
 	if len(p.Shots) > 0 {
-		var badAngle, banned, crowd []string
+		var badAngle, noAngle, banned, crowd []string
 		for _, sh := range p.Shots {
-			if !AngleWordOK(sh.AngleZH) {
+			// 角度词**必填**（用户《五》：「运镜：[运动方式] + [角度词]（**角度必填**），
+			// 例如"慢动作，低角度仰拍，镜头跟随"」）。
+			//
+			// 【2026-09-28 补】`AngleWordOK` 此前对**空值直接放行**（"空值合法"），
+			// 于是"角度词必填"这条**从来没有机检** —— 实测分镜里大量镜头这一栏是空的，
+			// 而契约一句话都不说。规范里那句"按 WARN，不拒收"说的是级别（不判 fail），
+			// 不是"不报"，所以这里按 warn 报，与规范不冲突。
+			if strings.TrimSpace(sh.AngleZH) == "" {
+				noAngle = append(noAngle, fmt.Sprintf("#%d", sh.ID))
+			} else if !AngleWordOK(sh.AngleZH) {
 				badAngle = append(badAngle, fmt.Sprintf("#%d「%s」", sh.ID, sh.AngleZH))
 			}
 			// 敏感词：查**会进渲染的**文本（正文 + 动作），卡片侧在下面单独查
@@ -1226,6 +1235,12 @@ func ValidatePlan(p *Plan) []Issue {
 			if len(sh.Characters) >= 3 && !hasAnyMarker(sh.H3Prompt+" "+sh.Action, PlanCrowdOrderMarkers) {
 				crowd = append(crowd, fmt.Sprintf("#%d(%d 人)", sh.ID, len(sh.Characters)))
 			}
+		}
+		if len(noAngle) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜没写机位角度词（%s）—— 用户《五》写明「角度**必填**」：不是靠模型自己猜从哪看，"+
+					"而是每一镜都要点名一个（%s，组合写法如「慢动作，中景，低角度仰拍」含其一即可）",
+				len(noAngle), strings.Join(firstN(noAngle, 6), "、"), strings.Join(PlanAngleWords, "/"))
 		}
 		if len(badAngle) > 0 {
 			add("warn", "plan.shots",
