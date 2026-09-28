@@ -106,15 +106,57 @@ func EnsureVoiceInline(prompt string, plan *project.Plan, chars []project.Charac
 	return strings.TrimRight(out, "\n") + "\n" + sb.String()
 }
 
+// voiceNameKeys 一个角色名在正文里可能的**几种写法**（2026-09-28 审计 B7）。
+//
+// 卡片名常带括号注解（`碑生（丙十七）`），而分镜正文里常写简称（`丙十七`）或基名（`碑生`）——
+// 只按**整名** `Contains` 判定的话，声线绑不上那句台词：同一个角色在不同镜头被写成几种嗓子，
+// 而用户听到的是"人物配音错误异常"（2026-09-25 报过）。
+//
+// 只**加候选**、不改写：命中任一写法就把声线绑上去，正文一个字不动。
+func voiceNameKeys(name string) []string {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return nil
+	}
+	out := []string{n}
+	for _, pair := range [][2]string{{"（", "）"}, {"(", ")"}} {
+		i := strings.Index(n, pair[0])
+		if i <= 0 {
+			continue
+		}
+		if head := strings.TrimSpace(n[:i]); head != "" {
+			out = append(out, head)
+		}
+		if j := strings.Index(n[i:], pair[1]); j > 0 {
+			inner := strings.TrimSpace(n[i+len(pair[0]) : i+j])
+			if inner != "" {
+				out = append(out, inner)
+			}
+		}
+	}
+	// 族基名（`沈砚·少年` → `沈砚`）：同一角色的造型档共用一条声线。
+	if b := project.CharFamilyBaseName(n); b != "" && b != n {
+		out = append(out, b)
+	}
+	return out
+}
+
 // replaceInLines 只对"提到 name 的行"做改写,其余行原样。逐行处理是为了不跨句误改。
+//
+// 匹配用 `voiceNameKeys`（整名 / 去注解的头 / 注解里的简称 / 族基名），
+// 而不是整名 —— 见那里的说明（B7）。
 func replaceInLines(s, name string, fn func(string) string) string {
-	if !strings.Contains(s, name) {
+	keys := voiceNameKeys(name)
+	if len(keys) == 0 {
 		return s
 	}
 	lines := strings.Split(s, "\n")
 	for i, ln := range lines {
-		if strings.Contains(ln, name) {
-			lines[i] = fn(ln)
+		for _, k := range keys {
+			if strings.Contains(ln, k) {
+				lines[i] = fn(ln)
+				break
+			}
 		}
 	}
 	return strings.Join(lines, "\n")

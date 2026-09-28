@@ -304,7 +304,10 @@ func (c *Coordinator) resolveSheetRef(j sheetJob) sheetRef {
 		}
 	}
 	if c.lib != nil {
-		if e, img, ok := c.lib.FindInFamily("characters", j.name); ok && fileReadable(img) {
+		// 带卡 id（审计 B12）：库里若有 id 相同的那一条就直接用；
+		// 否则按族基名找，但**跳过 id 明确不同**的条目 —— 两个恰好同名的人
+		// 互相命中时，派生起点会取到**另一个人**的主卡（与 B9/B11 同一个病根）。
+		if e, img, ok := c.lib.FindInFamilyForCard("characters", j.id, j.name); ok && fileReadable(img) {
 			return sheetRef{Path: img, Name: e.Name, Via: "资产库"}
 		}
 	}

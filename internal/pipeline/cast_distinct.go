@@ -104,10 +104,14 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 			continue
 		}
 		// 同一个人的另一档（或同名）：不是"别的角色"，比了只会得到"长得像同一个人"
+		//
+		// 【2026-09-28 审计 B9】这里原来还有**第二条**判据：`ch.Name == selfName` 就 `continue`。
+		// 那一条在 `SameCharacter` 修好之前是"兜底"，修好之后它变成了**漏洞**：
+		// 两个**恰好同名但确实是不同人**的角色（各有自己的卡片 id）会被它排除掉 ——
+		// 于是撞脸自检对他们**根本不跑**，两人共用一张脸时没有任何告警。
+		// 正确性只该由 `SameCharacter`（它按 id 判、只在"档名关系"时按名字合并）负责，
+		// 多一条按名字的兜底就是多一个静默失效点。
 		if project.SameCharacter(selfCardID, selfName, ch.ID, ch.Name) {
-			continue
-		}
-		if selfName != "" && strings.TrimSpace(ch.Name) == strings.TrimSpace(selfName) {
 			continue
 		}
 		a, ok := assets[id]

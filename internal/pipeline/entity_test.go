@@ -318,14 +318,14 @@ func TestShotEntityKinds(t *testing.T) {
 // 一个人"—— 套在铜雀身上等于又在要求它长脸。器物比的是形制/材质/部件数。
 func TestCastContrastIsKindAware(t *testing.T) {
 	plan := &project.Plan{Characters: []project.Character{realAzao, realLuqingyan}}
-	obj := castContrastBlock(plan, realAzao.Name, KindObject)
+	obj := castContrastBlock(plan, "", realAzao.Name, KindObject)
 	if !strings.Contains(obj, "different silhouette") || !strings.Contains(obj, "exactly ONE object") {
 		t.Errorf("器物对比块应比形制/材质,且「画面里只有一件」:\n%s", obj)
 	}
 	if strings.Contains(obj, "different face shape") || strings.Contains(obj, "ONE person") {
 		t.Errorf("器物对比块不得比脸/称「一个人」:\n%s", obj)
 	}
-	hum := castContrastBlock(plan, realLuqingyan.Name, KindHuman)
+	hum := castContrastBlock(plan, "", realLuqingyan.Name, KindHuman)
 	if !strings.Contains(hum, "different face shape") || !strings.Contains(hum, "exactly ONE person") {
 		t.Errorf("人物对比块应保持原措辞(2026-09-11 定稿):\n%s", hum)
 	}

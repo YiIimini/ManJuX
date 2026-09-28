@@ -984,6 +984,25 @@ func (l *Library) findWith(kind, name, description, selfID string) (*Entry, stri
 // 用途只有一处:变体卡的定妆照必须以主卡为 --init-image 派生,而不是各自文生图
 // (每张卡各自文生图 → 同一角色几张脸会漂,见 pipeline/sheetderive.go)。
 func (l *Library) FindInFamily(kind, name string) (*Entry, string, bool) {
+	return l.findInFamily(kind, "", name)
+}
+
+// FindInFamilyForCard 带卡片 id 的家族查找（2026-09-28 审计 B12）。
+//
+// 与 `FindInFamily` 的差别只有一处、但很关键：**库里若有 id 相同的那一条，直接用它**。
+//
+// 为什么需要：`FindInFamily` 按**名字的族基名**匹配（`沈砚·少年` → `沈砚`），
+// 于是两个恰好同名的不同角色会互相命中 —— 派生参考图取到**另一个人**的主卡，
+// 与 B9/B11 是同一个病根（名字当键）。有 id 时这条根本不该发生。
+func (l *Library) FindInFamilyForCard(kind, cardID, name string) (*Entry, string, bool) {
+	if e, img, ok := l.matchByID(kind, cardID); ok {
+		return e, img, true
+	}
+	return l.findInFamily(kind, strings.TrimSpace(cardID), name)
+}
+
+// findInFamily 家族查找的实现；selfID 非空时跳过"id 明确不同"的条目。
+func (l *Library) findInFamily(kind, selfID, name string) (*Entry, string, bool) {
 	fam := project.CharFamilyBaseName(name)
 	if strings.TrimSpace(fam) == "" || !validKind(kind) {
 		return nil, "", false
@@ -1009,6 +1028,11 @@ func (l *Library) FindInFamily(kind, name string) (*Entry, string, bool) {
 			continue
 		}
 		if project.CharFamilyBaseName(e.Name) != fam {
+			continue
+		}
+		// **id 明确不同 ⇒ 不是这张卡**（审计 B12）：同名不同人是两个人，
+		// 派生参考图取到别人的主卡，就是"这个角色被锚到另一张脸"。
+		if selfID != "" && !sameCardIDOrUnknown(e.ID, selfID) {
 			continue
 		}
 		img := filepath.Join(l.root, filepath.FromSlash(e.Image))

@@ -476,8 +476,15 @@ func facesOnOf(proj *project.Project) bool {
 
 // PortraitSubject 一张定妆照的装配输入(唯一装配点 PortraitPrompt 的参数)。
 type PortraitSubject struct {
-	Kind        EntityKind // 空 = 按 name/description/imagePrompt 推断
-	Name        string
+	Kind EntityKind // 空 = 按 name/description/imagePrompt 推断
+	Name string
+	// ID 卡片 id（2026-09-28 审计 B9）。
+	//
+	// 加它是因为下面两处"同剧其它角色"的块（`castContrastBlock` / `castFaceIDs`）
+	// 此前**只按名字**排除"自己" —— 于是两个恰好同名但确实是不同人的角色会互相被排除，
+	// 对比块与 FACE ID 段里都少了对方的设定（撞脸自检同样漏检，见 cast_distinct.go）。
+	// id 才是"同一个人"的稳定真源；名字只在 id 缺失时兜底。
+	ID          string
 	Description string
 	ImagePrompt string
 	// FacesOn 是否按动画介质渲染(项目的 script.stylized_faces)。
@@ -565,16 +572,33 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	// 不得丢失」三条断言就是挡这件事的；第一版我把 StripCJK 加在整个 prompt 末尾，被它们挡回来了）。
 	var added strings.Builder
 	added.WriteString(styleExpandFor(prompt, style, s.FacesOn, kind))
-	added.WriteString(castContrastBlock(plan, s.Name, kind))
+	added.WriteString(castContrastBlock(plan, s.ID, s.Name, kind))
 	added.WriteString(uniformCivilianClarify(s.Description))
 	added.WriteString(PortraitHairClause(kind))
 	added.WriteString(PortraitPoseClause(kind))
 	added.WriteString(PortraitFramingClause(kind, frameW, frameH))
 	if kind == KindHuman || kind == KindChibi {
-		added.WriteString(PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.Name)))
+		added.WriteString(PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.ID, s.Name)))
 	}
 	prompt += project.DropHanRunes(added.String())
 	return prompt
+}
+
+// isSelfCard "这一行是不是**我自己**"的统一判据（审计 B9）。
+//
+// 口径与 `project.SameCharacter` 一致（**id 优先**、两边 id 都说得出就必须相等），
+// 差别只在这里是"逐行判自己"而不是"判两人同族"：档名关系（`沈砚` / `沈砚·少年`）
+// 在这里**不算自己** —— 对比块要的正是"同一个人另一档长什么样"，
+// 把它排掉等于让变体档的提示词里没有主卡的对照（那正是"同一角色几张脸"的温床）。
+//
+// 所以：两边 id 都有 → 比 id；有一边为空 → 退回名字精确相等；否则 → 不是自己。
+func isSelfCard(selfID, selfName, candID, candName string) bool {
+	a, b := normalizeCardID(selfID), normalizeCardID(candID)
+	if a != "" && b != "" {
+		return a == b
+	}
+	return strings.TrimSpace(selfName) != "" &&
+		strings.TrimSpace(selfName) == strings.TrimSpace(candName)
 }
 
 // castFaceIDs 同剧其他人的**外形摘要**（供 PortraitFaceIDClause 点名"不许像谁"）。
@@ -582,14 +606,17 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 // 与 castContrastBlock 取同一份东西（IDENTITY LOCK 优先、description 兜底），
 // 但**不带人名**：FACE ID 段是"这一帧是某一个具体的人"的收尾纪律，塞进一串人名会
 // 把注意力引到"要不要画别人"上（本段是单人帧）。人名在对比块里已经出现过一次了。
-func castFaceIDs(plan *project.Plan, selfName string) []string {
+func castFaceIDs(plan *project.Plan, selfID, selfName string) []string {
 	if plan == nil {
 		return nil
 	}
-	self := strings.TrimSpace(selfName)
 	var out []string
 	for _, ch := range plan.Characters {
-		if strings.TrimSpace(ch.Name) == "" || strings.TrimSpace(ch.Name) == self {
+		if strings.TrimSpace(ch.Name) == "" {
+			continue
+		}
+		// **按 id 排自己**（审计 B9）：同名不同人是两个人，对方的设定必须留在段里。
+		if isSelfCard(selfID, selfName, ch.ID, ch.Name) {
 			continue
 		}
 		d := identityLockExcerpt(ch.ImagePrompt)
@@ -1254,15 +1281,19 @@ func normalizeUniformWording(text string) string {
 // kind 决定"差异"落在哪:人/Q 版比脸,器物比形制与材质,妖兽比物种与体量。
 // 同一段"脸型、年龄、肤色调开"的措辞套在铜雀上,就是在要求它长一张脸
 // (2026-09-24 用户报「阿凿是一只铜雀却渲染成人物」的连带根因)。
-func castContrastBlock(plan *project.Plan, selfName string, kind EntityKind) string {
+func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityKind) string {
 	if plan == nil {
 		return ""
 	}
-	self := strings.TrimSpace(selfName)
 	var parts []string
 	for _, ch := range plan.Characters {
 		n := strings.TrimSpace(ch.Name)
-		if n == "" || n == self {
+		if n == "" {
+			continue
+		}
+		// **按 id 排自己**（审计 B9）：此前 `n == self` 会把"同名不同人"也排掉，
+		// 于是这个角色的对比块里少了另一个人的设定 —— 而"要跟谁不一样"正靠这段说。
+		if isSelfCard(selfID, selfName, ch.ID, ch.Name) {
 			continue
 		}
 		// 外形优先（2026-09-27 修）：IDENTITY LOCK 那句才是"这个人长什么样"；
@@ -1304,6 +1335,9 @@ func castContrastBlock(plan *project.Plan, selfName string, kind EntityKind) str
 	case KindChibi:
 		one = "exactly ONE chibi figure appears in the frame"
 	}
+	// `self` 只用于**文案里的主体名**（"这里的这个人是「X」"）—— 排自己那件事已经由
+	// 上面的 `isSelfCard` 按 id 判过了，这里不再参与任何判据。
+	self := strings.TrimSpace(selfName)
 	return "\n\nCAST DISTINCTNESS (reference note, NOT to be drawn) — other cast members of this series: " + strings.Join(parts, "; ") +
 		". They are listed ONLY so that the subject depicted here (「" + self + "」) is clearly distinguishable from every one of them: " +
 		traits + ". " +

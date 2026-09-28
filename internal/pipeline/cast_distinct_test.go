@@ -28,7 +28,7 @@ func TestIdentityLockExcerptPrefersShapeOverPlot(t *testing.T) {
 		{ID: "char_01", Name: "沈砚", Description: "主角", ImagePrompt: "Shen Yan — half-body. IDENTITY LOCK (do not change): nineteen years old; thin long face"},
 		{ID: "char_06", Name: "周廷", Description: plot, ImagePrompt: "Zhou Ting — half-body . " + lock},
 	}}
-	blk := castContrastBlock(plan, "沈砚", KindHuman)
+	blk := castContrastBlock(plan, "", "沈砚", KindHuman)
 	if !strings.Contains(blk, "square face") || !strings.Contains(blk, "thirty-one") {
 		t.Errorf("对比块要用周廷的**外形锁**（方脸/31 岁），实际：%s", blk)
 	}
@@ -191,7 +191,12 @@ func TestCastPeersSkipsSameCharacterVariants(t *testing.T) {
 	if len(peers2) != 1 || peers2[0].name != "守钟女" {
 		t.Fatalf("从造型档出发也一样：%+v", peers2)
 	}
-	// 同名不同卡（数据脏时）也不比 —— 告警里分不清是谁，比了只会误导
+	// 【2026-09-28 审计 B9 · 期望反转】同名但**不同卡**（id 不同）**必须比**。
+	//
+	// 原来这里断言"不比"，理由是"告警里分不清谁是谁" —— 而那个理由已经被解决了：
+	// `castPeer` 带 `id`，告警里写得出是哪张卡（下面 plan3 那段钉的就是它）。
+	// 而"不比"的代价是实打实的：**两个恰好同名但确实是不同人**的角色，
+	// 撞脸自检对他们根本不跑 —— 两人共用一张脸时没有任何告警。
 	plan2 := &project.Plan{Characters: []project.Character{
 		{ID: "char_01", Name: "阿婆"},
 		{ID: "char_09", Name: "阿婆"},
@@ -200,8 +205,10 @@ func TestCastPeersSkipsSameCharacterVariants(t *testing.T) {
 		"char:char_01": {File: mk("e.png")},
 		"char:char_09": {File: mk("f.png")},
 	}
-	if got := castPeers(dir, plan2, assets2, "char:char_01"); len(got) != 0 {
-		t.Errorf("同名两张卡不比（分不清谁是谁）：%+v", got)
+	if got := castPeers(dir, plan2, assets2, "char:char_01"); len(got) != 1 {
+		t.Errorf("同名不同卡（id 不同）是两个人，撞脸自检**必须**比，实际 %+v", got)
+	} else if got[0].id == "" {
+		t.Error("比出来的 peer 必须带 id —— 同名时告警里就靠它分清是哪张卡")
 	}
 	// 比对对象要带 id（同名时告警里能分清）
 	plan3 := &project.Plan{Characters: []project.Character{
