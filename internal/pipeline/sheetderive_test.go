@@ -42,8 +42,13 @@ func TestSheetVariantTrigger(t *testing.T) {
 		// 方案里也没有另一张"沈砚" —— 初版只凭"名字里有中点"就判成造型档,于是它去找一个
 		// 不存在的主卡,每次定妆都播报"主卡缺图,退回文生图"(而那张图一直是对的)。
 		{"正卡名里带中点但方案里没有基名卡 → **不派生**(不再误报主卡缺图)", "char_01", "沈砚·一品", KindHuman, false, false},
-		{"Q 版资产(平台自己起名「X · Q版」)→ 绝不派生", "char_01_chibi", "青禾 · Q版", KindChibi, true, false},
-		{"Q 版资产(即便 id 带 vK 也按类型挡)→ 不派生", "char_01v2_chibi", "青禾 · Q版2", KindChibi, true, false},
+		// 【2026-09-28 用户口径反转】「Q 版直接使用对应角色定妆照图片生图片逻辑才对」——
+		// Q 版是同一个人的另一种画法，定妆照才是身份唯一权威；走文生图 = 把长相重新描述一遍
+		// ⇒ 必然得到"像但不完全像"的第二张脸。所以 Q 版**要**走派生（且用自己那套派生指令）。
+		{"Q 版资产(名字「X · Q版」+ 方案里有 X)→ 派生", "char_01_chibi", "青禾 · Q版", KindChibi, true, true},
+		// 但**没有对应角色时不许派生**：系统小人（chibi_sys_01，方案里没有"系统"这个人）
+		// 找不到主卡，硬派生只会每次都播报"主卡缺图"。
+		{"Q 版资产但没有对应的主卡 → 不派生", "chibi_sys_01", "系统机器人", KindChibi, false, false},
 		{"普通角色(id 数字尾但不是 vK)→ 不派生", "char_02", "小喇叭", KindSpiritPet, false, false},
 		{"空卡 → 不派生", "", "", KindHuman, false, false},
 	}
@@ -405,11 +410,22 @@ func TestGenSheetImageDegradesWhenMasterMissing(t *testing.T) {
 	}
 }
 
-// Q 版资产(平台自己起的名字带「·」)不许被当成造型档去派生。
-func TestGenSheetImageKeepsChibiOnText2Img(t *testing.T) {
+// Q 版资产**要走派生**：拿对应角色的定妆照做图生图。
+//
+// 【2026-09-28 用户口径】「Q 版直接使用对应角色定妆照图片生图片逻辑才对」——
+// 原实现把它挡在派生之外（"拿真人定妆照派生 Q 版是错的"），结果 Q 版走文生图 = 把长相
+// 重新描述一遍 ⇒ "像但不完全像"的第二张脸。这条测试的期望因此**反转**。
+func TestGenSheetImageDerivesChibiFromMaster(t *testing.T) {
 	rig := newSheetRig(t)
 	eng := &fakeSheetEngine{}
 	rig.masterSheet(t, "char_01", "青禾")
+	// 方案里要有那张主卡 —— `hasBaseCard` 就是靠它确认"确实存在同名的基名卡"
+	// （只有资产表里有图、方案里却没这个人，按平台的判据算"有中点 ≠ 有主卡"）。
+	if err := rig.store.SavePlan(rig.proj.ID, &project.Plan{
+		Characters: []project.Character{{ID: "char_01", Name: "青禾"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
 	j := sheetJob{
 		proj: rig.proj, assets: mustLoadAssets(t, rig), kind: "characters",
 		id: "char_01_chibi", name: "青禾 · Q版", prompt: "chibi", ek: KindChibi, w: 1024, h: 1024, seed: 7,
@@ -417,11 +433,15 @@ func TestGenSheetImageKeepsChibiOnText2Img(t *testing.T) {
 	if _, err := rig.c.genSheetImage(context.Background(), eng, j); err != nil {
 		t.Fatal(err)
 	}
-	if eng.i2i != 0 || eng.t2i != 1 {
-		t.Fatalf("Q 版形象不是造型档,必须走文生图(拿真人定妆照派生 Q 版是错的),实际 t2i=%d i2i=%d", eng.t2i, eng.i2i)
+	if eng.i2i+eng.t2i == 0 {
+		t.Fatal("Q 版形象必须真的出图（派生或降级文生图都算出了，一次都不出才是 bug）")
+	}
+	if eng.t2i == 1 && eng.i2i == 0 {
+		t.Errorf("Q 版必须走**从定妆照派生**（图生图），不该退回文生图 —— "+
+			"重新描述一遍长相必然得到「像但不完全像」的第二张脸。实际 t2i=%d i2i=%d", eng.t2i, eng.i2i)
 	}
 	if m := rig.findMessage("主卡缺图"); m != "" {
-		t.Errorf("Q 版本就不该走派生,不该有「主卡缺图」的降级播报:%s", m)
+		t.Errorf("主卡在图、方案里也有对应角色，不该有「主卡缺图」的降级播报:%s", m)
 	}
 }
 

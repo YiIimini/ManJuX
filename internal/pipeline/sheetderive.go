@@ -69,6 +69,33 @@ const SheetDeriveDenoise = 0.6
 // sheetRetrySeedStep 校验不过时换种子的步进(质数,与多视角同一套:避开同种子的复现)。
 const sheetRetrySeedStep = 7919
 
+// ChibiDeriveClause Q 版形象的**派生指令**。
+//
+// 【2026-09-28 用户口径】「Q 版直接使用对应角色定妆照图片生图片逻辑才对」。
+//
+// 为什么不能用变体卡那条 `SheetDeriveClause`：那条是"**只改服装/状态**，其余照抄" ——
+// 而 Q 版要改的恰恰是**画法与比例**（2.5–3 头身、圆润呆萌、玩具质感），
+// 脸/发型/服装/记号却必须照抄定妆照。两者"改什么、保什么"正好相反。
+//
+// 这也解释了 Q 版此前为什么被排除在派生之外（旧注释写着"拿真人定妆照去派生 Q 版形象是错的"）——
+// 那个判断站不住：Q 版本就是**同一个人的另一种画法**，而定妆照才是身份唯一权威。
+// 走文生图等于把长相重新描述一遍 ⇒ 必然得到"像但不完全像"的第二张脸
+// （`board.go` 的注释里记着同一条教训）。
+const ChibiDeriveClause = "Convert the character into a CHIBI / super-deformed figure: " +
+	"2.5-3 head-tall proportions with a big head on a small body, rounded cute proportions, " +
+	"toy-like soft matte surfaces and big expressive eyes. Keep the face design, the hairstyle and " +
+	"hair colour, the costume, the colour scheme and the signature marks EXACTLY as the reference image."
+
+// ChibiDeriveMarker 幂等判据：Q 版派生指令已在提示词里就不再叠加。
+const ChibiDeriveMarker = "Convert the character into a CHIBI"
+
+// ChibiDeriveDenoise Q 版派生的去噪强度。
+//
+// 比换装档（`SheetDeriveDenoise` = 0.6）高：换装只改一处，而**变化画法与头身比**要动的像素
+// 多得多 —— 0.6 在那个幅度下画面几乎不动（`imagegen.go` 记着实测口径："太低角度几乎不变"）。
+// 取 0.75：仍是"保身份"区间（0.6–0.75）的**上沿**，是这个改动幅度下保住脸的最大容差。
+const ChibiDeriveDenoise = 0.75
+
 // SheetDerivePrompt 变体卡的出图提示词 = 派生指令(在前) + 原样定妆提示词。
 //
 // 顺序不能反:定妆提示词里的取景/风格块(styleExpand 的介质块、取景重写结果)也带着
@@ -116,17 +143,25 @@ type sheetJob struct {
 //
 //	① id 带档位号(`char_01v4`)—— 机器写的,最可靠;
 //	② 名字形如 `X·档名` **且方案里真的还有一张叫 X 的卡** —— 这才是"同一角色换了造型";
-//	③ Q 版一律不走:平台给 Q 版资产起的名字叫「青禾 · Q版」,名字里也有「·」,
-//	   但它不是同一个人换了衣服 —— 拿真人定妆照去派生 Q 版形象是错的。
+//	③ **Q 版也走这条路**（2026-09-28 用户口径：「Q 版直接使用对应角色定妆照图片生图片逻辑才对」）。
+//
+// 【Q 版为什么改过来了】原实现在这里一刀切 `if KindChibi { return false }`，理由是
+// "拿真人定妆照去派生 Q 版形象是错的" —— 那个判断站不住：Q 版是**同一个人的另一种画法**
+// （观众靠它认"这段是心里话 / 系统在说"），而定妆照是身份唯一权威。
+// 走文生图 = 把长相重新描述一遍 ⇒ 必然得到"像但不完全像"的第二张脸。
+// 派生链路（EditImage / img2img：以定妆照为起点，身份与配色按像素保住）才是对的。
+//
+// ⚠ 这里**只是放开触发**，安全性由下面两条兜着（不是"放开就乱派生"）：
+//
+//	· ② 要求"名字形如 X·档名 **且方案里真有叫 X 的卡**" —— Q 版卡名是「青禾 · Q版」，
+//	  找不到主卡就不触发；系统小人（`chibi_sys_01`，没有对应角色）自然也不触发；
+//	· 主卡缺图时 `genSheetImage` 会如实播报「主卡缺图…退回文生图」，不是静默降级。
 //
 // ⚠ 真机事故(2026-09-26):初版漏了 ② 的后半句,只凭"名字里有中点"判断,于是把
 // 《求你们骂我》的**正卡名「沈砚·一品」**(id 仍是 char_01、方案里也没有另一张"沈砚")
 // 判成了造型档 → 它去找一个不存在的主卡 → 每次资产定妆都播报"主卡缺图,退回文生图",
 // 而那张图其实一直是对的。**有中点 ≠ 有主卡**:先确认基名卡存在,再谈派生。
 func sheetVariantTrigger(id, name string, ek EntityKind, hasBaseCard bool) bool {
-	if NormalizeEntityKind(string(ek)) == KindChibi {
-		return false
-	}
 	if project.CharVariantNumberOf(id) > 0 {
 		return true
 	}
@@ -136,21 +171,31 @@ func sheetVariantTrigger(id, name string, ek EntityKind, hasBaseCard bool) bool 
 	return project.CharVariantLabel(name) != ""
 }
 
-// hasBaseCard 方案里是否存在这张卡的"基名卡"(名字等于去掉档名后的基名)。
+// hasBaseCard 是否存在这张卡的"基名卡"（名字等于去掉档名后的基名）。
 //
-// 读不到方案时返回 false(按正卡处理):**不猜**比误报"主卡缺图"安全 ——
-// 那张图本来就是对的,误报只会让用户去追一个不存在的问题。
+// 两条来源都要问，缺一不可（2026-09-28 补第二条）：
+//
+//	① **本项目方案**：这一集里就有主卡（最常见）；
+//	② **资产库**：库侧那条路（抽卡/自定义新建/重抽）**没有项目上下文**，方案载不到 ——
+//	   但那不代表"没有主卡"。不兜这一步的后果是：**库里的 Q 版永远走文生图**，
+//	   与项目内同一角色走出两种脸（正是要防的事）。
+//
+// 读不到方案时**不猜**：① 没有就看 ②，两条都没有才返回 false ——
+// 误报"主卡缺图"会让用户去追一个不存在的问题。
 func (c *Coordinator) hasBaseCard(j sheetJob) bool {
 	base := project.CharFamilyBaseName(j.name)
 	if base == "" || base == j.name {
 		return false
 	}
-	plan, err := c.store.LoadPlan(j.proj.ID)
-	if err != nil || plan == nil {
-		return false
+	if plan, err := c.store.LoadPlan(j.proj.ID); err == nil && plan != nil {
+		for _, ch := range plan.Characters {
+			if ch.Name == base {
+				return true
+			}
+		}
 	}
-	for _, ch := range plan.Characters {
-		if ch.Name == base {
+	if c.lib != nil {
+		if _, _, ok := c.lib.FindInFamily("characters", base); ok {
 			return true
 		}
 	}
@@ -219,13 +264,37 @@ func familyMasterInAssets(assets map[string]project.Asset, selfAssetID, idKey, n
 	return best, found
 }
 
+// sheetRefKeys 找**派生参考图**用的锚定键。
+//
+// 【为什么 Q 版要单独算 —— 2026-09-28 用户口径带出来的一处真 bug】
+// `project.CharFamilyKeys` 对 Q 版有个**特例**：返回独立家族键 `chibi:<id>` 且 **nameKey 为空**
+// （见那里的注释：Q 版是"同一个人的另一种画法"，不该被并进"沈砚的造型档"家族里 ——
+// 否则界面上会显示成"沈砚 2 个造型档"，用户看不懂）。
+//
+// 那是**给界面分组**用的口径。而"**找主卡派生**"要的恰恰相反：Q 版**就是**某个人的另一种画法，
+// 必须能找到那个人。两处用同一套键的后果是 Q 版永远找不到主卡 ⇒ 永远退回文生图
+// ⇒ 重新描述一遍长相 ⇒ "像但不完全像"的第二张脸（正是用户这次要纠正的事）。
+//
+// 所以这里对 Q 版**只给 nameKey**（名字的基名，「青禾 · Q版」→「青禾」），
+// 不参与 id 家族匹配；名字里没有档名的（如系统小人的「系统机器人」）返回空 ⇒ 不派生。
+func sheetRefKeys(id, name string) (idKey, nameKey string) {
+	if project.IsChibiCard("", id) {
+		base := project.CharFamilyBaseName(name)
+		if base == "" || base == name {
+			return "", ""
+		}
+		return "", base
+	}
+	return project.CharFamilyKeys(id, name)
+}
+
 // resolveSheetRef 变体卡的派生参考图:**本项目优先,其次资产库**。
 //
 // 顺序的理由:同一集里往往同时用到同一角色的好几档(技能侧按场切换),本条目的主卡
 // 图就在资产表里、且是"本集这张脸"的权威;跨集时(第一集定的妆、本集只用到第 4 档)
 // 本集根本没有主卡,只能去资产库取。
 func (c *Coordinator) resolveSheetRef(j sheetJob) sheetRef {
-	idKey, nameKey := project.CharFamilyKeys(j.id, j.name)
+	idKey, nameKey := sheetRefKeys(j.id, j.name)
 	if idKey == "" && nameKey == "" {
 		return sheetRef{}
 	}
@@ -299,7 +368,17 @@ func (c *Coordinator) deriveVariantSheet(ctx context.Context, ce engine.Engine, 
 			"⚠ 主卡有图但%s:造型档「%s」退回文生图,与主卡的相似度不保证", cause, j.name)
 		return c.genPlainSheet(ctx, ce, j)
 	}
-	prompt := SheetDerivePrompt(j.prompt)
+	// Q 版用自己的派生指令（改画法/比例，脸与服装照抄），造型档用换装指令 ——
+	// 两者"改什么、保什么"正好相反，不能共用一句（见 ChibiDeriveClause）。
+	prompt := j.prompt
+	isChibi := NormalizeEntityKind(string(j.ek)) == KindChibi
+	if isChibi {
+		if !strings.Contains(prompt, ChibiDeriveMarker) {
+			prompt = ChibiDeriveClause + "\n" + prompt
+		}
+	} else {
+		prompt = SheetDerivePrompt(j.prompt)
+	}
 	// 身份闸门:与多视角共用同一份实现(qc.IdentityJudge)与同一套"重试一轮"的语义。
 	verifier := TurnaroundVerifier(c.cfg.Get().VLM)
 	attempts := verifyAttempts(TurnaroundOptions{Verify: verifier})
@@ -344,7 +423,12 @@ func (c *Coordinator) deriveVariantSheet(ctx context.Context, ce engine.Engine, 
 				},
 			}, out)
 		} else {
-			path, err = i2i.GenerateImageFrom(ctx, ref.Path, prompt, imageNegative, seed, j.w, j.h, SheetDeriveDenoise, out)
+			// 去噪强度按改动幅度选：换装档 0.6（只改一处）、Q 版档 0.75（要改画法与头身比）。
+			dn := SheetDeriveDenoise
+			if isChibi {
+				dn = ChibiDeriveDenoise
+			}
+			path, err = i2i.GenerateImageFrom(ctx, ref.Path, prompt, imageNegative, seed, j.w, j.h, dn, out)
 		}
 		if err != nil {
 			return "", err
