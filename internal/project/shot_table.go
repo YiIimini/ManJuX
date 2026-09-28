@@ -53,6 +53,19 @@ const (
 	PlanBeatGapSeconds = 30
 )
 
+// PlanPreferredShotSeconds 非末尾片段的**期望时长下限**（用户《【额外】仿真人10S分镜头指令》：
+// 「非最后一个片段时长优先在 7、8、9、10 秒中选择，以结束于动作自然停顿点为准」）。
+const PlanPreferredShotSeconds = 7
+
+// PlanShotSecondsRef 推算"这一集该有多少镜"用的参考时长（7-10 秒的中位 ≈ 8.5）。
+// 镜头数 ≈ 本集总秒数 ÷ 这个值 —— 实测这一条最能说明问题：真方案 239 秒给了 35 镜，
+// 而按口径 28 镜就够，多出的 7 镜是 7 次纯属多余的 GPU 生成。
+const PlanShotSecondsRef = 8.5
+
+// PlanShortClipSharePct 非末尾片段里"短于 7 秒"的占比超过它 ⇒ 报"镜头过碎"。
+// 25% 的由来：真方案的 41% 一眼就知道碎，而 0-10% 属于正常波动（个别镜确实该短）。
+const PlanShortClipSharePct = 25
+
 // PlanOneTakeSeconds 超过这个时长的片段**必须**在正文里切内部小镜头（否则报"一镜到底"）。
 //
 // 依据：用户《【额外】仿真人10S分镜头指令》「每个片段内拆成若干小镜头，每镜 1.5–4 秒」；

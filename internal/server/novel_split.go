@@ -313,7 +313,18 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: fmt.Sprintf("《%s》已在运行,跳过", ep)})
 			continue
 		}
-		if err := s.pipe.Start(ep, pipeline.PhaseAll, nil, "", 0); err != nil {
+		// **任务分配**（用户 2026-09-28：「LLM 继续解析分镜脚本，他们互不影响的，可以分开跑的」）：
+		// 起第 N 集之前，先把第 N+1 集的**剧本分镜**解析掉 —— 剧本是纯 LLM 调用、不碰显卡，
+		// 与正在跑的渲染互不争用（并发规则见 pipeline.Start 的 phaseNeedsGPU）。
+		// 于是轮到 N+1 时它已经有方案，直接从**资产阶段**起步，等于每集白赚一段解析时间。
+		s.preparseNextScript(i)
+
+		startPhase := pipeline.PhaseAll
+		if hasUsablePlan(s.store.Dir(ep)) {
+			// 方案已在（上一轮预解析或上次跑过）⇒ 不必再解析一遍，直接从资产开始。
+			startPhase = pipeline.PhaseAssets
+		}
+		if err := s.pipe.Start(ep, startPhase, nil, "", 0); err != nil {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
 				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, batchTotal(), ep, err)})
 			return
@@ -440,4 +451,33 @@ func projectFreshest(dir string) time.Time {
 		return nil
 	})
 	return newest
+}
+
+// preparseNextScript 预解析下一集的剧本（纯 LLM，可与当前集的显卡阶段并行）。
+//
+// 只在"下一集存在、且它还没有可用方案、且没有正在跑的管线"时动手；失败只播报不阻断
+// （预解析是**优化**，不是主流程 —— 抢不到就等轮到它时按正常流程解析）。
+func (s *Server) preparseNextScript(cur int) {
+	batch.mu.Lock()
+	next := ""
+	if cur+1 < len(batch.projects) {
+		next = batch.projects[cur+1]
+	}
+	batch.mu.Unlock()
+	if next == "" || hasUsablePlan(s.store.Dir(next)) || s.pipe.Running(next) != nil {
+		return
+	}
+	if err := s.pipe.Start(next, pipeline.PhaseScript, nil, "", 0); err != nil {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 下一集《%s》的剧本预解析没抢到（%v）—— 不影响主流程，轮到它时按正常顺序解析", next, err)})
+		return
+	}
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+		Message: fmt.Sprintf("🧠 顺手把下一集《%s》的**剧本分镜**解析掉（纯 LLM，不占显卡，与当前渲染并行）", next)})
+}
+
+// hasUsablePlan 这一集是否已有可用的 plan.json（有就跳过解析、直接从资产阶段起步）。
+func hasUsablePlan(dir string) bool {
+	st, err := os.Stat(filepath.Join(dir, "plan", "plan.json"))
+	return err == nil && !st.IsDir() && st.Size() > 0
 }

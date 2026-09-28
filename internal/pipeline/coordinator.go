@@ -133,9 +133,18 @@ func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride 
 		c.mu.Unlock()
 		return fmt.Errorf("项目正在运行中,请先停止")
 	}
-	for id := range c.runs {
-		c.mu.Unlock()
-		return fmt.Errorf("另一条管线正在运行(《%s》):为避免两条管线抢同一张显卡一起变慢/超时(实测并发会让定妆照生成超时、单镜从 3-5 分钟涨到 20+ 分钟),请先停止它再启动本集", id)
+	// **按资源分类的并发规则**（用户 2026-09-28：「LLM 继续解析分镜脚本，他们互不影响的，可以分开跑的，
+	// 这种情况以后需要考虑到如何合理分配任务」）：
+	//   · 抢显卡的阶段（资产出图 / 渲染）**互相排斥** —— 实测并发会让定妆照超时、单镜从 3-5 分钟涨到 20+ 分钟；
+	//   · 不碰显卡的阶段（剧本分镜＝纯 LLM 调用、合成＝CPU/ffmpeg）**可以与显卡阶段并行** ——
+	//     这正是"第 N 集在渲染时，把第 N+1 集的剧本先解析掉"的依据：两种资源互不争用。
+	for id, r := range c.runs {
+		if phaseNeedsGPU(phase) && phaseNeedsGPU(r.Phase) {
+			c.mu.Unlock()
+			return fmt.Errorf("另一条管线正在运行(《%s》，阶段 %s):显卡只能同时喂一条管线"+
+				"(实测并发会让定妆照生成超时、单镜从 3-5 分钟涨到 20+ 分钟)。"+
+				"不碰显卡的阶段(如剧本分镜)可以与它并行，请等它跑完或先停止本集", id, r.Phase)
+		}
 	}
 	proj, ok := c.store.Get(projectID)
 	if !ok {
@@ -588,4 +597,19 @@ func (c *Coordinator) ReleaseVRAMIfIdle(why string) {
 // 现在要求 QueueKnown:探测不到就**不释放**(宁可多占一会儿显存,不可毁掉正在跑的任务)。
 func vramReleaseAllowed(st *comfyengine.AdminStatus, adminErr error) bool {
 	return adminErr == nil && st != nil && st.QueueKnown && st.Running+st.Pending == 0
+}
+
+// phaseNeedsGPU 这个阶段是否要用显卡（ComfyUI）。
+//
+// 依据是实测：资产（出图/转台/三视图）与渲染（H3 视频）是显卡活，并发会互相拖死；
+// 剧本分镜是纯 LLM API 调用、合成是 CPU+ffmpeg —— 它们与显卡阶段**可以并行**。
+// 这条判据的唯一用途是"放行不争用的并行"（见 Start 里的并发规则）。
+func phaseNeedsGPU(phase string) bool {
+	switch phase {
+	case PhaseAssets, PhaseRender:
+		return true
+	case PhaseAll:
+		return true // 全流程必然包含显卡阶段
+	}
+	return false
 }
