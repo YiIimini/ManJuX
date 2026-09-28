@@ -18,6 +18,6 @@ Return STRICT JSON only (no markdown fences, no commentary):
     {"id":"prop_xxx","name":"中文名","en":"ENGLISH look phrase for the picture model","description":"中文外观/材质/配色/尺寸/记号","image_prompt":"ENGLISH 1:1 white-background single-object prompt (see PROP CARDS)"}
   ],
   "shots": [
-    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"prop_ids":["prop_xxx"],"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{"char_yyy":"上一镜在场、本镜已出画，走向门洞（本镜保留一行）"},"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{},"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
+    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"prop_ids":["prop_xxx"],"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{"char_yyy":"上一镜在场、本镜已出画，走向门洞（本镜保留一行）"},"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
   ]
 }

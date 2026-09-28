@@ -1,6 +1,9 @@
 package pipeline
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // proportion_clause.go 技能侧「人体比例锚点」在平台侧的处理(技能侧《平台侧整改清单》§5.1)。
 //
@@ -49,12 +52,34 @@ var skillProportionSignatures = []string{
 	"about one third of the face length",
 	"two thirds as wide as the cheekbones",
 	"seven and a half heads",
+	// 【2026-09-28 审计实测 · 识别漏了】平台自己的提示词（`sysFaceVocabRules`）要求模型写
+	// "eight and a half heads tall"，而上面那张签名表只认 7.5 —— 于是模型**按平台要求写对了**，
+	// 这里却识别不到"已有比例句"，平台随后再注入自己那套 ⇒ **两套比例同现、模型取中值**。
+	// 这正是本文件开头说的"丑"的来源，而且形态最隐蔽：不是漏在"没写比例"，是漏在"写了却不认"。
+	//
+	// 头身数的口径统一是用户的决定（四方不一致：技能侧锚表写「7.5 / 8 两档，不许第三种」、
+	// 用户《二》写九头身、《【额外】》写 8.5、平台此前自己拍过 7.5），已在回复里请他拍板；
+	// 但"**识别不许漏**"是确定的工程问题 —— 先把 8.5 与锚表的两档写法一并收进来。
+	"eight and a half heads",
+	"eight heads tall",
+	"seven point five heads",
+	// 中文（锚表的记述形态：`比例锚_机器：8 头身`）
+	"八个半头",
+	"八头身",
 	"never distort these ratios",
 	// 中文(清单 §5.1 的记述形态;技能侧若改出中文卡也能认出来)
 	"眼线在头部垂直中线",
 	"两眼间距＝一个眼宽",
 	"七个半头",
 }
+
+// reHeadRatio 阿拉伯数字的头身比写法。
+//
+// 【为什么子串不够，非要一条正则】技能侧锚表里每个角色的比例锚是**带数字的**：
+// `比例锚_机器：8 头身` / `7.5 头身` / `6.5 头身` —— 一部戏里从 6 到 8 头身都有值，
+// 把每一种数字都列进签名表既列不全、也会随下一部戏再漏一次。
+// 正则认的是"**数字 + 头身/heads tall**"这个形态本身。
+var reHeadRatio = regexp.MustCompile(`\d+(?:\.\d+)?\s*(?:头身|heads?[-\s]tall)`)
 
 // HumanProportionClausePresent 该提示词里是否已有技能侧的人体比例锚点句。
 //
@@ -71,7 +96,9 @@ func HumanProportionClausePresent(prompt string) bool {
 			return true
 		}
 	}
-	return false
+	// 带数字的头身比（锚表的 `8 头身`、卡里的 `7.5 heads tall`）—— 见 reHeadRatio 的说明：
+	// 数字取值随角色而变，列不完，只能按形态认。
+	return reHeadRatio.MatchString(low)
 }
 
 // PortraitProportionCheckable 这张定妆照该不该做人体比例自检(给 qc 侧的比例自检用)。
