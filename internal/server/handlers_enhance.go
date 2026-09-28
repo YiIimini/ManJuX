@@ -125,7 +125,7 @@ func (s *Server) prepareShotEnhance(w http.ResponseWriter, r *http.Request, suff
 	}
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
-		writeErr(w, 404, fmt.Errorf("尚无分镜方案"))
+		writeErr(w, 404, project.ErrNoPlan())
 		return nil, false
 	}
 	manifest, err := s.store.LoadManifest(id)

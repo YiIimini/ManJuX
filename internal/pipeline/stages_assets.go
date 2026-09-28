@@ -24,7 +24,7 @@ import (
 func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, onlyAssets []string) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
-		return fmt.Errorf("尚未生成分镜方案:请先运行「剧本分镜」阶段")
+		return project.ErrNoPlan()
 	}
 	// 身份真源唯一化：这本书有技能侧素材三卡就用它的定妆串（追补单 N4，见 asset_cards.go）。
 	// 放在这里而不是各出图点：下面每条路径（初出/补缺/多视角/三视图板）都从 plan 取提示词，

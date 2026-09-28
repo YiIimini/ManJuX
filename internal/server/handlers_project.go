@@ -610,7 +610,7 @@ func planCharFamilies(projectID string, s *Server) map[string]charFamilyInfo {
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	if err := s.store.Delete(id); err != nil {
@@ -673,7 +673,7 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
-		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
+		writeErr(w, 404, project.ErrNoPlan())
 		return
 	}
 	writeJSON(w, 200, plan)
@@ -683,7 +683,7 @@ func (s *Server) getPlan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) putParams(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,不能调参"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	p, ok := s.store.Get(id)
@@ -733,7 +733,7 @@ func (s *Server) runProject(w http.ResponseWriter, r *http.Request) {
 func (s *Server) upgrade2K(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	var in struct {

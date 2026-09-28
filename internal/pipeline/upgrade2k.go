@@ -20,7 +20,7 @@ func (c *Coordinator) StartUpgrade2K(projectID string, shotID int) error {
 	c.mu.Lock()
 	if _, dup := c.runs[projectID]; dup {
 		c.mu.Unlock()
-		return fmt.Errorf("项目正在运行中,请先停止")
+		return project.ErrProjectRunning("")
 	}
 	if _, ok := c.store.Get(projectID); !ok {
 		c.mu.Unlock()
@@ -62,7 +62,7 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 	if shotID > 0 {
 		plan, err := c.store.LoadPlan(projectID)
 		if err != nil {
-			return fmt.Errorf("尚未生成分镜方案")
+			return project.ErrNoPlan()
 		}
 		manifest, err := c.store.LoadManifest(projectID)
 		if err != nil {

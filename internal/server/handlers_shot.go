@@ -24,7 +24,7 @@ import (
 func (s *Server) putShot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	var in struct {
@@ -47,7 +47,7 @@ func (s *Server) putShot(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
-		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
+		writeErr(w, 404, project.ErrNoPlan())
 		return
 	}
 	for i := range plan.Shots {
@@ -129,7 +129,7 @@ func (s *Server) invalidateDerived(id, why string) int {
 func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	shotID, err := strconv.Atoi(r.PathValue("shotID"))
@@ -139,7 +139,7 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
-		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
+		writeErr(w, 404, project.ErrNoPlan())
 		return
 	}
 	idx := -1
@@ -227,7 +227,7 @@ func (s *Server) planPostProcess(id string, plan *project.Plan) (details, overfl
 func (s *Server) importPlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	var in struct {
@@ -388,7 +388,7 @@ func (s *Server) comfyOpenAppWin(w http.ResponseWriter, r *http.Request) {
 func (s *Server) regenAsset(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	var in struct {

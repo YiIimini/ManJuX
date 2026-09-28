@@ -20,7 +20,7 @@ import (
 func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
-		return fmt.Errorf("尚未生成分镜方案:请先运行「剧本分镜」阶段")
+		return project.ErrNoPlan()
 	}
 	assets, err := c.store.LoadAssets(proj.ID)
 	if err != nil {

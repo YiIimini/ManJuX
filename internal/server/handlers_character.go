@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/pipeline"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // putCharacter 编辑一张角色卡(名称/描述/定妆照提示词/**实体类型**)。
@@ -18,7 +19,7 @@ import (
 func (s *Server) putCharacter(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if s.pipe.Running(id) != nil {
-		writeErr(w, 409, fmt.Errorf("项目运行中,请先停止"))
+		writeErr(w, 409, project.ErrProjectRunning(""))
 		return
 	}
 	var in struct {
@@ -39,7 +40,7 @@ func (s *Server) putCharacter(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
-		writeErr(w, 404, fmt.Errorf("尚未生成分镜方案"))
+		writeErr(w, 404, project.ErrNoPlan())
 		return
 	}
 	for i := range plan.Characters {

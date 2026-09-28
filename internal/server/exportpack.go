@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // exportClipPack 导出剪辑素材包(剪映友好):按镜命名的片段 + 成片 + SRT + 导入说明,zip 打包。
@@ -20,7 +22,7 @@ func (s *Server) exportClipPack(w http.ResponseWriter, r *http.Request) {
 	}
 	plan, err := s.store.LoadPlan(id)
 	if err != nil {
-		writeErr(w, 400, fmt.Errorf("尚未生成分镜方案"))
+		writeErr(w, 400, project.ErrNoPlan())
 		return
 	}
 	manifest, err := s.store.LoadManifest(id)

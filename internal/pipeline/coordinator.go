@@ -149,7 +149,7 @@ func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride 
 	c.mu.Lock()
 	if _, dup := c.runs[projectID]; dup {
 		c.mu.Unlock()
-		return fmt.Errorf("项目正在运行中,请先停止")
+		return project.ErrProjectRunning("")
 	}
 	// **按资源分类的并发规则**（用户 2026-09-28：「LLM 继续解析分镜脚本，他们互不影响的，可以分开跑的，
 	// 这种情况以后需要考虑到如何合理分配任务」）：
@@ -189,7 +189,7 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	}
 	plan, err := c.store.LoadPlan(projectID)
 	if err != nil {
-		return fmt.Errorf("尚未生成分镜方案")
+		return project.ErrNoPlan()
 	}
 	kind, name, desc, prompt := "", "", "", ""
 	for _, ch := range plan.Characters {

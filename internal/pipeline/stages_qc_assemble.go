@@ -25,7 +25,7 @@ import (
 func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
-		return fmt.Errorf("尚未生成分镜方案")
+		return project.ErrNoPlan()
 	}
 	manifest, err := c.store.LoadManifest(proj.ID)
 	if err != nil {
@@ -375,7 +375,7 @@ func gradeAutoNote(grade string, autoDowngraded bool) string {
 func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
-		return fmt.Errorf("尚未生成分镜方案")
+		return project.ErrNoPlan()
 	}
 	manifest, err := c.store.LoadManifest(proj.ID)
 	if err != nil {
