@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"context"
+	"github.com/YiIimini/ManJuX/internal/project"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,7 @@ func TestWritePlaceholderClipRealFFmpeg(t *testing.T) {
 
 func TestPlaceholderNoteSaysWhy(t *testing.T) {
 	n := PlaceholderNote(7, 5, "渲染超时")
-	for _, want := range []string{"镜 7", "占位片段", PlaceholderMarker, "渲染超时", "悄悄变短", "必须重合成"} {
+	for _, want := range []string{"镜 7", "占位片段", project.PlaceholderMarker, "渲染超时", "悄悄变短", "必须重合成"} {
 		if !strings.Contains(n, want) {
 			t.Errorf("说明里要说清 %q，实际：%s", want, n)
 		}

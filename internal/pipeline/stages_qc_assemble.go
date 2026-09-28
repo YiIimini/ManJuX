@@ -379,19 +379,39 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	if err != nil {
 		return err
 	}
-	// 按镜头顺序收集已完成产物
+	// 按镜头顺序收集产物。
+	//
+	// **失败镜的黑场占位也收进来**（2026-09-28 修自己上轮留下的半成品）：渲染阶段在阶梯用尽后
+	// 会写一个黑场静音占位并标记 `placeholder: missing clip`（官方 fallback 第 4 级：
+	// "Skip the shot and add a `placeholder: missing clip` note for downstream review"）——
+	// 它的**全部意义**就是"保住时间轴、让缺口看得见、成片照出"。但这里此前死认 ShotDone，
+	// 于是一个镜头失败就**整片合不出来**，那段占位代码等于白写：用户既拿不到成片，也看不到缺口。
+	//
+	// 现在的判据：ShotDone ⇒ 正常片段；ShotFailed 且带占位标记 ⇒ 也收（下面会**大声播报**有几个）。
+	// 其余情况（没渲、产物丢了）仍然拒绝合成 —— 那不是"带瑕疵出片"，那是"还没做"。
 	var clips []string
+	placeholders := 0
 	for _, shot := range plan.Shots {
 		key := strconv.Itoa(shot.ID)
 		m, ok := manifest[key]
-		if !ok || m.Status != project.ShotDone || m.File == "" {
+		if !ok || m.File == "" || (m.Status != project.ShotDone && !isPlaceholderClip(m)) {
 			return fmt.Errorf("镜头 %d 尚未渲染完成:请先运行「渲染出片」", shot.ID)
 		}
 		full := filepath.Join(c.store.Dir(proj.ID), m.File)
 		if _, err := os.Stat(full); err != nil {
 			return fmt.Errorf("镜头 %d 产物缺失(%s):请重渲", shot.ID, m.File)
 		}
+		if isPlaceholderClip(m) {
+			placeholders++
+		}
 		clips = append(clips, full)
+	}
+	if placeholders > 0 {
+		c.emit(proj.ID, PhaseAssemble, 0, "warn", 1,
+			"⚠ 成片里有 **%d 个占位片段**（黑场静音）—— 这些镜头渲染失败、已按官方降级阶梯记为 "+
+				"`%s`。占位保住了时长与对位，但成片里那几段是没有画面的；"+
+				"重渲这些镜头后**必须重合成**（清单里查得到是哪几镜）",
+			placeholders, project.PlaceholderMarker)
 	}
 	// **合成前的新旧资产混用核对**（官方 qc-checklist 重生成纪律：用户重做产物后下游必须全用
 	// 最新版本，且"不得在最终拼接里静默混用新旧资产"）。
@@ -658,4 +678,13 @@ func pickEvenly(n, k int) []int {
 		out = append(out, i*(n-1)/(k-1))
 	}
 	return out
+}
+
+// isPlaceholderClip 这一镜的产物是不是**失败镜的占位片段**。
+//
+// 判据用清单里的标记（渲染阶段写入 project.PlaceholderMarker），而不是只看状态码：
+// 只有"确实写了占位"的失败镜才允许进合成 —— 别的失败（没渲、产物丢了）仍然拒绝，
+// 那不是"带瑕疵出片"，那是"还没做"。
+func isPlaceholderClip(m project.ClipManifest) bool {
+	return m.Status == project.ShotFailed && strings.Contains(m.Error, project.PlaceholderMarker)
 }

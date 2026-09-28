@@ -442,7 +442,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			} else {
 				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "%s", PlaceholderNote(shot.ID, shot.Duration, msg))
 			}
-			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, PlaceholderMarker+" —— "+msg)
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, project.PlaceholderMarker+" —— "+msg)
 			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(已写占位，继续下一镜):%s", shot.ID, msg)
 			continue
 		}

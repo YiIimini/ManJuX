@@ -779,3 +779,10 @@ func FingerprintText(parts ...string) string {
 func atomicWrite(path string, data []byte) error {
 	return fsutil.WriteFileAtomic(path, data)
 }
+
+// PlaceholderMarker 失败镜在清单里的**标记词**（官方 fallback 阶梯第 4 级的原话：
+// "Skip the shot and add a `placeholder: missing clip` note for downstream review"）。
+//
+// 放在 project 包是因为它有两个消费方：渲染阶段写入、合成阶段据此判定"这一段是占位、可以进成片
+// 但要大声播报"。定义在 pipeline 里会让 project 包的读者看不到这个词的来处。
+const PlaceholderMarker = "placeholder: missing clip"

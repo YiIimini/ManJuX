@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"github.com/YiIimini/ManJuX/internal/project"
 	"os"
 	"strings"
 
@@ -24,7 +25,6 @@ import (
 //	  在清单里**查得到**（官方要的 `placeholder: missing clip` 就是这个意思）。
 //
 // 所以这里选后者：黑场 + 静音，长度等于该镜计划时长，帧率 24（与全片同口径）。
-const PlaceholderMarker = "placeholder: missing clip"
 
 // writePlaceholderClip 生成一个黑场静音占位片段（长度 = 该镜计划时长）。
 func writePlaceholderClip(ctx context.Context, f *ff.FF, out string, durationSec int) error {
@@ -61,7 +61,7 @@ func PlaceholderNote(shotID, durationSec int, cause string) string {
 	return fmt.Sprintf("镜 %d 已按官方降级阶梯写为**占位片段**（%d 秒黑场＋静音，清单标记 %s）——"+
 		"原因：%s。为什么不是直接跳过：跳过会让成片悄悄变短、后面每一镜的画面与字幕整体前移；"+
 		"占位保住了时长与顺序，缺口在成片里看得见、在清单里查得到。**重出这一镜后必须重合成**",
-		shotID, durationSec, PlaceholderMarker, cause)
+		shotID, durationSec, project.PlaceholderMarker, cause)
 }
 
 // dirOf 取路径的目录部分（filepath.Dir 的一层薄封装，便于本文件独立单测）。
