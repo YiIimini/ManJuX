@@ -46,7 +46,7 @@ func TestPlanHeadDecodesProps(t *testing.T) {
 // 这条是"下次别再犯"的机器守卫：把骨架文字里的键名扫出来，逐个确认 planHead 能接住。
 func TestPlanSkeletonFieldsAllDecoded(t *testing.T) {
 	// 计划轮骨架的顶层键（从提示词原文里数，避免手抄漂移）
-	want := []string{"title", "logline", "style", "characters", "scenes", "props", "segments"}
+	want := []string{"title", "logline", "style", "characters", "scenes", "core_beats", "props", "segments"}
 	for _, k := range want {
 		if !strings.Contains(planSystemPrompt, `"`+k+`"`) {
 			t.Errorf("计划轮骨架里应有顶层字段 %q（提示词与解码必须同源）", k)
@@ -56,7 +56,8 @@ func TestPlanSkeletonFieldsAllDecoded(t *testing.T) {
 	probe := map[string]any{
 		"title": "t", "logline": "l", "style": "s",
 		"characters": []any{}, "scenes": []any{}, "props": []any{},
-		"segments": []any{map[string]any{"from": 1, "to": 2, "brief": "b"}},
+		"core_beats": []any{"核心冲突", "爽点①", "爽点②"},
+		"segments":   []any{map[string]any{"from": 1, "to": 2, "brief": "b"}},
 	}
 	b, _ := json.Marshal(probe)
 	head, err := decodePlanHead(string(b))
@@ -73,5 +74,19 @@ func TestPlanSkeletonFieldsAllDecoded(t *testing.T) {
 	raw := `{"title":"t","segments":[{"from":1,"to":2,"brief":"b"}],"props":[]}`
 	if _, err := decodePlanHead(raw); err != nil {
 		t.Errorf("空 props 数组不该解码失败:%v", err)
+	}
+}
+
+// TestPlanHeadDecodesCoreBeats 核心提炼必须活过解码（同 props 那次事故：加提示词字段不加解码字段
+// ⇒ 数据在解析处静默消失）。
+func TestPlanHeadDecodesCoreBeats(t *testing.T) {
+	raw := `{"title":"t","segments":[{"from":1,"to":2,"brief":"b"}],
+	  "core_beats":["核心冲突：他被写进碑册","爽点①：刮掉名字","爽点②：逼监工认账"]}`
+	head, err := decodePlanHead(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(head.CoreBeats) != 3 {
+		t.Fatalf("core_beats 必须在解码后还在，实际 %d 条", len(head.CoreBeats))
 	}
 }

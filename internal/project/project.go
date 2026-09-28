@@ -214,8 +214,15 @@ type Prop struct {
 
 // Plan LLM 直出的完整分镜方案。
 type Plan struct {
-	Title      string      `json:"title"`
-	Logline    string      `json:"logline"`
+	Title   string `json:"title"`
+	Logline string `json:"logline"`
+	// CoreBeats 本集的**核心提炼**：核心冲突 + 2-3 个大爽点（逆袭/打脸/揭秘/升阶），各标类型。
+	//
+	// 【为什么要有这个字段】用户 2026-09-28：「分镜脚本按照爆款爽剧的核心要点来，LLM 需要抓住文字
+	// 内容中的重点总结输出核心分镜脚本，而不是一味的照搬原文内容」。平台此前给 LLM 的指令恰恰相反
+	// （"必须沿原文节拍逐段改编、不得跳段"），改编于是退化成抄写。
+	// 提炼结果**落成字段**才能机检：有提炼，才谈得上"取舍"；没有提炼，分镜就只能是原文的段落表。
+	CoreBeats  []string    `json:"core_beats,omitempty"`
 	Style      string      `json:"style"` // 视觉风格(英文,注入每镜提示词)
 	Characters []Character `json:"characters"`
 	Scenes     []Scene     `json:"scenes"`

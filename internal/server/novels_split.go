@@ -207,7 +207,7 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				if r := []rune(orig); maxOrig > 0 && len(r) > maxOrig {
 					orig = string(r[:maxOrig])
 				}
-				src += "\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n" + orig
+				src += "\n\n【本集原文】(素材：提炼核心冲突与 2-3 个大爽点后重建分镜——砍冗余、可跳段、可合并;不要逐段照搬)\n" + orig
 			}
 			_ = s.store.SaveSource(epName, src)
 			// 把「这集覆盖哪些章」写进项目元数据:覆盖核对与「自动补缺」从此读这个真源,

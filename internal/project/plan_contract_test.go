@@ -18,7 +18,13 @@ func samplePlan() *Plan {
 	return &Plan{
 		Title:   "测试集",
 		Logline: "一句话梗概",
-		Style:   "PHOTOREAL 3D WORLD, SEMI-STYLISED FACES",
+		// 核心提炼：真实方案必有（用户口径"抓重点"），夹具也一样 —— 没有会被 plan.core 门抓住。
+		CoreBeats: []string{
+			"核心冲突：他被当作死人写进了碑册",
+			"爽点①：他当着碑奴的面把名字从碑上刮掉（reveal）",
+			"爽点②：他逼监工认账（reversal）",
+		},
+		Style: "PHOTOREAL 3D WORLD, SEMI-STYLISED FACES",
 		Characters: []Character{{
 			ID: "char_a", Name: "阿甲", Kind: "human",
 			Description: "二十岁男子", Voice: "young male voice",
