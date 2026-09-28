@@ -198,3 +198,25 @@ var PlanCrowdOrderMarkers = []string{
 	"前景", "背景", "中景", "遮挡", "挡住", "身后", "背后", "前方", "身后侧", "侧后方", "画左", "画右",
 	"foreground", "background", "behind", "in front of", "left of frame", "right of frame", "occlud",
 }
+
+// ── 关键道具：分镜动作里出现器物却没有 prop_ids ────────────────────────────────
+//
+// 判据是"动作里点名了一件**应当成卡的器物**"：兵器、法器、书信、信物、器皿、绳索布匹。
+// 词表按真实项目校准过（那一集里反复出现的是：碑刀、烙铁、名册板、腕上拓布、朱砂）。
+// 宁可漏报——多报会让人不再看这条告警。
+var PlanPropWords = []string{
+	"刀", "匕", "剑", "杖", "棍", "锤", "烙铁", "印", "符", "铃", "簪", "镜", "灯",
+	"册", "书", "信", "契", "簿", "帖", "囊", "袋", "绳", "索", "布", "帕", "令牌", "匣", "盒",
+	"knife", "blade", "sword", "dagger", "staff", "ledger", "scroll", "letter", "talisman", "lantern", "mirror",
+}
+
+// firstPropWord 动作里命中的第一个器物词（给人看的告警里指个位置）。
+func firstPropWord(s string) string {
+	low := strings.ToLower(s)
+	for _, w := range PlanPropWords {
+		if strings.Contains(low, strings.ToLower(w)) {
+			return w
+		}
+	}
+	return ""
+}

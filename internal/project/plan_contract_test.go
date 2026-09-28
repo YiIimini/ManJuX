@@ -27,9 +27,15 @@ func samplePlan() *Plan {
 			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙", ImagePrompt: "a ruined temple ...",
 			Landmarks: "门槛与东侧立柱", LightState: "黄昏，主光从门洞斜射",
 		}},
+		// 关键道具：2026-09-28 起"一件道具都没有"会报警（实测那一集 25 镜提到器物、0 张卡 ⇒ 漂移）。
+		// 夹具照**真实形态**写：一部戏总有几件反复出现的器物，样本里也得有。
+		Props: []Prop{{
+			ID: "prop_knife", Name: "旧柴刀", EN: "a short worn chopping knife with a hemp-wrapped handle",
+			Description: "磨薄的旧柴刀，柄缠麻布", ImagePrompt: "a short worn chopping knife ...",
+		}},
 		Shots: []Shot{{
-			ID: 1, Scene: "scene_room", Characters: []string{"char_a"},
-			ShotSize: "中景", Camera: "slow push-in", Action: "他站起来",
+			ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, PropIDs: []string{"prop_knife"},
+			ShotSize: "中景", Camera: "slow push-in", Action: "他把柴刀搁在供桌上，站起来",
 			View:     ViewAerial45,
 			EndState: "他站在供桌前，右手抬起指向门外，视线朝左前方，地面水渍未干",
 			HookType: "reveal",

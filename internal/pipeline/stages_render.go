@@ -267,6 +267,9 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			}
 		}
 		prompt = EnsureRefManifest(prompt, shot, roles)
+		// 关键道具的**跨镜文字锚定**（2026-09-28）：道具不进参考图集合（官方规则），
+		// 一致性只能靠文字 —— 把该镜引用到的器物卡原文逐字锚进来，模型才不会每镜自己发明一把刀。
+		prompt = EnsurePropAnchors(prompt, plan, shot)
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。

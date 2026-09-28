@@ -1053,6 +1053,48 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 	}
 
+	// ── 关键道具（2026-09-28 用户：「关键物品生成道具啊，前后镜都漂移了」）──────────
+	//
+	// 实测病根：某真实项目第一集的 plan **连 props 字段都没有**：25 个镜头提到碑刀/烙铁/名册，
+	// `prop_ids` 全空 —— 每镜由模型自己发明那把刀，形状缠柄一镜一个样 = 观众看到的漂移。
+	// 道具不进参考图集合（官方规则），跨镜一致**只能靠文字**，所以"没有卡"就等于"没有一致性"。
+	if len(p.Shots) > 0 {
+		if len(p.Props) == 0 {
+			add("warn", "plan.props",
+				"本集**一件道具都没提取** —— 招牌物件（兵器/法器/书信/信物/器具）不进卡片，就没有任何东西"+
+					"能约束它跨镜一致：每一镜都由模型自己发明一件，观众看到的就是**前后镜漂移**"+
+					"（实测那一集：25 镜提到刀/烙铁/名册、0 张道具卡）。收 2–6 件反复出现或参与关键剧情的物件成卡")
+		} else {
+			propIDs := map[string]bool{}
+			for _, pr := range p.Props {
+				propIDs[strings.TrimSpace(pr.ID)] = true
+			}
+			var dangling, unbound []string
+			for _, sh := range p.Shots {
+				for _, id := range sh.PropIDs {
+					if !propIDs[strings.TrimSpace(id)] {
+						dangling = append(dangling, fmt.Sprintf("#%d→%s", sh.ID, id))
+					}
+				}
+				if len(sh.PropIDs) == 0 && hasAnyMarker(sh.Action, PlanPropWords) {
+					unbound = append(unbound, fmt.Sprintf("#%d(%s)", sh.ID, firstPropWord(sh.Action)))
+				}
+			}
+			if len(dangling) > 0 {
+				add("fail", "plan.props",
+					"%d 处 prop_ids 指向方案里不存在的道具（%s）—— 装配时那件器物的锚定文本会落空，"+
+						"这一镜的刀/器物又变成模型自己编的",
+					len(dangling), strings.Join(firstN(dangling, 5), "、"))
+			}
+			if len(unbound) > 0 {
+				add("warn", "plan.props",
+					"%d 个镜头的动作里出现了器物却没写 prop_ids（%s）—— 这类镜是**漂移的高发区**："+
+						"不带锚定就等于让模型每镜重新设计一件同样的东西",
+					len(unbound), strings.Join(firstN(unbound, 6), "、"))
+			}
+		}
+	}
+
 	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
 	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
 	if len(p.Scenes) > 0 {

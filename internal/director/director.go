@@ -38,10 +38,32 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "scenes": [
     {"id":"scene_inn","name":"悦来客栈","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向(如 黄昏,主光从西侧门洞斜射)"}
   ],
+  "props": [
+    {"id":"prop_xxx","name":"中文名","en":"ENGLISH look phrase for the picture model","description":"中文外观/材质/配色/尺寸/记号","image_prompt":"ENGLISH 1:1 white-background single-object prompt (see PROP CARDS)"}
+  ],
   "shots": [
-    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
+    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"prop_ids":["prop_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
   ]
 }`
+
+// sysPropRules 关键道具卡（用户口径：**关键物品必须生成道具**，且跨镜不许漂）。
+//
+// 【2026-09-28 实测病根】某个真实项目的第一集 plan **连 props 字段都没有**：
+// 25 个镜头提到碑刀/烙铁/名册，`prop_ids` 全空 —— 于是每一镜都由模型**自己发明**那把刀，
+// 长短、缠柄、朱砂线一镜一个样，观众看到的就是"前后镜漂移"。而根因在平台这一侧：
+// **直出 schema 里从来没有 props**，LLM 不可能凭空提取它。
+//
+// 这一段把"什么该收成道具、每件要写什么、怎么保证跨镜一致"讲清楚；跨镜一致靠的是
+// 装配层（`pipeline/prop_anchor.go`：把卡片原文逐字锚进引用它的每一镜），不靠 LLM 每镜自觉复述。
+const sysPropRules = `## PROP CARDS (the series' signature objects — required, not optional)
+
+- **Extract props**: any object that RECURS, is HANDLED in key beats, or is the SIGNATURE of a character or of the series (a weapon, a tool, a talisman, a letter, a token, a book, a lamp). Typical episodic drama has 2-6 of them. An episode with NONE is almost always a miss: a blade that a man carves his own stele with IS a prop, and so is the iron brand in the fire, the ledger the antagonist reads from, the cloth wound round a wrist.
+- **Not props**: one-off clutter, scenery and fixed furnishings (those belong to the scene card), and anything that is part of a costume (that belongs to the character card).
+- One card per prop, ` + "`id: \"prop_xxx\"`" + `, with: **name** (Chinese), **en** (one ENGLISH look phrase — form + material + colour), **description** (Chinese: 外观/材质/配色/尺寸/记号), **image_prompt** (ENGLISH, 1:1, single object, centred, plain pure white background, no hands, no text). Give the object ONE canonical look here — marks, wear, knots, inlay, its exact size against a hand.
+- **Every shot that shows a prop must list it in ` + "`prop_ids`" + `** (by id). A shot that mentions the object in its action but leaves prop_ids empty is the drift bug: the model then invents a fresh object for that shot.
+- **Consistency is by TEXT**: props never get a picture slot in the video reference set, so the SAME object must be described with the SAME words wherever it appears. Do not restyle, re-colour, resize or re-decorate it between shots, and never let one shot's object become a different one.
+- A prop that is really an interface/screen (a holographic panel) has its interior left BLANK — never letter anything into it.
+- The object's own story wear is fine (chipped edge, scorch mark, ink stain) as long as the same wear is written every time.`
 
 // sysShotRulesTpl 分镜规则段**模板**:时长数字全部用 {{MIN}}/{{MAX}}/{{CPS}} 占位,
 // 由 renderShotRules() 从常量渲染 —— 这段文案里**不许**再出现写死的时长数字。
@@ -411,6 +433,8 @@ var SystemPrompt = sysHeader + `
 ` + sysCastRules + `
 
 ` + sysFaceVocabRules + `
+
+` + sysPropRules + `
 
 ` + sysSceneRules
 
@@ -889,6 +913,9 @@ Return STRICT JSON only (no markdown fences, no commentary):
   "scenes": [
     {"id":"scene_xxx","name":"中文名","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向"}
   ],
+  "props": [
+    {"id":"prop_xxx","name":"中文名","en":"ENGLISH look phrase for the picture model","description":"中文外观/材质/配色/尺寸/记号","image_prompt":"ENGLISH 1:1 white-background single-object prompt (see PROP CARDS)"}
+  ],
   "segments": [
     {"from":1,"to":3,"brief":"本段剧情要点(中文,≤160字):发生什么、关键台词原文、情绪转折、结局钩子"}
   ]
@@ -898,7 +925,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 - segments 的 from/to 是分镜镜号区间:从 1 开始连续覆盖到总镜数,不重叠不留空。
 - 每段 3-6 镜;段与段之间是清晰的故事节拍(开场钩子/升级/转折/高潮/收尾)。
 - brief 必须自足:仅凭 brief(不看全文)就能写好本段每一镜。关键台词必须原文引用。
-- characters/scenes 覆盖全片所有出场者;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + `
+- characters/scenes/props 覆盖全片所有出场者与关键器物;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + "\n\n" + sysPropRules + `
 
 ` + sysSceneRules
 
@@ -909,7 +936,7 @@ var batchSystemPrompt = sysHeader + `
 ## OUTPUT (THIS BATCH)
 Return STRICT JSON only (no markdown fences, no commentary):
 {"shots":[
-  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
+  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"prop_ids":["prop_xxx"],"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
 ]}
 
 ` + sysShotRules + `
@@ -927,6 +954,8 @@ Return STRICT JSON only (no markdown fences, no commentary):
 ` + sysHard + `
 
 ` + sysFaceVocabRules + `
+
+` + sysPropRules + `
 
 ## BATCH SCOPE
 - Produce ONLY the shots whose ids are inside the given range; do NOT invent shots outside it.
