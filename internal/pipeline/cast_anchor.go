@@ -72,6 +72,25 @@ func EnsureAnchorCast(plan *project.Plan, src string) []string {
 		have[normCastName(strings.TrimPrefix(ch.ID, "char_"))] = true
 		have[normCastName(ch.ID)] = true
 	}
+	// **给已存在、但没有英文画图提示词的卡补上**（不覆盖模型已经写好的那些）。
+	//
+	// 为什么这一步必须有：锚表补齐是**后来才加的**，而它在第一版里只搬了中文 `description` ——
+	// 那批已经生成好的卡至今 `image_prompt` 还是空的，出图时模型拿不到任何外貌依据
+	// （用户 2026-09-28 报的「中年人渲染出来跟个小年轻一样」就是这么来的）。
+	// 放在这里而不是写个一次性脚本：**下一次跑分镜就会自动修好**，不必等谁记得去修数据。
+	byName := map[string]project.SettingChar{}
+	for _, a := range anchors {
+		byName[normCastName(a.Name)] = a
+	}
+	for i := range plan.Characters {
+		ch := &plan.Characters[i]
+		if strings.TrimSpace(ch.ImagePrompt) != "" {
+			continue // 已有的英文提示词是模型写的，比这里能拼的更细 —— 一个字都不覆盖
+		}
+		if a, ok := byName[normCastName(ch.Name)]; ok {
+			ch.ImagePrompt = anchorImagePrompt(a)
+		}
+	}
 	var added []string
 	for _, a := range anchors {
 		if have[normCastName(a.Name)] {
