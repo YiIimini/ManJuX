@@ -1,7 +1,7 @@
 ﻿# ManJuX 提交前自检 —— 一条命令跑完全部检查。
 #
 # 为什么需要它:go build / go vet / gofmt / go test / 前端构建 / 第三方补丁在位
-# 是六道各自独立的闸门,平时靠人记得逐个跑;漏跑任何一道,问题都会等到界面上才暴露
+# 是七道各自独立的闸门,平时靠人记得逐个跑;漏跑任何一道,问题都会等到界面上才暴露
 # （典型:改了 frontend/src 但忘了 pnpm run build,webdist 是 go:embed 进去的,
 #  不重建就等于界面改动没生效）。
 #
@@ -91,7 +91,34 @@ if (-not $SkipTest) {
   Step "go test 测试（按参数跳过）"
 }
 
-# ---------- 5. 前端构建 ----------
+# ---------- 5. 竞态检测 (go test -race) ----------
+# 为什么加这一道（2026-09-28）：pipeline/server 都是并发跑的（协调器、任务分配、资产库共享状态），
+# 而数据竞争**不会**在普通 go test 里暴露 —— 它需要 -race（要 cgo，即本机得有 C 工具链）。
+# 没装工具链时**如实跳过**（不假装验过），装了就跑。实测两个并发最重的包合计约 19 秒，够便宜。
+Step "竞态检测 (go test -race)"
+$raceCC = $null
+foreach ($cand in @("D:\Ai\Tools\mingw64\bin", $env:MANJUX_MINGW)) {
+  if ($cand -and (Test-Path (Join-Path $cand "gcc.exe"))) { $raceCC = $cand; break }
+}
+if (-not $raceCC) {
+  $g = Get-Command gcc -ErrorAction SilentlyContinue
+  if ($g) { $raceCC = Split-Path -Parent $g.Source }
+}
+if (-not $raceCC) {
+  Ok "跳过：本机没有 C 工具链（-race 需要 cgo；装 mingw 后自动启用）"
+} else {
+  $env:CGO_ENABLED = "1"
+  $env:PATH = "$raceCC;$env:PATH"
+  $raceOut = & go test -race ./internal/pipeline/ ./internal/server/ 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    Bad "竞态检测失败（有数据竞争或测试失败）:"
+    $raceOut | Where-Object { $_ -match "DATA RACE|WARNING|FAIL|^---" } | Select-Object -First 20 | ForEach-Object { Write-Host "        $_" }
+  } else {
+    Ok "无数据竞争（pipeline + server，gcc: $raceCC）"
+  }
+}
+
+# ---------- 6. 前端构建 ----------
 # 这一步不能省:webdist 是 go:embed 进二进制的,改了 frontend/src 不重建
 # 就等于界面改动没生效 —— 而且 git 里会留下"新源码 + 旧产物"的不一致。
 if (-not $SkipFrontend) {
@@ -118,7 +145,7 @@ if (-not $SkipFrontend) {
   Step "前端构建（按参数跳过）"
 }
 
-# ---------- 6. 第三方本地补丁在位 ----------
+# ---------- 7. 第三方本地补丁在位 ----------
 # third_party/go-webview2 是**打了补丁的 fork**(go.mod 里有 replace 指向它)。它自己的
 # README 写着一条 `task update` 会重新同步上游、**覆盖掉补丁** —— 而补丁丢了的症状是
 # "应用莫名其妙整进程退出"(上游把原生文件对话框开闭期的瞬时焦点错误当致命错误
