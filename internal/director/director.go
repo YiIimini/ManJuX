@@ -359,6 +359,12 @@ func normalizePlan(plan *project.Plan, opt Options) {
 			opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
 				"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", hr.Voiceover)
 		}
+		if hr.MusicNA > 0 {
+			// 平台政策：每镜配乐一律 N/A（DEV-05）。实测写进提示词后仍有 19 镜带着配乐 ——
+			// 所以这一步是**确定性改写**，不是"指望模型自觉"。如实播报改了几处。
+			opt.OnNote("把 %d 镜的配乐段改写成 N/A（平台政策：片段内不带配乐，整片只铺一条连续 BGM）—— "+
+				"逐镜带曲子会让成片在每个接缝处换调", hr.MusicNA)
+		}
 	}
 }
 

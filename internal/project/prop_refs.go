@@ -238,6 +238,7 @@ type HealResult struct {
 	PropRefs  int // 器物引用对号了几处
 	Dialogue  int // 补了几镜的台词标签
 	Voiceover int // 补了几镜的画外演出素材引用
+	MusicNA   int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
 }
 
 // HealPlan **自愈三件**的唯一入口（幂等）：器物引用对号、缺失的台词标签补全、
@@ -254,5 +255,6 @@ func HealPlan(plan *Plan) HealResult {
 		PropRefs:  RemapPropRefs(plan),
 		Dialogue:  FillMissingDialogueTags(plan),
 		Voiceover: FillVoiceoverAssets(plan),
+		MusicNA:   EnsureMusicNA(plan),
 	}
 }
