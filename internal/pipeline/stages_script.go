@@ -109,6 +109,21 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 			c.emit(proj.ID, PhaseScript, sh.ID, "warn", 15, "⚠ %s", msg)
 		}
 	}
+	// **每集总时长对账**（2026-09-28 全面审计，来源：开源参考实现 shuohao-skills「每集总时长 ±15%」）。
+	// 时长被台词预算与切镜需要抬过之后，这一集的真实总长可能已经偏离目标 —— 用户看到的是
+	// "说要 4 分钟、结果成片 6 分钟"。超了如实报出差额与原因，让人决定是砍镜还是接受更长。
+	if p.TotalSeconds > 0 {
+		got := 0
+		for _, sh := range plan.Shots {
+			got += sh.Duration
+		}
+		if drift := float64(got-p.TotalSeconds) / float64(p.TotalSeconds); drift > 0.15 {
+			c.emit(proj.ID, PhaseScript, 0, "warn", 15,
+				"⚠ 本集实际总长 %d 秒，比目标 %d 秒多 %.0f%%（口径：超 ±15%% 就该看一眼）—— "+
+					"原因多是台词时长预算与切镜需要把镜头抬高；要么接受更长，要么砍/并几镜（本集 %d 镜）",
+				got, p.TotalSeconds, drift*100, len(plan.Shots))
+		}
+	}
 	// 台词语言标记兜底:LLM 常把模板要求的 <d>[Chinese]…</d> 写成 <d>…</d>,
 	// 标记一丢,H3 就用任意语言说话(成片出现听不懂的"鸟语",2026-09-12 用户报障)。
 	// 在**存盘前**补齐:方案、2K 重生成、局部重绘、音频驱动、续跑重渲都读这份文本,

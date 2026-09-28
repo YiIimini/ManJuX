@@ -130,9 +130,23 @@ func FitDialogueDurations(plan *project.Plan) (adjusted int, details []string) {
 	if plan == nil {
 		return 0, nil
 	}
+	// cutsDroveIt 记下"这条时长是被切镜需求抬起来的"镜号 —— 播报里要说清是台词还是切镜抬的，
+	// 否则用户看到"4→7 秒"不知道原因。
+	var cutsDroveIt []int
 	for i := range plan.Shots {
 		sh := &plan.Shots[i]
 		want := NeededDuration(*sh)
+		// **切镜需要的时间也要算**（2026-09-28 全面审计，来源：开源参考实现 shuohao-skills
+		// Apache-2.0「每拍几秒是**算出来的**，不要让模型估」＋ 用户《【额外】仿真人10S分镜头指令》
+		// 「每个片段内拆成若干小镜头，每个镜头 1.5–4 秒」）。
+		//
+		// 病根：平台此前只按**台词**算时长 ⇒ 一个 4 秒片段里被要求切 4 刀，每刀只有 1 秒，
+		// 低于"每镜 1.5 秒"的下限 ⇒ 模型要么草草带过、要么根本不切（实测那一集 35/35 镜一镜到底）。
+		// 有了这条下界，"切几刀"与"给多少秒"就对上了：刀数 × 1.5 秒是地板。
+		if floors := cutsFloorSeconds(*sh); floors > want {
+			want = floors
+			cutsDroveIt = append(cutsDroveIt, sh.ID)
+		}
 		if want > MaxShotSeconds {
 			want = MaxShotSeconds
 		}
@@ -144,9 +158,31 @@ func FitDialogueDurations(plan *project.Plan) (adjusted int, details []string) {
 			}
 			continue
 		}
-		details = append(details, fmt.Sprintf("镜 %d:%d→%d 秒(台词装得下)", sh.ID, sh.Duration, want))
+		reason := "台词装得下"
+		for _, id := range cutsDroveIt {
+			if id == sh.ID {
+				reason = fmt.Sprintf("切镜需要(片内 %d 刀 × %.1f 秒)", project.H3ClipCuts(sh.H3Prompt), MinCutSeconds)
+			}
+		}
+		details = append(details, fmt.Sprintf("镜 %d:%d→%d 秒(%s)", sh.ID, sh.Duration, want, reason))
 		sh.Duration = want
 		adjusted++
 	}
 	return adjusted, details
+}
+
+// MinCutSeconds 片段内**每一刀**的最短时长（用户《【额外】仿真人10S分镜头指令》：
+// 「每个镜头时长建议控制在 1.5～4 秒」）。切镜需要的时间下限就是"刀数 × 这个值"。
+const MinCutSeconds = 1.5
+
+// cutsFloorSeconds 这一镜"切了几刀"所需要的最短时长（刀数按**内部切点数**算，至少 1）。
+//
+// 来源：shuohao-skills 的「每拍几秒是算出来的，不要让模型估」（Apache-2.0）＋ 用户分镜文件的
+// 「片段内每个小镜头 1.5–4 秒」。这条下界把"要求切 4 刀"和"只给 4 秒"这种自相矛盾挡在存盘前。
+func cutsFloorSeconds(sh project.Shot) int {
+	cuts := project.H3ClipCuts(sh.H3Prompt)
+	if cuts < 1 {
+		cuts = 1
+	}
+	return int(float64(cuts)*MinCutSeconds + 0.999)
 }

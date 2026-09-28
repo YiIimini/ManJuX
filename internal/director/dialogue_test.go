@@ -1,6 +1,7 @@
 package director
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -99,4 +100,38 @@ func wantSecondsFor(chars int) int {
 		n = 4
 	}
 	return n
+}
+
+// TestCutsFloorRaisesDuration 切镜需要的时间也要算进镜头时长。
+//
+// 来源（2026-09-28 全面审计）：shuohao-skills(Apache-2.0)「每拍几秒是**算出来的**，不要让模型估」
+// ＋ 用户《【额外】仿真人10S分镜头指令》「每个片段内拆成若干小镜头，每个镜头 1.5–4 秒」。
+// 病根：平台此前只按**台词**算 ⇒ 一个 4 秒片段被要求切 4 刀、每刀 1 秒（低于 1.5 秒下限）
+// ⇒ 模型要么草草带过、要么根本不切（实测那一集 35/35 镜一镜到底）。
+func TestCutsFloorRaisesDuration(t *testing.T) {
+	h3 := func(cuts int) string {
+		s := "detailed_description:\n[Shot 1] he walks."
+		for i := 2; i <= cuts; i++ {
+			s += fmt.Sprintf("\n[Shot %d] At 00:0%d.000, closer.", i, i)
+		}
+		return s
+	}
+	// 4 刀 ⇒ 地板 6 秒：短于它的时长必须被抬上来，且**不缩**（只加不减是既有纪律）
+	plan := &project.Plan{Shots: []project.Shot{
+		{ID: 1, Duration: 4, H3Prompt: h3(4)},
+		{ID: 2, Duration: 9, H3Prompt: h3(2)}, // 已经够长，不动
+	}}
+	n, details := FitDialogueDurations(plan)
+	if n != 1 {
+		t.Fatalf("只该调整 1 镜，实际 %d(%v)", n, details)
+	}
+	if plan.Shots[0].Duration != 6 {
+		t.Errorf("4 刀需要至少 6 秒(4×1.5)，实际 %d", plan.Shots[0].Duration)
+	}
+	if plan.Shots[1].Duration != 9 {
+		t.Errorf("够长的镜头不该被动，实际 %d", plan.Shots[1].Duration)
+	}
+	if !strings.Contains(details[0], "切镜需要") {
+		t.Errorf("明细要说清是「切镜需要」抬的，实际 %q", details[0])
+	}
 }
