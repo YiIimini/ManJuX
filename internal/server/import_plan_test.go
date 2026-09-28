@@ -138,13 +138,15 @@ func TestImportPlanFitsDialogueDuration(t *testing.T) {
 		t.Fatalf("30 字台词装不进 4 秒,应调整 1 镜并给出明细,实际 %v(%v)",
 			out["duration_details"], out)
 	}
-	if s0, _ := det[0].(string); !strings.Contains(s0, "7") {
-		t.Fatalf("调整明细应写明时长变化(4→7 秒),实际 %q", s0)
+	// 期望值从**语速常量**推导（2026-09-28：4.5 → 4.1，依据 H3 公开契约文档"中文约 4.1 可发声字/秒"）：
+	// 同样的字数在更慢的语速下需要更长的时间，写死 7 秒会让测试变成假红。
+	need := project.NeededShotSeconds(project.Shot{Dialogue: []project.Line{{Text: strings.Repeat("字", 30)}}})
+	if s0, _ := det[0].(string); !strings.Contains(s0, strconv.Itoa(need)) {
+		t.Fatalf("调整明细应写明时长变化(4→%d 秒),实际 %q", need, s0)
 	}
 	plan, _ := s.store.LoadPlan(id)
-	// 30 字 ÷ 4.5 + 0.3 = 6.97 → 7 秒
-	if plan.Shots[0].Duration != 7 {
-		t.Fatalf("时长应被抬到 7 秒,实际 %d", plan.Shots[0].Duration)
+	if plan.Shots[0].Duration != need {
+		t.Fatalf("时长应被抬到 %d 秒,实际 %d", need, plan.Shots[0].Duration)
 	}
 
 	// 抬不动的:60 字需约 13.6 秒 > 10 秒上限 → 如实报 overflow,不许静默

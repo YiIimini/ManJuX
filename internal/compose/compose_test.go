@@ -489,9 +489,11 @@ func TestShotSpeechBudget(t *testing.T) {
 		Dialogue:  []project.Line{{Text: "一二三四五"}},
 		Narration: "六七八",
 	}
-	// (5+3)/4.5 + 2×0.3 = 2.38
-	if got := ShotSpeechBudget(sh); math.Abs(got-2.38) > 0.02 {
-		t.Errorf("应有口播时长约 2.38 秒,实际 %.2f", got)
+	// 期望值从**语速常量**推导（2026-09-28：4.5 → 4.1，依据 H3 公开契约文档"中文约 4.1 可发声字/秒"）：
+	// 写死 2.38 秒会让语速一改就假红，而语速本身是**有出处**的口径。
+	want := float64(5+3)/project.PlanCharsPerSecond + 2*project.PlanSpeechPadSeconds
+	if got := ShotSpeechBudget(sh); math.Abs(got-want) > 0.02 {
+		t.Errorf("应有口播时长约 %.2f 秒(语速 %.1f),实际 %.2f", want, project.PlanCharsPerSecond, got)
 	}
 }
 
