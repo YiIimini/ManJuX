@@ -375,6 +375,17 @@ func (s *Server) startupSageCheck() {
 	want := g.Comfy.SageAttention == nil || *g.Comfy.SageAttention
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
+	// **登记"正在改环境"**（2026-09-29 运行时审计 P3-11）。
+	//
+	// 这是后台起的、最长 20 分钟的**外部环境写操作**（下载 wheel → `pip install
+	// --force-reinstall` → 删旧 dist-info）。而关窗保护只看 `coord.HasRunning()` ——
+	// 它登记的是管线，Sage 自检不在其中。用户启动后立刻关窗（或看着慢以为卡住就关了），
+	// pip 在 `site-packages` 里被硬杀 → **半装的 sageattention**（旧 dist-info 已删、新包不全）
+	// → 之后要么 import 失败（渲染直接报错），要么静默没加速 —— 正是这个自检存在的理由。
+	//
+	// 登记之后，`OnBeforeClose` 会拦下关窗走"确认"流程，用户至少知道"正在装东西"。
+	s.setEnvMaintenance(true, "Sage 注意力加速包自检/修复")
+	defer s.setEnvMaintenance(false, "")
 	done, msg := ce.SageAutoRepair(ctx, want, func(m string) { s.opLog("%s", "   "+m) })
 	if !done {
 		s.opLog("⚠ %s", msg)

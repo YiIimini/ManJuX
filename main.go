@@ -186,6 +186,17 @@ func main() {
 				runtime.EventsEmit(ctx, "confirm-quit")
 				return true
 			}
+			// **环境维护中也要拦**（2026-09-29 运行时审计 P3-11）：Sage 自检会在后台
+			// 下载 wheel 并 `pip install --force-reinstall`（最长 20 分钟），它**不在管线里**，
+			// 上面那句看不见它。硬杀 pip 的后果是半装环境（旧 dist-info 已删、新包不全），
+			// 之后要么 import 失败、要么静默没加速 —— 正是那个自检要防的事。
+			if srv != nil {
+				if busy, what := srv.EnvMaintenance(); busy {
+					log.Printf("[manjux] 拦截关窗:正在维护环境(%s),等待用户确认", what)
+					runtime.EventsEmit(ctx, "confirm-quit")
+					return true
+				}
+			}
 			return false
 		},
 		OnShutdown: func(ctx context.Context) {

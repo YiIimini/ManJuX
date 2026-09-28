@@ -48,6 +48,16 @@ type Server struct {
 	usageCalls int
 	usageTotal llm.Usage
 
+	// envMu/envBusy/envWhat 标记"平台正在改本机环境"（2026-09-29 运行时审计 P3-11）。
+	//
+	// 目前唯一的写方是 Sage 自检（下载 wheel + pip --force-reinstall，最长 20 分钟），
+	// 而它**不在管线里** —— 关窗保护只看 `coord.HasRunning()`，看不见它。
+	// 被硬杀的后果是半装环境（旧 dist-info 已删、新包不全），之后要么 import 失败、
+	// 要么静默没加速。登记之后关窗会走"确认"流程。
+	envMu   sync.Mutex
+	envBusy bool
+	envWhat string
+
 	// startProdFn 是"拉起批量产线"的执行体,生产装配下为 nil(走真实 startBatch)。
 	//
 	// 为什么留这个接缝:导入路径(项目包导入 / 脚本创作)现在会**自动开跑**,而单元测试
@@ -134,6 +144,28 @@ func (s *Server) Start(basePort int) (int, error) {
 		port++
 	}
 	return 0, fmt.Errorf("端口 %d~%d 均被占用", basePort, port-1)
+}
+
+// setEnvMaintenance 登记/注销"平台正在改本机环境"（如 Sage 自检的 pip 安装）。
+//
+// 关窗保护（main.go 的 `OnBeforeClose`）据此拦下退出请求 —— 硬杀 pip 会留下半装环境。
+// 文案参数只用于日志与"在忙什么"的展示，空串表示注销。
+func (s *Server) setEnvMaintenance(busy bool, what string) {
+	s.envMu.Lock()
+	s.envBusy, s.envWhat = busy, what
+	s.envMu.Unlock()
+	if busy {
+		s.opLog("🔧 开始维护本机环境：%s（**完成前请勿关闭平台**，中断会留下半装环境）", what)
+	} else {
+		s.opLog("✅ 环境维护结束")
+	}
+}
+
+// EnvMaintenance 平台是否正在改本机环境；返回 (是否忙, 在忙什么)。
+func (s *Server) EnvMaintenance() (bool, string) {
+	s.envMu.Lock()
+	defer s.envMu.Unlock()
+	return s.envBusy, s.envWhat
 }
 
 // APIHandler 返回纯 API 路由(Wails 桌面模式的 AssetServer Handler)。
