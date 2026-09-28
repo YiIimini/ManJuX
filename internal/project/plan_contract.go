@@ -726,6 +726,46 @@ func ValidatePlan(p *Plan) []Issue {
 			}
 		}
 
+		// ── 片段内切点必须落在片长内（官方 `skills/h3-prompt-writing/SKILL.md` §Tips：
+		// "描述总时长必须等于请求时长，且落在 4–15 秒"）────────────────────────────────
+		//
+		// 平台此前那条"一镜到底"门只数**切点数量**，从不核对切点**是否超出片长** ✗ ——
+		// 于是"一个 6 秒片段里写着 At 00:09.000"这种自相矛盾的提示词能一路渲下去：
+		// 模型拿到的时间轴和实际时长对不上，画面节奏必然乱（要么赶、要么拖）。
+		// 两条判据：① 任何切点不得 ≥ 片长；② 最后一刀之后剩下的尾巴不能太长（等于又变成一镜到底）。
+		if len(p.Shots) > 0 {
+			var over, longTail []string
+			for _, sh := range p.Shots {
+				if sh.Duration <= 0 {
+					continue
+				}
+				last := 0
+				for _, tp := range shotTimestamps(sh.H3Prompt) {
+					if tp.ms >= sh.Duration*1000 {
+						over = append(over, fmt.Sprintf("#%d(片长 %ds，却有切点 %s)", sh.ID, sh.Duration, tp.raw))
+						break
+					}
+					if tp.ms > last {
+						last = tp.ms
+					}
+				}
+				if last > 0 && sh.Duration-last/1000 > PlanOneTakeSeconds {
+					longTail = append(longTail, fmt.Sprintf("#%d(最后一刀在 %ds，尾巴还有 %ds)", sh.ID, last/1000, sh.Duration-last/1000))
+				}
+			}
+			if len(over) > 0 {
+				add("fail", "plan.shots",
+					"%d 镜的**内部切点超出了片段时长**（%s）—— 官方要求「描述总时长必须等于请求时长」；"+
+						"切点超出片长时模型拿到的时间轴和实际时长对不上，节奏必然乱（要么赶词要么拖）",
+					len(over), strings.Join(firstN(over, 5), "、"))
+			}
+			if len(longTail) > 0 {
+				add("warn", "plan.shots",
+					"%d 镜的**最后一刀之后留了太长的尾巴**（%s）—— 尾巴超过 %d 秒等于又变回一镜到底；"+
+						"把最后一刀往后挪，或再补一刀",
+					len(longTail), strings.Join(firstN(longTail, 5), "、"), PlanOneTakeSeconds)
+			}
+		}
 		// ── 片段内切镜：治"拖沓"的机制门（2026-09-28 用户：「难怪渲染的视频总感觉拖沓，都没抓重点」）──
 		//
 		// 量出来的事实：平台的每镜正文里**只有一个 `[Shot 1]`** —— 一个 6–8 秒片段从头到尾演一个

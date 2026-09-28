@@ -432,8 +432,18 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				msg = "官方阶梯已试到第二级(换种子 → 缩短到 " + strconv.Itoa(planShortenSeconds) + " 秒)，仍失败：" + msg
 			}
 			failures = append(failures, fmt.Sprintf("镜%d:%v", shot.ID, err))
-			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, msg)
-			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(继续下一镜):%s", shot.ID, msg)
+			// 官方 fallback 第 4 级：失败镜写 **placeholder: missing clip**（下游复核用）。
+			// 平台化落地：写一个**黑场静音占位片段**顶在这个位置 —— 直接跳过会让成片悄悄变短、
+			// 后面每一镜的画面与字幕整体前移；占位保住时长与顺序，缺口在成片里看得见、清单里查得到。
+			placeholderPath := filepath.Join(clipsDir, outName)
+			if perr := writePlaceholderClip(ctx, c.ff, placeholderPath, shot.Duration); perr != nil {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+					"⚠ 镜头 %d 占位片段写入失败(该镜在成片里会被跳过，注意对位):%v", shot.ID, perr)
+			} else {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "%s", PlaceholderNote(shot.ID, shot.Duration, msg))
+			}
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, PlaceholderMarker+" —— "+msg)
+			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(已写占位，继续下一镜):%s", shot.ID, msg)
 			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
