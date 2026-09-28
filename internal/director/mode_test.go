@@ -1,6 +1,7 @@
 package director
 
 import (
+	"github.com/YiIimini/ManJuX/internal/project"
 	"math"
 	"testing"
 )
@@ -123,6 +124,31 @@ func TestDialogueBudgetFitsShotWindow(t *testing.T) {
 	}
 	if DialogueSeconds(slow, 0) != 0 {
 		t.Error("空台词应返回 0 秒")
+	}
+}
+
+// 仿真人 10S 那一格的数值**必须与 project.Plan* 完全一致**。
+//
+// 【为什么这条门最关键】2026-09-28 审计发现：平台早就有 `project.Plan*` 一套口径常量
+// （plan_contract.go / shot_table.go，每条带出处与 DEV 分歧登记），而我这一轮又新建了
+// mode.go —— **两套并行口径**，正是用户要消灭的口径散落。
+// 现在 mode.go 引用 project 的值，这道门负责钉住"引用不许退化成各写一遍"。
+func TestSim10MirrorsProjectConstants(t *testing.T) {
+	if ModeSim10.ClipMax != project.PlanMaxShotSeconds {
+		t.Errorf("片段上限应为 project.PlanMaxShotSeconds=%v，实际 %v（两套口径又分叉了）",
+			project.PlanMaxShotSeconds, ModeSim10.ClipMax)
+	}
+	if ModeSim10.ClipMin != project.PlanMinShotSeconds {
+		t.Errorf("片段下限应为 project.PlanMinShotSeconds=%v，实际 %v",
+			project.PlanMinShotSeconds, ModeSim10.ClipMin)
+	}
+	if ModeSim10.ShotMax != float64(project.PlanOneTakeSeconds) {
+		t.Errorf("单镜（内部切镜）上限应为 project.PlanOneTakeSeconds=%v，实际 %v",
+			project.PlanOneTakeSeconds, ModeSim10.ShotMax)
+	}
+	if len(ModeSim10.ClipPref) == 0 || ModeSim10.ClipPref[0] != project.PlanPreferredShotSeconds {
+		t.Errorf("非末片段的首选时长应为 project.PlanPreferredShotSeconds=%v，实际 %v",
+			project.PlanPreferredShotSeconds, ModeSim10.ClipPref)
 	}
 }
 

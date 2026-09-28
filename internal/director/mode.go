@@ -13,7 +13,11 @@
 // 用 `TODO(口径)` 标出，等作者拍板（见 docs 总表 §四）。
 package director
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/YiIimini/ManJuX/internal/project"
+)
 
 // StoryboardStyle 分镜的渲染风格轴。它改的不只是质感词 —— 仿真人档**删掉了
 // 【全局风格】与【转场说明】两个字段**，负向词也多出"塑料感、虚假光泽"。
@@ -71,11 +75,21 @@ var (
 	}
 	// 写实仿真人 × 10 秒 —— **不是"3D10 换个质感词"**：数值整体更紧（镜头 1.5-4、
 	// 台词延长阈值 4 秒、非末片段 7-10、整场景阈值 <10），且删掉两个字段。
+	//
+	// ⚠ **这一格的数值不在这里定义**：平台的真源是 `project.Plan*`
+	// （plan_contract.go / shot_table.go，那里每条都带出处与 DEV 分歧登记）。
+	// 本文件只**引用**它 —— 2026-09-28 审计发现"平台早就有 Plan* 一套口径，而我又新建了
+	// mode.go"，那正是用户要消灭的口径散落。两边由 mode_test.go 的
+	// TestSim10MirrorsProjectConstants 钉住，谁改一边就红。
 	ModeSim10 = StoryboardMode{
 		ID: "sim10", Label: "仿真人 · 10 秒", Style: StyleSimReal,
-		Src:     "【额外】仿真人10S分镜头指令.txt L2/L10/L11/L26/L27",
-		ClipMax: 10, ClipMin: 4, ClipPref: []float64{7, 8, 9, 10}, SceneUnder: 10, LineSplit: 10,
-		ShotMin: 1.5, ShotMax: 4, ShotFast: 1.2, ShotSlow: 5, LineExtend: 4, Freeze: 1, Overlap: 2,
+		Src:        "【额外】仿真人10S分镜头指令.txt L2/L10/L11/L26/L27（数值真源见 project.Plan*）",
+		ClipMax:    project.PlanMaxShotSeconds,
+		ClipMin:    project.PlanMinShotSeconds,
+		ClipPref:   []float64{project.PlanPreferredShotSeconds, 8, 9, 10},
+		SceneUnder: 10, LineSplit: 10,
+		ShotMin: 1.5, ShotMax: float64(project.PlanOneTakeSeconds), ShotFast: 1.2, ShotSlow: 5,
+		LineExtend: 4, Freeze: 1, Overlap: 2,
 	}
 	// 写实仿真人 × 15 秒。
 	ModeSim15 = StoryboardMode{
