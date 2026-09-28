@@ -142,6 +142,18 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 				"（锚表是硬约束、逐项照抄即可；这些卡同样会出定妆照并入库）",
 			len(ParseCastAnchor(text)), len(plan.Characters)-len(added), strings.Join(added, "、"))
 	}
+	// **专职翻译会话（用户架构第②步）**：锚表补齐的卡只有**中文**设定，而出图只吃英文 ——
+	// 不翻译的话模型只知道"几岁、几头身"，服装/脸型/发型全靠想象。用户 2026-09-28 报的
+	// 「角色三视图渲染异常」就是这么来的：设定写"深灰值勤装甲、方中带圆脸、剑眉、左手小指缺一节"，
+	// 画出来却是"穿现代浅灰衬衫、挂工牌的年轻职员"。见 anchor_translate.go。
+	if n, err := TranslateCardPrompts(ctx, client, plan); err != nil {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"⚠ 角色卡的英文定妆提示词生成失败(%v) —— 这些角色出图时只有年龄与头身比，"+
+				"服装/脸型/发型照不上设定；可重跑本阶段", err)
+	} else if n > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "success", 16,
+			"✔ 已为 %d 张只有中文设定的角色卡生成英文定妆提示词（逐项照抄锚表：脸型/眉眼/发型/服装/记号）", n)
+	}
 	if err := c.store.SavePlan(proj.ID, plan); err != nil {
 		return err
 	}
