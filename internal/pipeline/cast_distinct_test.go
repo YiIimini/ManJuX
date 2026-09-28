@@ -138,8 +138,11 @@ func TestAssetStageCallsCastDistinctness(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(src)
-	if !strings.Contains(s, "c.checkCastDistinctness(ctx, proj, assets, kind, id, name, imagePrompt, ek, path, genAsset)") {
-		t.Error("资产阶段要在定妆照出图后调用撞脸自检")
+	// 传下去必须是 **cardID（裸卡 id）**，不是 id（资产 id "char:xxx"）——
+	// 撞脸自检内部自己拼 "char:" 前缀，喂资产 id 就成了双前缀、自己排除不掉
+	// （2026-09-28「碑生跟自己比」的根因）。这条断言就是防它再退回去。
+	if !strings.Contains(s, "c.checkCastDistinctness(ctx, proj, assets, kind, cardID, name, imagePrompt, ek, path, genAsset)") {
+		t.Error("资产阶段要在定妆照出图后调用撞脸自检，且必须传**裸卡 id**（cardID），不是资产 id（id）")
 	}
 	if !strings.Contains(s, "CastSkipNoCapability") {
 		t.Error("没配视觉模型时要如实说「撞脸自检没跑」（每运行一次提醒一次），不能静默通过")
@@ -206,5 +209,50 @@ func TestCastPeersSkipsSameCharacterVariants(t *testing.T) {
 	}}
 	if got := castPeers(dir, plan3, assets, "char:char_01"); len(got) != 1 || got[0].id != "char_02" {
 		t.Errorf("比对对象要带卡片 id：%+v", got)
+	}
+}
+
+// TestCastPeersSurvivesAssetIDPrefix **照真实故障形态**写的回归夹具。
+//
+// 【2026-09-28 用户报障】某集报了
+//
+//	⚠ 定妆照「碑生（丙十七）（卡片 char:char_bingsheng）」与「碑生（丙十七）（卡片
+//	  char:char_bingsheng）」**长得像同一个人** …请重出其中一张
+//
+// 两边连卡 id 都一模一样 —— 它跟自己比。根因是**参数口径**：调用点传下来的是资产 id
+// （"char:"+卡 id），而 castPeers 内部又拼了一次 "char:" ⇒ selfID 成了双前缀 ⇒
+// "按 id 排除自己 / 按 id 查 selfName / 按名字排除"三道判据同时失效，自己进了比对名单
+// （资产表 key 恰好是单前缀，照样取到了自己的图）。
+//
+// 这条夹具特意**不喂"函数想要的形态"**，而是把生产调用点当时真正传进来的形态一并喂进去：
+// 上面那条 TestCastPeersPicksOtherCharacters 直接喂资产 id，所以函数本身"看着是对的"、
+// 真实调用点却在漏人 —— 夹具照真实形态写（AGENTS.md 教训清单里的第一条）。
+func TestCastPeersSurvivesAssetIDPrefix(t *testing.T) {
+	dir := t.TempDir()
+	mk := func(n string) string {
+		p := filepath.Join(dir, n)
+		if err := os.WriteFile(p, []byte("png"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	plan := &project.Plan{Characters: []project.Character{
+		{ID: "char_bingsheng", Name: "碑生（丙十七）"},
+		{ID: "char_xingwu", Name: "邢五"},
+	}}
+	assets := map[string]project.Asset{
+		"char:char_bingsheng": {File: mk("a.png")},
+		"char:char_xingwu":    {File: mk("b.png")},
+	}
+	// 三种拼法都必须把自己排除掉，且都要挑出「邢五」这一个真正的别人。
+	for _, self := range []string{
+		"char_bingsheng",           // 裸卡 id
+		"char:char_bingsheng",      // 资产 id（函数签名期望的形态）
+		"char:char:char_bingsheng", // 生产调用点当时真正传进来的形态（双前缀）
+	} {
+		peers := castPeers(dir, plan, assets, self)
+		if len(peers) != 1 || peers[0].name != "邢五" {
+			t.Fatalf("selfID=%q 时该只挑出「邢五」一个，实际 %+v —— 自己进了比对名单，就是「碑生跟碑生比」那个报障", self, peers)
+		}
 	}
 }

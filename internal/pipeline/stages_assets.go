@@ -104,6 +104,14 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	}
 	var pendingViews []pendingView
 	check := func(kind, id, name, description, imagePrompt, cardBoard string, ek EntityKind) {
+		// **两个 id 口径必须分开** —— 这就是 2026-09-28「碑生跟自己比」的根因：
+		//   · id     = **资产 id**（带 kind 前缀 "char:xxx"）：资产表 key、onlySet、genAsset、
+		//              入库、朝向重出都用它，一直都对；
+		//   · cardID = **裸卡 id**（"xxx"）：撞脸自检 / 跨期复核 / 家族键要的是这个形态
+		//              （它们内部自己拼 "char:"）。
+		// 此前把资产 id 直接喂给下游、下游又拼一次 "char:" ⇒ 双前缀 ⇒ 撞脸自检里
+		// "排除自己"的三道判据同时失效 ⇒ 碑生被拿去跟自己比，报「长得像同一个人」。
+		cardID := strings.TrimPrefix(id, "char:")
 		if len(onlySet) > 0 && !onlySet[id] {
 			return
 		}
@@ -222,10 +230,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					// 瘦长脸的年轻人 —— **读提示词的检查看不见这种失败，只能看图**。
 					// 与已生成的其他角色定妆照逐张比一次；判成"同一个人"就带上分离指令换种子重出一次。
 					var castNoCap bool
-					path, castNoCap = c.checkCastDistinctness(ctx, proj, assets, kind, id, name, imagePrompt, ek, path, genAsset)
+					path, castNoCap = c.checkCastDistinctness(ctx, proj, assets, kind, cardID, name, imagePrompt, ek, path, genAsset)
 					// 跨期造型档的**两向复核**（用户 2026-09-28：「不同时期会存在差异，但相似度不能走样」）:
 					// 该变的要真变(SSIM)、不该变的字字不动(VLM 同人判定)。与撞脸自检方向相反，各管一事。
-					path, _ = c.checkVariantIdentity(ctx, proj, assets, kind, id, name, path, genAsset)
+					path, _ = c.checkVariantIdentity(ctx, proj, assets, kind, cardID, name, path, genAsset)
 					if castNoCap && !castNoCapWarned {
 						castNoCapWarned = true
 						c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", CastSkipNoCapability)
@@ -233,8 +241,10 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				}
 				// 角色的多视角转台图排进第二阶段(见 pendingViews 注释)
 				if kind == "characters" && p.ViewsOn() {
+					// 这里存的是**资产 id**（已经是 "char:xxx"）—— 此前又拼了一次前缀，
+					// 消费处 TrimPrefix 一次后仍带 "char:"，多视角转台图的 key 于是整体错位一层。
 					pendingViews = append(pendingViews, pendingView{
-						id: "char:" + id, name: name, prompt: imagePrompt,
+						id: id, name: name, prompt: imagePrompt,
 						master: path, description: description, kind: ek,
 					})
 				}
@@ -350,6 +360,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			if ctx.Err() != nil {
 				break
 			}
+			// v.id 是**资产 id**（"char:xxx"）——genCharacterViews 要的是裸卡 id，
+			// 这里只去一次前缀正好；此前存进去的已经是双前缀，去一次还剩一层，转台图 key 整体错位。
 			c.genCharacterViews(ctx, proj, comfyGen, strings.TrimPrefix(v.id, "char:"), v.name, v.prompt, v.master, v.kind)
 			viewsDone++
 			// 多视角写回资产库:同一个角色全局只付一次转身成本,后续项目复用直接带走

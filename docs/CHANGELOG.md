@@ -11,6 +11,34 @@
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
 
+
+## 撞脸自检把自己当别人：一个参数担了两个口径（2026-09-28）
+
+用户：「定妆照「碑生（丙十七）（卡片 char:char_bingsheng）」与「碑生（丙十七）（卡片
+char:char_bingsheng）」**长得像同一个人**」—— 两边连卡 id 都一样，它跟自己比。
+
+**根因不是手法，是参数口径**：`stages_assets.go` 的 `check()` 里 `id` 是**资产 id**
+（`char:xxx` —— 资产表 key、`onlySet`、`genAsset`、入库都用它），却被直接喂给撞脸自检，
+而 `checkCastDistinctness` 内部又拼一次 `"char:"` 传给 `castPeers` ⇒ `selfID` 成了**双前缀**
+⇒「按 id 排除自己 / 按 id 查 selfName / 按名字排除」三道判据**同时失效**；资产表 key 恰好是
+单前缀，于是照样取到了自己的图，拿自己的图跟自己比。
+
+**同一根因还波及三处**（一并修）：
+
+- `checkVariantIdentity`：家族键与 master 查找都双前缀 ⇒ **造型档两向复核静默失效**（查不到主卡就直接 return）；
+- `pendingView.id`：又拼一次前缀，消费处再 `TrimPrefix` 一次 ⇒ 多视角转台图的 key 整体错位一层；
+- **测试夹具失真**：`cast_distinct_test.go` 直接喂 `castPeers` 资产 id，函数"看着是对的"，
+  而真实调用点在漏人 ——「夹具必须照真实形态写」（本文件里已记过四次）又应验一次。
+
+**修法**：`check()` 里显式分开 `assetID` / `cardID` 两个口径，下游要裸卡 id 的一律传 `cardID`；
+`castPeers` 的 `selfID` 一律过 `normalizeCardID` 归一（去干净重复前缀），不再假设调用点给的是哪种形态。
+
+**守卫**：新增 `TestCastPeersSurvivesAssetIDPrefix` —— 夹具照**真实故障形态**写（裸 id / 单前缀 /
+双前缀三种都喂，都必须挑出"真正的别人"），已做负向验证（把归一化退回单次 `TrimPrefix`，
+当场复现"自己进了比对名单"）；`TestAssetStageCallsCastDistinctness` 改为断言必须传 `cardID`。
+自检八门全过。
+
+
 ## 逐集解析的「门」：预解析只在没有相同任务时才跑（2026-09-28）
 
 用户两次纠同一处：「说了 LLM 解析按集来，为什么一来就直接两集开始解析？」→

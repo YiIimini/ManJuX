@@ -45,6 +45,20 @@ type castPeer struct {
 	path string
 }
 
+// normalizeCardID 把各种拼法归一到**裸卡 id**：去空白、去干净重复的 "char:" 前缀。
+//
+// 为什么需要它：同一份代码里"卡 id"有几种形态在流动 —— 方案里是裸的 `char_01`，
+// 资产表 key 是 `char:char_01`，而调用点有的传裸的、有的传带前缀的。2026-09-28 实测栽在
+// "调用点传资产 id、被调方又拼一次前缀"上：双前缀 ⇒ 下面三道"排除自己"的判据全部落空
+// ⇒ 碑生被拿去跟自己比 ⇒ 报出「碑生（丙十七）与碑生（丙十七）长得像同一个人」。
+func normalizeCardID(id string) string {
+	id = strings.TrimSpace(id)
+	for strings.HasPrefix(id, "char:") {
+		id = strings.TrimPrefix(id, "char:")
+	}
+	return id
+}
+
 // castPeers 挑出"已经生成好的其他角色定妆照"（排除自己、排除 Q 版等派生资产）。
 // castPeers 挑**同剧其他角色**的已出图定妆照作比对对象。
 //
@@ -56,14 +70,21 @@ type castPeer struct {
 // 而这里此前只按 **id** 排除自己，造型档的 id 不同、于是被当成"别人"拉来比 ✗。
 // 判据改成平台既有的"是不是同一个人"（`project.SameCharacter`，与首页角色数、
 // 造型档派生同一套家族键）；名字相同的一律不比（同名两张本来就没法从告警里分清是谁）。
+//
+// 【2026-09-28 用户报障 · 又是自己跟自己比，这次是**同一张卡**】告警里两边连卡片 id
+// 都一模一样（`char:char_bingsheng`）。根因不是手法，是**参数口径**：stages_assets.go
+// 的 check() 传下来的 id 已经是资产 id（`char:char_bingsheng`），这里又拼了一次 "char:"
+// —— selfID 成了双前缀，于是 `id == selfID`、按 id 查 selfName、按名字排除三道判据**同时失效**，
+// 自己进了比对名单（assets 的 key 恰好又是单前缀，照样取到了自己的图）。
+// 修法：selfID 一律过 normalizeCardID 归一到裸卡 id 再比，不再假设调用点给的是哪种形态。
 func castPeers(projDir string, plan *project.Plan, assets map[string]project.Asset, selfID string) []castPeer {
 	if plan == nil {
 		return nil
 	}
-	selfCardID := strings.TrimPrefix(selfID, "char:")
+	selfCardID := normalizeCardID(selfID)
 	var selfName string
 	for _, ch := range plan.Characters {
-		if ch.ID == selfCardID {
+		if normalizeCardID(ch.ID) == selfCardID {
 			selfName = ch.Name
 			break
 		}
@@ -79,7 +100,7 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 		// 「定妆照「碑生」与「碑生」长得像同一个人」。
 		// 改用平台自己那套判据 project.IsChibiCard（kind=="chibi" 或 chibi_ 前缀，两处口径合一），
 		// 顺带覆盖"kind 标了 chibi 但 id 没按约定写"的卡。
-		if id == selfID || project.IsChibiCard(ch.Kind, ch.ID) {
+		if normalizeCardID(ch.ID) == selfCardID || project.IsChibiCard(ch.Kind, ch.ID) {
 			continue
 		}
 		// 同一个人的另一档（或同名）：不是"别的角色"，比了只会得到"长得像同一个人"
