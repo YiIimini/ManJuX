@@ -1,5 +1,6 @@
 <script setup>
 import { G, api, refreshProject, phaseLabel, sourceLabel, sourceTone } from '../store'
+import { groupCharFamilies } from '../composables/useCharGroups'
 import { computed, ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
@@ -62,22 +63,11 @@ function isChibiCard(c) {
 // 判据由后端下发(pj.char_families,与 pj.char_kinds 同一手法)——前端**不自己抄一份**
 // "名字前缀 / id 的 vK 后缀"的规则:抄一份必然与后端漂移,而漂移的表现是"界面显示成两个人、
 // 渲染按一个人派生",最难查。后端没下发时(老版本/无方案)按"各自成组"退化成原样显示。
-const charGroups = computed(() => {
-  const fams = pj.value?.char_families || {}
-  const groups = new Map()
-  for (const c of charsWithAsset.value) {
-    const info = fams[c.id] || {}
-    const key = info.family || ('solo:' + c.id)
-    let g = groups.get(key)
-    if (!g) { g = { key, base: info.base || c.name, items: [] }; groups.set(key, g) }
-    g.items.push({ ...c, variant: info.variant || '', master: !!info.master })
-  }
-  for (const g of groups.values()) {
-    // 组内主卡在前(与资产阶段的生成顺序一致:主卡先出图,变体从它派生)
-    g.items.sort((a, b) => (b.master ? 1 : 0) - (a.master ? 1 : 0))
-  }
-  return [...groups.values()]
-})
+// 分组算法见 `composables/useCharGroups.js`（**全前端唯一实现**）。
+// 此前这段在项目页、阶段详情抽屉、资产库三处各写一遍，其中两份逐字相同、
+// 一份已经漂移（solo 键用了 name 而不是 id）—— 漂移的表现正是最难查的那类：
+// "界面显示成两个人、渲染按一个人派生"。
+const charGroups = computed(() => groupCharFamilies(charsWithAsset.value, pj.value?.char_families))
 
 // charPeople 这一集有几位**角色**(造型档算同一个人);charCards 是给模板的扁平列表:
 // 多档的人前面插一行分组头,单人(绝大多数)不插 —— 观感与原先完全一致。

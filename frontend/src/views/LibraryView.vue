@@ -3,6 +3,7 @@ import { G, api, fileToB64, sourceLabel, sourceTone} from '../store'
 import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmGpuContention } from '../pipelineBusy'
+import { groupCharFamilies } from '../composables/useCharGroups'
 
 // 分类**由后端决定**，前端不再写死清单。
 //
@@ -51,15 +52,23 @@ const list = computed(() => lib.value[kind.value] || [])
 // 基名(family)由后端现算下发(条目名里「·」之前的部分)——前端不自己拆名字:
 // 拆法只有一份实现才可能与产线一致(与 char_kinds 同一条教训)。
 // 单档的角色(绝大多数)不插分组头,观感与原先完全一致。
+// 分组算法见 `composables/useCharGroups.js`（**全前端唯一实现**）。
+//
+// 这一份此前**已经漂移**：solo 键写成 `'solo:' + e.kind + e.name`（用名字），
+// 而另外两处用 `'solo:' + id` —— 同名不同人（合法数据）在这页会被并成一组，
+// 界面显示成"一个人有两个造型档"，而渲染按两个人各出一张图。
 const libGroups = computed(() => {
-  const groups = new Map()
-  for (const e of list.value) {
-    const key = (kind.value === 'characters' && e.family) ? e.family : ('solo:' + e.kind + e.name)
-    let g = groups.get(key)
-    if (!g) { g = { key, base: e.family || e.name, items: [] }; groups.set(key, g) }
-    g.items.push(e)
+  if (kind.value !== 'characters') {
+    // 非角色类（场景/道具）没有家族概念，按条目各自成组（保持原有观感）
+    return (list.value || []).map(e => ({ key: 'solo:' + e.kind + e.name, base: e.name, items: [e] }))
   }
-  return [...groups.values()]
+  // 角色：走共用实现。库里条目带的家族信息在 `e.family`（后端下发）
+  const items = (list.value || []).map(e => ({ ...e, id: e.id || (e.kind + ':' + e.name) }))
+  const fams = {}
+  for (const e of list.value || []) {
+    if (e && e.family) fams[e.id || (e.kind + ':' + e.name)] = { family: e.family, base: e.family }
+  }
+  return groupCharFamilies(items, fams)
 })
 
 // libCards 给模板的扁平列表:多档的人前面插一行分组头。

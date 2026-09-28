@@ -4,6 +4,7 @@ import { G, api, refreshProject, sourceLabel, sourceTone } from '../store'
 import { computed, reactive, watch, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmGpuContention } from '../pipelineBusy'
+import { groupCharFamilies } from '../composables/useCharGroups'
 
 const visible = computed({
   get: () => !!G.stageDetail,
@@ -31,20 +32,9 @@ const propList = computed(() => (plan.value?.props || []).map(p => ({ ...p, asse
 // (「翻篇·收容所」「翻篇·归零」…,id 形如 char_01v1 / char_01v4)。按卡平铺,
 // 用户会以为多出来一堆新角色;而它们本来就是同一个人换了服装/状态。
 // 家族判据由后端下发(与 char_kinds 同一手法),前端不自己抄一份规则(抄了必然漂移)。
-const charGroups = computed(() => {
-  const fams = pj.value?.char_families || {}
-  const groups = new Map()
-  for (const c of charList.value) {
-    const info = fams[c.id] || {}
-    const key = info.family || ('solo:' + c.id)
-    let g = groups.get(key)
-    if (!g) { g = { key, base: info.base || c.name, items: [] }; groups.set(key, g) }
-    g.items.push({ ...c, variant: info.variant || '', master: !!info.master })
-  }
-  const out = [...groups.values()]
-  for (const g of out) g.items.sort((a, b) => (b.master ? 1 : 0) - (a.master ? 1 : 0))
-  return out
-})
+// 分组算法见 `composables/useCharGroups.js`（**全前端唯一实现**）—— 这段此前与
+// 项目页那份**逐字相同**，而资产库那份已经漂移（solo 键用了 name 而不是 id）。
+const charGroups = computed(() => groupCharFamilies(charList.value, pj.value?.char_families))
 // 给模板的扁平列表:多档的人前面插一行分组头;单人(绝大多数)不插,观感与原先一致。
 const charRows = computed(() => {
   const out = []
