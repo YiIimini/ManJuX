@@ -254,7 +254,12 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		if createdN == 0 && onEps != nil && len(epsAll) > 0 {
 			onEps(series, epsAll)
 		}
-		go s.fillEpisodeBriefs(ctx, series, eps, artStyle, briefMin, briefMax, prevSum)
+		// 【2026-09-28 用户口径】这里本来是「**给全部集并行补写 brief**」——每集最多 1.2 万字原文丢给
+		// LLM，一本几十集的书就是几十个并发大请求，用户点一次导入就"一上来全解析"了 ✗。
+		// 改成**轮到哪一集才解析哪一集**（流水线：第 N 集解析→渲染→第 N+1 集解析→渲染…），
+		// 由批量产线在处理该集前调用 ensureEpisodeBrief（见 novels_jobs.go）。
+		_ = ctx
+		_ = prevSum
 		return series, epsAll, nil
 	}
 

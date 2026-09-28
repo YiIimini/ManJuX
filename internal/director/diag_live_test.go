@@ -2,6 +2,7 @@ package director
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -130,4 +131,40 @@ func TestDiagPlanRoundLive(t *testing.T) {
 		}
 	}
 	t.Logf("契约自检：fail=%d warn=%d", fails, warns)
+
+	// 把方案**落盘**（MANJUX_DIAG_OUT）—— 2026-09-28 加：诊断不落盘时，跑完 30 分钟只剩几行日志，
+	// "道具到底提取了没有"这种问题得再烧一次才答得上；落盘后可以直接
+	//   go run ./cmd/preflight -dir <目录>
+	// 逐类复核（角色卡/场景卡/道具卡/分镜），也能拿真方案做对比。
+	if out := os.Getenv("MANJUX_DIAG_OUT"); out != "" {
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			t.Fatalf("建目录失败:%v", err)
+		}
+		b, err := json.MarshalIndent(plan, "", "  ")
+		if err != nil {
+			t.Fatalf("序列化方案失败:%v", err)
+		}
+		if err := os.WriteFile(filepath.Join(filepath.Dir(out), "plan.json"), b, 0o644); err != nil {
+			t.Fatalf("写方案失败:%v", err)
+		}
+		t.Logf("方案已落盘:%s（可 go run ./cmd/preflight -dir %s）", filepath.Join(filepath.Dir(out), "plan.json"), filepath.Dir(out))
+	}
+	// 四类产物的**一处汇总**：道具这一项此前只能靠肉眼翻 plan，落这里就一眼看见。
+	t.Logf("四类：角色 %d（其中 Q 版 %d）/ 场景 %d / **道具 %d** / 分镜 %d",
+		len(plan.Characters), func() int {
+			n := 0
+			for _, ch := range plan.Characters {
+				if project.IsChibiCard(ch.Kind, ch.ID) {
+					n++
+				}
+			}
+			return n
+		}(), len(plan.Scenes), len(plan.Props), len(plan.Shots))
+	withProp := 0
+	for _, sh := range plan.Shots {
+		if len(sh.PropIDs) > 0 {
+			withProp++
+		}
+	}
+	t.Logf("带 prop_ids 的镜：%d / %d", withProp, len(plan.Shots))
 }
