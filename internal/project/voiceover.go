@@ -102,8 +102,178 @@ func (p *Plan) HasPropID(id string) bool {
 	return false
 }
 
-// IsChibiCard 这张角色卡是不是 **Q 版形象**（技能侧 `kind: "chibi"`；id 约定 `chibi_<原角色id>`）。
+// FillVoiceoverAssets 补全画外演出镜的**素材引用**，返回补了几镜。
 //
+// 【2026-09-28 实测驱动】一次真跑里整个方案的唯一 fail 是
+// 「#11 vo_kind=inner 但 chibi_ids 为空」：模型标了"这是内心镜"，却没写演出素材 id。
+// 口径是"字段标了不算、素材必须真在"，所以契约必须 fail —— 但用户看到的是"又说不能渲"，
+// 而**素材本来就是按角色自动生成的**（资产阶段给每个角色同步出 Q 版），缺的只是"对上号"。
+//
+// 所以这里确定性补全（幂等，可重复调用）：
+//   - inner 镜：为出场角色各建一张 Q 版**卡**（技能侧命名 `chibi_<原角色id>`，kind=chibi），
+//     并把 id 写进 chibi_ids。为什么不指望模型写：Q 版不是创作内容，是"内心戏由 Q 版演出"
+//     这条口径的执行体，模型漏一次就 fail 一次。
+//   - system 镜：bot 挂在 `chibi_sys_01`（没有就建一张系统机器人卡），panel 指向一件道具卡
+//     （没有就按该场建一件"面板"道具，1:1 白底提示词），并把它并进 prop_ids。
+func FillVoiceoverAssets(plan *Plan) int {
+	if plan == nil {
+		return 0
+	}
+	n := 0
+	for i := range plan.Shots {
+		sh := &plan.Shots[i]
+		switch sh.VoKind {
+		case VoKindInner:
+			if len(sh.ChibiIDs) == 0 {
+				var ids []string
+				for _, cid := range sh.Characters {
+					cid = strings.TrimSpace(cid)
+					if cid == "" {
+						continue
+					}
+					chibi := ensureChibiCard(plan, cid)
+					if chibi != "" {
+						ids = append(ids, chibi)
+					}
+				}
+				if len(ids) > 0 {
+					sh.ChibiIDs = ids
+					n++
+				}
+			}
+		case VoKindSystem:
+			if sh.SystemAssets == nil {
+				sh.SystemAssets = map[string]string{}
+			}
+			changed := false
+			if strings.TrimSpace(sh.SystemAssets["bot"]) == "" {
+				if id := ensureSystemBotCard(plan); id != "" {
+					sh.SystemAssets["bot"] = id
+					changed = true
+				}
+			}
+			if strings.TrimSpace(sh.SystemAssets["panel"]) == "" {
+				if id := ensurePanelProp(plan, sh); id != "" {
+					sh.SystemAssets["panel"] = id
+					if !hasStr(sh.PropIDs, id) {
+						sh.PropIDs = append(sh.PropIDs, id)
+					}
+					changed = true
+				}
+			}
+			if changed {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// ensureChibiCard 确保 `chibi_<baseID>` 这张 Q 版卡存在，返回它的 id（建不出来返回空）。
+//
+// 卡的提示词**从主卡派生**：Q 版的身份必须来自主卡（同一张脸的另一套画法），
+// 而不是让模型重新描述一个人 —— 这里只补"Q 版画法"的取景与头身比，身份照抄主卡的 IDENTITY LOCK。
+func ensureChibiCard(plan *Plan, baseID string) string {
+	id := "chibi_" + baseID
+	if plan.HasCharacterID(id) {
+		return id
+	}
+	base, ok := findCharacter(plan, baseID)
+	if !ok {
+		return ""
+	}
+	lock := identityLockOf(base.ImagePrompt)
+	prompt := "chibi / super-deformed version of the SAME character, 2.5-3 head-tall proportions, " +
+		"big head, small body, same face features, same hair, same costume palette and same signature marks, " +
+		"full body on plain white background, soft even light, no text, no watermark. " + lock
+	plan.Characters = append(plan.Characters, Character{
+		ID:          id,
+		Name:        base.Name + "·Q版",
+		Kind:        "chibi",
+		Description: "同一角色的 Q 版形象（内心活动镜由它演出）",
+		ImagePrompt: prompt,
+		Voice:       base.Voice,
+	})
+	return id
+}
+
+// ensureSystemBotCard 确保系统镜的机器人卡存在（技能侧约定 `chibi_sys_01`）。
+func ensureSystemBotCard(plan *Plan) string {
+	const id = "chibi_sys_01"
+	if plan.HasCharacterID(id) {
+		return id
+	}
+	plan.Characters = append(plan.Characters, Character{
+		ID:          id,
+		Name:        "系统机器人",
+		Kind:        "chibi",
+		Description: "半透明发光的小型机器人化身（系统提示的演出体）",
+		ImagePrompt: "a small translucent glowing chibi robot mascot, rounded body, soft cyan light, " +
+			"full body on plain white background, even light, no text, no watermark",
+	})
+	return id
+}
+
+// ensurePanelProp 确保系统镜的"面板"道具卡存在（1:1 白底单件，与道具链同一套要求）。
+func ensurePanelProp(plan *Plan, sh *Shot) string {
+	id := "prop_panel_" + strings.TrimPrefix(strings.TrimSpace(sh.Scene), "scene_")
+	if plan.HasPropID(id) {
+		return id
+	}
+	name := "系统面板"
+	if sc, ok := findScene(plan, sh.Scene); ok && strings.TrimSpace(sc.Name) != "" {
+		name = sc.Name + "·系统面板"
+	}
+	plan.Props = append(plan.Props, Prop{
+		ID:          id,
+		Name:        name,
+		EN:          "a floating holographic panel with a thin glowing frame",
+		Description: "悬浮的半透明发光面板，边框细亮线，**面板上不出现任何文字**（文字进画面必糊成伪汉字）",
+		ImagePrompt: "a floating holographic panel with a thin glowing frame, blank surface " +
+			"(absolutely no letters, no numbers, no UI text), 1:1 square, isolated on plain white background",
+	})
+	return id
+}
+
+func findCharacter(plan *Plan, id string) (Character, bool) {
+	for _, ch := range plan.Characters {
+		if ch.ID == id {
+			return ch, true
+		}
+	}
+	return Character{}, false
+}
+
+func findScene(plan *Plan, id string) (Scene, bool) {
+	for _, sc := range plan.Scenes {
+		if sc.ID == id {
+			return sc, true
+		}
+	}
+	return Scene{}, false
+}
+
+// identityLockOf 取卡片里的 IDENTITY LOCK 段（没有就退回整条提示词的首句）。
+func identityLockOf(prompt string) string {
+	if i := strings.Index(prompt, "IDENTITY LOCK"); i >= 0 {
+		rest := prompt[i:]
+		if j := strings.IndexAny(rest, "\r\n"); j > 0 {
+			rest = rest[:j]
+		}
+		return strings.TrimSpace(rest)
+	}
+	return strings.TrimSpace(prompt)
+}
+
+func hasStr(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
 // 【两套命名都要认】技能侧用**前缀**（`chibi_char_01` = 沈砚·Q版），平台自己早先派生 Q 版时
 // 用的是**后缀**（`char_01_chibi`）—— 判据只认一套就会漏：实测撞脸自检因此把**本人和它自己的
 // Q 版**拿去互比（Q 版本来就是同一个人 ⇒ 必然报"长得像同一个人"，用户 2026-09-28 报障）。

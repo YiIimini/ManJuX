@@ -711,6 +711,14 @@ func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scen
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
 	}
 	prompt += styleExpand(planStyle(plan), facesOnOf(proj), KindScene)
+	// **建立镜头串由装配层保证**（2026-09-28 用户：「场景简陋单一」＋ 实测 4/4 张场景卡都没有它）。
+	//
+	// 官方 §4.4 要求场景板必须含这一串 —— 平台的规则文字里写了，但实测**模型不照做**（分镜镜头的
+	// 同一串它倒是照做：那次只有 0/4 张卡带）。按本仓的既定做法：能确定性做到的就不指望 LLM 自觉，
+	// 在**唯一装配点**补上（幂等：已经有了就不重复加；成品会被写回卡片，契约门随后自然通过）。
+	if !containsAny(prompt, project.PlanEstablishingExtra) {
+		prompt += "\n" + project.PlanEstablishingExtra
+	}
 
 	// 事件隔离（整改单 §1.3）：场景板只画**事件发生前的地点固有状态**。
 	// 板上若带着血渍/尸体/刚破碎物/遗落道具，那一集每一镜都像"事情已经发生过"

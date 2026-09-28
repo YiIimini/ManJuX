@@ -508,12 +508,24 @@ type segment struct {
 	Brief string `json:"brief"`
 }
 
+// planHead 规划轮产物（"轻量头部"：剧名/角色/场景/道具/切分计划）。
+//
+// 【2026-09-28 实测抓到的静默丢字段】这个结构体原先**没有 Props** —— 而规划轮是唯一
+// 产出道具卡的地方（分镜轮 batchShotOut 只回 shots）。于是模型在分镜里老老实实写了
+// `prop_ids`（实测 35 镜里 19 镜带 `prop_zaodao / prop_shidao / prop_taijia / prop_gangzi`
+// 这种真道具 id），道具卡却**在解码这一步被无声丢掉**，落盘方案里连 `props` 键都没有。
+// 后果：契约的"prop_ids 悬空 ⇒ fail"必然触发，道具一张图也不会出 —— 用户看到的正是
+// 「关键物品生成道具啊，前后镜都漂移了」。
+//
+// 教训（写进注释免得再犯）：**给提示词加字段时，必须同时给解码结构体加字段** ——
+// 只改骨架文字，模型写的东西会在解析处消失，而且不报错。
 type planHead struct {
 	Title      string              `json:"title"`
 	Logline    string              `json:"logline"`
 	Style      string              `json:"style"`
 	Characters []project.Character `json:"characters"`
 	Scenes     []project.Scene     `json:"scenes"`
+	Props      []project.Prop      `json:"props"`
 	Segments   []segment           `json:"segments"`
 }
 
@@ -604,6 +616,15 @@ func normalizePlan(plan *project.Plan, opt Options) {
 	if n := project.MarkOffscreenSpeakers(plan); n > 0 && opt.OnNote != nil {
 		opt.OnNote("把 %d 条「说话人不在本镜画面里」的台词标成画外音（os=true）—— 语义上本来就是画外音，"+
 			"标上之后契约不再因此 fail", n)
+	}
+	// 画外演出的**资产引用**由归一化补全（2026-09-28 实测：一次真跑里 35 镜的 fail 就是
+	// 「#11 vo_kind=inner 但 chibi_ids 为空」——模型标了"这是内心镜"，却忘了写演出素材 id，
+	// 契约于是 fail，用户看到的是"又说不能渲"）。口径是"字段标了不算，素材必须真在"，
+	// 所以这里按该镜出场角色**确定性地**补出 Q版 / 系统素材 id：素材本来就会按角色自动生成
+	// （见资产阶段的 Q 版生成），补 id 只是把双方对上号，不改任何创作内容。
+	if n := project.FillVoiceoverAssets(plan); n > 0 && opt.OnNote != nil {
+		opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
+			"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", n)
 	}
 }
 
@@ -1204,7 +1225,7 @@ func generateBatched(ctx context.Context, client *llm.Client, sourceText string,
 	total := len(head.Segments)
 	plan := &project.Plan{
 		Title: head.Title, Logline: head.Logline, Style: head.Style,
-		Characters: head.Characters, Scenes: head.Scenes,
+		Characters: head.Characters, Scenes: head.Scenes, Props: head.Props,
 	}
 
 	// ---- 轮 2..k:逐批出镜 ----
