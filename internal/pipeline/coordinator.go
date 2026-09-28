@@ -383,6 +383,16 @@ func (c *Coordinator) finish(projectID string) {
 }
 
 func (c *Coordinator) emit(projectID, phase string, shotID int, level string, progress int, format string, args ...any) {
+	// bus 为 nil 时**什么都不发**，而不是 panic。
+	//
+	// 为什么值得这一行（2026-09-28 被测试撞出来的）：Coordinator 在很多地方是可以"裸造"的
+	// （只填它需要的那几个字段 —— 测试、单资产重生成、离线工具都是这么用的）。没有这道判断，
+	// 任何一条新代码路径只要在裸 Coordinator 上走到 emit 就整进程崩，而崩的地方离原因很远
+	// （症状是某段逻辑跑不通，实际是"没接消息总线"）。事件是**通知**，不是业务状态 ——
+	// 发不出去不该让业务挂掉。
+	if c.bus == nil {
+		return
+	}
 	c.bus.Publish(Event{
 		ProjectID: projectID, Phase: phase, ShotID: shotID,
 		Level: level, Progress: progress,

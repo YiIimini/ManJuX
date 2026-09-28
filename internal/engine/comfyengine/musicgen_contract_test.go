@@ -2,6 +2,8 @@ package comfyengine
 
 import (
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/engine"
 )
 
 // 配乐图的**契约测试**（不需要模型，只校验图的形状与官方蓝本一致）。
@@ -11,7 +13,7 @@ import (
 // "生成失败/产物不对"，排查起来很远；这里把契约钉死，drift 一眼可见。
 func TestMusicGraphContract(t *testing.T) {
 	m := DefaultMusicModels()
-	g := buildMusicGraph(m, MusicJob{Tags: "calm guzheng, slow, instrumental", Seconds: 90, BPM: 70}, 12345, "bgm_test")
+	g := buildMusicGraph(m, engine.MusicJob{Tags: "calm guzheng, slow, instrumental", Seconds: 90, BPM: 70}, 12345, "bgm_test")
 
 	// ① 节点类名必须与本地 ComfyUI 的 node_id 一致（一个字母都不能差）
 	wantTypes := map[string]string{
@@ -92,7 +94,7 @@ func TestMusicGraphContract(t *testing.T) {
 
 // TestMusicGraphDefaults 缺省值必须兜住（BPM/秒数为 0 时不能把 0 传给模型）。
 func TestMusicGraphDefaults(t *testing.T) {
-	g := buildMusicGraph(DefaultMusicModels(), MusicJob{Tags: "x"}, 1, "p")
+	g := buildMusicGraph(DefaultMusicModels(), engine.MusicJob{Tags: "x"}, 1, "p")
 	enc := g["5"].(map[string]any)["inputs"].(map[string]any)
 	if enc["bpm"] != 120 {
 		t.Errorf("BPM 缺省应为 120，实际 %v", enc["bpm"])
@@ -105,10 +107,10 @@ func TestMusicGraphDefaults(t *testing.T) {
 // TestGenerateMusicRejectsEmptyTags 空提示词必须拒绝（否则会生成一段随机曲子还报成功）。
 func TestGenerateMusicRejectsEmptyTags(t *testing.T) {
 	e := &Engine{}
-	if _, err := e.GenerateMusic(nil, MusicJob{OutputDir: "d", OutputName: "n"}); err == nil {
+	if _, err := e.GenerateMusic(nil, engine.MusicJob{OutputDir: "d", OutputName: "n"}); err == nil {
 		t.Error("配乐提示词为空时必须报错")
 	}
-	if _, err := e.GenerateMusic(nil, MusicJob{Tags: "x"}); err == nil {
+	if _, err := e.GenerateMusic(nil, engine.MusicJob{Tags: "x"}); err == nil {
 		t.Error("落点未指定时必须报错")
 	}
 }

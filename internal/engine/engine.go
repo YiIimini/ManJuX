@@ -163,6 +163,11 @@ type Engine interface {
 	ClearQueue(ctx context.Context)
 	Interrupt(ctx context.Context)
 	GenerateImage(ctx context.Context, prompt, neg string, seed int64, w, h int, outPath string) (string, error)
+	// GenerateMusic 生成一段配乐（本地引擎实现；云端给出带指引的错误）。
+	//
+	// 与 GenerateImage/Upscale 同属"可选能力"：调用方用 Caps.Music 先问能不能做，
+	// 不能做时走"如实报告没有配乐"，而不是硬调用再报一个看不懂的错。
+	GenerateMusic(ctx context.Context, job MusicJob) (string, error)
 	// Upscale 对已完成的镜头做 2× 放大后处理(必须保留原音轨)。
 	// 与上面几项同属可选能力:云端引擎不支持,给出带指引的错误。
 	Upscale(ctx context.Context, srcVideoPath string, opt UpscaleOptions, length int, fps float64, outName, outPath string, timeout time.Duration) (string, error)
@@ -243,4 +248,24 @@ func SnapCanvas(w, h int) (int, int) {
 		return v / 32 * 32
 	}
 	return snap(w), snap(h)
+}
+
+// MusicJob 一次配乐生成的输入。
+//
+// 为什么类型放在 engine 包（而不是 comfyengine）：它是**接口的一部分** ——
+// 云端引擎给安全空实现、本地引擎真正实现，调用方（管线）不该知道具体引擎类型。
+type MusicJob struct {
+	// Tags 风格/情绪/乐器/节奏的描述（ACE 的 tags 就是它的提示词）。
+	Tags string
+	// Seconds 目标时长（秒）。成片铺底会自动循环，所以不必等于成片长度。
+	Seconds float64
+	// BPM 速度；0 = 引擎默认（120）。
+	BPM int
+	// Seed 0 = 随机；非 0 可复现同一段曲子。
+	Seed int64
+	// OutputDir / OutputName 落点。
+	OutputDir  string
+	OutputName string
+	// Timeout 0 = 引擎默认（首次要加载文本编码器，比出图慢得多）。
+	Timeout time.Duration
 }

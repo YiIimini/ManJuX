@@ -195,6 +195,12 @@ func (f *fakeSheetEngine) Interrupt(context.Context)       {}
 func (f *fakeSheetEngine) Render(context.Context, engine.Job) (*engine.Result, error) {
 	return nil, fmt.Errorf("本用例不该走视频渲染")
 }
+
+// GenerateMusic 桩：本测试不涉及配乐生成（与云端引擎同一政策：安全空实现）。
+func (f *fakeSheetEngine) GenerateMusic(context.Context, engine.MusicJob) (string, error) {
+	return "", nil
+}
+
 func (f *fakeSheetEngine) Upscale(context.Context, string, engine.UpscaleOptions, int, float64, string, string, time.Duration) (string, error) {
 	return "", fmt.Errorf("本用例不该走放大")
 }

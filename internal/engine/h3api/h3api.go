@@ -499,3 +499,9 @@ func ratioFor(w, h int) string {
 		return "9:16"
 	}
 }
+
+// GenerateMusic 云端引擎不提供配乐生成（安全空实现，与 GenerateImage/Upscale 同一政策）：
+// 返回带指引的错误，让调用方如实播报"本机没有配乐生成能力"，而不是静默无声。
+func (e *Engine) GenerateMusic(ctx context.Context, job engine.MusicJob) (string, error) {
+	return "", fmt.Errorf("当前引擎(%s)不支持配乐生成：请在设置里把引擎切到本地 ComfyUI，或手工指定配乐文件", e.Name())
+}

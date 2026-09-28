@@ -3,6 +3,7 @@ package comfyengine
 import (
 	"context"
 	"fmt"
+	"github.com/YiIimini/ManJuX/internal/engine"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,23 +25,6 @@ import (
 // 【为什么 BGM 只要器乐】平台已经按官方 qc-checklist 做"成片一条连续 BGM + 人声下闪避"
 // （compose/bgm.go），而 H3 片段自带同期声与台词 ⇒ 配乐必须是**纯器乐**，否则会跟台词打架。
 // 所以这里固定空歌词（lyrics 传空串）、并在 tags 里强调 instrumental。
-
-// MusicJob 一次配乐生成的输入。
-type MusicJob struct {
-	// Tags 风格/情绪/乐器/节奏的描述（英文最佳；ACE 的 tags 是它的"提示词"）。
-	Tags string
-	// Seconds 目标时长（秒）。成片铺底会自动循环/裁剪，所以给一个略长于成片的值最省事。
-	Seconds float64
-	// BPM 速度；0 = 用默认 120。
-	BPM int
-	// Seed 0 = 随机（引擎侧填实际种子并回收，方便复现同一段曲子）。
-	Seed int64
-	// OutputDir / OutputName 落点。
-	OutputDir  string
-	OutputName string
-	// Timeout 0 = 默认 20 分钟（首次要加载 4B 文本编码器，比出图慢得多）。
-	Timeout time.Duration
-}
 
 // MusicModelFiles ACE-Step 1.5 需要的四个模型文件（与 docs/ACE-Step接入记录.md 一致）。
 type MusicModelFiles struct {
@@ -69,7 +53,7 @@ func DefaultMusicModels() MusicModelFiles {
 //	ConditioningZeroOut ────────────────────────────┼─ KSampler ─ VAEDecodeAudio ─ SaveAudioMP3
 //	EmptyAceStep1.5LatentAudio ─────────────────────┘
 //	VAELoader ───────────────────────────────────────┘（给 KSampler 与解码用）
-func buildMusicGraph(m MusicModelFiles, job MusicJob, seed int64, prefix string) map[string]any {
+func buildMusicGraph(m MusicModelFiles, job engine.MusicJob, seed int64, prefix string) map[string]any {
 	if job.BPM <= 0 {
 		job.BPM = 120
 	}
@@ -120,7 +104,7 @@ func buildMusicGraph(m MusicModelFiles, job MusicJob, seed int64, prefix string)
 // GenerateMusic 生成一段配乐并返回落盘路径。
 //
 // 时长给足：首次运行要加载 4B 文本编码器（比出图链路慢得多），超时默认 20 分钟。
-func (e *Engine) GenerateMusic(ctx context.Context, job MusicJob) (string, error) {
+func (e *Engine) GenerateMusic(ctx context.Context, job engine.MusicJob) (string, error) {
 	if strings.TrimSpace(job.Tags) == "" {
 		return "", fmt.Errorf("配乐提示词为空（tags 必须写风格/情绪/乐器）")
 	}

@@ -249,3 +249,8 @@ func TestScaleImageExact(t *testing.T) {
 		t.Errorf("归一化后应精确为 %d×%d，实际 %d×%d", bw, bh, w, h)
 	}
 }
+
+// GenerateMusic 桩：本测试不涉及配乐生成，给安全空实现（与云端引擎同一政策）。
+func (s stubBoardEngine) GenerateMusic(ctx context.Context, job engine.MusicJob) (string, error) {
+	return "", nil
+}

@@ -18,6 +18,11 @@ type Caps struct {
 	ImageGen bool
 	// MaskFix 局部重绘、AudioDrive 音频驱动这类图增强(依赖本地节点链)。
 	MaskFix bool
+	// Music 能生成配乐（本地 ACE-Step 链）。云端不提供。
+	//
+	// 为什么要单开一位：配乐是"可选但要如实播报"的能力 —— 没有它时成片就是没有配乐，
+	// 而"没有配乐"必须让人知道（此前只在用户手工填了 assemble.bgm 时才通）。
+	Music bool
 }
 
 // CapsOf 按引擎名给出能力表。未知引擎返回**零值**:
@@ -26,7 +31,7 @@ type Caps struct {
 func CapsOf(name string) Caps {
 	switch name {
 	case "comfy":
-		return Caps{Local: true, Seam: true, VRAM: true, Queue: true, ImageGen: true, MaskFix: true}
+		return Caps{Local: true, Seam: true, VRAM: true, Queue: true, ImageGen: true, MaskFix: true, Music: true}
 	case "api":
 		return Caps{} // 云端:纯文生/图生视频,没有本地概念
 	}

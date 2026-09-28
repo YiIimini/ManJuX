@@ -38,6 +38,9 @@ var assetSourceNames = []struct {
 	{"upload-whitebg", "上传 · 白底化"},
 	{"video-frame", "视频截帧"},
 	{"gacha", "抽卡"},
+	// 配乐来源（2026-09-28 用户要求 BGM 进资产库管理）：本地 ACE-Step 生成。
+	// 名字带上模型名，因为用户就是在设置页按这个名字配模型的。
+	{"ace-step", "ACE-Step（AI 作曲）"},
 }
 
 // AssetSources 全部来源(按展示顺序),供 /api/meta 下发。

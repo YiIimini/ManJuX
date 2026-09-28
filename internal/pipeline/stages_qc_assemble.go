@@ -11,6 +11,8 @@ import (
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/compose"
+	"github.com/YiIimini/ManJuX/internal/director"
+	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/fsutil"
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
@@ -531,7 +533,12 @@ func (c *Coordinator) bgmPathOf(proj *project.Project, plan *project.Plan) (stri
 		if filepath.IsAbs(raw) {
 			return raw, "项目参数指定的配乐文件"
 		}
-		return filepath.Join(c.store.Dir(proj.ID), raw), "项目参数指定的配乐文件"
+		// 相对路径按**项目目录**解析；拿不到项目目录时（裸造 Coordinator）如实说明，
+		// 不 panic、也不假装能解析 —— 与 emit 的 nil 宽容同一考虑。
+		if dir := c.projectDir(proj.ID); dir != "" {
+			return filepath.Join(dir, raw), "项目参数指定的配乐文件"
+		}
+		return "", "配乐写的是相对路径(" + raw + ")，但拿不到项目目录，无法解析 —— 请改填绝对路径"
 	}
 	brief := strings.TrimSpace(p.BGMDescription)
 	if brief == "" || c.lib == nil {
@@ -545,7 +552,86 @@ func (c *Coordinator) bgmPathOf(proj *project.Project, plan *project.Plan) (stri
 		c.lib.BumpUsed("music", name)
 		return img, fmt.Sprintf("资产库复用配乐「%s」（同需求免重生成）", name)
 	}
-	return "", fmt.Sprintf("资产库没有这份配乐需求「%s」", name)
+	// ③ 库里没有 ⇒ **现场生成**（本地 ACE-Step），生成成功就**入库**供下次复用。
+	//
+	// 这一步是用户 2026-09-28 那条要求的闭环："生成的背景音乐也要做成资产库里进行管理，
+	// 后续存在相同的可以直接复用"。生成器可注入（musicGenHook），便于在没有模型的机器上
+	// 测"生成→入库→复用"这条链本身。
+	path, gnote := c.generateMusic(proj, plan, name, brief)
+	if path != "" {
+		return path, gnote
+	}
+	return "", fmt.Sprintf("资产库没有这份配乐需求「%s」，且%s", name, gnote)
+}
+
+// musicGenHook 生成器的注入点（测试用；nil = 走真实引擎）。
+//
+// 为什么要留这个口子：配乐生成依赖 13.68 GB 的本地模型，测试机不一定有；而"生成→入库→复用"
+// 这条链**本身**的逻辑（入库名字、来源标记、失败时的措辞）与此无关、必须能测。
+var musicGenHook func(ctx context.Context, tags string, seconds float64) (string, error)
+
+// generateMusic 现场生成配乐并入库，返回(项目内绝对路径, 说明)。失败时返回("", 原因)。
+//
+// 时长取"成片的 1/3 且不超过 180 秒"：铺底会自动循环（compose/bgm.go），
+// 生成 3 分钟的曲子去铺 6 分钟的片子完全够用，而生成时间与时长近似成正比 —— 没必要等更久。
+func (c *Coordinator) generateMusic(proj *project.Project, plan *project.Plan, name, brief string) (string, string) {
+	total := 0
+	if plan != nil {
+		for _, sh := range plan.Shots {
+			total += sh.Duration
+		}
+	}
+	seconds := float64(total) / 3
+	if seconds < 60 {
+		seconds = 60
+	}
+	if seconds > 180 {
+		seconds = 180
+	}
+	// tags 里必须钉住"纯器乐"：H3 片段自带同期声与台词，配乐带唱词会打架（与官方 STEP 8 同一口径）
+	tags := strings.TrimSpace(brief) + ", instrumental only, no vocals, background score"
+	ctx := context.Background()
+	gen := musicGenHook
+	if gen == nil {
+		if c.reg == nil {
+			// 裸造 Coordinator（测试/离线工具）没有引擎注册表：如实说"没有能力"，不 panic。
+			return "", "没有可用的本地引擎（配乐生成需要 ComfyUI）"
+		}
+		eng, err := c.reg.Get("comfy")
+		if err != nil || eng == nil {
+			return "", "本机没有可用的本地引擎（配乐生成需要 ComfyUI）"
+		}
+		if !engine.CapsOf(eng.Name()).Music {
+			return "", fmt.Sprintf("当前引擎(%s)不支持配乐生成", eng.Name())
+		}
+		gen = func(ctx context.Context, tags string, sec float64) (string, error) {
+			outDir := filepath.Join(c.store.Dir(proj.ID), "assets", "music")
+			if err := os.MkdirAll(outDir, 0o755); err != nil {
+				return "", err
+			}
+			return eng.GenerateMusic(ctx, engine.MusicJob{
+				Tags: tags, Seconds: sec,
+				OutputDir: outDir, OutputName: "bgm_" + director.SanitizeForCache(name),
+			})
+		}
+	}
+	c.emit(proj.ID, PhaseAssemble, 0, "info", 2,
+		"♪ 资产库没有这份配乐，开始生成（%.0f 秒，纯器乐）—— 生成后自动入库，下次同需求直接复用", seconds)
+	path, err := gen(ctx, tags, seconds)
+	if err != nil || strings.TrimSpace(path) == "" {
+		why := "生成失败"
+		if err != nil {
+			why = err.Error()
+		}
+		return "", "现场生成也不成：" + why
+	}
+	// 入库（按需求命名，来源记成 ace-step，便于日后追它是谁生成的）
+	if c.lib != nil {
+		if _, perr := c.lib.Put("music", name, brief, tags, path, proj.ID, "ace-step"); perr != nil {
+			c.emit(proj.ID, PhaseAssemble, 0, "warn", 2, "⚠ 配乐已生成但入库失败（下次还得重新生成）:%v", perr)
+		}
+	}
+	return path, fmt.Sprintf("已生成配乐「%s」并入库（下次同需求直接复用）", name)
 }
 
 // shotEstablishesScene 这一镜是不是它所在场景的**建立镜**（该场景第一次出现的镜）。
@@ -687,4 +773,16 @@ func pickEvenly(n, k int) []int {
 // 那不是"带瑕疵出片"，那是"还没做"。
 func isPlaceholderClip(m project.ClipManifest) bool {
 	return m.Status == project.ShotFailed && strings.Contains(m.Error, project.PlaceholderMarker)
+}
+
+// projectDir 项目目录（store 为空时返回空串）。
+//
+// 为什么要这层：Coordinator 在很多地方是"裸造"的（测试、离线工具），没有 store；
+// 直接 c.store.Dir(...) 会整进程崩，而崩的位置离原因很远。事件与路径解析都属于
+// "拿不到就降级"，不该让业务挂掉。
+func (c *Coordinator) projectDir(projectID string) string {
+	if c.store == nil {
+		return ""
+	}
+	return c.store.Dir(projectID)
 }
