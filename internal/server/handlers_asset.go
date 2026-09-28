@@ -124,12 +124,18 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		assets = map[string]project.Asset{}
 	}
 	rel, _ := filepath.Rel(s.store.Dir(id), dest)
-	assets[assetID] = project.Asset{
+	rec := project.Asset{
 		ID: assetID, Kind: kind, Name: name,
 		File: filepath.ToSlash(rel), Source: "upload",
 		Fingerprint: project.FingerprintFile(dest),
 	}
-	if err := s.store.SaveAssets(id, assets); err != nil {
+	assets[assetID] = rec
+	// **按 key 合并写**（2026-09-29 运行时审计 P1-3）：素材上传要落盘一个文件，
+	// 期间管线可能正在写别的资产 —— 用进来时那份快照整体覆盖会抹掉对方刚落的盘。
+	if err := s.store.UpdateAssets(id, func(cur map[string]project.Asset) error {
+		cur[assetID] = rec
+		return nil
+	}); err != nil {
 		writeErr(w, 500, err)
 		return
 	}
@@ -200,9 +206,14 @@ func (s *Server) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(filepath.Join(s.store.Dir(id), a.File))
 	}
 	delete(assets, assetID)
+	// **按 key 删除**（2026-09-29 运行时审计 P1-3）：删除要先删文件（上面那步），
+	// 期间别的写方可能落了新资产 —— 整体覆盖写会把它们一并抹掉。
 	// 【2026-09-28 审计 A8】原来是 `_ = s.store.SaveAssets(…)` —— 写盘失败也照报 ok，
 	// 用户看到"删了"，刷新一下资产又回来了（真实感受是"这软件删除键坏了"）。
-	if err := s.store.SaveAssets(id, assets); err != nil {
+	if err := s.store.UpdateAssets(id, func(cur map[string]project.Asset) error {
+		delete(cur, assetID)
+		return nil
+	}); err != nil {
 		writeErr(w, 500, fmt.Errorf("删除后写回资产表失败:%w（界面请勿认为已删除）", err))
 		return
 	}

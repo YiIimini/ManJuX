@@ -223,6 +223,17 @@ func (e *Engine) launchLocked(ctx context.Context, c config.ComfySettings) error
 		}
 		return fmt.Errorf("启动 ComfyUI 失败: %w", err)
 	}
+	// **子进程已拿到自己的句柄副本，父进程这份要立刻关**（2026-09-29 运行时审计 P3-12）。
+	//
+	// 原来只在 `Start()` **失败**时 Close，成功路径不关 —— 于是父进程在整个生命周期里
+	// 额外持有一份日志写句柄（靠 `os.File` 的 finalizer 在 GC 时才回收）。
+	// 更实际的影响不是句柄耗尽（每次 1–2 个，GC 会收），而是：**一键清理想截断引擎日志时
+	// 会因句柄被占而失败**（Windows 上尤其明显）。
+	//
+	// Windows 下 Go 的 exec 会为子进程显式复制句柄，关掉父进程这份不影响子进程继续写。
+	if logF != nil {
+		logF.Close()
+	}
 	e.setOwnedProc(cmd.Process)
 	writePidFile(c, cmd.Process.Pid) // 代管状态持久化:重启后可接管
 	// 渲染引擎提为高优先级:分镜渲染是最重的生产任务,不应被桌面/其它进程

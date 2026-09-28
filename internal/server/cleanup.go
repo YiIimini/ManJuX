@@ -18,6 +18,9 @@ import (
 type cleanupResult struct {
 	Items   []string `json:"items"`
 	FreedMB float64  `json:"freedMB"`
+	// Skipped 因为"管线正在跑"而**故意没清**的项（2026-09-29 审计 P3-10）。
+	// 清理是用户的显式动作，默默少清一项等于让他以为清干净了。
+	Skipped []string `json:"skipped,omitempty"`
 }
 
 func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
@@ -141,8 +144,15 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ④ 系统临时文件(mx-* 前缀,应用自身产生的)
+	//
+	// 【2026-09-29 运行时审计 P3-10】**运行时不能无条件清这一片**：
+	// `mx-audio-*.pcm`（合成阶段做语音边界检测，写完**立刻** `os.ReadFile`）与
+	// `mx-frame-*.png`（截帧）都落在删除范围内。渲染/合成进行中用户点一下「一键清理」，
+	// 症状是随机性的"解码音轨失败 → 回退中点切"或"截帧产物不可读"—— 事后完全对不上因。
+	// 所以管线在跑时**跳过**这一项并如实说明（清理是用户的显式动作，默默少清要讲出来）。
 	tmpDir := os.TempDir()
-	if ents, err := os.ReadDir(tmpDir); err == nil {
+	busy := s.pipe != nil && s.pipe.HasRunning()
+	if ents, err := os.ReadDir(tmpDir); err == nil && !busy {
 		var tmpCount int
 		var tmpSize int64
 		for _, e := range ents {
@@ -159,6 +169,9 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		if tmpCount > 0 {
 			add(fmt.Sprintf("系统临时文件 %d 个", tmpCount), tmpSize)
 		}
+	} else if busy {
+		res.Skipped = append(res.Skipped,
+			"系统临时文件（mx-*）：**本机还有管线在跑**，那里可能有正在用的音轨/抽帧中间产物 —— 等它跑完再清")
 	}
 
 	// ⑥（已并入 ①）：ComfyUI input 里的参考图上传副本曾经在这里单独清（只清 24 小时前的**图片**）。

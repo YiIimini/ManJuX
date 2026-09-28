@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -239,7 +240,49 @@ func dumpRawForDiagnosis(raw, tag string) string {
 	if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
 		return ""
 	}
+	// **按份数封顶**（2026-09-29 运行时审计 P3-9）：这个目录**只增不减**，
+	// 而一键清理只认 `mx-*` / `mx_*` 前缀，够不着它（实测：本机还没跑过大规模产线，
+	// 已经堆了 41 个文件；一次 80 集、每集几轮重试能到几百个）。
+	//
+	// 保留最近 N 份即可：这些转储是"出事时拿最近的原文来查"用的，
+	// 陈年旧档没有价值（每份 20–30KB，几百份就是几 MB 的纯垃圾）。
+	pruneDumps(dir, maxLLMDumps)
 	return p
+}
+
+// maxLLMDumps 诊断转储保留的**份数上限**。
+const maxLLMDumps = 60
+
+// pruneDumps 只留最新的 n 份文件（按修改时间），多出来的删掉。
+//
+// 失败**不报错**：清理是尽力而为的副任务，删不掉（文件被占用）不该让诊断落盘本身失败。
+func pruneDumps(dir string, n int) {
+	ents, err := os.ReadDir(dir)
+	if err != nil || len(ents) <= n {
+		return
+	}
+	type fi struct {
+		name string
+		mod  time.Time
+	}
+	all := make([]fi, 0, len(ents))
+	for _, e := range ents {
+		if e.IsDir() {
+			continue
+		}
+		info, ierr := e.Info()
+		if ierr != nil {
+			continue
+		}
+		all = append(all, fi{name: e.Name(), mod: info.ModTime()})
+	}
+	if len(all) <= n {
+		return
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].mod.After(all[j].mod) })
+	for _, f := range all[n:] {
+		_ = os.Remove(filepath.Join(dir, f.name)) // 删不掉就留着，下次再来
+	}
 }
 
 // salvageShotObjects 整段 JSON 解析不了时，**逐个镜头抢救**。
