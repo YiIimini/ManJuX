@@ -36,6 +36,10 @@ watch(stageId, () => {
   // 若不在这里兜底成 true,抽屉一开就会把用户亲手关掉(false)的开关也显示成开。
   form.script.stylized_faces = form.script.stylized_faces !== false
   form.assemble.denoise = form.assemble.denoise !== false
+  // 配乐两个字段（2026-09-28）：老项目快照里没有这两个键 ⇒ 兜底成空串。
+  // 不兜底的话 v-model 会绑到 undefined 上，输入框里会显示成一串看不懂的东西。
+  form.assemble.bgm = form.assemble.bgm || ''
+  form.assemble.bgm_description = form.assemble.bgm_description || ''
   // 画面文字检测(清单 §3.1a):同样是「未表态即开」——后端 QCParams.TextDetectOn() 把缺键
   // 读成开,这里必须同步兜底成 true,否则存量项目打开抽屉会看到"关着",而实际在跑(或反之:
   // 看着是关、一保存就真的把它关掉了)。
@@ -302,6 +306,26 @@ async function save() {
 
     <div v-else-if="stageId === 'assemble'" class="flex flex-col gap-4">
       <el-form label-position="top">
+        <!-- 配乐（2026-09-28）：**优先级必须写在界面上** —— 否则用户填了需求，不知道库里已有同需求
+             会直接复用、也不知道填了文件就压过一切（后端的解析顺序是：文件 ＞ 库内同需求 ＞ 生成）。 -->
+        <el-form-item label="配乐需求（自然语言：风格/情绪/乐器/节奏）">
+          <el-input
+            v-model="form.assemble.bgm_description"
+            type="textarea"
+            :rows="2"
+            placeholder="例：低沉竹笛与弦乐，压抑，慢速，碑下独白段落"
+          />
+          <div class="text-xs opacity-60 mt-1">
+            留空 = 不铺配乐。填了就先去资产库找同需求的现成配乐；没有就自动生成一段纯器乐并入库，
+            下次同样的需求（换个标点写法也算）直接复用。
+          </div>
+        </el-form-item>
+        <el-form-item label="配乐文件（可选；填了就压过上面那条需求）">
+          <el-input v-model="form.assemble.bgm" placeholder="绝对路径，或相对本项目目录的路径，如 bgm.mp3" />
+          <div class="text-xs opacity-60 mt-1">
+            手上有曲子时填这里。平台负责把它铺成一条连续的 BGM，并在人声下自动闪避。
+          </div>
+        </el-form-item>
         <el-form-item label="转场">
           <el-select v-model="form.assemble.transition">
             <el-option value="cut" label="硬切(最稳)" />
