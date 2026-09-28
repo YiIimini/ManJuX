@@ -168,7 +168,15 @@ func (s *Server) handleAssetFrameApply(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, _ = s.lib.Put(kind, a.Name, desc, prompt, dest, id, "video-frame")
+		// 【2026-09-28 审计 A15】原来是 `_, _ = s.lib.Put(...)` —— 入库失败也照报
+		// "与成片形象零偏差"（下面那句 opLog），于是用户以为这张截帧进了库、
+		// 其它集会自动复用；实际没有，**每一集都要重新截一次**。
+		if _, err := s.lib.Put(kind, a.Name, desc, prompt, dest, id, "video-frame"); err != nil {
+			s.opLog("⚠ 视频截帧「%s」(镜 %d)已存到本项目，但**入库失败**(%v)——其它项目复不到这张，会各自重截一遍",
+				a.Name, in.ShotID, err)
+			writeJSON(w, 200, a)
+			return
+		}
 	}
 	s.opLog("🎬 视频截帧定妆:%s「%s」(镜 %d,%d%% 处)——与成片形象零偏差", map[string]string{"characters": "角色", "scenes": "场景", "props": "道具"}[kind], a.Name, in.ShotID, int(in.Ratio*100))
 	writeJSON(w, 200, a)

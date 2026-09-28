@@ -166,7 +166,12 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 				_ = os.Remove(filepath.Join(s.store.Dir(id), filepath.FromSlash(c.File)))
 			}
 			delete(m, key)
-			_ = s.store.SaveManifest(id, m)
+			// 【审计 A12 同类，2026-09-28 源码门咬出】原来 `_ = s.store.SaveManifest(id, m)` ——
+			// 删了镜头却写不进清单，界面报"已删除"，重开又回来了。
+			if err := s.store.SaveManifest(id, m); err != nil {
+				writeErr(w, 500, fmt.Errorf("删除镜头后写回渲染清单失败:%w（界面请勿认为已删除）", err))
+				return
+			}
 		}
 	}
 	// 派生品作废(成片/2K 定稿/质检报告/剪辑素材包)

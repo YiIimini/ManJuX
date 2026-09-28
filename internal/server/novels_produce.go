@@ -57,12 +57,28 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			})
 			sort.Strings(paths)
 			var sb strings.Builder
+			read := 0
+			var unread []string
 			for _, p := range paths {
-				b, _ := os.ReadFile(p)
+				// 【2026-09-28 审计 A10】原来是 `b, _ := os.ReadFile(p)` —— 读不出的章
+				// **只写一个章头、正文整段消失**，而册数照按 `len(paths)` 报（"64 册"）。
+				// 用户拿到的是一本缺章的书，界面却在说"64 册已读入"，事后无从查起。
+				b, err := os.ReadFile(p)
+				if err != nil {
+					unread = append(unread, filepath.Base(p))
+					continue
+				}
 				sb.WriteString(ensureChapterHead(filepath.Base(p), string(b)))
 				sb.WriteString("\n\n")
+				read++
 			}
-			return sb.String(), len(paths)
+			if len(unread) > 0 {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+					Message: fmt.Sprintf("⚠ 有 %d 册**读不出来**（%s…）——它们的内容不在本次解析里；"+
+						"报出的册数是**成功读入**的 %d 册（目录里共有 %d 册），请先确认这些文件没被占用/损坏",
+						len(unread), strings.Join(unread[:min(3, len(unread))], "、"), read, len(paths))})
+			}
+			return sb.String(), read
 		}
 		if fbs, _ := filepath.Glob(filepath.Join(in.Path, "全本", "*")); len(fbs) > 0 && hasTxtExt(fbs[0]) {
 			b, err := os.ReadFile(fbs[0])

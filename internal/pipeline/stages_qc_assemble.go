@@ -422,7 +422,16 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	// 渲的 —— 合成照跑、阶段照报成功，成片里同一个人前后两张脸而无人过问。
 	// 这里用**当前方案**重算每镜的资产指纹并与渲染时记下的比对：对不上就是旧资产渲的。
 	// 只播报、不拦人：官方纪律是"不许**静默**混用"，让人看见并决定重渲即可。
-	assetMap, _ := c.store.LoadAssets(proj.ID) // 读不到就当空表：核对退化为"全部未知"，不会误报成"旧资产"
+	// 【2026-09-28 审计 A13】`assetMap, _ :=` 的后果不是"少一次核对"，而是**把病因叙述错**：
+	// 读不到资产表时核对退化成"全部 unknown"，界面于是告诉用户"这些片段是老清单渲的"——
+	// 用户照着去重渲，而真毛病（asset_map.json 坏了）一个字没提，重渲完还是同样报。
+	// 现在把两种情形分开说：**资产表读不出**与**真的是旧资产**是两回事。
+	assetMap, aerr := c.store.LoadAssets(proj.ID)
+	if aerr != nil {
+		c.emit(proj.ID, PhaseAssemble, 0, "warn", 1,
+			"⚠ **读不出资产表**(%v)——本次「是否混用新旧资产」的核对无法进行（这不是「这些是老清单渲的」，"+
+				"是核对本身跑不了）。请先修 asset_map.json，再重跑合成", aerr)
+	}
 	stale, unknown := StaleAssetClips(plan, manifest, assetMap)
 	if len(stale) > 0 {
 		c.emit(proj.ID, PhaseAssemble, 0, "warn", 1,

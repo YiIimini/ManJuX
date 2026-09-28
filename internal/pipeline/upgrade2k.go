@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -92,13 +93,33 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		prompt = ShotRenderPrompt(projPtr, plan, shot)
 		label = fmt.Sprintf("镜头 %d", shotID)
 		// 参考图沿用渲染期资产(与 render 阶段共用 RefPlan,防止两处漂移)
-		assets, _ := c.store.LoadAssets(projectID)
+		//
+		// 【2026-09-28 审计 A2】原来这两处是 `assets, _ :=` 与 `refs, roles, _ =` ——
+		// **丢掉错误**的后果不是"少一张图"而是**静默换路线**：资产表读不出时 assets 是 nil，
+		// RefPlan 装配不出任何参考图，于是这一镜的 2K **不带参考图跑**（云端按文字重画，
+		// 人脸与主渲染那版不是同一个），**白花一次云额度，还照报"完成"**。
+		// 现在接住并如实播报：宁可让用户看到"这次没带参考图"，也不要交一版不一样的脸。
+		assets, aerr := c.store.LoadAssets(projectID)
+		if aerr != nil {
+			c.emit(projectID, "pipeline", shotID, "warn", 0,
+				"⚠ %s 的 2K 定稿读不到资产表(%v)——本次**不带角色参考图**跑,画面里的人脸由模型按文字重画,"+
+					"与主渲染那一版不保证是同一个人", label, aerr)
+		}
 		compact := true
 		if proj, ok := c.store.Get(projectID); ok {
 			compact = proj.Config.Params.Assets.CompactRefsOn() // 与主渲染保持同一套参考图
 		}
 		var roles []RefRole
-		refs, roles, _ = RefPlan(c.store.Dir(projectID), *shot, assets, compact)
+		var missing []string
+		refs, roles, missing = RefPlan(c.store.Dir(projectID), *shot, assets, compact)
+		if len(missing) > 0 {
+			// 【2026-09-28 审计 A2】`missing` 原来是被 `_` 丢掉的 —— 它不是"少一张图"那么轻：
+			// 少的那张不会让流程停，而是让这一镜的 2K **按文字重画那个人**，
+			// 于是"主渲染一版脸、2K 定稿另一版脸"，而阶段照报"完成"。
+			c.emit(projectID, "pipeline", shotID, "warn", 0,
+				"⚠ %s 的 2K 缺 %d 张参考图(%s)——缺的那几张不会让流程停,但画面里对应的人/景会**由模型按文字重画**,"+
+					"与主渲染那一版不保证一致", label, len(missing), strings.Join(missing, "/"))
+		}
 		// 与主渲染同一份参考图**权威清单**:单镜 2K 若少了它,升上去的那一版会按
 		// 上文猜错的编号理解拼合图(见 refmanifest.go)。
 		prompt = EnsureRefManifest(prompt, *shot, roles)
@@ -119,7 +140,12 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 			planPtr = pl
 		}
 		prompt = final2KPrompt(projPtr, planPtr)
-		assets, _ := c.store.LoadAssets(projectID)
+		// 【审计 A2 同类，源码门咬出】下面 preflight 那段也读一次资产表 —— 同样不能吞错。
+		assets, aerr2 := c.store.LoadAssets(projectID)
+		if aerr2 != nil {
+			c.emit(projectID, "pipeline", shotID, "warn", 0,
+				"⚠ 读不出资产表(%v)——本次预校验按无资产处理", aerr2)
+		}
 		refs = final2KRefs(c.store.Dir(projectID), planPtr, assets)
 		if len(refs) > 0 {
 			c.emit(projectID, "pipeline", shotID, "info", 3,

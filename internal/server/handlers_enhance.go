@@ -290,7 +290,10 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// + fully_copy 保留标记):不写标记,H3 只把音频当音色参考,口型会与配音脱节
 	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
 	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
-	assets, _ := s.store.LoadAssets(ctx.proj.ID)
+	assets, aerr := s.store.LoadAssets(ctx.proj.ID)
+	if aerr != nil {
+		s.opLog("⚠ 读不出资产表(%v)——本次增强的参考图按无参考图处理，画面可能与人设不一致", aerr)
+	}
 	refs, roles, missing := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
 	// 参考图**变少**必须说出来(甲5):RefPlan 缺图时不会报错,只会少给几张,而少一张
@@ -511,7 +514,10 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	// + fully_copy 保留标记):不写标记,H3 只把音频当音色参考,口型会与配音脱节
 	// (ComfyUI 官方文档的社区实测,见 pipeline/audio_ref.go 的引用)。
 	prompt = pipeline.EnsureAudioDriveMarkers(prompt)
-	assets, _ := s.store.LoadAssets(ctx.proj.ID)
+	assets, aerr := s.store.LoadAssets(ctx.proj.ID)
+	if aerr != nil {
+		s.opLog("⚠ 读不出资产表(%v)——本次增强的参考图按无参考图处理，画面可能与人设不一致", aerr)
+	}
 	refs, roles, missing := pipeline.RefPlan(s.store.Dir(ctx.proj.ID), *ctx.shot, assets,
 		ctx.proj.Config.Params.Assets.CompactRefsOn())
 	// 参考图**变少**必须说出来(甲5),理由见上一处调用点。

@@ -156,7 +156,15 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	if need != nil && !caps.Local {
 		c.emit(proj.ID, PhaseRender, 0, "info", 0, "本次引擎=%s:跳过本地资产补齐(单镜范围内缺图将降级纯文生)", engName)
 	} else if !need.isEmpty() {
-		c.backfillAssets(ctx, proj, plan, assets, need)
+		// 【2026-09-28 审计 A5】`backfillAssets` 的返回值原来被丢掉 —— 而它正是
+		// "**资产齐了**（true）"与"**注定降级纯文生**（false：缺图 + 本地引擎不可用/未就绪）"
+		// 的分界。丢掉它的后果：阶段末照样报"渲染完成"，而这一集里**混了两种画风**
+		// （有参考图的镜头是一个人、降级重画的镜头是另一个人），用户只能从成片里看出来。
+		if !c.backfillAssets(ctx, proj, plan, assets, need) {
+			c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+				"⚠ 有镜头拿不到参考图、将**降级纯文生**（上一条已说明原因）——本集画面会出现"+
+					"「有参考图的镜头」与「按文字重画的镜头」两种画风并存,与主卡不像的镜头就出自后者")
+		}
 		// 多视角转台图补齐:角色只有单张正面照时,渲染前补出转身多视角
 		// (库复用/手动上传/存量项目三类不会重跑资产阶段,只能在这里兜)
 		c.backfillAssetViews(ctx, proj, plan, assets, need)
@@ -495,6 +503,14 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return nil
 	}
 	c.emit(proj.ID, PhaseRender, 0, "success", 100, "✔ 渲染完成:新出 %d 镜,跳过 %d 镜", done, skipped)
+	// 【2026-09-28 审计 A12 的收尾】清单落盘失败在这里**统一报一次**（逐镜报会刷屏，
+	// 不报则用户只看到上面那句"渲染完成"，重开应用才发现已渲镜头全被判为未渲）。
+	if n, err := c.takeManifestSaveFailure(); n > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "error", 100,
+			"✕ **渲染清单有 %d 次没写进磁盘**(%v)——本次的镜头状态只在内存里："+
+				"**重开应用后这些镜头会被判为未渲、需要重渲一遍**。请检查项目目录的写入权限与磁盘空间后，重新运行渲染（已渲的片段文件还在，重渲会命中缓存）",
+			n, err)
+	}
 	if legacyModel > 0 {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 100,
 			"⚠ 跳过的 %d 镜没有渲染模型记录(产出于该字段引入之前):若你刚换过底模,这些镜头仍是旧模型的画面,"+
@@ -848,7 +864,35 @@ func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]pro
 	}
 	m.UpdatedAt = time.Now()
 	manifest[key] = m
-	c.store.SaveManifest(projectID, manifest) // 每次落盘,崩溃可恢复
+	// 【2026-09-28 审计 A12】原来是 `c.store.SaveManifest(...)` —— **返回值整个丢弃**。
+	// 后果：清单写不进时，每镜的状态只活在内存里；**重开应用后已渲的镜头全部判为未渲**，
+	// 一集几十镜白渲一遍。而这条链每一镜都会走，所以**不能每镜播报**（会刷屏），
+	// 用 `manifestSaveFailed` 记一次、阶段末统一说（见 renderStage 的收尾播报）。
+	if err := c.store.SaveManifest(projectID, manifest); err != nil {
+		c.markManifestSaveFailed(err)
+	}
+}
+
+// markManifestSaveFailed 记住"清单落盘失败"这件事（首次发生时报一次，其余只计数）。
+//
+// 为什么要聚合：`setShotStatusLen` **每一镜**都调用，逐镜播报会把日志淹没；
+// 而完全不报又正是审计 A12 的老毛病（用户只看到"渲染完成"，重开应用才发现全没记上）。
+func (c *Coordinator) markManifestSaveFailed(err error) {
+	c.manifestErrMu.Lock()
+	defer c.manifestErrMu.Unlock()
+	c.manifestErrCount++
+	if c.manifestErrFirst == nil {
+		c.manifestErrFirst = err
+	}
+}
+
+// takeManifestSaveFailure 取走"清单落盘失败"的聚合结果（阶段末播报用；取走即清零）。
+func (c *Coordinator) takeManifestSaveFailure() (int, error) {
+	c.manifestErrMu.Lock()
+	defer c.manifestErrMu.Unlock()
+	n, err := c.manifestErrCount, c.manifestErrFirst
+	c.manifestErrCount, c.manifestErrFirst = 0, nil
+	return n, err
 }
 
 // anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格

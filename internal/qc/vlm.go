@@ -22,6 +22,13 @@ type VLMReport struct {
 	Score  int      `json:"score"` // 0-100
 	Issues []string `json:"issues"`
 	Advice string   `json:"advice"` // 重渲改进建议(中文,可操作)
+
+	// FramesSeen 模型**实际看到**的帧数（2026-09-28 审计 A14）。
+	//
+	// 它与"抽取目标"（2 帧：1 秒与 3 秒）可能不同：抽帧失败时旧实现只是 `continue`，
+	// 于是**只看到一帧照样给分**，而报告里没有任何地方写着这件事 —— 用户拿分数决定
+	// 这一镜要不要重渲，却不知道结论只基于一秒处的画面。
+	FramesSeen int `json:"frames_seen"`
 }
 
 const vlmSystem = `You are a strict AI short-video shot reviewer. Given frames from one generated shot, judge:
@@ -39,16 +46,23 @@ func VLMJudge(ctx context.Context, client *llm.Client, ffmpeg, videoPath string,
 	defer os.RemoveAll(tmp)
 
 	var imgs []string
+	frameErrs := 0
 	for i, pos := range []string{"1", "3"} {
 		out := filepath.Join(tmp, fmt.Sprintf("f%d.png", i))
 		cmd := sysexec.Hide(exec.CommandContext(ctx, ffmpeg, "-y", "-ss", pos, "-i", videoPath,
 			"-frames:v", "1", "-vf", "scale=540:-2", out))
 		if b, err := cmd.CombinedOutput(); err != nil {
+			// 【2026-09-28 审计 A14】原来这里 `continue` 得干干净净 —— 抽帧失败**不留痕迹**，
+			// 而下面的报告只写"分数"：**两帧只抽出一帧照样给分**，用户按那个分数判断这一镜
+			// 过没过，却不知道模型只看到了一帧（1 秒处）就下了结论。
 			_ = b
+			frameErrs++
 			continue
 		}
 		if raw, err := os.ReadFile(out); err == nil && len(raw) > 0 {
 			imgs = append(imgs, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(raw))
+		} else {
+			frameErrs++
 		}
 	}
 	if len(imgs) == 0 {
@@ -78,6 +92,14 @@ func VLMJudge(ctx context.Context, client *llm.Client, ffmpeg, videoPath string,
 	}
 	if r.Issues == nil {
 		r.Issues = []string{}
+	}
+	// **实际看了几帧要写进报告**（审计 A14）：少于目标帧数时如实告知，
+	// 并把它变成一条 issue —— 用户是按这份报告决定重渲的，不能让他以为模型看了全片。
+	r.FramesSeen = len(imgs)
+	if frameErrs > 0 || len(imgs) < 2 {
+		r.Issues = append(r.Issues, fmt.Sprintf(
+			"质检只看到 %d 帧（目标 2 帧，%d 帧抽帧失败）——结论基于不完整的画面，建议先确认片段文件可正常解码",
+			len(imgs), frameErrs))
 	}
 	return &r, nil
 }

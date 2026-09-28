@@ -435,6 +435,22 @@ func (p *StageParams) Sanitize() {
 	if p.Assets.Source != "upload" && p.Assets.Source != "krea2" && p.Assets.Source != "skip" {
 		p.Assets.Source = "upload"
 	}
+	// QC 段**整个缺失**时补默认（开），而不是留成 false（关）。
+	//
+	// 【2026-09-28 审计 A11】`QC.Enabled` 是普通 bool，而 `Sanitize` 只校验"非法值"、
+	// 不管"缺键" —— 于是任何**没有 qc 段**的 project.json（老项目、技能侧导入的包、
+	// 手工改过的配置）加载后 `Enabled=false`，**质检被静默关掉**：暗帧/黑屏/画面文字
+	// 检测一次都不跑，而用户在设置页看到的是那个开关的默认勾选状态，以为在质检。
+	//
+	// 判据用"整段零值"：`defaults()` 里 QC 的每一项都有非零默认（Enabled=true、
+	// DarkRatioFail=0.60…），所以**整段全零只可能来自"这个键没写"**，不可能是用户真配成这样。
+	// 取舍（写清楚免得下次被质疑）：若哪天有人把 qc 全部显式配成零值（含 Enabled=false），
+	// 这里会把它当成"缺键"补回默认 —— 那种配置没有实际意义（等于关掉质检且各项阈值全 0），
+	// 而"缺键导致静默关质检"是真实发生过的事故，两害相权取此。
+	if q := p.QC; q.Enabled == false && q.DarkRatioFail == 0 && q.DarkRatioWarn == 0 &&
+		q.MinDuration == 0 && q.MaxDuration == 0 {
+		p.QC = DefaultStageParams().QC
+	}
 	r := &p.Render
 	if r.Engine != "auto" && r.Engine != "comfy" && r.Engine != "api" {
 		r.Engine = "auto"

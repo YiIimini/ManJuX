@@ -209,13 +209,27 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				}
 				src += "\n\n【本集原文】(素材：提炼核心冲突与 2-3 个大爽点后重建分镜——砍冗余、可跳段、可合并;不要逐段照搬)\n" + orig
 			}
-			_ = s.store.SaveSource(epName, src)
+			// 【2026-09-28 审计 A3】原来这里是 `_ = s.store.SaveSource(epName, src)` ——
+			// **源文本没写盘也照报"建集成功"**，而该集随后一定在读源文本那一步炸掉，
+			// 用户拿到的是一个"建好了但一跑就废"的空集。写不进去就该当场说清、并且**不建这一集**。
+			if err := s.store.SaveSource(epName, src); err != nil {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error", ProjectID: epName,
+					Message: fmt.Sprintf("✕ 分集《%s》源文本写盘失败(%v)——**本集不建**（建了也跑不动：下一步读源文本必失败）。"+
+						"请检查磁盘空间与目录权限后重试", epName, err)})
+				continue
+			}
 			// 把「这集覆盖哪些章」写进项目元数据:覆盖核对与「自动补缺」从此读这个真源,
 			// 不再依赖 LLM 的 chapters 字符串或【本集原文】是否附着成功(事故根因)。
 			if len(ep.ChapNums) > 0 {
 				if pj, ok := s.store.Get(epName); ok {
 					pj.Chapters = append([]int(nil), ep.ChapNums...)
-					_ = s.store.SaveMeta(pj)
+					if err := s.store.SaveMeta(pj); err != nil {
+						// 元数据丢了不会立刻炸，但"覆盖核对/自动补缺"会从此读不到覆盖范围 ——
+						// 报出来，别让它变成以后某个查不动的现象。
+						s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", ProjectID: epName,
+							Message: fmt.Sprintf("⚠ 分集《%s》的覆盖章号没写进元数据(%v)——「覆盖核对/自动补缺」会读不到本集盖了哪些章",
+								epName, err)})
+					}
 				}
 			}
 			epsAll = append(epsAll, epName)
@@ -780,7 +794,12 @@ func (s *Server) fillEpisodeBriefs(_ context.Context, series string, eps []epIte
 			if i > 0 && briefs[i-1] != "" {
 				src = upsertPrevSummary(src, eps[i-1].Ep, eps[i-1].Title, clampRunes(briefs[i-1], prevSum))
 			}
-			_ = s.store.SaveSource(epID, src)
+			// 【审计 A3 同类，源码门咬出】这一处在**改写已有分集**的源文本 —— 写不进去
+			// 就是"剧本/前情提要改了但没生效"，而界面报的是"已更新"。
+			if err := s.store.SaveSource(epID, src); err != nil {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error", ProjectID: epID,
+					Message: fmt.Sprintf("✕ 分集《%s》的源文本改写**没写进磁盘**(%v)——剧本/前情提要是旧的，请检查磁盘与权限后重试", epID, err)})
+			}
 		}(i)
 	}
 	wg.Wait()

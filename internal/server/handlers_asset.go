@@ -112,7 +112,17 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	assets, _ := s.store.LoadAssets(id)
+	// 【2026-09-28 审计 A7】原来是 `assets, _ :=` —— 资产表损坏时 assets 是 **nil map**，
+	// 紧接着的 `assets[assetID] = …` 直接 **panic**（HTTP handler 里没有 recover），
+	// 连接被掐断、界面只显示"请求失败"，原因一个字都没有。
+	assets, lerr := s.store.LoadAssets(id)
+	if lerr != nil {
+		writeErr(w, 500, fmt.Errorf("读取资产表失败:%w（这张图不入库，请检查 asset_map.json）", lerr))
+		return
+	}
+	if assets == nil {
+		assets = map[string]project.Asset{}
+	}
 	rel, _ := filepath.Rel(s.store.Dir(id), dest)
 	assets[assetID] = project.Asset{
 		ID: assetID, Kind: kind, Name: name,
@@ -158,9 +168,16 @@ func (s *Server) uploadAsset(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if _, err := s.lib.Put(kind, name, desc, prompt, dest, id, "upload"); err == nil {
-			// 入库成功仅记录日志,不阻塞响应
+		// 【2026-09-28 审计 A6】原来是 `if _, err := …; err == nil { // 空 }` ——
+		// 失败分支**什么都不做**，而下面的 opLog 照样写"已上传…**并入库**"。
+		// 用户以为进了库（后续项目会自动复用），实际没有：那一集又要重新生成一张。
+		if _, err := s.lib.Put(kind, name, desc, prompt, dest, id, "upload"); err != nil {
+			s.opLog("⚠ 已上传%s「%s」，但**入库失败**(%v)——本项目可用，其它项目复不到这张图", map[string]string{"characters": "角色定妆照", "scenes": "场景参考图", "props": "道具图"}[kind], name, err)
+		} else {
+			s.opLog("⬆ 已上传%s「%s」并入库(项目「%s」)", map[string]string{"characters": "角色定妆照", "scenes": "场景参考图", "props": "道具图"}[kind], name, id)
 		}
+		writeJSON(w, 200, assets[assetID])
+		return
 	}
 	s.opLog("⬆ 已上传%s「%s」并入库(项目「%s」)", map[string]string{"characters": "角色定妆照", "scenes": "场景参考图", "props": "道具图"}[kind], name, id)
 	writeJSON(w, 200, assets[assetID])
@@ -183,7 +200,12 @@ func (s *Server) deleteAsset(w http.ResponseWriter, r *http.Request) {
 		_ = os.Remove(filepath.Join(s.store.Dir(id), a.File))
 	}
 	delete(assets, assetID)
-	_ = s.store.SaveAssets(id, assets)
+	// 【2026-09-28 审计 A8】原来是 `_ = s.store.SaveAssets(…)` —— 写盘失败也照报 ok，
+	// 用户看到"删了"，刷新一下资产又回来了（真实感受是"这软件删除键坏了"）。
+	if err := s.store.SaveAssets(id, assets); err != nil {
+		writeErr(w, 500, fmt.Errorf("删除后写回资产表失败:%w（界面请勿认为已删除）", err))
+		return
+	}
 	s.opLog("🗑 已删除资产 %s(项目「%s」)", assetID, id)
 	writeJSON(w, 200, map[string]any{"ok": true})
 }

@@ -356,20 +356,35 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	if len(pendingViews) > 0 && ctx.Err() == nil {
 		c.emit(proj.ID, PhaseAssets, 0, "info", 0, "阶段②:多视角 %d 个角色(按类型分别用转身/转台/旋动,每个约数分钟)…", len(pendingViews))
 		viewsDone := 0
+		viewsFailed := 0
 		for _, v := range pendingViews {
 			if ctx.Err() != nil {
 				break
 			}
 			// v.id 是**资产 id**（"char:xxx"）——genCharacterViews 要的是裸卡 id，
 			// 这里只去一次前缀正好；此前存进去的已经是双前缀，去一次还剩一层，转台图 key 整体错位。
-			c.genCharacterViews(ctx, proj, comfyGen, strings.TrimPrefix(v.id, "char:"), v.name, v.prompt, v.master, v.kind)
-			viewsDone++
+			// 【2026-09-28 审计 A9】原来这里**丢掉返回值、无条件 `viewsDone++`** ——
+			// 而 `genCharacterViews` 失败时返回**空串**。于是"N/N 完成"是拿**圈数**折出来的：
+			// **全失败也报 N/N**，用户看到的是一句"多视角已完成"，而资产里一张转台图都没有，
+			// 下一阶段只能降级（角色角度参考缺失）。计入成功必须按**真的拿到了图**。
+			if views := c.genCharacterViews(ctx, proj, comfyGen, strings.TrimPrefix(v.id, "char:"), v.name, v.prompt, v.master, v.kind); views != "" {
+				viewsDone++
+			} else {
+				viewsFailed++
+			}
 			// 多视角写回资产库:同一个角色全局只付一次转身成本,后续项目复用直接带走
 			if c.lib != nil {
 				if _, err := c.lib.PutCard("characters", strings.TrimPrefix(v.id, "char:"), v.name, v.description, v.prompt, v.master, proj.ID, c.imageSourceKey()); err != nil {
 					c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角写回资产库失败:角色「%s」:%v", v.name, err)
 				}
 			}
+		}
+		if viewsFailed > 0 {
+			// **失败必须单独说**：只说"N/M 完成"时，用户分不清"还没轮到"与"试过但没出图"，
+			// 而后者要去看引擎日志/显存，前者只要续跑。
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+				"⚠ 多视角转台图有 %d 个角色**没出图**(成功 %d / 目标 %d)——这些角色渲染时拿不到角度参考，"+
+					"只能按定妆照那一张正面理解侧面与背面", viewsFailed, viewsDone, len(pendingViews))
 		}
 		if viewsDone < len(pendingViews) {
 			c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⏹ 多视角转台图已停止:%d/%d 完成,其余将在续跑时补齐(定妆照已就绪,不受影响)",
@@ -669,6 +684,21 @@ func assetImageSize(proj *project.Project, kind string) (int, int) {
 	// 要真出 16:9 那一张，应当是**另加一个产物**（人审用），而不是把参考图改比例。
 	// 在动手之前先跟用户确认这个取舍，别默默改掉参考图。
 	return w, h
+}
+
+// saveAssetsOrWarn 落盘资产表，失败时**如实播报**。
+//
+// 【2026-09-28 审计 A4】`backfillAssets` 的四个出口原来全是 `_ = c.store.SaveAssets(...)` ——
+// 写盘失败时**补齐的资产只活在内存里**：本次渲染看着能用，下一次续跑/重进项目时资产表里
+// 没有它们，于是又被当"缺图"补一遍，**白烧一次 GPU**，而用户完全看不出发生过什么。
+//
+// 不返回错误让调用方中止：资产补齐本来就有降级路径，中止反而更糟；但要**说出来**。
+func (c *Coordinator) saveAssetsOrWarn(projID string, assets map[string]project.Asset, phase string) {
+	if err := c.store.SaveAssets(projID, assets); err != nil {
+		c.emit(projID, phase, 0, "warn", 0,
+			"⚠ 资产表落盘失败(%v)——本次补齐的参考图**只存在于内存**,续跑或重进项目时会被当成缺图再补一遍(白烧一次 GPU)",
+			err)
+	}
 }
 
 // genAssetImage 资产阶段/渲染前补齐的**单张参考图生成**(打印播报 + 交给唯一出口)。
@@ -1237,19 +1267,19 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 		}
 	}
 	if len(todo) == 0 {
-		_ = c.store.SaveAssets(proj.ID, assets)
+		c.saveAssetsOrWarn(proj.ID, assets, PhaseRender)
 		return true
 	}
 	eng, err := c.reg.Get("comfy")
 	if err != nil {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地引擎不可用,对应镜头将降级纯文生(建议先启动 ComfyUI)", len(todo))
-		_ = c.store.SaveAssets(proj.ID, assets)
+		c.saveAssetsOrWarn(proj.ID, assets, PhaseRender)
 		return false
 	}
 
 	if err := eng.Available(ctx); err != nil {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ 缺 %d 张参考图且本地 ComfyUI 未就绪(%v),对应镜头将降级纯文生", len(todo), err)
-		_ = c.store.SaveAssets(proj.ID, assets)
+		c.saveAssetsOrWarn(proj.ID, assets, PhaseRender)
 		return false
 	}
 	c.emit(proj.ID, PhaseRender, 0, "info", 0, "检测到 %d 张参考图缺失,渲染前自动补齐(%s)…", len(todo), c.imageSourceLabel())
@@ -1274,7 +1304,7 @@ func (c *Coordinator) backfillAssets(ctx context.Context, proj *project.Project,
 			}
 		}
 	}
-	_ = c.store.SaveAssets(proj.ID, assets)
+	c.saveAssetsOrWarn(proj.ID, assets, PhaseRender)
 	return true
 }
 

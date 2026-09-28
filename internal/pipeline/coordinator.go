@@ -49,6 +49,15 @@ type Coordinator struct {
 	bus    *Bus
 	lib    *library.Library // 跨项目资产库(可为 nil=禁用)
 
+	// 清单落盘失败的**聚合**（2026-09-28 审计 A12）。
+	//
+	// `setShotStatusLen` 每一镜都要落一次清单，失败时不能逐镜播报（刷屏），
+	// 更不能静默（用户只看到"渲染完成"，重开应用才发现几十镜的状态全没记上）。
+	// 所以在这里记"首次错误 + 次数"，阶段末统一报一次。
+	manifestErrMu    sync.Mutex
+	manifestErrCount int
+	manifestErrFirst error
+
 	// musicGen 配乐生成器的**注入点**（nil = 走真实引擎）。
 	//
 	// 为什么放在实例上而不是包级变量（2026-09-28 并发审计）：包级可变状态是"测试写、产线读"，
