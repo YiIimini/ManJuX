@@ -95,6 +95,22 @@ type shotEnhanceCtx struct {
 	engineCE *comfyengine.Engine
 }
 
+// enhanceLabel 单镜增强操作的**人话名**（播报用）。
+//
+// 这张表存在的理由（2026-09-29）：这三个操作此前一处日志都没有，用户只看到按钮转圈。
+// 现在每次开始/结束都会播报，用户至少知道"在跑、跑的是哪一镜、干什么"。
+func enhanceLabel(suffix string) string {
+	switch suffix {
+	case "maskfix":
+		return "局部重绘"
+	case "2k":
+		return "2K 放大"
+	case "audiodrive":
+		return "音频驱动"
+	}
+	return "单镜增强"
+}
+
 func (s *Server) prepareShotEnhance(w http.ResponseWriter, r *http.Request, suffix string) (*shotEnhanceCtx, bool) {
 	id := r.PathValue("id")
 	shotID, err := strconv.Atoi(r.PathValue("shotID"))
@@ -139,6 +155,13 @@ func (s *Server) prepareShotEnhance(w http.ResponseWriter, r *http.Request, suff
 		return nil, false
 	}
 	outName := fmt.Sprintf("shot_%03d_%s", shotID, suffix)
+	// **开始播报**（2026-09-29：这三个操作此前一处日志都没有）。
+	//
+	// 局部重绘 / 2K 放大 / 音频驱动都要跑几分钟 GPU，而界面上只有按钮转圈 ——
+	// 管线日志里一片空白，用户分不清"在跑"与"卡住了"，也没法对照别的阶段看进度
+	// （渲染/资产/合成每个阶段都有播报，只有这三个没有）。
+	s.bus.Publish(pipeline.Event{Phase: "enhance", Level: "info", ProjectID: id, ShotID: shotID,
+		Message: fmt.Sprintf("%s · 镜头 %d 开始（源：%s）", enhanceLabel(suffix), shotID, filepath.Base(m.File))})
 	return &shotEnhanceCtx{
 		proj:     proj,
 		plan:     plan,
@@ -333,6 +356,9 @@ func (s *Server) handleShotMaskFix(w http.ResponseWriter, r *http.Request) {
 	// 产物作为**独立文件**保留,不覆盖原镜头产物 —— 由用户比对后再决定是否采用
 	rel := s.relFile(ctx.proj.ID, ctx.outPath)
 	s.opLog("✔ 局部重绘完成:%s 镜 %d → %s", ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath))
+	s.bus.Publish(pipeline.Event{Phase: "enhance", Level: "success", ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
+		Message: fmt.Sprintf("✔ 局部重绘完成 · 镜头 %d → %s（结果**独立成文件**，原镜头未改动）",
+			ctx.shot.ID, filepath.Base(ctx.outPath))})
 	// 重活做完把显存交还(队列还有活/管线在跑时内部会自己拦下,见 ReleaseVRAMIfIdle)
 	s.pipe.ReleaseVRAMIfIdle("局部重绘完成")
 	writeJSON(w, 200, map[string]any{
@@ -472,6 +498,9 @@ func (s *Server) handleShotUpscale(w http.ResponseWriter, r *http.Request) {
 	s.opLog("✔ 2× 放大完成:%s 镜 %d → %s(%d×%d → %d×%d)",
 		ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath),
 		info.Width, info.Height, outInfo.Width, outInfo.Height)
+	s.bus.Publish(pipeline.Event{Phase: "enhance", Level: "success", ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
+		Message: fmt.Sprintf("✔ 放大完成 · 镜头 %d：%d×%d → %d×%d（音轨沿用源片，原镜头未改动）",
+			ctx.shot.ID, info.Width, info.Height, outInfo.Width, outInfo.Height)})
 	s.pipe.ReleaseVRAMIfIdle("2× 放大完成")
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "file": rel,
@@ -541,6 +570,9 @@ func (s *Server) handleShotAudioDrive(w http.ResponseWriter, r *http.Request) {
 	}
 	rel := s.relFile(ctx.proj.ID, ctx.outPath)
 	s.opLog("✔ 音频驱动完成:%s 镜 %d → %s", ctx.proj.ID, ctx.shot.ID, filepath.Base(ctx.outPath))
+	s.bus.Publish(pipeline.Event{Phase: "enhance", Level: "success", ProjectID: ctx.proj.ID, ShotID: ctx.shot.ID,
+		Message: fmt.Sprintf("✔ 音频驱动完成 · 镜头 %d → %s（口型跟随音频；原镜头未改动）",
+			ctx.shot.ID, filepath.Base(ctx.outPath))})
 	s.pipe.ReleaseVRAMIfIdle("音频驱动完成")
 	writeJSON(w, 200, map[string]any{
 		"ok": true, "file": rel,
