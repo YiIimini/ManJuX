@@ -435,7 +435,13 @@ const sysFaceVocabRules = `## FACE VOCABULARY & SAFE WORDING (mandatory — thes
 - 毛孔可见/汗毛/visible pores → matte skin with a soft natural finish (never realistic pores).
 - 血管可见/visible veins → drop it; if needed: faint blue veins at the temple, subtle.
 - Also banned: 性感暴露, 沟, 翘臀/蜜桃臀, 巨乳, 网衣/链式衣饰/蛛网衣, 大面积镂空, 暗示性动作, 不雅姿态, 低俗图案.
-- Costume quality (keeps the design rich without exposure): 立体剪裁(流畅衣身线条、侧身拼接、内藏式收省)、材质对撞至少 4 种高级材质、外层自然过渡到腰胯；女装必须有内搭。
+- 年龄口径（用户《【额外】人物道具场景提取》：「预估年龄（**不低于20岁**）」）：人形角色的卡面
+  年龄一律 **20 岁及以上**（写"二十出头 / 二十三"这类），不要写 19 岁或更小 —— 这是用户定的
+  合规向设定。剧情原文里若提到更小的年龄，卡面仍写 ≥20（角色外形按 ≥20 画）。
+- 立绘构图口径：**定妆照是半身像**（它是"脸部身份锚"，渲染时挂给每一镜认脸；全身会令脸变小、
+  认脸失效），**全身立绘由三视图板承担**（3 全身 ＋ 6 头角度 ＋ 6 局部）。这是与
+  《【额外】人物道具场景提取》「正面站立、全身完整」的**有意偏离**，理由见
+  「docs/口径对账-平台vs用户参考库.md」，不要当成 bug 改回去。- Costume quality (keeps the design rich without exposure): 立体剪裁(流畅衣身线条、侧身拼接、内藏式收省)、材质对撞至少 4 种高级材质、外层自然过渡到腰胯；女装必须有内搭。
 - Make-up and pupils: make-up is style-adaptive — period xianxia/fantasy uses an upturned eyeliner tail, huadian forehead mark, bitten-lip colour and a brow ornament; modern/urban uses earth-tone eyeshadow, a very fine liner, natural lip colour and a clean base. Pupil colour is one of 深黑 / 浅褐 / 琥珀 / 灰蓝 / 血红, and the GAZE must match the temperament (清冷 / 凌厉 / 温柔 / 狡黠 / 迷茫 / 坚毅 / 空洞) — a character with the wrong gaze reads as the wrong person.
 
 ### Character quality bar (verbatim essentials; the style-related parts follow the project style string)
