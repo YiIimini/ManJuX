@@ -86,8 +86,20 @@ func TestFillVoiceoverAssetsSystem(t *testing.T) {
 		}
 		return Prop{}, false
 	}()
-	if !strings.Contains(pr.ImagePrompt, "no letters") {
-		t.Error("面板提示词必须写明**不出现任何文字**（文字进画面必糊成伪汉字）")
+	// 面板上**不能有字**这一条不变；但**写法必须是正向的**：
+	// 图片侧跑的是蒸馏模型（CFG 1.0），实测**对否定词免疫、却会把名词当指令画出来** ——
+	// 写成 "no letters / no numbers / no UI text"，模型反而会把这些字画上去
+	// （用户 2026-09-28 报的"莫名的文字"就是这么来的，见 artstyle.go 的说明）。
+	// 所以判据是"**说了表面空白无标记**"，不是"说了不许写字"。
+	low := strings.ToLower(pr.ImagePrompt)
+	if !strings.Contains(low, "blank") || !strings.Contains(low, "unmarked") {
+		t.Errorf("面板提示词要用**正向**写法说明表面空白无标记（写 \"no letters\" 反而会画出字）：%q",
+			pr.ImagePrompt)
+	}
+	for _, bad := range []string{"no letters", "no numbers", "no text", "no ui text"} {
+		if strings.Contains(low, bad) {
+			t.Errorf("面板提示词里不许用否定词「%s」—— 图片模型会把名词画出来：%q", bad, pr.ImagePrompt)
+		}
 	}
 	if got := voiceoverRefIssues(p); len(got) > 0 {
 		t.Errorf("补完后不该再有悬空引用：%v", got)

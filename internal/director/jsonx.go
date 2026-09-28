@@ -21,6 +21,18 @@ import (
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
+// ExtractJSONObject 供**包外复用**（2026-09-28）。
+//
+// 【为什么要导出】库侧「抽卡」（`handleLibraryGacha`：让 LLM 出一个原创角色卡）此前自己写了个
+// 简陋解析 `trimJSON` —— 只取"第一个 `{` 到最后一个 `}`"就 Unmarshal。模型只要返回
+// 带围栏的 JSON、先说一句解释、给两段 JSON，或者输出被截断，就一律报
+// 「抽卡结果解析失败(LLM 返回异常)」—— **而且不告诉你模型到底返回了什么**（用户报的就是这个）。
+// 这套提取器本来就是为"模型不老实"写的：配对扫描找候选 + 逐候选试解析 + 截断时补全。
+func ExtractJSONObject(raw string) (string, bool) { return extractJSONObject(raw) }
+
+// Snippet 截断一段文本用于报错/日志：既能看出模型返回了什么，又不会把整段塞进错误里。
+func Snippet(s string, n int) string { return snippet(s, n) }
+
 // candidateObjects 列出所有"从某个 { 起、括号配平"的候选片段(按出现顺序)。
 // 配不平(截断)时把剩余部分交出去,由 closeTruncatedJSON 补。
 // 上限 64 个起点:正常输出第一个就命中,防病态输入把扫描拖长。

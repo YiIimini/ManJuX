@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
@@ -61,15 +62,31 @@ func (s *Server) handleLibraryGacha(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, fmt.Errorf("抽卡失败(LLM):%w", err))
 		return
 	}
-	out = strings.TrimSpace(strings.Trim(out, "`"))
-	var card struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		ImagePrompt string `json:"image_prompt"`
+	card, perr := parseGachaCard(out)
+	if perr != nil {
+		// **解析失败要重试一次**，而且要把"你上一次输出成什么样"一并喂回去 ——
+		// 照 director 侧自纠的同一套做法：散文规则管不住模型，"把违规连同原文回给它"
+		// 才管得住。此前这里直接 500，用户只看到一句"抽卡结果解析失败"，无从下手。
+		if out2, err2 := client.Chat(ctx, []llm.Message{
+			{Role: "system", Content: sys},
+			{Role: "user", Content: user},
+			{Role: "assistant", Content: director.Snippet(out, 800)},
+			{Role: "user", Content: "上一次的输出不是合法 JSON（" + perr.Error() +
+				"）。只输出那一个 JSON 对象，不要任何解释、不要 markdown 围栏。"},
+		}, true); err2 == nil {
+			if c2, e2 := parseGachaCard(out2); e2 == nil {
+				card, perr = c2, nil
+			} else {
+				perr = e2
+				out = out2
+			}
+		}
 	}
-	if err := json.Unmarshal([]byte(trimJSON(out)), &card); err != nil ||
-		card.Name == "" || card.ImagePrompt == "" {
-		writeErr(w, 500, fmt.Errorf("抽卡结果解析失败(LLM 返回异常)"))
+	if perr != nil {
+		// **报错要带上模型返回的原文片段** —— 不带原文的"解析失败"是查不动的错
+		// （用户报的那条就是这种）。200 字足够看出它到底吐了什么。
+		writeErr(w, 500, fmt.Errorf("抽卡结果解析失败(LLM 返回异常)：%s；模型原文前 200 字：%s",
+			perr, director.Snippet(strings.TrimSpace(out), 200)))
 		return
 	}
 
@@ -696,6 +713,37 @@ func (s *Server) genLibraryPortrait(ctx context.Context, name, description, prom
 }
 
 // trimJSON 剥掉 LLM 可能残留的 markdown 围栏与前缀。
+// gachaCard 抽卡要模型直出的三个字段。
+type gachaCard struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	ImagePrompt string `json:"image_prompt"`
+}
+
+// parseGachaCard 从模型返回里取出角色卡。
+//
+// **用 director 那套鲁棒提取器**（配对扫描找候选 + 逐候选试解析 + 截断时补全），
+// 不再自己截花括号 —— 旧的 `trimJSON` 只取"第一个 { 到最后一个 }"，
+// 模型给两段 JSON、或先说一句带花括号的解释、或输出被截断，就必报"解析失败"。
+func parseGachaCard(raw string) (gachaCard, error) {
+	obj, ok := director.ExtractJSONObject(raw)
+	if !ok {
+		return gachaCard{}, fmt.Errorf("返回里找不到 JSON 对象")
+	}
+	var c gachaCard
+	if err := json.Unmarshal([]byte(obj), &c); err != nil {
+		return gachaCard{}, fmt.Errorf("JSON 解析失败:%v", err)
+	}
+	if strings.TrimSpace(c.Name) == "" || strings.TrimSpace(c.ImagePrompt) == "" {
+		return gachaCard{}, fmt.Errorf("JSON 里缺 name 或 image_prompt")
+	}
+	return c, nil
+}
+
+// trimJSON 从一段文本里粗取 JSON 对象。
+//
+// 仅作**兜底**使用（新代码请走 `director.ExtractJSONObject`）：它只取第一个 `{` 到
+// 最后一个 `}`，遇到"两段 JSON"或"截断输出"会切出非法区间 —— 抽卡那次报障就是它。
 func trimJSON(s string) string {
 	s = strings.TrimSpace(s)
 	if i := strings.Index(s, "{"); i > 0 {

@@ -346,8 +346,14 @@ var entityProfiles = map[EntityKind]entityProfile{
 			"design, hairstyle and hair colour, the same costume and colour scheme, the same signature marks (a mole, a scar, a hair ornament, " +
 			"a tool). Only the PROPORTIONS become chibi. Do not redraw the identity into a generic cute mascot.",
 		SheetMarker: "CHIBI FIDELITY",
-		SheetLook: animatedMediumImageBlock() + "\n- Oversized rounded head, simplified rounded features, " +
-			"thick clean outlines and flat cel colour with a dull even finish.",
+		// 【2026-09-28 用户要求「Q 版形象需要娇小呆萌可爱」】
+		// 介质块**必须用 Q 版自己那套**（`animatedChibiImageBlock`：可爱风格化 3D、玩具质感），
+		// 不能用 `animatedMediumImageBlock`（电影级 3D 写实）—— 后者会把 Q 版画成
+		// "写实的小人"，与"娇小呆萌"正好相反。旧文案里的 "flat cel colour" 也一并去掉：
+		// 那是 2D 平涂的写法，与 3D 玩具质感打架（`artstyle_test.go` 有专条钉"不许出现 2D 卡通用词"）。
+		SheetLook: animatedChibiImageBlock() + "\n- Rounded, chunky and huggable: simplified rounded " +
+			"features, large bright eyes with a warm friendly expression, soft matte surfaces and a " +
+			"cheerful silhouette that reads as a small cute character at a glance.",
 		// Q 版的比例就是它这个类型本身(见 SheetProportions 的字段说明):卡里带技能侧的
 		// 人体比例句时这句让位,介质块照旧保留。
 		SheetProportions:    "\n- Two-to-three-head-tall proportions.",

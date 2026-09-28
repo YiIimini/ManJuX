@@ -204,12 +204,17 @@ func ensureSystemBotCard(plan *Plan) string {
 		return id
 	}
 	plan.Characters = append(plan.Characters, Character{
-		ID:          id,
-		Name:        "系统机器人",
-		Kind:        "chibi",
-		Description: "半透明发光的小型机器人化身（系统提示的演出体）",
-		ImagePrompt: "a small translucent glowing chibi robot mascot, rounded body, soft cyan light, " +
-			"full body on plain white background, even light, no text, no watermark",
+		ID:   id,
+		Name: "系统机器人",
+		Kind: "chibi",
+		// 【2026-09-28 用户要求】「系统绑定类需要是 3D 全息面板 + Q 版形象小人」。
+		// 措辞按"**娇小呆萌**的 Q 版小人"写：2.5–3 头身、圆润玩具感、大眼睛、半透明发光外壳。
+		// 与定妆照那条口径一致（见 pipeline 的 animatedChibiImageBlock）——
+		// 系统小人是 Q 版介质，不是写实机器人。
+		Description: "系统提示的演出体：娇小呆萌的 Q 版小机器人（半透明发光、圆润玩具感）",
+		ImagePrompt: "a small adorable chibi robot mascot, chibi 2.5-3 head-tall proportions, " +
+			"rounded toy-like body, big bright friendly eyes, translucent glowing shell with soft cyan light, " +
+			"full body on plain white background, even soft light",
 	})
 	return id
 }
@@ -225,12 +230,18 @@ func ensurePanelProp(plan *Plan, sh *Shot) string {
 		name = sc.Name + "·系统面板"
 	}
 	plan.Props = append(plan.Props, Prop{
-		ID:          id,
-		Name:        name,
-		EN:          "a floating holographic panel with a thin glowing frame",
-		Description: "悬浮的半透明发光面板，边框细亮线，**面板上不出现任何文字**（文字进画面必糊成伪汉字）",
-		ImagePrompt: "a floating holographic panel with a thin glowing frame, blank surface " +
-			"(absolutely no letters, no numbers, no UI text), 1:1 square, isolated on plain white background",
+		ID:   id,
+		Name: name,
+		// 【2026-09-28 用户要求】「系统绑定类需要是 **3D 全息面板** + Q 版形象小人」——
+		// 面板这边把"3D 全息"写死进外观串（原来只写 "holographic panel"，
+		// 出图容易变成一块扁平的发光板）。
+		EN: "a floating 3D holographic panel with a thin glowing frame and a translucent cyan display",
+		// 「面板上不出现任何文字」保持**正向**写法（图片侧对否定词免疫、名词会被画出来，
+		// 见 artstyle.go 的说明）：说"空白表面"，不说"不许写字"。
+		Description: "悬浮的 3D 全息面板，半透明青色显示面、边框细亮线，表面保持空白无标记",
+		ImagePrompt: "a floating 3D holographic panel, sci-fi, translucent cyan glowing display with a " +
+			"thin bright frame, blank unmarked surface, hovering in mid-air, 1:1 square, isolated on plain " +
+			"white background",
 	})
 	return id
 }

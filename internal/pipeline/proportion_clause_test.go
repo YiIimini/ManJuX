@@ -144,7 +144,10 @@ func TestStyleExpandUnchangedWithoutSkillClause(t *testing.T) {
 	}
 	// Q 版类型块:没有技能侧比例句 → 平台的"二到三头身"照旧在,介质块也在
 	chibi := styleExpandFor("", "Q版呆萌", true, KindChibi)
-	for _, want := range []string{"Two-to-three-head-tall proportions", MediumMarker, "CHIBI FIDELITY"} {
+	// 判据用 **Q 版自己的介质块标记**（2026-09-28：Q 版介质块从"电影级写实"换成
+	// "可爱风格化 3D"，标记也跟着换了 —— 这条测试的意图是"介质条款必须留下"，
+	// 不是"必须是写实那一块"）。
+	for _, want := range []string{"Two-to-three-head-tall proportions", ChibiMediumMarker, "CHIBI FIDELITY"} {
 		if !strings.Contains(chibi, want) {
 			t.Errorf("Q 版类型块存量行为被改变,缺「%s」:\n%s", want, chibi)
 		}
@@ -158,7 +161,9 @@ func TestPlatformProportionStandsDownForChibiWithSkillAnchor(t *testing.T) {
 	if strings.Contains(withAnchor, "Two-to-three-head-tall proportions") {
 		t.Errorf("已有技能侧人体比例句时,平台侧的比例措辞必须让位:\n%s", withAnchor)
 	}
-	for _, want := range []string{MediumMarker, "CHIBI FIDELITY", "thick clean outlines", "flat cel colour"} {
+	// 「让位只让比例」：介质块与忠实度块必须留下。判据跟着 2026-09-28 的介质变更走
+	// （写实块 → Q 版自己的可爱风格化 3D 块），意图不变。
+	for _, want := range []string{ChibiMediumMarker, "CHIBI FIDELITY", "toy-like", "big head on a small body"} {
 		if !strings.Contains(withAnchor, want) {
 			t.Errorf("让位只让比例,介质/忠实度条款必须留下,缺「%s」:\n%s", want, withAnchor)
 		}

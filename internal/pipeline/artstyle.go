@@ -94,6 +94,34 @@ func animatedMediumImageBlock() string {
 		"画面表面保持**空白无标记**、背景为**无缝纯净**的一整片,画面里只有主体本身。)"
 }
 
+// ChibiMediumMarker Q 版介质块的**标记**（幂等判据 + 机检判据）。
+//
+// 平台每个介质块都有标记（`MediumMarker` / `RenderMediumMarker`），Q 版块也必须有 ——
+// 否则"这段提示词里到底有没有介质块"没法机检，而 `proportion_clause_test.go` 那两条
+// 「让位只让比例、介质条款必须留下」的门正是靠标记判的（加这个块的当天就被它们咬住了）。
+const ChibiMediumMarker = "CUTE 3D STYLISED RENDER"
+
+// animatedChibiImageBlock **Q 版（呆萌化身）自己的介质块**。
+//
+// 【2026-09-28 用户要求】「Q 版形象需要**娇小呆萌可爱**」。
+//
+// 它**不能**用 `animatedMediumImageBlock()` —— 那块 2026-09-28 已被改成
+// "电影级 3D 写实"（为了把人物从"半风格化"拉齐到与器物/场景同档）。Q 版跟着用，
+// 画出来就是"写实的小人"：既不娇小也不呆萌，与用户要的**完全相反**。
+//
+// Q 版是**同一个人的另一种画法**（观众靠它认"这段是心里话 / 系统在说话"），
+// 所以它要的是**圆润、讨喜、玩具感**的 3D 渲染 —— 与写实介质块并列的**第二套**，
+// 不是"写实块的一个变体"。
+//
+// 只用正向词（图片侧是蒸馏模型，对否定词免疫、却会把名词当指令画出来）。
+func animatedChibiImageBlock() string {
+	return "\n\n" + ChibiMediumMarker + " (mandatory): a cute stylised 3D render — a small, adorable " +
+		"mascot-like figure with a rounded silhouette, a big head on a small body, big expressive eyes, " +
+		"soft matte toy-like surfaces, chunky simplified shapes and a gentle rim light." +
+		"(中文对照:可爱风格化 3D 渲染——**娇小呆萌**的吉祥物式小人:圆润轮廓、大头小身、大眼睛、 " +
+		"柔和哑光的玩具质感、块面化简化造型、温和轮廓光。)"
+}
+
 // animatedFaceImageBlock Krea-2(人物定妆照/重抽)用的画风块 = 通用介质 + **人类专属条款**。
 //
 // 【2026-09-28 用户口径变更：要写实，不要"简化五官"】
