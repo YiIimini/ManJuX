@@ -814,7 +814,8 @@ func (s *Server) genOneChapterBrief(ctx context.Context, series string, ep epIte
 	if !client.Configured() {
 		return ""
 	}
-	cctx, cancel := context.WithTimeout(ctx, time.Duration(g.LLM.Timeout)*time.Second)
+	// 同 novels_jobs.go：配置值 ≤0 会让 ctx **立即过期**（不是"不限时"），统一走兜底。
+	cctx, cancel := context.WithTimeout(ctx, llmTimeout(g.LLM.Timeout))
 	defer cancel()
 	sys := fmt.Sprintf("你在为一集短视频写「剧情节拍 brief」(中文,%d-%d 字):按该章原文的先后顺序逐拍列出事件、出场人物、"+
 		"关键台词(逐字保留重要对白)、情绪转折与结尾悬念;只写这一章的内容,不要扩写、不要引用其它章节。", briefMin, briefMax)

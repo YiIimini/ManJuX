@@ -32,6 +32,24 @@ var novelJobs = struct {
 	m map[string]*novelJob
 }{m: map[string]*novelJob{}}
 
+// llmTimeout 把设置里的 LLM 超时（秒）换算成 Duration，**带兜底**。
+//
+// 【2026-09-29 运行时审计 P2-8】`context.WithTimeout(ctx, 0)` 的语义是
+// "**立即已过期**"，不是"不限时" —— 而设置里的 `llm.timeout_seconds` 可能是 0 或负数
+// （前端有 `:min="60"` 挡着，但 `PUT /api/settings` 对数值一个都不校验，
+// 手改 `data/settings.json` 在本仓是常态）。后果很隐蔽：那次「小说转剧本」会话
+// **瞬间**失败，整本书每一集都退化成"用小说原文直接分镜"，只有一条 warn，
+// 批量产线照跑 —— 用户看到的是"跑得挺快、就是分镜不对劲"。
+//
+// `llm.New()` 自己早就有 `<=0 → 600s` 兜底，直接用配置值算 ctx 的地方没有；
+// 现在统一走这里，两处口径一致。
+func llmTimeout(sec int) time.Duration {
+	if sec <= 0 {
+		sec = 600 // 与 llm.New 的默认值同源
+	}
+	return time.Duration(sec) * time.Second
+}
+
 // jobsPath 拆集任务状态的落盘文件;为空则只在内存中维护(未初始化/测试场景)。
 var jobsPath string
 
@@ -290,7 +308,16 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	if !client.Configured() {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(g.LLM.Timeout)*time.Second)
+	// **超时必须兜底**（2026-09-29 运行时审计 P2-8）。
+	//
+	// `time.Duration(0)*time.Second` 交给 `WithTimeout` 不是"不限时"，而是**立即已过期**
+	// —— 于是这次「小说转剧本」会话瞬间失败，整本书每一集都退化成"用小说原文直接分镜"，
+	// 只留一条 warn，批量产线照跑。用户看到的是"跑得挺快、就是分镜不对劲"。
+	//
+	// 可达性：前端有 `:min="60"` 挡着，但 `PUT /api/settings` 对**数值一个都不校验**
+	// （只对字符串做回填），而手改 `data/settings.json` 在本仓是常态（盘上有 .bak 为证）。
+	// `llm.New()` 自己有 `<=0 → 600` 兜底，这两处直接用配置值算 ctx 的没有 —— 现在统一。
+	ctx, cancel := context.WithTimeout(context.Background(), llmTimeout(g.LLM.Timeout))
 	defer cancel()
 	// 【2026-09-28 用户口径】这是**专职的「小说转剧本」会话**：先给它角色与规矩，
 	// 再给原文 —— 逐条口径来自作者的《一、网文小说转剧本提示词指令》，不是我自己编的清单。

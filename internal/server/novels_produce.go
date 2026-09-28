@@ -239,13 +239,35 @@ type novelProducer struct {
 func prodStart(series string, cancel context.CancelFunc) *novelProducer {
 	p := &novelProducer{done: make(chan struct{}), cancel: cancel}
 	novelProducers.Lock()
+	// 同一个 series 再产一次时**先给旧条目发撤销**（2026-09-29 运行时审计 P2-6）：
+	// 旧条目若还在，它的 prodDone 会按 series 无条件删掉**新**条目（见下），
+	// 让 `prodAlive` 假 false → 产线判"拆集结束、自然收尾"提前收尾，
+	// 而第二批集还在后台生成 → 新集永远不会被消费。先撤销旧的，把它挤出去。
+	if old, ok := novelProducers.m[series]; ok && old != p {
+		select {
+		case <-old.done:
+		default:
+			close(old.done)
+		}
+	}
 	novelProducers.m[series] = p
 	novelProducers.Unlock()
 	return p
 }
+
+// prodDone 摘掉生产者登记。
+//
+// **必须校验身份**（2026-09-29 运行时审计 P2-6）：同一本书被点两次（双击 / 两个入口 /
+// 重试）时，第一个生产者的 `prodDone` 会把**第二个**的条目删掉 ——
+// 与 `Coordinator.finish` 是同一个病（那处已改）。
+// `delete(m, series)` 无条件执行时，`prodAlive` 假 false 会让批量产线
+// **提前收尾**，第二批集永远不被消费；反过来条目残留则让产线 4 秒一轮静默空转
+// （`waitAnnounced` 让日志只报一次，连线索都没有），只能靠手动停止或下次启动回收。
 func prodDone(series string, p *novelProducer) {
 	novelProducers.Lock()
-	delete(novelProducers.m, series)
+	if cur, ok := novelProducers.m[series]; ok && cur == p {
+		delete(novelProducers.m, series)
+	}
 	novelProducers.Unlock()
 	select {
 	case <-p.done:

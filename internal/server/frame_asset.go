@@ -114,8 +114,25 @@ func (s *Server) handleAssetFrameApply(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
-	tmp := filepath.Join(os.TempDir(), fmt.Sprintf("mx-frame-%d.png", os.Getpid()))
+	// **每次调用一个唯一临时文件**（2026-09-29 运行时审计 P2-7）。
+	//
+	// 原来是 `%TEMP%\mx-frame-<pid>.png` —— 进程级固定名，所有并发请求共用同一个路径，
+	// 而这是个 race detector **结构上抓不到**的共享可变状态（文件级而非内存级）。
+	// 两个 frame-apply 并发（两个窗口 / 同一资产被连点 / 前端没有请求序号守卫）时：
+	//
+	//	· A 写完读到的可能是 B 的帧 → **给 A 装上了 B 的画面**，还一路写进资产表与资产库；
+	//	· A 的 `defer os.Remove` 把 B 正在写的文件删掉 → 报"截帧产物不可读"的假失败。
+	//
+	// 顺带：这个路径正好是一键清理的删除目标（`mx-*`），撞上更热闹。
+	tmpf, terr := os.CreateTemp("", "mx-frame-*.png")
+	if terr != nil {
+		writeErr(w, 500, fmt.Errorf("无法创建临时文件: %w", terr))
+		return
+	}
+	tmp := tmpf.Name()
+	tmpf.Close() // ffmpeg 要按路径写，句柄交给它；下面 defer 删文件
 	if err := s.extractFrame(r.Context(), id, in.ShotID, in.Ratio, info.Duration, tmp); err != nil {
+		os.Remove(tmp)
 		writeErr(w, 500, fmt.Errorf("截帧失败: %w", err))
 		return
 	}

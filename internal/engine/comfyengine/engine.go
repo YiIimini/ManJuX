@@ -38,6 +38,10 @@ type Engine struct {
 	procMu  sync.Mutex
 	procRef *os.Process // 代管启动的 ComfyUI 进程
 
+	// launchMu 让"启动 ComfyUI"单飞（2026-09-29 运行时审计 P2-5）。
+	// 见 launch 的注释：并发探活失败会拉起两个实例，各吃 20GB 权重 → OOM。
+	launchMu sync.Mutex
+
 	// torch 版本探测缓存(sage 状态展示用):管理页每 8 秒轮询,不能每次都起 python。
 	torchMu      sync.Mutex
 	torchVer     string
@@ -140,7 +144,32 @@ func (e *Engine) Available(ctx context.Context) error {
 }
 
 // launch 代管启动 ComfyUI 进程并等待就绪(日志落 data/logs/comfyui.log)。
+//
+// ## 单飞（2026-09-29 运行时审计 P2-5）
+//
+// `Available()` 是"先探活、失败就启动"，而它被十几个入口并发调用（启动时的
+// `StartOnBoot`、管理页的 `StartAdmin`、各种一次性操作）。两处同时探活失败时，
+// 两个 `cmd.Start()` 都会执行 —— 端口只有一个能绑，另一个报错退出或反复重试；
+// 而 `setOwnedProc` / `writePidFile` 是**后者覆盖前者**，于是代管句柄指向错的 pid，
+// 下次 `adoptFromPidFile` 认领到错进程。
+//
+// 最坏形态正是文档里反复记的那个：两个实例各吃 20GB 权重 → OOM / 换页 →
+// "定妆照整批失败、单镜 20+ 分钟"。
+//
+// 所以整个启动过程加一把锁：**并发者排队等**，等到的第一个启动成功后，
+// 后面的会在 `Available()` 的探活处直接命中（见那里的二次探活）。
 func (e *Engine) launch(ctx context.Context, c config.ComfySettings) error {
+	e.launchMu.Lock()
+	defer e.launchMu.Unlock()
+	// 排队期间别人可能已经把它拉起来了 —— 拿锁后**再探一次**，避免重复启动。
+	if e.client() != nil && e.client().Alive(ctx) {
+		return nil
+	}
+	return e.launchLocked(ctx, c)
+}
+
+// launchLocked 真正的启动过程（调用方须持 launchMu）。
+func (e *Engine) launchLocked(ctx context.Context, c config.ComfySettings) error {
 	py := filepath.Join(c.RootDir, "standalone-env", "python.exe")
 	main := filepath.Join(c.RootDir, "ComfyUI", "main.py")
 	if _, err := os.Stat(py); err != nil {
