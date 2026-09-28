@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/fsutil"
@@ -156,11 +158,35 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 	}
 
 	// ── 第二遍:落盘 + 注册 + 后处理 ──
+	// **落盘阶段要么全成、要么全退**（2026-09-29 数据完整性审计 #12）。
+	//
+	// 第一遍**校验**本来就是全有或全无（上面那段注释写着），但**落盘**不是：任何一处
+	// `return` 都把已拷进去的几集留在 `data/projects/`，而这次请求没重扫、也没播报
+	// "哪几集已经进去了" —— 用户看到的是一个 500，然后带着**半套系列**往下跑
+	// （正是契约文档说"比导入失败难查得多"的那种状态）。
+	//
+	// 回滚只删**本次新建**的目录（`copyPackage` 之前不存在的那种）：已存在的是
+	// 用户在用的包，覆盖它属于另一种语义，不能因为一次失败把它删掉。
+	var created []string
+	rollback := func() {
+		for _, d := range created {
+			if err := os.RemoveAll(d); err != nil {
+				s.opLog("⚠ 导入失败回滚：删不掉 %s（%v）—— 请手动确认该目录", filepath.Base(d), err)
+			}
+		}
+		s.store.Rescan() // 让回滚后的盘上状态立刻反映到索引
+		s.opLog("↩ 导入失败，已回滚本次拷入的 %d 个目录（盘上不留半套系列）", len(created))
+	}
+
 	for _, st := range stage {
 		dest := filepath.Join(s.store.Root(), st.man.Book,
 			fmt.Sprintf("%s·%s·%s", st.man.Book, st.man.Episode, orDefault(st.man.EpisodeTitle, "未命名")))
+		if _, serr := os.Stat(dest); os.IsNotExist(serr) {
+			created = append(created, dest)
+		}
 		if err := copyPackage(st.pkg, dest); err != nil {
-			writeErr(w, 500, fmt.Errorf("拷贝 %s 失败:%w", filepath.Base(st.pkg), err))
+			rollback()
+			writeErr(w, 500, fmt.Errorf("拷贝 %s 失败:%w（已回滚本次拷入的目录）", filepath.Base(st.pkg), err))
 			return
 		}
 		// project.json 的 id 必须与目录名一致(Store 以目录名为 id)
@@ -181,7 +207,8 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 			// 用户看到的是"盘上明明有目录、列表里没有它"。
 			// （`loadMeta` 那侧现在也会记日志说明原因，但**不让它坏**才是正解。）
 			if werr := fsutil.WriteFileAtomic(filepath.Join(dest, "project.json"), raw); werr != nil {
-				writeErr(w, 500, fmt.Errorf("导入：project.json 的 id/name 回写失败:%w（生成的是一个目录名与内部 id 不一致的半个项目）", werr))
+				rollback()
+				writeErr(w, 500, fmt.Errorf("导入：project.json 的 id/name 回写失败:%w（已回滚本次拷入的目录）", werr))
 				return
 			}
 		}
@@ -193,7 +220,8 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 		// 用户/技能端都能看到平台实际按什么模式跑,而不是读取时才算。
 		nMode := st.plan.NormalizeShotModes()
 		if err := s.store.SavePlan(id, st.plan); err != nil {
-			writeErr(w, 500, err)
+			rollback()
+			writeErr(w, 500, fmt.Errorf("方案存盘失败:%w（已回滚本次拷入的目录）", err))
 			return
 		}
 		results = append(results, result{
@@ -426,6 +454,75 @@ func briefList(ids []string, n int) []string {
 	return append(append([]string{}, ids[:n]...), fmt.Sprintf("等 %d 个", len(ids)))
 }
 
+// projSummary 列表页真正需要的几个数（2026-09-29 性能审计 #6）。
+//
+// ## 为什么要缓存
+//
+// `listProjects` 原来对**每个项目**做一次完整 `LoadPlan`（解析 + 全镜清洗 + HealPlan）
+// 与一次 `LoadManifest`。实测 289KB/60 镜的方案 1.59 ms/项目 ⇒ 40 集 ≈ 64 ms +
+// 40×289KB ≈ **12MB 读盘与分配/次**，而前端**每 15 秒**拉一次（≈48 MB/min 的 GC 垃圾）；
+// 200 集时单次 300 ms+。列表页要的其实只有"几镜、渲了几镜、几个角色几个场景"。
+//
+// ## 缓存键怎么取
+//
+// 用 `plan.json` / `manifest.json` 的**修改时间**：这两份文件是唯一的写入点
+// （`SavePlan` / `SaveManifest`），写一次 mtime 就变 ⇒ 缓存自动失效。
+// `os.Stat` 比解析 289KB 的 JSON 便宜两个数量级，而且不会漏掉任何写路径
+// （不像"在 Store 里手工 invalidate"那样要在每个写点挂钩子 —— 本仓在库索引那处
+// 已经吃过这个教训）。
+type projSummary struct {
+	planMod, manifestMod time.Time
+	hasPlan              bool
+	total, done          int
+	chars, scenes        int
+}
+
+var (
+	projSumMu sync.Mutex
+	projSums  = map[string]projSummary{}
+)
+
+// projectSummary 取项目摘要（命中缓存则零解析）。
+func (s *Server) projectSummary(p *project.Project) projSummary {
+	dir := s.store.Dir(p.ID)
+	planPath := filepath.Join(dir, "plan.json")
+	mfPath := filepath.Join(dir, "manifest.json")
+	var sum projSummary
+	if st, err := os.Stat(planPath); err == nil {
+		sum.planMod = st.ModTime()
+	}
+	if st, err := os.Stat(mfPath); err == nil {
+		sum.manifestMod = st.ModTime()
+	}
+
+	projSumMu.Lock()
+	if cached, ok := projSums[p.ID]; ok &&
+		cached.planMod.Equal(sum.planMod) && cached.manifestMod.Equal(sum.manifestMod) {
+		projSumMu.Unlock()
+		return cached
+	}
+	projSumMu.Unlock()
+
+	// 未命中：真解析一次
+	if plan, err := s.store.LoadPlan(p.ID); err == nil {
+		sum.hasPlan = true
+		sum.total = len(plan.Shots)
+		sum.chars = project.CharFamilyCount(plan.Characters)
+		sum.scenes = len(plan.Scenes)
+		if m, err := s.store.LoadManifest(p.ID); err == nil {
+			for _, c := range m {
+				if c.Status == project.ShotDone {
+					sum.done++
+				}
+			}
+		}
+	}
+	projSumMu.Lock()
+	projSums[p.ID] = sum
+	projSumMu.Unlock()
+	return sum
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	// 拉列表时顺手重扫一次盘:**「列表」就是盘上的真相**。
 	//
@@ -450,21 +547,14 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	out := []item{}
 	for _, p := range s.store.List() {
 		it := item{Project: p, Cover: s.projectCover(p.ID)}
-		if plan, err := s.store.LoadPlan(p.ID); err == nil {
-			it.HasPlan = true
-			it.Total = len(plan.Shots)
-			// 按**人**算(§4.2):技能侧把每个造型档做成独立卡,按卡计数会把
-			// 《翻篇》的 12 个角色报成 21 个,首页统计就成了"多出来一堆新角色"。
-			it.Chars = project.CharFamilyCount(plan.Characters)
-			it.Scenes = len(plan.Scenes)
-			if m, err := s.store.LoadManifest(p.ID); err == nil {
-				for _, c := range m {
-					if c.Status == project.ShotDone {
-						it.Done++
-					}
-				}
-			}
-		}
+		// 摘要走缓存（见 projectSummary）：列表页每 15 秒拉一次，
+		// 而它要的只是"几镜/渲了几镜/几个角色几个场景"这几个数。
+		sum := s.projectSummary(p)
+		it.HasPlan = sum.hasPlan
+		it.Total = sum.total
+		it.Done = sum.done
+		it.Chars = sum.chars
+		it.Scenes = sum.scenes
 		if run := s.pipe.Running(p.ID); run != nil {
 			it.Running = true
 			it.Phase = run.Phase
