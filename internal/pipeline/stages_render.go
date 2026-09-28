@@ -279,6 +279,17 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 关键道具的**跨镜文字锚定**（2026-09-28）：道具不进参考图集合（官方规则），
 		// 一致性只能靠文字 —— 把该镜引用到的器物卡原文逐字锚进来，模型才不会每镜自己发明一把刀。
 		prompt = EnsurePropAnchors(prompt, plan, shot)
+		// 场次切换的转场字幕（用户《仿真人10S分镜头指令》/《3D漫剧15秒分镜》：渐隐渐显 + "[地点・时间]" 字幕）。
+		// 放在装配点的理由同道具锚定：这是**已知量**（场次一变，地点时间就在场景卡名字里），
+		// 让 LLM 每镜自觉复述只会时灵时不灵；而且官方屏幕文字规则要求文字逐字进英文双引号。
+		var prevShot *project.Shot
+		for i := range plan.Shots {
+			if plan.Shots[i].ID == shot.ID && i > 0 {
+				prevShot = &plan.Shots[i-1]
+				break
+			}
+		}
+		prompt = EnsureTransitionCaption(prompt, plan, shot, prevShot)
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。

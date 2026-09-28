@@ -43,6 +43,16 @@ var PlanHookDensityTypes = []string{"reveal", "reversal", "callback"}
 // PlanHookStrongTypes 开篇镜与收尾镜必须带的强钩子（官方 STEP 5.5 检查 1 后半句）。
 var PlanHookStrongTypes = []string{"visual-joke", "reversal", "reveal", "suspense", "tender"}
 
+// 单集节奏公式的门槛（行业实测，见 plan_contract.go 的引注）。
+const (
+	// PlanOpeningSetupSeconds 开场多少秒内不许连续铺垫（实测：短剧不存在慢开场）。
+	PlanOpeningSetupSeconds = 10
+	// PlanFirstPayoffSeconds 前多少秒内必须出现第一次反转/爽点。
+	PlanFirstPayoffSeconds = 30
+	// PlanBeatGapSeconds 情绪节点的最大间隔（实测口径：每 20–30 秒一处）。
+	PlanBeatGapSeconds = 30
+)
+
 // PlanOneTakeSeconds 超过这个时长的片段**必须**在正文里切内部小镜头（否则报"一镜到底"）。
 //
 // 依据：用户《【额外】仿真人10S分镜头指令》「每个片段内拆成若干小镜头，每镜 1.5–4 秒」；

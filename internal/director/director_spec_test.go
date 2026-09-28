@@ -19,7 +19,11 @@ func mustReadFile(t *testing.T, name string) string {
 // director_spec_test.go 平台直出提示词要**真的带**技能侧《平台侧生成规范》的硬口径。
 //
 // 2026-09-27 对着那份规范逐条审的结果：director 里**早已有**事件隔离串、建立镜头串＋禁小景别、
-// 9 视角词表（含"空值合法"）、物件配额 2–4 组、闭嘴句、7.5 头身；**当时缺**的是下面这些：
+// 9 视角词表（含"空值合法"）、物件配额 2–4 组、闭嘴句、头身比；**当时缺**的是下面这些：
+//
+// 【头身比口径变更 2026-09-28】用户《二、人物道具提取指令》写"九头身"、《【额外】人物道具场景提取》写"8.5 头身"，
+// 而技能侧规范此前写 7.5（那是我在用户报"比例太丑"时拍的值，把"丑"误判成"头身数太高"）。
+// 用户今天明确要求照 `D:\Ai\Datas\漫剧制作` 的口径 ⇒ 取 **8.5**。技能侧规范需同步改这一句。
 //
 //	① 五官词表（§3.2）：此前只要求"写清脸型眼型"，LLM 于是爱写 `large bright eyes`/`精致五官`/
 //	   `绝美` 这类**尺寸词与抽象词** —— 那正是"全剧一张模板脸"的根源（同一天还报过"周廷和主角脸相似"）；
@@ -35,7 +39,7 @@ func TestDirectorPromptsCarrySpecRules(t *testing.T) {
 		"large eyes", "精致五官", "绝美",
 		// ② 敏感词与安全替代
 		"SAFE WORDING", "cloth shoes", "high collar", "opaque matte fabric",
-		"seven and a half heads", "matte skin with a soft natural finish",
+		"eight and a half heads", "matte skin with a soft natural finish",
 		// ③ 叙事配额 + MAX 算式
 		"MAX(dialogue time, action time)", "12 seconds", "AT LEAST 5 seconds",
 		// ④ 自包含

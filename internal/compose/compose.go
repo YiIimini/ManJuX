@@ -994,6 +994,12 @@ func buildASS(plan *project.Plan, starts, durations []float64, sizePct, marginVP
 	// 下边距:避开平台底部 UI 安全区(见 subtitleMarginVPctDefault)。
 	// 这里吃的是**交付高度**(playH)—— 1080×1920 交付时 15% = 288px。
 	marginV := playH * marginVPct / 100
+	// 场次字幕的字号比台词小一档（它是"这是哪儿"的提示，不该抢台词的注意力），
+	// 停留 2.5 秒、从该镜起播后 0.4 秒出现（给渐显留出黑场时间，否则字幕压在黑屏上像报错）。
+	captionFontSize := int(float64(fontSize) * 0.8)
+	if captionFontSize < 20 {
+		captionFontSize = 20
+	}
 	marginLR := playW * 5 / 100
 	// 单行可容字数 ≈ 可用宽度/字宽(全角字宽≈字号);不足下限兜底
 	maxRunes := int(float64(playW-marginLR*2) / float64(fontSize) * 0.98)
@@ -1012,10 +1018,31 @@ ScaledBorderAndShadow: yes
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Dialogue,Microsoft YaHei,%d,&H0020D9FF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,%d,%d,%d,1
 Style: Narration,Microsoft YaHei,%d,&H00FFFFFF,&H000000FF,&H00101010,&H80000000,-1,0,0,0,100,100,0,0,1,3,1,2,%d,%d,%d,1
+Style: Caption,Microsoft YaHei,%d,&H00D8F0FF,&H000000FF,&H00101010,&H80000000,0,0,0,0,100,100,2,0,1,3,1,2,%d,%d,%d,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-`, playW, playH, fontSize, marginLR, marginLR, marginV, fontSize, marginLR, marginLR, marginV)
+`, playW, playH, fontSize, marginLR, marginLR, marginV, fontSize, marginLR, marginLR, marginV,
+		captionFontSize, marginLR, marginLR, marginV+int(float64(fontSize)*2.2))
+
+	// 场次字幕：换场（以及首镜）时在画面上方留一条"地点·时间"。
+	//
+	// 来源《五、3D漫剧15秒分镜指令》/《【额外】仿真人10S分镜头指令》："不同场景间通过渐隐渐显转场，
+	// 如需地点时间信息，可在画面描述中以字幕形式自然呈现"。**文字由这里烧，不进视频提示词** ——
+	// H3 画汉字必成伪汉字（实测），而 ASS 用系统汉字字体是稳的（用户文件也写了"若不可靠则后期替换"）。
+	// 判据与提示词那边共用 project.SceneCaptionFor（一处实现，免得"提示词判换场、字幕判法不同"）。
+	for i := range plan.Shots {
+		caption := project.SceneCaptionFor(plan, i)
+		if caption == "" {
+			continue
+		}
+		t := 0.0
+		if i < len(starts) {
+			t = starts[i]
+		}
+		fmt.Fprintf(&sb, "Dialogue: 0,%s,%s,Caption,,0,0,0,,%s\n",
+			assTime(t+captionLeadIn), assTime(t+captionHold), caption)
+	}
 
 	for i, shot := range plan.Shots {
 		d := 7.0
@@ -1052,6 +1079,13 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 	}
 	return sb.String()
 }
+
+const (
+	// captionLeadIn 场次字幕相对该镜起点延迟出现（秒）：先让画面从黑渐显出来。
+	captionLeadIn = 0.4
+	// captionHold 场次字幕消失的时刻（相对该镜起点，秒）。
+	captionHold = 2.9
+)
 
 // wrapAssText 把超宽字幕行按 maxRunes 断为多行(以 \N 相连);
 // 中文断点优先落在标点后,不得已才按字符硬切。

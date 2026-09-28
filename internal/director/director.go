@@ -414,7 +414,12 @@ const sysFaceVocabRules = `## FACE VOCABULARY & SAFE WORDING (mandatory — thes
 - 深V/低胸/露乳/low neckline → collar wording only: high collar / small stand collar / layered lapels / 一字领(非低胸). Never any chest-revealing design.
 - 宽腰封/紧束/勒紧 → 立体剪裁贴合身形 / 衣料垂坠自然收窄 (tailoring, not tightness); if a belt is needed it is at most a palm-wide thin cord or chain — preferably no belt at all.
 - 半透/透视装/sheer → opaque matte fabric with a woven texture (state explicitly that it is NOT see-through).
-- 超模身材/大长腿/legs 60% of height → express as proportions instead: "seven and a half heads tall, lean, straight-backed, shoulders about two head-widths".
+- 超模身材/大长腿/legs 60% of height → express as proportions instead: "**eight and a half heads tall**, lean,
+  straight-backed, shoulders about two head-widths".
+  【口径来源，2026-09-28 更正】用户《二、人物道具提取指令》写"九头身"、《【额外】人物道具场景提取》写"身材比例 8.5 头身"
+  —— 两处都是**用户定的口径**。平台此前写 7.5 是**我自己**在用户报"比例太丑"时拍的，把"丑"误当成"头身数太高"：
+  真正的病根是**比例失真**（Q 版比例混进真人卡、取景与全身比例打架），那两条现在各有专门的自检与锚点。
+  头身数回到用户文件的口径；若哪天用户说"就是要 7.5"，改这里并注明是用户拍板。
 - 毛孔可见/汗毛/visible pores → matte skin with a soft natural finish (never realistic pores).
 - 血管可见/visible veins → drop it; if needed: faint blue veins at the temple, subtle.
 - Also banned: 性感暴露, 沟, 翘臀/蜜桃臀, 巨乳, 网衣/链式衣饰/蛛网衣, 大面积镂空, 暗示性动作, 不雅姿态, 低俗图案.

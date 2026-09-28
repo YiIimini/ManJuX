@@ -198,3 +198,42 @@ func TestCuePlanDrivesBothSubtitles(t *testing.T) {
 		t.Errorf("公开入口应保持镜头级窗口(1.0 秒起),实际 %.2f", oldSRT[0])
 	}
 }
+
+// TestSceneCaptionEvents ASS 里必须有**场次字幕**：换场（与首镜）各一条，样式 Caption，
+// 文字取场景卡名字（地点·时间），同场景连拍不重复。
+//
+// 来源（用户《五、3D漫剧15秒分镜指令》/《【额外】仿真人10S分镜头指令》）：
+// "不同场景间通过渐隐渐显转场，如需地点时间信息，可在画面描述中以字幕形式自然呈现"。
+// 文字由后期 ASS 烧（汉字字体稳），**不进视频提示词**（H3 画汉字必成伪汉字）。
+func TestSceneCaptionEvents(t *testing.T) {
+	plan := &project.Plan{
+		Scenes: []project.Scene{
+			{ID: "s1", Name: "西坡碑林·黄昏"},
+			{ID: "s2", Name: "拓碑棚·清晨"},
+		},
+		Shots: []project.Shot{
+			{ID: 1, Scene: "s1", Duration: 5, Dialogue: []project.Line{{Speaker: "甲", Text: "一"}}},
+			{ID: 2, Scene: "s1", Duration: 5, Dialogue: []project.Line{{Speaker: "甲", Text: "二"}}},
+			{ID: 3, Scene: "s2", Duration: 5, Dialogue: []project.Line{{Speaker: "甲", Text: "三"}}},
+		},
+	}
+	starts := []float64{0, 5, 10}
+	durations := []float64{5, 5, 5}
+	ass := BuildASS(plan, starts, durations, 4, 768, 1344)
+	caps := 0
+	for _, ln := range strings.Split(ass, "\n") {
+		if !strings.HasPrefix(ln, "Dialogue:") || !strings.Contains(ln, ",Caption,") {
+			continue
+		}
+		caps++
+		if !strings.Contains(ln, "西坡碑林·黄昏") && !strings.Contains(ln, "拓碑棚·清晨") {
+			t.Errorf("场次字幕的文字应是场景卡名字（地点·时间），实际：%s", ln)
+		}
+	}
+	if caps != 2 {
+		t.Errorf("首镜 + 换场各一条，应 2 条场次字幕，实际 %d 条", caps)
+	}
+	if !strings.Contains(ass, "Style: Caption,") {
+		t.Error("ASS 里要有 Caption 样式")
+	}
+}

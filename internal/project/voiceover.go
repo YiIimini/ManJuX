@@ -307,3 +307,27 @@ func hasString(list []string, v string) bool {
 	}
 	return false
 }
+
+// SceneCaptionFor 第 i 镜要不要打**场次字幕**，要打就打什么字（空串 = 不打）。
+//
+// 判据：首镜或**场次相对上一镜发生变化**才打。来源是用户《【额外】仿真人10S分镜头指令》与
+// 《五、3D漫剧15秒分镜指令》："不同场景间通过渐隐渐显转场，如需地点时间信息，可在画面描述中
+// 以字幕形式自然呈现"。
+//
+// 【放在 project 而不是 pipeline】compose 要用它（字幕轨），而 compose 被 pipeline 依赖 ——
+// 判据放这里，pipeline 与 compose 共用一份，不会出现"提示词那边判换场、字幕那边判法不同"。
+func SceneCaptionFor(plan *Plan, i int) string {
+	if plan == nil || i < 0 || i >= len(plan.Shots) {
+		return ""
+	}
+	sh := plan.Shots[i]
+	if i > 0 && strings.EqualFold(strings.TrimSpace(plan.Shots[i-1].Scene), strings.TrimSpace(sh.Scene)) {
+		return ""
+	}
+	for _, sc := range plan.Scenes {
+		if sc.ID == sh.Scene && strings.TrimSpace(sc.Name) != "" {
+			return strings.TrimSpace(sc.Name)
+		}
+	}
+	return ""
+}

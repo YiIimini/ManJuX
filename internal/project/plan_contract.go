@@ -745,6 +745,80 @@ func ValidatePlan(p *Plan) []Issue {
 			}
 		}
 
+		// ── 单集节奏公式（行业实测，按**秒**卡；2026-09-28 用户要求我"上网去学"，不再闭门造车）──
+		//
+		// 来源：拆解 100+ 部播放破亿竖屏短剧的节奏拆解（[单集万能节奏公式](https://www.163.com/dy/article/L30RCS1005340TH8.html)），
+		// 与用户《一、网文小说转剧本提示词指令》同向 —— 用户那份讲"每 80/200 字"，这份讲"每 20–30 秒"，
+		// 按秒的口径对**成片节奏**更贴身，所以两条都留、这条当主判据：
+		//
+		//	0–3 秒  黄金钩子（无慢开场）
+		//	0–10 秒 交代：核心矛盾 / 人物关系 / 主角目标
+		//	前 30 秒 必须有一次反转或爽点（压抑—爆发的第一次释放）
+		//	每 20–30 秒 一个情绪节点
+		//	结尾 5–10 秒 强钩子，卡在情绪最高点
+		//
+		// 三大死坑里能机检的两条：**开场 10 秒内全是铺垫**、**中段长时间没有情绪节点**。
+		if len(p.Shots) > 0 {
+			// ① 开场 10 秒内不许全是铺垫（setup 是"交代"，连续两镜都在交代 = 慢开场）
+			openSetup := 0
+			elapsed := 0
+			for _, sh := range p.Shots {
+				if elapsed >= PlanOpeningSetupSeconds {
+					break
+				}
+				elapsed += sh.Duration
+				if hookTypeOf(sh) == "setup" {
+					openSetup++
+				}
+			}
+			if openSetup >= 2 && elapsed <= PlanOpeningSetupSeconds {
+				add("warn", "plan.shots",
+					"开场 %d 秒里连着 %d 镜都是 setup（铺垫）—— 行业实测：**短剧不存在慢开场**，"+
+						"前 3 秒抓不住人后面再精彩也会被划走。开场镜要么直接冲突、要么强悬念、要么极致反差，"+
+						"把「交代三件事」（核心矛盾/人物关系/主角目标）塞进**动作**里，别用铺垫讲",
+					elapsed, openSetup)
+			}
+			// ② 前 30 秒必须有一次反转/爽点
+			acc, first := 0, 0
+			for _, sh := range p.Shots {
+				acc += sh.Duration
+				if isPayoffHook(hookTypeOf(sh)) {
+					first = acc
+					break
+				}
+			}
+			if first == 0 || first > PlanFirstPayoffSeconds {
+				add("warn", "plan.shots",
+					"前 %d 秒内没有第一次反转/爽点（行业口径：**前 30 秒必须给一次情绪释放**，"+
+						"形成「压抑→爆发」的起伏；一直压着不给反馈，观众直接弃剧）",
+					PlanFirstPayoffSeconds)
+			}
+			// ③ 情绪节点间隔：任何 30 秒以上没有"非交代型"节拍 ⇒ 这一段是平的
+			var flat []string
+			gap, from := 0, p.Shots[0].ID
+			for _, sh := range p.Shots {
+				if gap == 0 {
+					from = sh.ID
+				}
+				gap += sh.Duration
+				if h := hookTypeOf(sh); h != "" && h != "setup" && h != "expression-beat" {
+					gap = 0
+					continue
+				}
+				if gap > PlanBeatGapSeconds {
+					flat = append(flat, fmt.Sprintf("#%d–#%d（%d 秒）", from, sh.ID, gap))
+					gap = 0
+				}
+			}
+			if len(flat) > 0 {
+				add("warn", "plan.shots",
+					"%d 段连续超过 %d 秒没有情绪节点（%s）—— 行业实测「每 20–30 秒就要设置一处情绪节点，"+
+						"不管是台词冲突、动作冲突还是隐藏信息曝光，不能长时间平淡无波澜」；"+
+						"把这一段切开(内部小镜头)或提前放一个冲突",
+					len(flat), PlanBeatGapSeconds, strings.Join(firstN(flat, 5), "、"))
+			}
+		}
+
 		// 检查 1：钩子密度。每镜都要有 hook_type；每连续三镜至少一个 reveal/reversal/callback；
 		// 开篇镜与收尾镜必须是强钩子。
 		var noHook, badHook []string
