@@ -69,7 +69,30 @@ git clone --depth 1 https://github.com/MiniMax-AI/MiniMax-H3
 
 ---
 
-## 四、维护本表的纪律
+## 四、官方 H3 技能仓库逐件对账（2026-09-28 全面审计）
+
+官方源：`MiniMax-AI/MiniMax-H3`，`main@d21241f`。逐件读完后与平台对账（**每件都读了，包括此前没读的**）：
+
+| 官方文件 | 平台对应实现 | 结论 |
+|---|---|---|
+| `h3-prompt-writing/references/ref-en.txt` | `sysH3Format` + `H3FormatViolations`（15 项门） | ✓ 六段/顺序/风格句位置/时间戳/说话人/词数/屏幕文字都已对齐；**本轮补**：`<d>` 语言标签、标点归一化、标签编号连续、说话人分配必须使用 |
+| `h3-prompt-writing/references/base-en.txt` | T2VA 三段判断 | ✓ |
+| `3d-animation-short-generator/references/shot-table-spec.md` | `shot_table.go` 受控词表（10 个钩子、六列） | ✓ 词表从"controlled vocabulary"那句抄（有过抄举例句的教训） |
+| `…/storyboard-guidelines.md` | 钩子密度/开篇与收尾强钩/三人同框上限 | ✓ |
+| `…/qc-checklist.md`（STEP 8 成片装配） | `compose` | **本轮补两条**：① **不许逐镜配乐**（官方 "Do not generate BGM per shot"）+ 单条 BGM 铺底与人声闪避（`compose/bgm.go`，参数 `assemble.bgm`）；② 成片不带分镜痕迹的标签禁表补齐为官方那五个 |
+| `…/model-selection.md`（STEP 7 per-shot 规则） | `pipeline` 装配 + `prompts.go` 风格块 | **本轮补**：`[dur:`/`[hook:` 进禁用词表；官方前缀里"与画风无关"的三句（设计语言强/动态干净/配色同品牌）抽成 `officialPrefixEssentials` 注入风格块（皮克斯介质那几句**不抄**，会改掉用户画风） |
+| `…/fallback-policy.md`（失败与漂移降级阶梯） | `stages_render.go` 重试循环 | **本轮补**：三级阶梯（① 重试换种子 ② **缩短到 ≤6 秒** ③ 如实标注不悄悄混进成片）；第三级"切到另一个视频模型"本机没有第二个视频引擎 ⇒ 注释记为**不适用**而非假装做了 |
+| `skills/README.md`、`meta.yaml`、`SKILL.cn.md` | — | 无额外硬要求 |
+
+**平台化差异（如实记，不假装一致）**：
+- 官方 fallback 第二级要求把砍掉的秒数"拆成相邻新镜"，平台**不自动建新镜**（那是创作决定），只如实报出砍了多少秒。
+- 官方 fallback 第三级是"换模型"（H3 ↔ Seedance 2.0 混合模式），本机只有一个视频引擎，等价物是引擎加速档位（run 级、非单镜级）。
+- 官方 model-selection 的前缀是给皮克斯风 3D 的；国漫/写实项目只取其中与画风无关的三句。
+
+
+## 五、维护本表的纪律
+
+
 
 1. **新增任何口径**（提示词里的一句硬要求、代码里的一个常量）**都必须在本表补一行**，
    并写清出处类别：`用户文件（哪份哪句）` / `官方（哪份哪个 §）` / `我的判断（待确认）`。
