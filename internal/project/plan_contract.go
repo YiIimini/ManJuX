@@ -643,6 +643,31 @@ func ValidatePlan(p *Plan) []Issue {
 				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
 		}
 
+		// ── 运镜（camera）的三条门（2026-09-28 加）──────────────────────────────
+		//
+		// 判据在 `camera_gate.go`（返回**数据**），播报文案在这里 —— 因为 `docs/门目录.md`
+		// 由 gatecat 扫**字面格式串**生成，写成 `add(..., "%s", msg)` 那条门在目录里就看不出来。
+		// 口径出处（官方 / 平台规则 / 用户《五》的"慢动作"）都写在 camera_gate.go 的文件头。
+		for _, iss := range CameraIssues(p.Shots) {
+			switch iss.Kind {
+			case CamMissing:
+				add("warn", "plan.shots",
+					"%d 镜没有写运镜（camera）—— 运镜是这一镜「看起来是不是活的」的直接来源；"+
+						"平台要求每镜给一个（官方 §4.3 只规定写法与词表，这条是平台规则）：%s",
+					len(iss.IDs), strings.Join(firstN(iss.IDs, 6), " "))
+			case CamJargon:
+				add("warn", "plan.shots",
+					"%d 镜用了摄影术语「%s」—— H3 认的是自然英文动作（官方 §4.3 的三个示例都是 "+
+						"「The camera pushes in …」这种写法），术语进正文只是噪音：%s",
+					len(iss.IDs), iss.Term, strings.Join(firstN(iss.IDs, 6), " "))
+			case CamRepeat:
+				add("warn", "plan.shots",
+					"连续 %d 镜同一个运镜「%s」（#%d 起）—— 上限 %d 镜；与「连续同景别」同一条机理："+
+						"运镜一潭死水，整集看下来像没剪过",
+					iss.Run, iss.Cam, iss.Start, PlanMaxConsecutiveSameCamera)
+			}
+		}
+
 		// H3 官方格式（§1.5 的可机检三条）：聚合报一次，附前几条人话说明
 		var fmtHits []string
 		badShots := 0
