@@ -72,7 +72,13 @@ func (s *Server) openExternalURL(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		URL string `json:"url"`
 	}
-	_ = readBody(r, &in)
+	// 【2026-09-29 审计 #10】原来是 `_ = readBody(r, &in)` —— 请求体坏了（截断/非 JSON）
+	// 时 `in.URL` 保持零值，于是报出来的错是"仅支持 https 链接"，把一个**格式问题**
+	// 说成了**内容问题**，用户去改链接怎么改都不对。
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, fmt.Errorf("请求体格式错误:%w", err))
+		return
+	}
 	if !strings.HasPrefix(in.URL, "https://") {
 		writeErr(w, 400, fmt.Errorf("仅支持 https 链接"))
 		return
@@ -149,7 +155,11 @@ func (s *Server) testConn(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Target string `json:"target"`
 	}
-	_ = readBody(r, &in)
+	// 同 #10：body 坏了要说"body 坏了"，别让它走到下面报成"未知的测试目标"。
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, fmt.Errorf("请求体格式错误:%w", err))
+		return
+	}
 	g := s.cfg.Get()
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()

@@ -2,7 +2,6 @@ package project
 
 import (
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 )
@@ -91,7 +90,8 @@ func ShortenShotPrompt(h3 string, duration int, maxSeconds int) (string, int, bo
 	return strings.Replace(h3, seg, out, 1), newDur, true
 }
 
-var h3ShotHeadReLocal = regexp.MustCompile(`(?m)^\s*\[Shot\s+\d+\]`)
+// （2026-09-29 审计 #11：这里曾有一个 `h3ShotHeadReLocal`，与 h3_format_extra.go 的
+// `h3ShotHeadRe` 逐字重复且全仓无使用点 —— 死代码已删。要用请直接用那个唯一的一份。
 
 // rebuildWithHeadings 把正文段截到前 keep 个小镜头（保留每段的正文内容与标点）。
 func rebuildWithHeadings(seg string, locs [][]int, keep int) string {
