@@ -293,28 +293,33 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 	if opt.TotalSeconds <= 0 {
 		opt.TotalSeconds = opt.MaxShots * 7
 	}
+	// 两条产出路径**共用**的收尾：归一化 → **自纠一轮**。
+	//
+	// 【2026-09-28 修一个真缺口】自纠轮（治"一镜到底"这类机器可判定的违规）此前只挂在
+	// 单轮直出那条路上，而**分批路径在它之前就 return 了** —— 于是分批生成的方案（正好是长集数、
+	// 也正是用户实际在跑的那条路）**从来没跑过自纠**。实证：真方案 35/35 镜一镜到底，
+	// 而提示词里明明写着"4 秒以上必须内部切 2-4 个小镜头"—— 不是模型不听话，是**这步没跑**。
+	finish := func(plan *project.Plan) (*project.Plan, error) {
+		enforceStyleLock(plan, sourceText)
+		normalizePlan(plan, opt)
+		if n, note := RepairPlan(ctx, client, plan, opt); n > 0 && opt.OnNote != nil {
+			opt.OnNote("%s", note)
+		}
+		return plan, nil
+	}
+
 	if opt.MaxShots > batchThresholdShots || len([]rune(sourceText)) > batchThresholdRunes {
 		plan, err := generateBatched(ctx, client, sourceText, opt, contentDriven)
 		if err != nil {
 			return nil, err
 		}
-		enforceStyleLock(plan, sourceText)
-		normalizePlan(plan, opt)
-		return plan, nil
+		return finish(plan)
 	}
 	plan, err := generateSingle(ctx, client, sourceText, opt, contentDriven, secondsGiven)
 	if err != nil {
 		return nil, err
 	}
-	enforceStyleLock(plan, sourceText)
-	normalizePlan(plan, opt)
-	// **自纠一轮**（2026-09-28 实测驱动）：散文规则模型不照做 —— 真章节那一跑 35 镜
-	// 全都还是一镜到底（提示词里明明写着"4 秒以上必须内部切 2-4 个小镜头"）。
-	// 所以把机器能判定的违规**连同原文**回给它改一次，只改被点名的镜，改坏了退回原文。
-	if n, note := RepairPlan(ctx, client, plan, opt); n > 0 && opt.OnNote != nil {
-		opt.OnNote("%s", note)
-	}
-	return plan, nil
+	return finish(plan)
 }
 
 // normalizePlan 直出结果进契约之前的**最后一手归一化**（两条产出路径共用，只此一处）。
@@ -513,7 +518,9 @@ func parsePlan(raw string) (*project.Plan, error) {
 		}
 	}
 	if !ok || obj == "" {
-		return nil, fmt.Errorf("输出中未找到 JSON 对象(原文 %d 字):%s", len([]rune(raw)), snippet(raw, 120))
+		path := dumpRawForDiagnosis(raw, "plan")
+		return nil, fmt.Errorf("输出中找不到可解析的 JSON 对象(原文 %d 字)%s；原文已存到 %s",
+			len([]rune(raw)), "；首尾摘录:"+snippet(raw, 120), firstNonEmpty(path, "(落盘失败)"))
 	}
 	s := repairJSONStrings(obj)
 	decode := func(x string) (*project.Plan, error) {
@@ -890,6 +897,7 @@ func generateBatched(ctx context.Context, client *llm.Client, sourceText string,
 			return nil, fmt.Errorf("分镜批次 %d/%d(镜 %d-%d)失败: %w", bi+1, total, seg.From, seg.To, err)
 		}
 		shots, err := parseShotsBatch(raw, seg.From, seg.To)
+		errFirst := err // 留档：两次失败形态常常不同，只报后一个会把人带偏
 		if err != nil {
 			// 单批重试一次
 			raw2, err2 := client.Chat(ctx, []llm.Message{
@@ -904,7 +912,28 @@ func generateBatched(ctx context.Context, client *llm.Client, sourceText string,
 			}
 			shots, err = parseShotsBatch(raw2, seg.From, seg.To)
 			if err != nil {
-				return nil, fmt.Errorf("分镜批次 %d/%d 二次解析仍失败: %w", bi+1, total, err)
+				// **两次错误都带上**（2026-09-28）：此前只报第二次的 —— 而两次的失败形态常常不同
+				// （第一次可能是"镜号越界"，第二次是"JSON 配不平"），只看后一个会把人带偏。
+				return nil, fmt.Errorf("分镜批次 %d/%d 二次解析仍失败（首次:%v；重试后:%w）", bi+1, total, errFirst, err)
+			}
+		}
+		// 抢救（salvage）可能只救回一部分：**缺号必须播报**，不能静默少镜。
+		// 缺口同时会撞上契约的"镜头号不连续"门（warn），两条一起保证"少镜看得见"。
+		if opt.OnNote != nil {
+			got := map[int]bool{}
+			for _, sh := range shots {
+				got[sh.ID] = true
+			}
+			var missing []string
+			for id := seg.From; id <= seg.To; id++ {
+				if !got[id] {
+					missing = append(missing, fmt.Sprintf("#%d", id))
+				}
+			}
+			if len(missing) > 0 {
+				opt.OnNote("⚠ 第 %d/%d 批只解析出 %d/%d 镜，缺 %s —— 这些镜号没拿到内容"+
+					"（原文已落盘可查），请重跑这一批或让修复轮补",
+					bi+1, total, len(shots), seg.To-seg.From+1, strings.Join(missing, "、"))
 			}
 		}
 		plan.Shots = append(plan.Shots, shots...)
@@ -967,7 +996,16 @@ func parseShotsBatch(raw string, from, to int) ([]project.Shot, error) {
 		}
 	}
 	if !ok || obj == "" {
-		return nil, fmt.Errorf("未找到 JSON 对象(原文 %d 字):%s", len([]rune(raw)), snippet(raw, 120))
+		// ① **逐镜抢救**：整段配不平，但单个镜头对象往往是好的（缺口交给修复轮去补，
+		//    它会如实播报补了什么 —— 所以"救回来的"不会静默变成少镜）。
+		if saved := salvageShotObjects(raw); len(saved) > 0 {
+			return saved, nil
+		}
+		// ② 抢救不动：把**原文落盘**并给出路径。只给首尾摘录没法查 —— 问题在中间某处
+		//    （2026-09-28 用户 88 集卡在第 1 集，报的就是这种无从下手的错）。
+		path := dumpRawForDiagnosis(raw, "shots-batch")
+		return nil, fmt.Errorf("输出里找不到可解析的 JSON 对象(原文 %d 字、逐镜抢救也未成功)%s；原文已存到 %s — 把这个文件给开发者即可定位",
+			len([]rune(raw)), "；首尾摘录:"+snippet(raw, 120), firstNonEmpty(path, "(落盘失败)"))
 	}
 	s := repairJSONStrings(obj)
 	decode := func(x string) ([]project.Shot, error) {
@@ -1048,3 +1086,11 @@ func previousShotsSummary(shots []project.Shot) string {
 //	· 放大情绪反差 / 反转密集 → sysDynamicShotRules 与钩子密度规则
 //	· 合规零风险 → sysHard 既有合规段
 var sysHighlightRules = promptText("sysHighlightRules__GRAB_THE_POINT")
+
+// firstNonEmpty 取第一个非空字符串（错误信息里给"落盘路径或兜底说明"用）。
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}

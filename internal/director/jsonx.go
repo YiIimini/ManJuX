@@ -11,8 +11,14 @@ package director
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // candidateObjects 列出所有"从某个 { 起、括号配平"的候选片段(按出现顺序)。
@@ -203,4 +209,82 @@ func snippet(s string, n int) string {
 		return string(r)
 	}
 	return string(r[:n]) + " …〔中略 " + strconv.Itoa(len(r)-2*n) + " 字〕… " + string(r[len(r)-n:])
+}
+
+// dumpRawForDiagnosis 把模型原文落盘，返回文件路径（失败时返回空串）。
+//
+// 【为什么必须有】（2026-09-28 用户 88 集产线卡在第 1 集）：报"未找到 JSON 对象(原文 22799 字)"
+// 时，日志只给首尾各 120 字的摘录 —— 而**问题在中间某处**（一个引号判断错就足以让整段配不平）。
+// 没有原文，只能靠猜；有了原文，修复才是可验证的。落盘放临时目录（不污染项目），
+// 路径写进错误信息里，用户能把文件拿给我。
+func dumpRawForDiagnosis(raw, tag string) string {
+	dir := filepath.Join(os.TempDir(), "manjux-llm-dumps")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return ""
+	}
+	name := fmt.Sprintf("%s-%s.txt", tag, time.Now().Format("20060102-150405"))
+	p := filepath.Join(dir, name)
+	if err := os.WriteFile(p, []byte(raw), 0o644); err != nil {
+		return ""
+	}
+	return p
+}
+
+// salvageShotObjects 整段 JSON 解析不了时，**逐个镜头抢救**。
+//
+// 【为什么值得做】批次原始输出 20–30 KB、内含 6–7 个千词级提示词，一个引号判断错就让整段配不平
+// ⇒ 整条产线卡住（用户实测：88 集停在第 1 集）。但**单个镜头对象往往是好的**：把每个
+// `{"id":` 起、括号配平（字符串与转义感知）的片段单独拿出来解析，能救回绝大部分。
+//
+// 不走"猜哪里坏了"那条路：救回几个算几个，**缺口交给既有的补缺机制**（plan 的修复轮会补
+// 没拿到的镜头号，并如实播报补了什么）—— 于是"救回来的"与"补出来的"都有痕迹，
+// 不会静默少镜。
+func salvageShotObjects(raw string) []project.Shot {
+	cands := shotObjectCandidates(raw)
+	var out []project.Shot
+	for _, c := range cands {
+		body := repairJSONStrings(c)
+		var one project.Shot
+		if err := json.Unmarshal([]byte(body), &one); err == nil && one.ID > 0 {
+			out = append(out, one)
+			continue
+		}
+		// 整段解析不了时，再试"补全截断"（末镜常被 max_tokens 截断）
+		if fixed, ok := closeTruncatedJSON(body); ok {
+			var two project.Shot
+			if err := json.Unmarshal([]byte(fixed), &two); err == nil && two.ID > 0 {
+				out = append(out, two)
+			}
+		}
+	}
+	return out
+}
+
+// shotObjectCandidates 找出所有"从 {\"id\": 起、括号配平"的片段（字符串与转义感知）。
+func shotObjectCandidates(raw string) []string {
+	var out []string
+	inStr, esc := false, false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case esc:
+			esc = false
+		case c == '\\' && inStr:
+			esc = true
+		case c == '"':
+			inStr = !inStr
+		case inStr:
+		case c == '{':
+			// 只认"看起来是镜头对象"的起点，避免把包装层或提示词里的花括号当候选
+			if strings.HasPrefix(raw[i:], `{"id":`) || strings.HasPrefix(raw[i:], `{ "id":`) {
+				if frag, ok := balancedFrom(raw, i); ok {
+					out = append(out, frag)
+				} else {
+					out = append(out, raw[i:]) // 截断的尾巴，交给 closeTruncatedJSON
+					return out
+				}
+			}
+		}
+	}
+	return out
 }
