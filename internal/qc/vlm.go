@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/sysexec"
@@ -75,17 +74,8 @@ func VLMJudge(ctx context.Context, client *llm.Client, ffmpeg, videoPath string,
 	if err != nil {
 		return nil, err
 	}
-	s := strings.TrimSpace(out)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	if i := strings.LastIndex(s, "```"); i >= 0 {
-		s = s[:i]
-	}
-	if a := strings.Index(s, "{"); a >= 0 {
-		if b := strings.LastIndex(s, "}"); b > a {
-			s = s[a : b+1]
-		}
-	}
+	// 剥围栏走**共用实现**（2026-09-29 代码健康审计 P1-10），理由见 identity.go 同处。
+	s := stripJSONFence(out)
 	var r VLMReport
 	if err := json.Unmarshal([]byte(s), &r); err != nil {
 		return nil, fmt.Errorf("VLM 输出解析失败: %v", err)

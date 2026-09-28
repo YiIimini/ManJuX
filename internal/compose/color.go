@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -234,9 +235,17 @@ func probeColors(ctx context.Context, f *ff.FF, clips []string) []colorSpec {
 // 单独走一次 ffprobe 而不是扩 ff.Probe:ff.Probe 是**全应用共用**的摘要探测
 // (画幅/帧率/音轨),要不要把色彩字段塞进它的结构是另一处的决定;这里只多读四个字段,
 // mp4 上是毫秒级。
+// probeClipColor 探测单个镜头的色彩标记。
+//
+// **三处报错都要带上文件名**（2026-09-29 代码健康审计 P1-5）：它是被 `probeColors`
+// 按镜头**循环调用**的（一集 30+ 个 clip），不带文件名时用户根本不知道是哪一镜出的问题。
+// 而它手上一直就有 `path`。更要紧的是原来 `json.Unmarshal` 的裸错误被直接 `return` 出去
+// —— 用户看到的是 `invalid character 'x' looking for beginning of value` 这种纯 Go 报错，
+// 连"这是色彩探测"都没说。
 func probeClipColor(ctx context.Context, f *ff.FF, path string) (colorSpec, error) {
+	base := filepath.Base(path)
 	if f == nil || f.Ffprobe == "" {
-		return colorSpec{}, fmt.Errorf("未配置 ffprobe")
+		return colorSpec{}, fmt.Errorf("%w（探测 %s 的色彩标记）", ff.Missing("ffprobe"), base)
 	}
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -245,16 +254,16 @@ func probeClipColor(ctx context.Context, f *ff.FF, path string) (colorSpec, erro
 		"-show_entries", "stream=color_range,color_space,color_transfer,color_primaries",
 		"-of", "json", path)).Output()
 	if err != nil {
-		return colorSpec{}, fmt.Errorf("ffprobe 色彩探测失败: %w", err)
+		return colorSpec{}, fmt.Errorf("%s 色彩探测失败: %w", base, err)
 	}
 	var po struct {
 		Streams []colorSpec `json:"streams"`
 	}
 	if err := json.Unmarshal(raw, &po); err != nil {
-		return colorSpec{}, err
+		return colorSpec{}, fmt.Errorf("%s 的色彩元数据无法解析（ffprobe 输出格式异常）: %w", base, err)
 	}
 	if len(po.Streams) == 0 {
-		return colorSpec{}, fmt.Errorf("ffprobe 没有返回视频流")
+		return colorSpec{}, fmt.Errorf("%s 里没有视频流（ffprobe 没返回 stream）", base)
 	}
 	return normColorSpec(po.Streams[0]), nil
 }

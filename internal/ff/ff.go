@@ -46,6 +46,28 @@ func resolve(path, name string) (string, error) {
 	return p, nil
 }
 
+// Missing 未配置某个工具时的**统一错误**（2026-09-29 代码健康审计 P1-4）。
+//
+// ## 为什么要有这个函数
+//
+// 平台上"没配 ffmpeg/ffprobe"这件事，此前在 8 个地方各报各的，一共四种说法：
+//
+//	「未配置 ffmpeg」/「未配置 ffprobe」/「没有 ffmpeg」（5 处）/「未配置 ffmpeg,无法抽帧」
+//
+// 而**没有一条**提到设置页有 `ffmpeg_path` / `ffprobe_path` 输入框。
+// 用户拿到「没有 ffmpeg」时，唯一可行动的信息是零 —— 他既不知道去哪配，
+// 也不知道这是"没装"还是"没告诉平台装在哪"。
+//
+// 现在所有调用点都走这里，文案里**带上下一步动作**（去哪配）。
+// 注意与 `New`/`resolve` 的分工：那两个管"启动时找不到"，这里管"运行时发现字段为空"。
+func Missing(tool string) error {
+	if tool == "" {
+		tool = "ffmpeg"
+	}
+	return fmt.Errorf("未找到 %s（当前从 PATH 查找）—— 请在 设置 → 工具路径 填写 %s 的完整路径，"+
+		"或把它装进 PATH 后重启平台", tool, tool)
+}
+
 // Run 执行 ffmpeg(实时收集 stderr 摘要)。
 func (f *FF) Run(ctx context.Context, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Minute)

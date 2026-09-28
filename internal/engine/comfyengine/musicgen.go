@@ -167,7 +167,7 @@ func (e *Engine) GenerateMusic(ctx context.Context, job engine.MusicJob) (string
 // ProbeAudioSeconds 读音频时长（给"配乐时长是否够铺满成片"这类判断用）。
 func ProbeAudioSeconds(ctx context.Context, f *ff.FF, path string) (float64, error) {
 	if f == nil {
-		return 0, fmt.Errorf("没有 ffmpeg")
+		return 0, ff.Missing("ffmpeg")
 	}
 	info, err := f.Probe(path)
 	if err != nil {

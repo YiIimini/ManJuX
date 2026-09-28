@@ -29,7 +29,7 @@ import (
 // writePlaceholderClip 生成一个黑场静音占位片段（长度 = 该镜计划时长）。
 func writePlaceholderClip(ctx context.Context, f *ff.FF, out string, durationSec int) error {
 	if f == nil {
-		return fmt.Errorf("没有 ffmpeg")
+		return ff.Missing("ffmpeg")
 	}
 	if durationSec <= 0 {
 		durationSec = 4

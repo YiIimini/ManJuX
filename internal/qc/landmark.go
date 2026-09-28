@@ -159,7 +159,7 @@ func firstLine(s string) string {
 // 调用方负责清理 outDir。
 func SampleFrameAt(ctx context.Context, f *ff.FF, video string, at float64, outDir, name string) (string, error) {
 	if f == nil {
-		return "", fmt.Errorf("没有 ffmpeg")
+		return "", ff.Missing("ffmpeg")
 	}
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return "", err

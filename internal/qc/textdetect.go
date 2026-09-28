@@ -125,7 +125,7 @@ func DetectOnScreenText(ctx context.Context, client VisionClient, f *ff.FF, vide
 		return nil, fmt.Errorf("未配置视觉模型")
 	}
 	if f == nil {
-		return nil, fmt.Errorf("未配置 ffmpeg,无法抽帧")
+		return nil, fmt.Errorf("%w（无法抽帧）", ff.Missing("ffmpeg"))
 	}
 	if duration <= 0 {
 		info, err := f.Probe(videoPath)
@@ -380,9 +380,13 @@ func intList(ids []int) string {
 
 // stripJSONFence 从模型输出里取出那个 JSON 对象:去掉 ```json 围栏,并裁掉前后
 // 的解释性文字(VLM 即使开了 json_object 也常把 JSON 包在散文里)。
+// stripJSONFence 剥掉模型输出外面可能套着的 ```json 围栏，并裁到最外层 `{...}`。
 //
-// 与 vlm.go / identity.go 里内联的同名处理一致 —— 那两处**刻意没动**(它们分别在判分与
-// 身份闸门的关键路径上,本次整改不牵动),所以这里是第三份。将来要合并时,合并到本函数即可。
+// **这是本包唯一的实现**（2026-09-29 代码健康审计 P1-10 合并）。
+// 此前 `vlm.go` 与 `identity.go` 各自内联了一份，注释里还写着"那两处刻意没动，
+// 所以这里是第三份" —— 而三份已经悄悄漂移：本函数末尾有一次 `TrimSpace`，
+// 两个内联版没有。VLM 判分与身份闸门走的正是内联那两份，也就是说**漂移发生在关键路径上**。
+// 现在两处都改为调用这里，那份"刻意没动"的注释也删了。
 func stripJSONFence(s string) string {
 	s = strings.TrimSpace(s)
 	s = strings.TrimPrefix(s, "```json")

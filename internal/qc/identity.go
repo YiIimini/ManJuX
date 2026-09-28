@@ -99,17 +99,11 @@ func IdentityJudge(ctx context.Context, client *llm.Client, master string, frame
 	if err != nil {
 		return nil, err
 	}
-	s := strings.TrimSpace(out)
-	s = strings.TrimPrefix(s, "```json")
-	s = strings.TrimPrefix(s, "```")
-	if i := strings.LastIndex(s, "```"); i >= 0 {
-		s = s[:i]
-	}
-	if a := strings.Index(s, "{"); a >= 0 {
-		if b := strings.LastIndex(s, "}"); b > a {
-			s = s[a : b+1]
-		}
-	}
+	// 剥围栏走**共用实现**（2026-09-29 代码健康审计 P1-10）。
+	// 原来这里内联一份、vlm.go 内联一份、textdetect.go 还有一份正式版 —— 三份已经悄悄漂移：
+	// 正式版末尾有一次 `TrimSpace`，两个内联版没有；而 VLM 判分与身份闸门走的正是内联那两份。
+	// 现在统一到 `stripJSONFence`。
+	s := stripJSONFence(out)
 	var rep IdentityReport
 	if err := json.Unmarshal([]byte(s), &rep); err != nil {
 		return nil, fmt.Errorf("身份判定输出解析失败: %v", err)

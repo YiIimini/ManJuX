@@ -48,7 +48,7 @@ func (e *Envelope) Duration() float64 {
 // 无音轨/解码失败都会返回错误,调用方据此回退到旧行为(中点切)。
 func Decode(ctx context.Context, f *ff.FF, path string) (*Envelope, error) {
 	if f == nil {
-		return nil, fmt.Errorf("未配置 ffmpeg")
+		return nil, ff.Missing("ffmpeg")
 	}
 	tmp, err := os.CreateTemp("", "mx-audio-*.pcm")
 	if err != nil {

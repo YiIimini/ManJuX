@@ -41,7 +41,7 @@ const bgmTargetLUFS = -16
 // 归一后就地覆盖原文件（库里存的就是归一后的版本 —— 复用时不至于再踩一次）。
 func normalizeBGM(ctx context.Context, f *ff.FF, path string) (before, after float64, err error) {
 	if f == nil {
-		return 0, 0, fmt.Errorf("没有 ffmpeg")
+		return 0, 0, ff.Missing("ffmpeg")
 	}
 	if _, statErr := os.Stat(path); statErr != nil {
 		return 0, 0, fmt.Errorf("配乐文件不存在: %w", statErr)

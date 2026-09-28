@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
@@ -116,7 +117,7 @@ func (c *Coordinator) checkVariantIdentity(ctx context.Context, proj *project.Pr
 // 统一到 512 只是为了让**结构**可比，不比像素尺寸——这正是"这张图变没变"要问的东西。
 func (c *Coordinator) imageSSIM(ctx context.Context, a, b string) (float64, error) {
 	if c.ff == nil {
-		return 0, fmt.Errorf("没有 ffmpeg")
+		return 0, ff.Missing("ffmpeg")
 	}
 	filter := "[0:v]scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2,format=gray[aa];" +
 		"[1:v]scale=512:512:force_original_aspect_ratio=decrease,pad=512:512:(ow-iw)/2:(oh-ih)/2,format=gray[bb];" +
