@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -26,6 +27,12 @@ const (
 	repairMaxShots = 12
 	// repairMaxWords 正文词数上限（官方 350-500，留余量到 600；超了就是"注意力被摊薄"）。
 	repairMaxWords = 600
+	// repairConcurrency 自纠一轮的并发度。
+	//
+	// 各镜之间**互不影响**（每镜只改自己的提示词，指令里明写"别的地方一个字别动"），
+	// 串行等纯属浪费：实测那一集 12 镜打满上限，光这一段就十几分钟。
+	// 但也不能无限并发 —— 一次几十个请求会把接口压到限流，限流一开整轮都变慢。
+	repairConcurrency = 4
 )
 
 // repairableIssue 一镜需要修的地方（给人看的一句话 + 给模型看的指令）。
@@ -92,23 +99,48 @@ func RepairPlan(ctx context.Context, client *llm.Client, plan *project.Plan, opt
 		issues = issues[:repairMaxShots]
 	}
 	before := map[int]string{}
-	for _, sh := range plan.Shots {
+	idxOf := map[int]int{} // 镜号 → plan.Shots 下标
+	for i, sh := range plan.Shots {
 		before[sh.ID] = sh.H3Prompt
+		idxOf[sh.ID] = i
 	}
-	fixed := 0
-	for _, is := range issues {
-		for i := range plan.Shots {
-			sh := &plan.Shots[i]
-			if sh.ID != is.shotID {
-				continue
-			}
-			got, err := repairOneShot(ctx, client, *sh, is.fix)
+	// **并发修**（2026-09-28 用户问「解析一集为什么要那么久」）：原来一镜一次调用、串行等，
+	// 12 镜就是 12 次串行调用 —— 实测那一集正好打满上限，光这一段就十几分钟。
+	// goroutine 里只**读**自己那一镜，写回统一在主协程做（合并顺序也稳定，无数据竞争）。
+	type repairOut struct {
+		idx int
+		got string
+		ok  bool
+	}
+	outs := make([]repairOut, len(issues))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, repairConcurrency)
+	for k, is := range issues {
+		i, ok := idxOf[is.shotID]
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(k, i int, fix string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			got, err := repairOneShot(ctx, client, plan.Shots[i], fix)
 			if err != nil {
-				continue // 单镜失败不影响其余（也不把方案弄坏）
+				return // 单镜失败不影响其余（也不把方案弄坏）
 			}
-			if adoptRepaired(sh, got) {
-				fixed++
-			}
+			outs[k] = repairOut{idx: i, got: got, ok: true}
+		}(k, i, is.fix)
+	}
+	wg.Wait()
+	// 合并按 issues 顺序串行做：adoptRepaired 会改方案与指纹，不能并发写
+	fixed := 0
+	for _, o := range outs {
+		if !o.ok {
+			continue
+		}
+		if adoptRepaired(&plan.Shots[o.idx], o.got) {
+			fixed++
 		}
 	}
 	if fixed == 0 {

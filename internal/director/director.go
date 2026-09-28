@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -244,7 +245,14 @@ type batchShotOut struct {
 
 const batchThresholdShots = 6    // 超过 → 分批
 const batchThresholdRunes = 1500 // 源文本超长(字)→ 分批
-const batchMaxShots = 5          // 每批最多镜数
+
+// batchConcurrency 分批出镜的并发度。
+//
+// 各批之间**没有依赖**（段落边界与各段梗概在规划轮就定好了，见 generateBatched 的说明），
+// 串行只是历史写法 —— 实测那一集 36 镜 6 批，光这一段的耗时就是 6 × 单批。
+// 上限取 4：一集通常 5-8 批，再高的收益有限，反而容易把接口压到限流（限流一开全线变慢）。
+const batchConcurrency = 4
+const batchMaxShots = 5 // 每批最多镜数
 
 // defaultContentDrivenShots 内容驱动(MaxShots=0)时的内部兜底镜头数。它仅用于
 // 分批阈值判断与每段秒数换算,不会被写进提示词 —— 提示词走
@@ -878,76 +886,122 @@ func generateBatched(ctx context.Context, client *llm.Client, sourceText string,
 		Characters: head.Characters, Scenes: head.Scenes, Props: head.Props, CoreBeats: head.CoreBeats,
 	}
 
-	// ---- 轮 2..k:逐批出镜 ----
+	// ---- 轮 2..k:分批出镜（**并行**）----
+	//
+	// 【2026-09-28 用户问「拆完分镜脚本，脚本中分不同的镜头，这不需要花费那么的推理时间吧」】
+	// 原实现逐批**串行**：36 镜 /每批 ≤5 镜 = 6 批，每批一次完整推理（一批要输出 5 镜的六段式
+	// 提示词），于是这一段耗时 = 6 × 单批耗时。而各批之间**本来就没有依赖** —— 段落边界与
+	// 各段梗概在规划轮就定好了；串行唯一的作用是把"上一批实际拍了什么"喂给下一批，
+	// 而那点信息的上游就是**规划轮给的前一段 brief**。现在并发跑、按批号顺序合并。
 	cards, _ := json.Marshal(map[string]any{"characters": head.Characters, "scenes": head.Scenes})
+	type batchOut struct {
+		shots []project.Shot
+		err   error
+	}
+	outs := make([]batchOut, total)
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, batchConcurrency)
 	for bi, seg := range head.Segments {
-		if opt.OnBatch != nil {
-			opt.OnBatch(bi+1, total, seg.From, seg.To)
-		}
-		segSeconds := opt.TotalSeconds * (seg.To - seg.From + 1) / opt.MaxShots
-		if contentDriven {
-			// 内容驱动下 opt.TotalSeconds/MaxShots 只是内部兜底(12 镜×7 秒),
-			// 拿它换算分段时长会把"32 镜的一集"每段写成 10 秒 —— 提示词自相矛盾。
-			// 按本文件一贯的 7 秒/镜估,才和实际方案对得上。
-			segSeconds = (seg.To - seg.From + 1) * 7
-		}
-		prevSummary := previousShotsSummary(plan.Shots)
-		user := fmt.Sprintf(promptText("generateBatched__ESTABLISHED_PLAN_HEAD_STRICT"), cards, head.Style, hint, seg.From, seg.To,
-			seg.To-seg.From+1, segSeconds, seg.Brief, prevSummary)
+		wg.Add(1)
+		go func(bi int, seg segment) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			if opt.OnBatch != nil { // 进度照旧实时报（并发下顺序会乱，但每条都带批号）
+				opt.OnBatch(bi+1, total, seg.From, seg.To)
+			}
+			segSeconds := opt.TotalSeconds * (seg.To - seg.From + 1) / opt.MaxShots
+			if contentDriven {
+				// 内容驱动下 opt.TotalSeconds/MaxShots 只是内部兜底(12 镜×7 秒),
+				// 拿它换算分段时长会把"32 镜的一集"每段写成 10 秒 —— 提示词自相矛盾。
+				// 按本文件一贯的 7 秒/镜估,才和实际方案对得上。
+				segSeconds = (seg.To - seg.From + 1) * 7
+			}
+			user := fmt.Sprintf(promptText("generateBatched__ESTABLISHED_PLAN_HEAD_STRICT"), cards, head.Style, hint,
+				seg.From, seg.To, seg.To-seg.From+1, segSeconds, seg.Brief, prevSegBrief(head.Segments, bi))
 
-		raw, err := client.Chat(ctx, []llm.Message{
-			{Role: "system", Content: batchSystemPrompt},
-			{Role: "user", Content: user},
-		}, true)
-		if err != nil {
-			return nil, fmt.Errorf("分镜批次 %d/%d(镜 %d-%d)失败: %w", bi+1, total, seg.From, seg.To, err)
-		}
-		shots, err := parseShotsBatch(raw, seg.From, seg.To)
-		errFirst := err // 留档：两次失败形态常常不同，只报后一个会把人带偏
-		if err != nil {
-			// 单批重试一次
-			raw2, err2 := client.Chat(ctx, []llm.Message{
+			raw, err := client.Chat(ctx, []llm.Message{
 				{Role: "system", Content: batchSystemPrompt},
 				{Role: "user", Content: user},
-				{Role: "assistant", Content: raw},
-				{Role: "user", Content: "Invalid JSON or shots outside range " +
-					fmt.Sprintf("%d-%d", seg.From, seg.To) + ". Error: " + err.Error() + "\nReturn the corrected STRICT JSON only."},
 			}, true)
-			if err2 != nil {
-				return nil, fmt.Errorf("分镜批次 %d/%d 解析失败: %w", bi+1, total, err)
-			}
-			shots, err = parseShotsBatch(raw2, seg.From, seg.To)
 			if err != nil {
-				// **两次错误都带上**（2026-09-28）：此前只报第二次的 —— 而两次的失败形态常常不同
-				// （第一次可能是"镜号越界"，第二次是"JSON 配不平"），只看后一个会把人带偏。
-				return nil, fmt.Errorf("分镜批次 %d/%d 二次解析仍失败（首次:%v；重试后:%w）", bi+1, total, errFirst, err)
+				outs[bi] = batchOut{err: fmt.Errorf("分镜批次 %d/%d(镜 %d-%d)失败: %w", bi+1, total, seg.From, seg.To, err)}
+				return
 			}
-		}
-		// 抢救（salvage）可能只救回一部分：**缺号必须播报**，不能静默少镜。
-		// 缺口同时会撞上契约的"镜头号不连续"门（warn），两条一起保证"少镜看得见"。
-		if opt.OnNote != nil {
-			got := map[int]bool{}
-			for _, sh := range shots {
-				got[sh.ID] = true
-			}
-			var missing []string
-			for id := seg.From; id <= seg.To; id++ {
-				if !got[id] {
-					missing = append(missing, fmt.Sprintf("#%d", id))
+			shots, err := parseShotsBatch(raw, seg.From, seg.To)
+			errFirst := err // 留档：两次失败形态常常不同，只报后一个会把人带偏
+			if err != nil {
+				// 单批重试一次
+				raw2, err2 := client.Chat(ctx, []llm.Message{
+					{Role: "system", Content: batchSystemPrompt},
+					{Role: "user", Content: user},
+					{Role: "assistant", Content: raw},
+					{Role: "user", Content: "Invalid JSON or shots outside range " +
+						fmt.Sprintf("%d-%d", seg.From, seg.To) + ". Error: " + err.Error() + "\nReturn the corrected STRICT JSON only."},
+				}, true)
+				if err2 != nil {
+					outs[bi] = batchOut{err: fmt.Errorf("分镜批次 %d/%d 解析失败: %w", bi+1, total, err)}
+					return
+				}
+				shots, err = parseShotsBatch(raw2, seg.From, seg.To)
+				if err != nil {
+					// **两次错误都带上**（2026-09-28）：此前只报第二次的 —— 而两次的失败形态常常不同
+					// （第一次可能是"镜号越界"，第二次是"JSON 配不平"），只看后一个会把人带偏。
+					outs[bi] = batchOut{err: fmt.Errorf("分镜批次 %d/%d 二次解析仍失败（首次:%v；重试后:%w）", bi+1, total, errFirst, err)}
+					return
 				}
 			}
-			if len(missing) > 0 {
-				opt.OnNote("⚠ 第 %d/%d 批只解析出 %d/%d 镜，缺 %s —— 这些镜号没拿到内容"+
-					"（原文已落盘可查），请重跑这一批或让修复轮补",
-					bi+1, total, len(shots), seg.To-seg.From+1, strings.Join(missing, "、"))
+			// 抢救（salvage）可能只救回一部分：**缺号必须播报**，不能静默少镜。
+			// 缺口同时会撞上契约的"镜头号不连续"门（warn），两条一起保证"少镜看得见"。
+			if opt.OnNote != nil {
+				got := map[int]bool{}
+				for _, sh := range shots {
+					got[sh.ID] = true
+				}
+				var missing []string
+				for id := seg.From; id <= seg.To; id++ {
+					if !got[id] {
+						missing = append(missing, fmt.Sprintf("#%d", id))
+					}
+				}
+				if len(missing) > 0 {
+					opt.OnNote("⚠ 第 %d/%d 批只解析出 %d/%d 镜，缺 %s —— 这些镜号没拿到内容"+
+						"（原文已落盘可查），请重跑这一批或让修复轮补",
+						bi+1, total, len(shots), seg.To-seg.From+1, strings.Join(missing, "、"))
+				}
 			}
+			outs[bi] = batchOut{shots: shots}
+		}(bi, seg)
+	}
+	wg.Wait()
+	// 按**批号顺序**合并：镜号顺序不受并发影响（每一批只产出自己那一段的镜号）。
+	for bi := range outs {
+		if outs[bi].err != nil {
+			return nil, outs[bi].err
 		}
-		plan.Shots = append(plan.Shots, shots...)
+		plan.Shots = append(plan.Shots, outs[bi].shots...)
 	}
 	if err := validateAndNote(plan, opt, contentDriven); err != nil {
 		return nil, err
 	}
 	return plan, nil
+}
+
+// prevSegBrief 上一段的梗概（并行出镜时的衔接上下文）。
+//
+// 串行版本喂给模型的是"上一批**实际产出**的镜头摘要"；并行时拿不到它 —— 改用规划轮给的
+// 前一段 brief。那是同一份信息的上游（段落梗概本来就规定了这一段该拍什么），而且**更稳**：
+// 串行时上一批少出几镜，下一批拿到的摘要也跟着变。
+func prevSegBrief(segs []segment, bi int) string {
+	if bi <= 0 || bi-1 >= len(segs) {
+		return ""
+	}
+	p := segs[bi-1]
+	b := strings.TrimSpace(p.Brief)
+	if b == "" {
+		return fmt.Sprintf("上一段（镜 %d-%d）已拍完。", p.From, p.To)
+	}
+	return fmt.Sprintf("上一段（镜 %d-%d）梗概：%s", p.From, p.To, b)
 }
 
 // normalizeSegments 规范切分:钳制批大小/镜号连续覆盖 1..max。
