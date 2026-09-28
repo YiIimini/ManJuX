@@ -43,7 +43,7 @@ func TestAssembleShotRefsOrder(t *testing.T) {
 		"scene:scene_inn": {File: "assets/scenes/inn.png"},
 	}
 	mkAssetsOnDisk(t, dir, assets)
-	refs, missing := AssembleShotRefs(dir, shot, assets, true)
+	refs, missing, _ := AssembleShotRefs(dir, shot, assets, true)
 	if len(missing) != 0 {
 		t.Fatalf("不应有缺失,实际 %v", missing)
 	}
@@ -66,7 +66,7 @@ func TestAssembleShotRefsMissingCharacter(t *testing.T) {
 		"scene:scene_inn": {File: "assets/scenes/inn.png"},
 	}
 	mkAssetsOnDisk(t, dir, assets)
-	refs, missing := AssembleShotRefs(dir, shot, assets, true)
+	refs, missing, _ := AssembleShotRefs(dir, shot, assets, true)
 	if len(missing) != 1 || missing[0] != "char_a" {
 		t.Fatalf("应报出缺失角色 char_a,实际 %v", missing)
 	}
@@ -81,7 +81,7 @@ func TestAssembleShotRefsSingleCharacter(t *testing.T) {
 	shot := project.Shot{Scene: "s", Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: "a.png"}, "scene:s": {File: "s.png"}}
 	mkAssetsOnDisk(t, dir, assets)
-	refs, missing := AssembleShotRefs(dir, shot, assets, true)
+	refs, missing, _ := AssembleShotRefs(dir, shot, assets, true)
 	if len(refs) != 2 || len(missing) != 0 {
 		t.Fatalf("单角色 + 场景应为 2 张且无缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -93,7 +93,7 @@ func TestAssembleShotRefsEmptyFileTreatedMissing(t *testing.T) {
 	dir := t.TempDir()
 	shot := project.Shot{Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: ""}}
-	refs, missing := AssembleShotRefs(dir, shot, assets, true)
+	refs, missing, _ := AssembleShotRefs(dir, shot, assets, true)
 	if len(refs) != 0 || len(missing) != 1 {
 		t.Fatalf("空 File 应视为缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -139,7 +139,7 @@ func TestAssembleShotRefsNoScene(t *testing.T) {
 	shot := project.Shot{Characters: []string{"char_a"}}
 	assets := map[string]project.Asset{"char:char_a": {File: "a.png"}}
 	mkAssetsOnDisk(t, dir, assets)
-	refs, missing := AssembleShotRefs(dir, shot, assets, true)
+	refs, missing, _ := AssembleShotRefs(dir, shot, assets, true)
 	if len(refs) != 1 || len(missing) != 0 {
 		t.Fatalf("无场景不应报缺失,实际 refs=%d missing=%v", len(refs), missing)
 	}
@@ -167,7 +167,7 @@ func TestAssembleShotRefsCompactDropsRedundantPortrait(t *testing.T) {
 		"char:a": {File: "a.png"}, "char:b": {File: "b.png"}, "scene:s": {File: "scene.png"},
 	}
 
-	compact, missing := AssembleShotRefs(dir, shot, assets, true)
+	compact, missing, _ := AssembleShotRefs(dir, shot, assets, true)
 	if len(missing) != 0 {
 		t.Fatalf("不应缺失:%v", missing)
 	}
@@ -184,7 +184,7 @@ func TestAssembleShotRefsCompactDropsRedundantPortrait(t *testing.T) {
 		t.Errorf("场景必须最后,实际 %s", compact[2].Kind)
 	}
 
-	legacy, _ := AssembleShotRefs(dir, shot, assets, false)
+	legacy, _, _ := AssembleShotRefs(dir, shot, assets, false)
 	if len(legacy) != 4 {
 		t.Fatalf("关闭去冗余应逐字复现旧行为(4 张),实际 %d:%v", len(legacy), legacy)
 	}

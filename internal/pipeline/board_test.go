@@ -183,7 +183,7 @@ func TestAssembleShotRefsNeverUsesBoard(t *testing.T) {
 	shot := project.Shot{ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, ShotSize: "中景", Mode: "ref2va"}
 	assets := map[string]project.Asset{"char:char_a": {ID: "char:char_a", Kind: "characters", Name: "阿甲", File: base + ".png"}}
 
-	refs, _, _ := RefPlan(dir, shot, assets, false)
+	refs, _, _, _ := RefPlan(dir, shot, assets, false)
 	for _, r := range refs {
 		if strings.Contains(r.Path, BoardSuffix) {
 			t.Fatalf("板子被当成镜头参考图了:%v", r.Path)

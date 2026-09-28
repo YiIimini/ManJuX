@@ -259,8 +259,8 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		var roles []RefRole
 		mode := project.EffectiveShotMode(shot)
 		if proj.Config.Params.Assets.Source != "skip" && mode == "ref2va" {
-			var missing []string
-			refs, roles, missing = RefPlan(c.store.Dir(proj.ID), shot, assets,
+			var missing, overCap []string
+			refs, roles, missing, overCap = RefPlan(c.store.Dir(proj.ID), shot, assets,
 				proj.Config.Params.Assets.CompactRefsOn())
 			if len(refs) == 0 {
 				mode = "t2va" // 资产缺失降级纯文生
@@ -271,6 +271,11 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
 					"镜头 %d 缺 %d 张参考图(%s),提示词中的画面编号会随之错位,建议补齐后重渲",
 					shot.ID, len(missing), strings.Join(missing, "/"))
+			}
+			// **"装不下已裁掉"与"缺图"方向相反**（审计 P0-3）：这一条要说"拆镜/减同框角色"，
+			// 不能说"补齐" —— 照补齐只会更超上限。
+			for _, w := range overCap {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "镜头 %d：%s", shot.ID, w)
 			}
 		} else if mode == "ref2va" && proj.Config.Params.Assets.Source == "skip" {
 			mode = "t2va"

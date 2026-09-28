@@ -40,7 +40,7 @@ func cjkNamesFor(plan *project.Plan) []string {
 func TestRefManifestClosingLeavesNoUnprotectedCJKInTail(t *testing.T) {
 	for _, compact := range []bool{false, true} {
 		dir, shot, assets := refmanAssets(t)
-		_, roles, missing := RefPlan(dir, shot, assets, compact)
+		_, roles, missing, _ := RefPlan(dir, shot, assets, compact)
 		if len(missing) != 0 {
 			t.Fatalf("不该报缺失，实际 %v", missing)
 		}
@@ -79,7 +79,7 @@ func TestRefManifestClosingLeavesNoUnprotectedCJKInTail(t *testing.T) {
 // 判成无防护汉字，也要**逐字留着**（H3 拿它出原生中文配音，删掉等于没配音）。
 func TestRefManifestClosingKeepsDialogueIntact(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	_, roles, _ := RefPlan(dir, shot, assets, false)
+	_, roles, _, _ := RefPlan(dir, shot, assets, false)
 	proj := &project.Project{}
 	proj.Config.Params = project.DefaultStageParams()
 	plan := &project.Plan{
@@ -107,7 +107,7 @@ func TestRefManifestClosingKeepsDialogueIntact(t *testing.T) {
 // 提示词的**最后一段**：只把它塞进 manifest 中间，等于让后面的中文名继续当字形来源。
 func TestRefManifestClosingIsTheLastParagraph(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	_, roles, _ := RefPlan(dir, shot, assets, false)
+	_, roles, _, _ := RefPlan(dir, shot, assets, false)
 	m := RefManifest(shot, roles)
 
 	iMan := strings.Index(m, refManifestKey)

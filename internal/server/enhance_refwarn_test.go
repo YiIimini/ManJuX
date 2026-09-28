@@ -59,13 +59,19 @@ func TestEnhanceEntrypointsWarnOnMissingRefs(t *testing.T) {
 		t.Fatalf("增强入口应有两处 RefPlan 调用(局部重绘 / 音频驱动),实际 %d 处 —— "+
 			"函数形状变了,这条断言需要跟着更新", n)
 	}
-	// 两处都必须把 missing 接出来
-	if n := strings.Count(src, "missing := pipeline.RefPlan("); n != 2 {
-		t.Errorf("两处 RefPlan 都必须接住 missing,实际只有 %d 处", n)
+	// 两处都必须把 missing 接出来（2026-09-29 起签名多了一个 `overCap`：
+	// "参考图太多被裁"与"缺图"方向相反，必须分开报 —— 见审计 P0-3）
+	if n := strings.Count(src, "missing, overCap := pipeline.RefPlan("); n != 2 {
+		t.Errorf("两处 RefPlan 都必须接住 missing 与 overCap,实际只有 %d 处", n)
 	}
 	// 两处都必须告警
 	if n := strings.Count(src, "missingRefWarning(missing)"); n != 2 {
 		t.Errorf("两处入口都要把 missing 交给 missingRefWarning,实际 %d 处", n)
+	}
+	// **"太多被裁"必须单独报**：混进 missing 会让提示变成"补齐参考图"，
+	// 而用户照做只会更超上限（这正是审计 P0-3 那个 bug）。
+	if n := strings.Count(src, "for _, w := range overCap {"); n != 2 {
+		t.Errorf("两处入口都要单独报 overCap（不能混进 missing）,实际 %d 处", n)
 	}
 	// 告警只能走这一处实现(避免两处口径漂移)
 	if n := strings.Count(src, "func missingRefWarning("); n != 1 {

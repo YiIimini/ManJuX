@@ -110,8 +110,8 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 			compact = proj.Config.Params.Assets.CompactRefsOn() // 与主渲染保持同一套参考图
 		}
 		var roles []RefRole
-		var missing []string
-		refs, roles, missing = RefPlan(c.store.Dir(projectID), *shot, assets, compact)
+		var missing, overCap []string
+		refs, roles, missing, overCap = RefPlan(c.store.Dir(projectID), *shot, assets, compact)
 		if len(missing) > 0 {
 			// 【2026-09-28 审计 A2】`missing` 原来是被 `_` 丢掉的 —— 它不是"少一张图"那么轻：
 			// 少的那张不会让流程停，而是让这一镜的 2K **按文字重画那个人**，
@@ -119,6 +119,10 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 			c.emit(projectID, "pipeline", shotID, "warn", 0,
 				"⚠ %s 的 2K 缺 %d 张参考图(%s)——缺的那几张不会让流程停,但画面里对应的人/景会**由模型按文字重画**,"+
 					"与主渲染那一版不保证一致", label, len(missing), strings.Join(missing, "/"))
+		}
+		// "参考图太多被裁"是另一回事（审计 P0-3）：要说"拆镜/减同框角色"，不能说"补齐"。
+		for _, w := range overCap {
+			c.emit(projectID, "pipeline", shotID, "warn", 0, "⚠ %s：%s", label, w)
 		}
 		// 与主渲染同一份参考图**权威清单**:单镜 2K 若少了它,升上去的那一版会按
 		// 上文猜错的编号理解拼合图(见 refmanifest.go)。

@@ -33,7 +33,7 @@ func refmanAssets(t *testing.T) (dir string, shot project.Shot, assets map[strin
 // TestRefPlanRoles 角色归属:定妆照是权威、拼合图是"同一个角色的另一组角度"、场景永远最后。
 func TestRefPlanRoles(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	refs, roles, missing := RefPlan(dir, shot, assets, false)
+	refs, roles, missing, _ := RefPlan(dir, shot, assets, false)
 	if len(missing) != 0 {
 		t.Fatalf("不该报缺失,实际 %v", missing)
 	}
@@ -58,7 +58,7 @@ func TestRefPlanRoles(t *testing.T) {
 		t.Errorf("定妆照必须在拼合图之前,实际 %s / %s", refs[0].Path, refs[1].Path)
 	}
 	// 旧签名(兼容壳)必须与 RefPlan 给出同一组图
-	back, _ := AssembleShotRefs(dir, shot, assets, false)
+	back, _, _ := AssembleShotRefs(dir, shot, assets, false)
 	if len(back) != len(refs) {
 		t.Errorf("AssembleShotRefs 兼容壳与 RefPlan 不一致:%d vs %d", len(back), len(refs))
 	}
@@ -68,7 +68,7 @@ func TestRefPlanRoles(t *testing.T) {
 // 实际是"三张图、第 2 张是主角自己的拼合图" —— 权威清单必须把这件事说死。
 func TestRefManifestKillsTheMiscount(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	_, roles, _ := RefPlan(dir, shot, assets, false)
+	_, roles, _, _ := RefPlan(dir, shot, assets, false)
 	m := RefManifest(shot, roles)
 	for _, want := range []string{
 		"Exactly 3 picture(s) are attached", // 张数由渲染器说
@@ -89,7 +89,7 @@ func TestRefManifestKillsTheMiscount(t *testing.T) {
 // TestEnsureRefManifestIsIdempotentAndLossless 幂等 + 不丢原文 + 无参考图时不动原文。
 func TestEnsureRefManifestIsIdempotentAndLossless(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	_, roles, _ := RefPlan(dir, shot, assets, false)
+	_, roles, _, _ := RefPlan(dir, shot, assets, false)
 	base := "subject_definitions:\n<Subject 1> is Gu Qinghe …\n\nTwo pictures are attached in total.\n"
 	got := EnsureRefManifest(base, shot, roles)
 	if !strings.Contains(got, "Two pictures are attached in total.") {
@@ -112,7 +112,7 @@ func TestEnsureRefManifestIsIdempotentAndLossless(t *testing.T) {
 // 同一个沈砚在不同镜里成了不同的人。这条用例钉住"名字行被绑到它实际那张图上"。
 func TestEnsureRefManifestBindsSubjectToItsPicture(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	_, roles, _ := RefPlan(dir, shot, assets, false)
+	_, roles, _, _ := RefPlan(dir, shot, assets, false)
 	name := roles[0].Name
 	base := "subject_definitions:\n<Subject 1> is " + name + "（human）— 十八九岁、男、体型：瘦 —— 以附图为准。\n"
 	got := EnsureRefManifest(base, shot, roles)
@@ -157,7 +157,7 @@ func TestOnScreenTextPolicyForbidsOwnNotes(t *testing.T) {
 // 必须点明"最左格就是定妆照、它才是权威" —— 否则模型会在四格之间挑一张脸。
 func TestRefManifestCompactStripsSayWhichCellIsAuthoritative(t *testing.T) {
 	dir, shot, assets := refmanAssets(t)
-	refs, roles, _ := RefPlan(dir, shot, assets, true)
+	refs, roles, _, _ := RefPlan(dir, shot, assets, true)
 	if len(refs) != 2 {
 		t.Fatalf("去冗余后应为 拼合图 + 场景 = 2 张,实际 %d", len(refs))
 	}
@@ -225,7 +225,7 @@ func TestRefPlanDropsAnglesForCloseShots(t *testing.T) {
 	for _, tc := range cases {
 		s := shot
 		s.ShotSize = tc.size
-		refs, roles, _ := RefPlan(dir, s, assets, false)
+		refs, roles, _, _ := RefPlan(dir, s, assets, false)
 		if len(refs) != tc.wantRefs {
 			t.Errorf("景别 %q:期望 %d 张,实际 %d", tc.size, tc.wantRefs, len(refs))
 			continue

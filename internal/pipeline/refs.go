@@ -84,7 +84,16 @@ func boardImagePath(dir, rel string) string {
 //
 // 顺序即契约,与 AssembleShotRefs 完全一致:先 shot.Characters 每个已定妆的角色
 // (严格按数组顺序),最后追加场景图。拼合图按景别决定要不要附(见 wantsAnglesStrip)。
-func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, roles []RefRole, missing []string) {
+//
+// **两个诊断返回值必须分开**（2026-09-29 审计 P0-3）：
+//
+//	· `missing`  —— 该有而**没有**的资产（用户要"补齐"）
+//	· `warnings` —— 有、但**装不下被裁掉了**（用户要"拆镜/减同框角色"，方向相反）
+//
+// 曾经它们合成一个 `missing` 返回，三个消费方全把"参考图**太多**已裁掉"念成
+// "参考图**缺失**、建议补齐后重渲" —— 而照做只会更超上限。
+// 这条路径恰好只在用户必须动手时才触发，等于在最需要正确指引的地方给了反向指引。
+func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, roles []RefRole, missing []string, warnings []string) {
 	add := func(engineKind, roleKind, id, name, path string) {
 		refs = append(refs, engine.RefImage{Kind: engineKind, Path: path})
 		roles = append(roles, RefRole{Picture: len(refs), Kind: roleKind, Name: name, ID: id})
@@ -183,9 +192,11 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 	// 把风险留给后端等于把"人物乱配"交给运气。
 	if keptRefs, keptRoles, note := capRefsToLimit(refs, roles); note != "" {
 		refs, roles = keptRefs, keptRoles
-		missing = append(missing, note)
+		// **走 warnings 而不是 missing**（审计 P0-3）：这是"装不下所以裁掉"，
+		// 不是"缺图"。混进 missing 会让调用方提示用户"补齐参考图" —— 方向刚好反了。
+		warnings = append(warnings, note)
 	}
-	return refs, roles, missing
+	return refs, roles, missing, warnings
 }
 
 // AssembleShotRefs 按 H3 参考图契约组装单镜的参考图。
@@ -210,9 +221,9 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 //
 // 调用方请改用 RefPlan:它同样给出这张表的身份归属,而**提示词必须带 RefManifest**
 // —— 否则 LLM 猜错张数时,拼合图会被当成场景图(2026-09-25 实测事故,见 refmanifest.go)。
-func AssembleShotRefs(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, missing []string) {
-	refs, _, missing = RefPlan(dir, shot, assets, compact)
-	return refs, missing
+func AssembleShotRefs(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, missing []string, warnings []string) {
+	refs, _, missing, warnings = RefPlan(dir, shot, assets, compact)
+	return refs, missing, warnings
 }
 
 // MaxH3RefImages H3 公开输入契约的**参考图上限**（1 首帧 + 1 尾帧 + **9 参考图** + 3 视频 + 3 音频）。

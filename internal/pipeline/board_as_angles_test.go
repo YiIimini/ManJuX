@@ -30,7 +30,7 @@ func TestRefsUseBoardAsAngleReference(t *testing.T) {
 	}
 	// 中景：需要角度参考 → 应给"定妆照 + 板子"两张，角色名仍是 character_angles
 	shot := project.Shot{ID: 1, Scene: "", ShotSize: "中景", Characters: []string{"char_01"}}
-	refs, roles, _ := RefPlan(dir, shot, assets, false)
+	refs, roles, _, _ := RefPlan(dir, shot, assets, false)
 	if len(refs) != 2 {
 		t.Fatalf("中景应装配 定妆照 + 板子 两张，实际 %d 张", len(refs))
 	}
@@ -43,7 +43,7 @@ func TestRefsUseBoardAsAngleReference(t *testing.T) {
 
 	// 近景/特写：角度参考不附（板子缩下去只剩 1/4 细节，没必要占一张参考位）
 	closeShot := project.Shot{ID: 2, ShotSize: "特写", Characters: []string{"char_01"}}
-	refs2, _, _ := RefPlan(dir, closeShot, assets, false)
+	refs2, _, _, _ := RefPlan(dir, closeShot, assets, false)
 	if len(refs2) != 1 {
 		t.Errorf("特写只该给定妆照一张，实际 %d 张", len(refs2))
 	}
@@ -55,7 +55,7 @@ func TestRefsUseBoardAsAngleReference(t *testing.T) {
 	if got := turnaroundPath(dir, "characters_char_shenyan.png"); got == "" {
 		t.Fatalf("夹具的转台图命名与 turnaroundPath 的推导不一致：%s", turn)
 	}
-	refs3, _, _ := RefPlan(dir, shot, assets, false)
+	refs3, _, _, _ := RefPlan(dir, shot, assets, false)
 	if len(refs3) != 2 || filepath.Clean(refs3[1].Path) != filepath.Clean(turn) {
 		t.Errorf("有转台图时应优先用转台图（老路留着），实际 %+v", refs3)
 	}

@@ -190,9 +190,12 @@ func TestBackfillAssetsReusesLibraryWithoutEngine(t *testing.T) {
 		t.Errorf("场景应从库复用,实际 %+v", a)
 	}
 	// 装配参考图时必须真的能拿到这两张(而不是 missing)
-	refs, roles, missing := RefPlan(store.Dir(proj.ID), plan.Shots[0], assets, false)
+	refs, roles, missing, overCap := RefPlan(store.Dir(proj.ID), plan.Shots[0], assets, false)
 	if len(missing) != 0 {
 		t.Errorf("复用的资产不该再算缺失:%v", missing)
+	}
+	if len(overCap) != 0 {
+		t.Errorf("三张图不该触发超上限裁剪:%v", overCap)
 	}
 	if len(refs) != 3 || len(roles) != 3 {
 		t.Errorf("应装配 定妆照 + 转台图 + 场景 共 3 张,实际 %d 张(refs=%d)", len(refs), len(roles))

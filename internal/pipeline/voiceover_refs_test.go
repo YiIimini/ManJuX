@@ -36,7 +36,7 @@ func TestRefsInnerShotUsesChibiNotThePerson(t *testing.T) {
 		ID: 1, Scene: "scene_01", ShotSize: "中景", Characters: []string{"char_01"},
 		VoKind: project.VoKindInner, ChibiIDs: []string{"chibi_char_01"},
 	}
-	refs, roles, missing := RefPlan(dir, shot, assets, false)
+	refs, roles, missing, _ := RefPlan(dir, shot, assets, false)
 	if len(missing) != 0 {
 		t.Fatalf("不该有缺失：%v", missing)
 	}
@@ -77,7 +77,7 @@ func TestRefsSystemShotAddsBotAndPanel(t *testing.T) {
 		VoKind: project.VoKindSystem, PropIDs: []string{"prop_holo_01"},
 		SystemAssets: map[string]string{"bot": "chibi_sys_01", "panel": "prop_holo_01"},
 	}
-	refs, roles, missing := RefPlan(dir, shot, assets, false)
+	refs, roles, missing, _ := RefPlan(dir, shot, assets, false)
 	if len(missing) != 0 {
 		t.Fatalf("不该有缺失：%v", missing)
 	}
@@ -118,7 +118,7 @@ func TestRefsInnerFallsBackWhenChibiMissing(t *testing.T) {
 		ID: 3, Scene: "scene_01", ShotSize: "中景", Characters: []string{"char_01"},
 		VoKind: project.VoKindInner, ChibiIDs: []string{"chibi_char_01"}, // 卡在方案里，但图还没出
 	}
-	_, roles, _ := RefPlan(dir, shot, assets, false)
+	_, roles, _, _ := RefPlan(dir, shot, assets, false)
 	found := false
 	for _, r := range roles {
 		if r.Kind == "character_front" {
@@ -139,7 +139,7 @@ func TestPlainShotUnaffected(t *testing.T) {
 		"scene:scene_01": {ID: "scene:scene_01", Kind: "scenes", Name: "临水城", File: "scene01.png"},
 	}
 	shot := project.Shot{ID: 4, Scene: "scene_01", ShotSize: "中景", Characters: []string{"char_01"}}
-	refs, roles, _ := RefPlan(dir, shot, assets, false)
+	refs, roles, _, _ := RefPlan(dir, shot, assets, false)
 	if len(refs) != 2 || roles[0].Kind != "character_front" || roles[1].Kind != "scene" {
 		t.Errorf("普通镜应仍为 本人照 + 场景，实际 %+v", roles)
 	}
