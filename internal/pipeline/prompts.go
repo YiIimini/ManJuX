@@ -514,6 +514,7 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	// 图像侧的两道预处理(见 artstyle.go 的说明):
 	//   ① 剥掉微雕文字/极小铭文 —— 在半身幅里它们只会糊成灰渍(实测定妆照胸口与腕部的污渍);
 	//   ② 姿态纪律 —— 半身幅里复杂手势会变成连指手套(实测模型自作主张画了抱胸)。
+	// （清汉字见下方幂等判据**之后** —— 顺序不能反，理由写在那里。）
 	prompt := StripMicroTextForImage(normalizeUniformWording(s.ImagePrompt))
 	// 定妆照取景与本片镜头的景别对齐(见 sheet_framing.go):**半身**。
 	// 卡里若同时写着取景 `upper-body framing` 与全身比例 `seven and a half heads`,模型会选
@@ -525,6 +526,19 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
 		return prompt // 已经是本类型的装配结果:不重复叠加
 	}
+	// **清汉字（2026-09-28 补，位置必须在幂等判据之后）**
+	//
+	// 为什么人物卡要清：场景板与道具图早就在装配时清掉输入里的汉字
+	// （SceneImagePrompt / PropImagePrompt 都调 StripCJK），**唯独人物卡没有** ——
+	// 于是角色卡里的中文注解被模型当成"要画的字"，定妆照与三视图板上就出现了乱码字形。
+	// 同一条机理，同一个修法。
+	//
+	// 为什么**必须放在判据之后**：本函数会被调用两次（资产阶段装配一次、渲染前补齐再一次），
+	// 第二次进来时 prompt 已经是**成品** —— 而画风块自带中英对照（含中文），
+	// 若在判据之前清，就会把成品的中文对照删掉，于是"第二次装配改变了结果"、幂等被打破。
+	// 2026-09-28 我加这条时正是按"预处理"的顺序写在前面，`TestPortraitPromptIsIdempotent`
+	// 当场咬住；场景侧（SceneImagePrompt）本来就是"先判幂等再清"，照它对齐。
+	prompt = project.StripCJK(prompt)
 	if prof.RewriteSheetFraming {
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
 	} else if kind == KindHuman || kind == KindChibi {

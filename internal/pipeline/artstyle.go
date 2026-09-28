@@ -76,20 +76,47 @@ func animatedMediumImageBlock() string {
 		"visible craft (aged timber, paper, silk, brocade, brass, lacquer, glazed clay, wet stone), true light " +
 		"response on every surface, soft motivated key light with a gentle falloff, natural film grain, " +
 		"shallow depth of field, and an overall matte finish whose highlights stay wide, dull and low in " +
-		"contrast. The subject is an original design." +
+		"contrast. The subject is an original design. Surfaces stay blank and unmarked, the backdrop is a " +
+		"plain seamless sweep, and the picture holds nothing but the subject itself." +
+		// 【2026-09-28 用户报】「说了角色定妆照和多视图里不能生成文字」。
+		//
+		// **注意这里写的是正向句，不是 "no text"** —— 图片侧跑的是蒸馏模型（CFG 1.0），
+		// 实测它对否定词免疫、却会把名词当指令画出来（"no epaulettes" 直接画出肩章，
+		// 见 uniformCivilianClarify 的记录与 artstyle_test.go 的门）。所以"不许出现文字"
+		// 在图片侧**不能直译**："no lettering / no watermark" 只会把 lettering 和 watermark
+		// 画进去。这里用正向的 blank / unmarked / plain seamless / nothing but the subject
+		// 表达同一个意思。
+		//
+		// 另一半对策是**输入侧**：汉字注解会被模型当"要画的字"照抄（乱码字形），
+		// 所以人物卡也要在装配时清汉字 —— 见 PortraitPrompt 里那条 StripCJK。
 		"(中文对照:电影级 3D 写实渲染——真实材质与工艺痕迹(旧木/纸/丝/锦/铜/漆/陶/湿石)、" +
-		"真实受光响应、柔和动机光与平缓衰减、自然胶片颗粒、浅景深,整体哑光、高光宽而暗哑;主体为原创设计。)"
+		"真实受光响应、柔和动机光与平缓衰减、自然胶片颗粒、浅景深,整体哑光、高光宽而暗哑;主体为原创设计。" +
+		"画面表面保持**空白无标记**、背景为**无缝纯净**的一整片,画面里只有主体本身。)"
 }
 
 // animatedFaceImageBlock Krea-2(人物定妆照/重抽)用的画风块 = 通用介质 + **人类专属条款**。
 //
-// 只能用"它是什么"来描述:理想化的半风格化面孔 —— 结构清晰、五官简化可读(不是真人照片的
-// 毛孔级写实,也不是 2D 平涂线稿),皮肤为哑光均匀、与全片颗粒一致的质感。一个否定词都不写。
+// 【2026-09-28 用户口径变更：要写实，不要"简化五官"】
+// 用户原话：「人物渲染的风格还没有道具和场景的风格好，一股陈旧风格！！写实风格不行吗？」
+// 病根就是原先那句 —— 道具/场景/灵宠/妖兽/Q 版**全部只用通用介质块**（"cinematic photoreal
+// 3D render"），唯独**人**被额外加了 "idealised and **semi-stylised** … **simplified**,
+// readable features"。同一个项目里器物与场景是电影级写实，人却被拉回"简化五官"，
+// 看着就是旧的、廉价的；而且这条在 2026-09-27 已被实测证实有害 —— 用户报「周廷和主角脸相似」，
+// 定位到的力正是 "simplified features 往**一个模板**上拉"（见 PortraitPrompt 尾部的 FaceID 注释）。
+//
+// 现在保留正向词 `idealised`（本块本来就有，且 artstyle_test.go 钉着不许删），
+// 去掉 "semi-stylised / simplified"，改为**与器物、场景同一档的电影级写实**：
+// 真实皮肤着色、次表面散射、织物真实受光、同一层颗粒。
+//
+// **只能用正向句**：图片侧是蒸馏模型（CFG 1.0），对否定词免疫却会把名词当指令画出来，
+// 所以"不要真人脸"这类排除句**不写在这里**，它们进的是 H3 那头（animatedMediumRenderBlock）。
 func animatedFaceImageBlock() string {
-	return animatedMediumImageBlock() + "\n- Human faces are idealised and semi-stylised: a clean graphic facial " +
-		"structure with simplified, readable features, and skin that reads as a matte, even complexion with " +
-		"the same fine film grain as everything else." +
-		"(中文对照:人物:理想化半风格化面孔——结构清晰、五官简化可读;肤色哑光均匀,与全片同一层细颗粒。)"
+	return animatedMediumImageBlock() + "\n- Human characters are fully rendered with the same cinematic " +
+		"photoreal 3D craft as the props and the sets: idealised features with real skin shading, " +
+		"subsurface scattering, true light response on skin and fabric, natural film grain and " +
+		"shallow depth of field." +
+		"(中文对照:人物与器物/场景**同一档电影级 3D 写实**——是理想化但**完整渲染**的角色:" +
+		"真实皮肤着色与次表面散射、皮肤与织物的真实受光、全片同一层自然颗粒、浅景深。)"
 }
 
 // animatedMediumRenderBlock H3 侧的**通用介质块**:画风 + 质感 + 通用排除句。
