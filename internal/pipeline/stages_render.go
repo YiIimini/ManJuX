@@ -451,6 +451,13 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 清单长度(length)与"计划 / 实际"记录分别取(口径见 shotFrameRecord 的说明)。
 		length, frameNote := shotFrameRecord(wantFrames, res)
 		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", length, wantModel)
+		// 记下"这一镜用的是**哪批资产**"（官方重生成纪律：不得在成片里静默混用新旧资产）。
+		// 合成前会用当前方案重算一遍并核对 —— 详见 asset_fp.go 的说明。
+		if afp := shotAssetFP(shot, assets); afp != "" {
+			rec := manifest[strconv.Itoa(shot.ID)]
+			rec.AssetFP = afp
+			manifest[strconv.Itoa(shot.ID)] = rec
+		}
 		if seamHere {
 			// 记下"渲这一镜时上游是谁":上游日后被重渲(指纹变)时,这一镜必须跟着重渲,
 			// 否则接缝处钉的还是旧 latent(画面跳变,而成片与阶段照常报成功)。
@@ -822,6 +829,7 @@ func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]pro
 	m.File = file
 	m.InputFP = fp
 	m.Error = errMsg
+
 	if length > 0 {
 		m.Length = length
 	}

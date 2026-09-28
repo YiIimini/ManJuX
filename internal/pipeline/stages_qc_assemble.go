@@ -383,6 +383,26 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		}
 		clips = append(clips, full)
 	}
+	// **合成前的新旧资产混用核对**（官方 qc-checklist 重生成纪律：用户重做产物后下游必须全用
+	// 最新版本，且"不得在最终拼接里静默混用新旧资产"）。
+	//
+	// 真实事故长这样：用户把某角色定妆照重生成（换了脸），只重渲了前 5 镜，剩下 20 镜还是旧脸
+	// 渲的 —— 合成照跑、阶段照报成功，成片里同一个人前后两张脸而无人过问。
+	// 这里用**当前方案**重算每镜的资产指纹并与渲染时记下的比对：对不上就是旧资产渲的。
+	// 只播报、不拦人：官方纪律是"不许**静默**混用"，让人看见并决定重渲即可。
+	assetMap, _ := c.store.LoadAssets(proj.ID) // 读不到就当空表：核对退化为"全部未知"，不会误报成"旧资产"
+	stale, unknown := StaleAssetClips(plan, manifest, assetMap)
+	if len(stale) > 0 {
+		c.emit(proj.ID, PhaseAssemble, 0, "warn", 1,
+			"⚠ 这 %d 个片段是**旧资产**渲的（%s）：角色定妆照/场景板/道具卡在它们渲完之后被改过 —— "+
+				"成片里会出现同一个人前后不一致。官方纪律：不得在新旧资产混用的状态下合成成片。"+
+				"建议对这些镜头点「重渲」后再合成（本次仍按现有片段合成，缺口在成片里可见）",
+			len(stale), joinShotIDs(stale, 8))
+	} else if len(unknown) > 0 {
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 1,
+			"提示：%d 个片段没有资产批次记录（是加这一列之前渲的），本次无法核对新旧 —— 重渲一次即可纳入核对",
+			len(unknown))
+	}
 	p := proj.Config.Params.Assemble
 	outDir := filepath.Join(c.store.Dir(proj.ID), "output")
 	_ = os.MkdirAll(outDir, 0o755)
@@ -480,4 +500,17 @@ func shotEstablishesScene(plan *project.Plan, shot project.Shot) bool {
 		}
 	}
 	return true
+}
+
+// joinShotIDs 把镜号列表拼成 "#3、#7、…"（最多显示 n 个，其余给计数）。
+func joinShotIDs(ids []int, n int) string {
+	parts := make([]string, 0, n+1)
+	for i, id := range ids {
+		if i >= n {
+			parts = append(parts, fmt.Sprintf("…等 %d 处", len(ids)))
+			break
+		}
+		parts = append(parts, "#"+strconv.Itoa(id))
+	}
+	return strings.Join(parts, "、")
 }

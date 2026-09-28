@@ -296,7 +296,14 @@ type ClipManifest struct {
 	// 处理方式与 Length/Model 一致:**不往指纹里加字段**(那会让存量项目全部重渲),
 	// 而是单独记一列。老清单没有这个键(空串)时不推翻指纹结论,只对"接缝确实生效且
 	// 上游指纹变了"的新清单判失效。
-	SeamFrom  string    `json:"seam_from,omitempty"`
+	SeamFrom string `json:"seam_from,omitempty"`
+	// AssetFP 渲这一镜时**所用资产**的指纹（角色定妆照/场景板/道具卡/系统卡片的 id+kind+fingerprint 集合哈希）。
+	//
+	// 为什么要单独记（2026-09-28 全面审计，官方 qc-checklist 重生成纪律）：官方要求"用户重做产物后
+	// 下游必须全用最新版本，且**不得在最终拼接里静默混用新旧资产**"。manifest 里已记 Length/Model/SeamFrom
+	// 三列各治一类静默故障，却没有一列说明"这镜用的是哪批资产" —— 于是"换了定妆照只重渲前 5 镜、
+	// 成片里同一个人前后两张脸"这种事故合成时无人过问。与 Model 同样处理：单独一列，空值不推翻结论。
+	AssetFP   string    `json:"asset_fp,omitempty"`
 	TaskID    string    `json:"task_id"` // 云端任务 id(如有)
 	Error     string    `json:"error"`
 	UpdatedAt time.Time `json:"updated_at"`
