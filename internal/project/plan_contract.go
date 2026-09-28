@@ -643,6 +643,14 @@ func ValidatePlan(p *Plan) []Issue {
 				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
 		}
 
+		// ── 必填字段（规范 §6.2，审计 #15「只查 action 一个字段」的收口）────────
+		//
+		// 判据在 `required_fields.go`。那里只列**还没有专门门**的字段（其余各项各有门，
+		// 重复造门就是同一件事报两遍）；台词那一条只对 `vo_kind=speech` 的镜判。
+		for _, msg := range RequiredFieldIssues(p) {
+			add("warn", "plan.shots", "%s", msg)
+		}
+
 		// ── 「片段 → 小镜头」两层结构（2026-09-28 用户架构）────────────────────
 		//
 		// 判据在 cuts.go。用户原话：「一个分镜里可以包含多个小分镜，小分镜里包含运镜」——

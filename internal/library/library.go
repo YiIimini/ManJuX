@@ -325,6 +325,20 @@ func (l *Library) entryDirOfLocked(e *Entry) (string, error) {
 	return l.entryDir(e.Kind, key)
 }
 
+// looksLikeCardID 这个字符串看着像**平台自己发的卡片 id** 吗（审计 B13）。
+//
+// 只认平台发的几个前缀 —— 显示名（中文或人给的名字）绝不会长成这样，
+// 所以"名字段里混进 id"这件事能被安全地区分出来。
+func looksLikeCardID(s string) bool {
+	s = strings.TrimSpace(s)
+	for _, p := range []string{"char_", "char:", "prop_", "prop:", "scene_", "scene:"} {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
 // matchByNameLocked 按**显示名或别名**找条目（调用方须持锁）。扫目录，不走目录名。
 func (l *Library) matchByNameLocked(kind, name string) (*Entry, bool) {
 	name = strings.TrimSpace(name)
@@ -445,6 +459,19 @@ func (l *Library) ClearRelated(kind, name string) {
 
 // Match 名称精确匹配;命中返回条目与图片绝对路径。
 func (l *Library) Match(kind, name string) (*Entry, string, bool) {
+	// **id 优先**（2026-09-28 审计 B13）：界面那条路的 URL 段叫 `{name}`，
+	// 但传进来的可能是**卡片 id** —— 而"按名字找"在**同名不同人**时只能到第一条：
+	// 第二条条目在界面上访问不到，而且点删除/重抽会落到**第一条**身上。
+	// 这里加一层"看着像卡片 id 就先按 id 查"，一处修、全部走这条路的路由都受益
+	// （`GET/PUT/DELETE /api/library/{kind}/{name}` 与 regen/views/describe 共七条）。
+	//
+	// 判据 `looksLikeCardID` 只认 `char_` / `char:` / `prop_` / `scene_` 这些**平台自己发的**
+	// 前缀 —— 中文名与任意显示名绝不会长成这样，所以对存量调用零影响。
+	if looksLikeCardID(name) {
+		if e, img, ok := l.matchByID(kind, name); ok {
+			return e, img, true
+		}
+	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	dir, err := l.entryDir(kind, name)
