@@ -90,7 +90,27 @@ git clone --depth 1 https://github.com/MiniMax-AI/MiniMax-H3
 - 官方 model-selection 的前缀是给皮克斯风 3D 的；国漫/写实项目只取其中与画风无关的三句。
 
 
-## 五、维护本表的纪律
+## 五、本轮新增口径（2026-09-28 全面审计）
+
+| 口径 | 出处 | 落地 |
+|---|---|---|
+| 中文可发声语速 **4.1 字/秒** | **官方**（H3 公开输入契约文档 `drama-skills`/`references/minimax-h3.md`）+ **用户文件**（《【额外】仿真人10S》给区间 3.5–4.5，4.1 在区间内）| `PlanCharsPerSecond` / `CharsPerSecond`（原 4.5 是**我的判断**，已按有出处的值校正）|
+| 参考图上限 **9 张**（1 首帧+1 尾帧+9 参考图）| **官方**（同上）| `MaxH3RefImages` + 身份优先截断并如实播报 |
+| 描述总时长必须等于请求时长、4–15 秒 | **官方**（`skills/h3-prompt-writing/SKILL.md` §Tips —— `.claude/` 版**没有**这段，是本轮审计发现的同步漏洞）| 新门：切点必须落在片长内 |
+| `summary` 以 `[任务类型]` 开头；时间戳毫秒**三位** | **官方**（`ref-en.txt` §3、§4.2/§5.1）| H3 格式门 ⑯⑰ |
+| 禁用标签是**五个**（`[char:` `[scene:` `[shot:` `[dur:` `[hook:`）| **官方**（`model-selection.md` per-shot 规则）| `h3TraceTags`（原只有前三个 = 抄清单抄了一半）|
+| 成片**一条连续 BGM**、不许逐镜配乐、人声下闪避 | **官方**（`qc-checklist.md` STEP 8）| `compose/bgm.go` + 门 `plan.music` |
+| 失败阶梯：重试 → **缩到 ≤6 秒** → 如实标注（不许把修好的与没修好的悄悄混拼）| **官方**（`fallback-policy.md`）| `stages_render.go` 三级阶梯 + `ShortenShotPrompt` + 占位片段 `placeholder: missing clip` |
+| 每镜时长 = max(台词秒数, **刀数×1.5**, 下限 4) 封顶 10；每集总时长 ±15% | **用户文件**（《【额外】仿真人10S》每镜 1.5–4 秒）＋ **开源参考**（`shuohao-skills` Apache-2.0「每拍几秒是算出来的」、每集 ±15%）| `FitDialogueDurations` + `MinCutSeconds` + 阶段对账播报 |
+| 参考锚点**四个子字段**（地标／人物位置／退场状态／光位基线）；离屏角色至少保留一镜 | **官方**（`shot-table-spec.md` STEP 5）| `shot.positions` / `shot.offscreen` + 两条门 |
+| 成片与参考图都必须**保持批准画幅** | **官方**（`model-selection.md` "Maintain the approved screen size / aspect ratio"）| 成片：qc 的 ExpectWidth/Height；**本轮补参考图产物**：`assetShapeMismatch`（角色/场景随项目画幅、道具卡 1:1）|
+| 门编号 + 两档（structural/craft）| **开源参考**（`drama-skills` MIT 的 SHT/CON 编号与四档分类，平台落两档）| `docs/门目录.md`（生成式，过期即红）|
+
+**仍未落地、等用户拍板的**（不在上表，因为缺出处或缺资源）：
+- AI 作曲（自动生成一条 BGM）—— 本机无音乐模型，需下载与安装目录确认；
+- 人脸嵌入质检（insightface 512 维 / 阈值 0.85 / pre_anchor）—— 来源是 `YYC3`（**无 LICENSE**，只可取思路），需下载模型；
+- 官方要求把失败镜"砍掉的秒数拆成相邻新镜"—— 平台**不擅自替你拆**（那是创作决定），只如实报出砍了多少秒。
+## 六、维护本表的纪律
 
 
 

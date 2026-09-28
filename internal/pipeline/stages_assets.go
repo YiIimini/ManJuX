@@ -181,6 +181,24 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				}
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "✔ 已生成:%s「%s」%s",
 					kindLabel(kind), name, entityKindSuffix(kind, ek))
+				// **产物方向必须核对**（2026-09-28 全面审计）。官方 `model-selection.md` 的 per-shot
+				// 规则里有一条 "Maintain the approved screen size / aspect ratio" —— 平台对**成片**
+				// 有画幅核对（qc 的 ExpectWidth/ExpectHeight），对**参考图产物**此前只在"复用场景图"
+				// 那条路上核对过，**新生成的图没人看**。
+				//
+				// 为什么要紧：参考图与成片画幅不一致时，H3 只能自行裁切或拉伸 —— 构图与信息量错位，
+				// 而界面上一点异常都看不出来（正是本项目反复修的那类"报成功其实坏了"）。
+				// 图像链本来就不保证像素数（见 board.go 的实测记录），所以这里只判**方向/形状**，
+				// 不卡具体像素。
+				if iw, ih, ierr := imagePixelSize(path); ierr == nil {
+					if bad, why := assetShapeMismatch(kind, iw, ih,
+						proj.Config.Params.Render.Width, proj.Config.Params.Render.Height); bad {
+						c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+							"⚠ 生成的%s「%s」%s（图 %d×%d）—— 参考图与成片画幅不一致时，模型只能自行裁切/拉伸，"+
+								"构图与信息量都会错位；建议点「重新生成」，或先核对该资产的出图尺寸设置",
+							kindLabel(kind), name, why, iw, ih)
+					}
+				}
 				// 定妆照出图后立刻做一次比例自检(见 checkProportion 的说明):
 				// 早发现早重出,别等到成片里才看出"脸被拉长/眼距失衡"。
 				// 同一份自检里也量**朝向**(构图项):定妆照是全片身份的权威参考图,
@@ -1131,4 +1149,42 @@ func planHasChibiCard(plan *project.Plan) bool {
 		}
 	}
 	return false
+}
+
+// assetShapeMismatch 判这张资产图的**形状**是否与它的用途相符，返回(是否不符, 中文原因)。
+//
+// 判据分两类（来源：官方 `model-selection.md` "Maintain the approved screen size / aspect ratio"
+// ＋ 官方道具卡的画面纪律「Single object only, centred, shot 1:1 square」）：
+//
+//	· 角色定妆照 / 场景图 —— 必须与**项目成片画幅同向**（竖版项目要竖版参考图）；
+//	· 道具卡 —— 必须是**方形**（道具卡是"单件、正对、1:1"，方才能不裁地贴进画面任何位置）。
+//
+// 只判方向与形状，不卡具体像素：图像链本来就不保证像素数（见 board.go 的实测记录），
+// 卡像素只会天天假告警，反而让人不再看告警。
+func assetShapeMismatch(kind string, iw, ih, projW, projH int) (bool, string) {
+	if iw <= 0 || ih <= 0 {
+		return false, ""
+	}
+	// 容差 12%：出图链会小幅改变比例，这不算错
+	const tol = 0.12
+	if kind == "props" {
+		ratio := float64(iw) / float64(ih)
+		if ratio < 1-tol || ratio > 1+tol {
+			return true, "应是 1:1 方形（道具卡是单件正对，方形才能不裁地贴进画面任何位置）"
+		}
+		return false, ""
+	}
+	if projW <= 0 || projH <= 0 {
+		return false, ""
+	}
+	projPortrait := projH > projW
+	imgPortrait := ih > iw
+	if projPortrait != imgPortrait {
+		dir := "竖版"
+		if !projPortrait {
+			dir = "横版"
+		}
+		return true, fmt.Sprintf("方向与本项目画幅不一致（本项目是%s）", dir)
+	}
+	return false, ""
 }
