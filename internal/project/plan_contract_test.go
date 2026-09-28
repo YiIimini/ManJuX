@@ -77,7 +77,7 @@ const SampleStyleSentence = "A cinematic GUOFENG period film, real materials, so
 // （本仓的老规矩：夹具必须照真实形态写，干净的夹具会给出假的绿灯）。
 func compliantH3(body string) string {
 	if !strings.Contains(body, "detailed_description:") && !strings.Contains(body, "integrated_multimodal_description:") {
-		// 夹具照**真实形态**写：5 秒以上的片段必须带内部切镜（用户《仿真人10S分镜头指令》：
+		// 夹具照**真实形态**写：超过单镜上限的片段必须带内部切镜（用户《仿真人10S分镜头指令》：
 		// 每片段 2–4 个小镜头、每镜 1.5–4 秒），否则会被"一镜到底"的节奏门抓住 ——
 		// 那不是门太严，是夹具不像真东西（这一周第四次栽在同一件事上）。
 		body += "\n\ndetailed_description:\n" + SampleStyleSentence + "\n[Shot 1] " +

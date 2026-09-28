@@ -309,7 +309,7 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 	enforceStyleLock(plan, sourceText)
 	normalizePlan(plan, opt)
 	// **自纠一轮**（2026-09-28 实测驱动）：散文规则模型不照做 —— 真章节那一跑 35 镜
-	// 全都还是一镜到底（提示词里明明写着"5 秒以上必须内部切 2-4 个小镜头"）。
+	// 全都还是一镜到底（提示词里明明写着"4 秒以上必须内部切 2-4 个小镜头"）。
 	// 所以把机器能判定的违规**连同原文**回给它改一次，只改被点名的镜，改坏了退回原文。
 	if n, note := RepairPlan(ctx, client, plan, opt); n > 0 && opt.OnNote != nil {
 		opt.OnNote("%s", note)

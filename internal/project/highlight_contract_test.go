@@ -61,7 +61,7 @@ func mkShot(id int, size string, dur int, hook, line string) Shot {
 	}
 }
 
-// TestHighlightOneTakeGate 片段内切镜门：5 秒以上只有一个 [Shot 1] ⇒ 报"一镜到底"。
+// TestHighlightOneTakeGate 片段内切镜门：超过单镜上限（PlanOneTakeSeconds）还只有一个 [Shot 1] ⇒ 报"一镜到底"。
 //
 // 依据（用户 2026-09-28：「难怪渲染的视频总感觉拖沓，都没抓重点」）：
 // 实测每镜正文只有一个 [Shot 1]，一个 6-8 秒片段从头到尾演一个连续动作 = 全程慢动作。
@@ -69,19 +69,28 @@ func mkShot(id int, size string, dur int, hook, line string) Shot {
 func TestHighlightOneTakeGate(t *testing.T) {
 	p := samplePlan()
 	if hasIssue(ValidatePlan(p), "warn", "一镜到底") {
-		t.Fatal("夹具本身就该是切过镜的（5 秒以上两刀），不该先报自己")
+		t.Fatal("夹具本身就该是切过镜的，不该先报自己")
 	}
 	// 把第二刀拿掉 → 立刻变成"一镜到底"
 	p.Shots[0].H3Prompt = strings.Replace(p.Shots[0].H3Prompt, "\n[Shot 2] At 00:02.500", "", 1)
 	if !hasIssue(ValidatePlan(p), "warn", "一镜到底") {
-		t.Error("5 秒以上只有一个镜头要报（切镜是节奏，一镜到底就是拖）")
+		t.Error("超过单镜上限还只有一个镜头要报（切镜是节奏，一镜到底就是拖）")
 	}
-	// 短片段一镜到底不算拖
+	// **恰好在分界上**也要报：用户文件《【额外】仿真人10S分镜头指令》写的是
+	// 「每镜 1.5–4 秒」—— 4 秒时还只有一刀，单镜就已经到上限了，再长就越界。
+	// （2026-09-28 校正：此前分界是 5 秒，比用户文件松，已按出处改成 4。）
 	p2 := samplePlan()
 	p2.Shots[0].H3Prompt = strings.Replace(p2.Shots[0].H3Prompt, "\n[Shot 2] At 00:02.500", "", 1)
-	p2.Shots[0].Duration = 4
-	if hasIssue(ValidatePlan(p2), "warn", "一镜到底") {
-		t.Error("4 秒以内的单动作片段不该报（5 秒才是分界）")
+	p2.Shots[0].Duration = PlanOneTakeSeconds
+	if !hasIssue(ValidatePlan(p2), "warn", "一镜到底") {
+		t.Errorf("时长正好等于分界(%d 秒)且只有一刀时要报", PlanOneTakeSeconds)
+	}
+	// 短于分界的单动作片段一镜到底不算拖
+	p3 := samplePlan()
+	p3.Shots[0].H3Prompt = strings.Replace(p3.Shots[0].H3Prompt, "\n[Shot 2] At 00:02.500", "", 1)
+	p3.Shots[0].Duration = PlanOneTakeSeconds - 1
+	if hasIssue(ValidatePlan(p3), "warn", "一镜到底") {
+		t.Errorf("短于分界(%d 秒)的单动作片段不该报", PlanOneTakeSeconds)
 	}
 }
 

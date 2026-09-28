@@ -784,11 +784,11 @@ func ValidatePlan(p *Plan) []Issue {
 			}
 			if len(oneTake) > 0 {
 				add("warn", "plan.shots",
-					"%d 镜是**一镜到底的长片段**（%s）—— 一个 5 秒以上的片段里只有一个「[Shot 1]」，"+
+					"%d 镜是**一镜到底的长片段**（%s）—— 一个 %d 秒以上的片段里只有一个「[Shot 1]」，"+
 						"从头到尾演一个连续动作，观众感觉就是「全程慢动作」（用户原话：拖沓、没抓重点）。"+
 						"按《【额外】仿真人10S分镜头指令》：片段内要切 **2–4 个小镜头、每镜 1.5–4 秒**，"+
 						"用官方多镜形式「[Shot 2] At 00:03.500, …」写，时间戳严格递增且各镜之和 = 该片段时长",
-					len(oneTake), strings.Join(firstN(oneTake, 8), "、"))
+					len(oneTake), strings.Join(firstN(oneTake, 8), "、"), PlanOneTakeSeconds)
 			}
 		}
 
