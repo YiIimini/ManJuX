@@ -105,37 +105,73 @@ func CharVariantNumberOf(id string) int {
 	return v
 }
 
-// charIDFamily 拆 id:`char_01v4` → ("char_1", 4, true);`char_01` → ("char_1", 0, true);
-// 拆不出家族编号(裸名、`char_01_chibi`)→ ok=false。
+// charIDFamily 拆 id：家族基键 + 档号。
+//
+// 【2026-09-28 修 · 用户报「同一个人判成两个 / 两个不同的人判成一个」】
+// 原实现要求**基名以数字结尾**（只认 `char_01` / `char_01v4`）—— 那是早期"角色 id 一律
+// `char_NN`"时代的假设。现在技能侧的卡片 id 是**命名式**（`char_bingsheng`、`char_qiqi`），
+// 于是这里 `ok=false`、家族键**静默退回名字**，两个方向同时出错：
+//
+//   - 同一个人的两种写法（id `char_qiqi` ↔ 名字「祁七」）→ 家族键不同 → **判成两个人**
+//     （首页角色数虚高、"变体排到主卡之后"不成立）；
+//   - **两个不同的人同名** → 名字基名相同 → **判成一个**（撞脸自检把他们当自己人排除掉，
+//     共用一张脸反而没人报 —— 这是"跨集换脸"最隐蔽的形态）。
+//
+// 现在：**有 id 就以 id 为家族键本体**（去掉 `char:` 前缀与档位后缀）；名字只在"压根没有 id"
+// 时兜底。带 `v` 的档位后缀仍然认，但**必须带分隔符**（`_v2` / `-v2`），
+// 免得 `foov2` 这种被当成"foo 的第 2 档"。
 func charIDFamily(id string) (string, int, bool) {
 	s := strings.TrimSpace(id)
+	// **只有带卡片前缀的才是卡片 id**（`char_xxx` / `char:char_xxx`）。
+	// 裸名（`abc`、`沈砚`）不是 —— 它可能是模型随手写的、也可能是名字被误塞进 ID 字段，
+	// 拿它当家族键会让"同一个人的两张卡"永远碰不上（`char_family_test.go` 的
+	// 「id 认不出」用例钉着这条）。
+	if !strings.HasPrefix(s, "char:") && !strings.HasPrefix(s, "char_") {
+		return "", 0, false
+	}
+	s = strings.TrimPrefix(s, "char:")
 	if s == "" {
 		return "", 0, false
 	}
 	base, variant := s, 0
-	// 尾部数字段
+	// 档位后缀 `_v2` / `-v2`：**分隔符可有可无**（`char_01v2` 与 `char_01_v2` 都认），
+	// 但**档位前的部分必须以数字结尾** —— 否则 `foov2` 会被当成"foo 的第 2 档"。
+	if i := variantSuffixIndex(s); i > 0 {
+		if n, err := strconv.Atoi(s[i+1:]); err == nil && n > 0 {
+			// 去掉档位前的分隔符：`char_01_v2` → `char_01`（留下尾下划线会让它认不出家族）
+			base, variant = strings.TrimRight(s[:i], "_-"), n
+		}
+	}
+	nb := normCharIDBase(base)
+	if nb == "" {
+		return "", 0, false
+	}
+	return nb, variant, true
+}
+
+// variantSuffixIndex 找出档位后缀 `v2` 里 `v`/`V` 的下标（找不到、或档位前的部分不以数字
+// 结尾，都返回 -1）。
+//
+// 与旧实现的唯一差别：**不再要求 `v` 前面有分隔符**。旧版只认 `char_01_v4`、不认
+// `char_01v2`（而真实卡片写的正是后者），于是变体卡排不到主卡之后。分隔符由下面那句
+// "档位前必须以数字结尾"来兜底，`foov2` 依然不会被误判。
+func variantSuffixIndex(s string) int {
 	j := len(s)
 	for j > 0 && s[j-1] >= '0' && s[j-1] <= '9' {
 		j--
 	}
-	if j < len(s) && j > 0 && (s[j-1] == 'v' || s[j-1] == 'V') {
-		k := j - 1
-		if k > 0 && (s[k-1] == '_' || s[k-1] == '-') {
-			k-- // 容忍 char_01_v4 这种带分隔符的写法
-		}
-		cand := strings.TrimSpace(s[:k])
-		// 档位前缀必须以数字结尾(家族编号),否则 "foov2" 会被当成 "foo 的第 2 档"
-		if cand != "" && lastIsDigit(cand) {
-			if n, err := strconv.Atoi(s[j:]); err == nil && n > 0 {
-				base, variant = cand, n
-			}
-		}
+	if j == len(s) || j == 0 {
+		return -1 // 没有数字尾
 	}
-	nb := normCharIDBase(base)
-	if nb == "" || !lastIsDigit(nb) {
-		return "", 0, false
+	k := j - 1
+	if s[k] != 'v' && s[k] != 'V' {
+		return -1
 	}
-	return nb, variant, true
+	cand := strings.TrimRight(s[:k], "_-")
+	if cand == "" || !lastIsDigit(cand) {
+		return -1 // 档位前不是家族编号
+	}
+	return k
 }
 
 // normCharIDBase id 基名归一:小写 + 尾部数字去前导零(`char_01` 与 `char_1` 同族)。
@@ -218,14 +254,43 @@ func CharFamilyKey(id, name string) string {
 func SameCharacter(aID, aName, bID, bName string) bool {
 	aIDKey, aNameKey := CharFamilyKeys(aID, aName)
 	bIDKey, bNameKey := CharFamilyKeys(bID, bName)
+	// 【2026-09-28 重写 · 用户报「同一个人判成两个 / 两个不同的人判成一个」】
+	//
+	// 旧实现是"两边 id 都能解析时**只看 id**"，而当时"能解析"被定义成"id 以数字结尾" ——
+	// 那个定义把**命名式卡片 id**（`char_bingsheng`、`char_qiqi`，也就是技能侧现在实际用的形态）
+	// 判为"解析不了"，家族键静默退回名字，于是两个方向同时错：
+	//   同名不同人 → 判成一个；同人不同写法 → 判成两个。
+	//
+	// 现在的规则按**四种情形**分开（每条都由 char_family_stage_test.go 的用例钉着）：
+	// ① 两边 id 都说得出来且相同            → 同一个（这是最可靠的一路）
+	// ② 只有一边有 id（另一张卡没写 id）    → 名字兜底：那是同一个人的两张卡
+	// ③ 两边 id 不同 → 只有当名字是"档名关系"（`沈砚` ↔ `沈砚·少年`）才算同一个：
+	//    那是"同一个人按场换服装"；**两个不同的人恰好同名时名字没有档名** → 判不同
+	// ④ 其余 → 不同
 	if aIDKey != "" && bIDKey != "" {
-		return aIDKey == bIDKey
+		if aIDKey == bIDKey {
+			return true
+		}
+		return aNameKey != "" && aNameKey == bNameKey && nameHasVariantSuffix(aName, bName)
 	}
-	if aNameKey != "" && aNameKey == bNameKey {
-		return true
+	if (aIDKey == "") != (bIDKey == "") {
+		return aNameKey != "" && aNameKey == bNameKey
 	}
-	// 名字也给不出结论时退回 id 家族（至少有一边可解析的情况上面已覆盖，这里兜底）
-	return aIDKey != "" && aIDKey == bIDKey
+	return aNameKey != "" && aNameKey == bNameKey && nameHasVariantSuffix(aName, bName)
+}
+
+// nameHasVariantSuffix 两个名字里是否**至少有**一个带档名（`沈砚·少年` 的 `·少年`）。
+//
+// 判据用 CharFamilyBaseName 反推（基名 != 原名 ⇒ 带档名），不另立一套分隔符表 ——
+// 名字的档名写法只该有一个定义处。
+func nameHasVariantSuffix(names ...string) bool {
+	for _, n := range names {
+		s := strings.TrimSpace(n)
+		if s != "" && CharFamilyBaseName(s) != s {
+			return true
+		}
+	}
+	return false
 }
 
 // CharFamilyIndex 一批角色卡 → **卡片 id → 归一后的家族键**（同一个人拿到同一个键）。
@@ -238,19 +303,27 @@ func SameCharacter(aID, aName, bID, bName string) bool {
 // Q 版形象独立成族（不是造型档，见 CharFamilyKeys 的说明）。
 func CharFamilyIndex(chars []Character) map[string]string {
 	parent := map[string]string{}
-	var find func(string) string
-	find = func(x string) string {
-		p, ok := parent[x]
-		if !ok {
-			parent[x] = x
-			return x
+	// find 用**迭代**而不是递归，并且**带步数上限**。
+	//
+	// 【2026-09-28 实测】原实现是无上限递归，一旦 parent 里出现互相指向的两个节点，
+	// 无上限递归会一路把栈打爆 —— 整个测试进程 `fatal error: stack overflow`，
+	// 连"哪个用例出问题"都看不到。改成迭代 + 上限之后，最坏情况是把某个节点自立为根，
+	// 而不是把进程干掉；归族结果哪怕退化了也还能看、还能报。
+	find := func(x string) string {
+		root := x
+		for i := 0; i <= len(parent)+1; i++ {
+			p, ok := parent[root]
+			if !ok {
+				parent[root] = root
+				return root
+			}
+			if p == root {
+				return root
+			}
+			root = p
 		}
-		if p == x {
-			return x
-		}
-		r := find(p)
-		parent[x] = r
-		return r
+		parent[x] = x // 兜底：真出现环，把 x 立为根，不让它继续扩散
+		return x
 	}
 	union := func(a, b string) {
 		ra, rb := find(a), find(b)
@@ -267,6 +340,7 @@ func CharFamilyIndex(chars []Character) map[string]string {
 	}
 	byIDKey := map[string]string{}
 	byNameKey := map[string]string{}
+	nameOf := map[string]string{} // nameKey → 该 key 首个卡的名字（判"档名关系"用）
 	for _, c := range chars {
 		n := node(c)
 		find(n)
@@ -280,29 +354,26 @@ func CharFamilyIndex(chars []Character) map[string]string {
 		}
 		if nameKey != "" {
 			if first, ok := byNameKey[nameKey]; ok {
-				union(n, first)
+				// **只有"档名关系"才按名字合并**：两个不同的人恰好同名时 nameKey 也相同，
+				// 无条件合并会把两个人并成一个（`char_family_stage_test.go` 的 ⑤ 号用例：
+				// `char_01/沈砚` 与 `char_02/沈砚` 必须判成两个人）。
+				//
+				// 这里替掉了原来"先无条件并、再事后按 id 拆"的写法 —— 那段补丁做的是
+				// `parent[find(x)] = x`，也就是**把别人的根指向一个非根节点**，会破坏并查集；
+				// 一旦因此成环，`find` 的无上限递归直接把进程打到 `stack overflow`
+				// （2026-09-28 实测：整个 project 包测试跑不起来，连哪个用例出问题都看不到）。
+				if nameHasVariantSuffix(c.Name) || nameHasVariantSuffix(nameOf[nameKey]) {
+					union(n, first)
+				}
 			} else {
 				byNameKey[nameKey] = n
+				nameOf[nameKey] = c.Name
 			}
 		}
 	}
-	// 再把"同一名字但两边 id 都能解析且不同族"的情形拆开：
-	// 名字并了、而 id 明确说不是一个人 ⇒ 以 id 为准（既有取舍）。
-	for _, c := range chars {
-		for _, d := range chars {
-			if c.ID == d.ID {
-				continue
-			}
-			ci, _ := CharFamilyKeys(c.ID, c.Name)
-			di, _ := CharFamilyKeys(d.ID, d.Name)
-			if ci != "" && di != "" && ci != di {
-				// 两张 id 明确不同族的卡不能同族 —— 若被名字并到了一起，按 id 拆开
-				if find(node(c)) == find(node(d)) {
-					parent[find(node(d))] = node(d)
-				}
-			}
-		}
-	}
+	// 注：这里**不再**需要"事后按 id 把并错的人拆开"那一步 —— 合并时已经只认档名关系，
+	// 而"两个 id 明确不同族的人"从一开始就不会被并到一起。
+
 	// 每组取一个**人可读的规范标签**（不是内部节点名）：
 	// 优先用组内最小的 id 家族键（`char_1` 这种，与旧行为一致 —— 界面与投影都在用它），
 	// 没有 id 家族键时才用名字基名。**要确定性**：同一批卡换顺序也得给出同一个标签，
