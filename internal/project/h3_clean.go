@@ -1,6 +1,9 @@
 package project
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // h3_clean.go 剔除混进 `h3_prompt` 的**"写给生成器的话"**。
 //
@@ -107,4 +110,84 @@ func StripH3WriterDirectives(prompt string) (string, int) {
 		packed = append(packed, ln)
 	}
 	return strings.Join(packed, "\n"), removed
+}
+
+// ── 占位台词标签（2026-09-28 用户：「配音也怪的很，重复配音」）────────────────────
+//
+// 实测病根：真渲那一集成片里有 **36/74 个 `<d>` 标签的内容只有「…」**（48 镜里 36 镜各一个），
+// 而同一批正文里"计划台词+旁白"与正文**一处不差** —— 也就是说模型把该念的都念对了，
+// 多出来的正是这些**空标签**：给模型一个"这里要说点什么"的标签，它就会自己编一句、
+// 或者发出叹气/清嗓/半个音节。用户听到的就是"怪配音、重复配音"。
+//
+// 为什么由平台兜底：`sysH3Format` 是"规则与输出骨架混排"的模板，LLM 直出时会把骨架里的
+// 占位示例照抄进正文（`<d>[Chinese]…</d>` 就是骨架里那一行的样子）。等上游改等于这 36 镜永远在。
+//
+// 清理口径（**只删整句，不留残句**）：仅删标签是不够的 —— 留下 "The narrator says in an
+// off-screen voiceover:" 这种半句，模型照样会张嘴。所以命中占位标签时，把**包含它的那一句**
+// 整句删掉。边界：只在 `<d>` 内容是"空 / 纯标点省略号 / 无 / N-A"时才动手，宁可漏不可误删。
+var placeholderDialogueRe = regexp.MustCompile(`<d>\s*(?:\[(?:Chinese|Mandarin|普通话)\]\s*)?([^<]{0,40}?)\s*</d>`)
+
+// isPlaceholderDialogue 标签内容是不是"没有真话可说"的占位。
+func isPlaceholderDialogue(s string) bool {
+	t := strings.TrimSpace(s)
+	if t == "" {
+		return true
+	}
+	// 纯标点/省略号/破折号/空格
+	only := true
+	for _, r := range t {
+		switch r {
+		case '.', '。', '…', '·', '、', '-', '—', '～', '~', ' ', '\t', '(', ')', '（', '）':
+		default:
+			only = false
+		}
+		if !only {
+			break
+		}
+	}
+	if only {
+		return true
+	}
+	// 去掉包裹的括号再判：`（无）` / `(N/A)` 这类真实写法（第一版漏了，测试抓到）
+	t = strings.Trim(t, "()（）[]【】 ")
+	switch strings.ToLower(t) {
+	case "无", "n/a", "na", "none", "silence", "silent", "no dialogue", "此处无台词":
+		return true
+	}
+	return false
+}
+
+// HasPlaceholderDialogue 提示词里有没有占位台词标签（契约门用）。
+func HasPlaceholderDialogue(prompt string) bool {
+	for _, m := range placeholderDialogueRe.FindAllStringSubmatch(prompt, -1) {
+		if isPlaceholderDialogue(m[1]) {
+			return true
+		}
+	}
+	return false
+}
+
+// placeholderSilenceNote 占位标签的替换文本。
+//
+// 为什么不是"删掉整句"（我第一版就是那么写的，被测试抓了）：`<d>[Chinese]…</d>` 常常嵌在
+// 一句有用的话中间（"…voiceover: <d>…</d> while the on-screen characters' lips remain
+// completely closed."）—— 按句删会把**后半句有效约束一起删掉**。换成一句明确的指令既保住句子，
+// 又把"这里要说点什么"的信号**翻成它的反面**（这镜不说话）。
+const placeholderSilenceNote = "(this shot has no spoken words here — never voice a line, no sigh, no filler sound)"
+
+// StripPlaceholderDialogue 把占位台词标签换成明确的"无声"指令，返回(新文本, 替换处数)。
+func StripPlaceholderDialogue(prompt string) (string, int) {
+	if !strings.Contains(prompt, "<d>") {
+		return prompt, 0
+	}
+	n := 0
+	out := placeholderDialogueRe.ReplaceAllStringFunc(prompt, func(m string) string {
+		sub := placeholderDialogueRe.FindStringSubmatch(m)
+		if len(sub) < 2 || !isPlaceholderDialogue(sub[1]) {
+			return m
+		}
+		n++
+		return placeholderSilenceNote
+	})
+	return out, n
 }

@@ -32,6 +32,15 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	}
 	g := c.cfg.Get()
 	rp := proj.Config.Params.Render
+	// 读取时清掉的占位台词（`<d>[Chinese]…</d>`）如实播报：给模型一个"这里要说点什么"的空标签，
+	// 它就会自己编一句或发出怪声 —— 用户听到的是"怪配音、重复配音"（实测那一集 36/74 个 <d> 是这种）。
+	// 清理挂在唯一读取边界（project.LoadPlan），这里只负责说一声，不静默改输入。
+	if plan.StrippedPlaceholders > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+			"⚠ 方案里有 %d 处**空台词标签**（`<d>…</d>` 内容只有省略号）已在读取时清掉 —— "+
+				"这类标签会被模型当成「这里要说点什么」，从而自己编台词或发怪声（听感就是重复配音）；"+
+				"要根治请重跑一次「剧本分镜」，提示词已禁止写占位标签", plan.StrippedPlaceholders)
+	}
 	// 单镜渲染超时取自设置页(全局),此前该配置项被引擎写死忽略 —— 用户怎么改
 	// 都不生效,只能吃 45 分钟硬编码。现在经 Job.Timeout 透传给各引擎。
 	shotTimeout := time.Duration(g.Render.ShotTimeout) * time.Minute

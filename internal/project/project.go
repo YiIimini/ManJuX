@@ -224,7 +224,10 @@ type Plan struct {
 
 	// StrippedDirectives 本次读取时从 h3_prompt 里剔掉的"生成器指令行"条数（见 h3_clean.go）。
 	// **不进 JSON**：它是读取期的诊断量，不是方案的一部分（写回磁盘会把上游文件"改脏"）。
-	StrippedDirectives int `json:"-"`
+	StrippedDirectives int
+	// StrippedPlaceholders 读取时被清掉的**占位台词标签**句数（`<d>…</d>` 里没有真话的那些）。
+	// 单独计数是为了如实播报：用户听到的"怪配音"就是从这些标签来的，清了要说一声。
+	StrippedPlaceholders int `json:"-"`
 }
 
 // Asset 参考图资产。
@@ -634,6 +637,14 @@ func (s *Store) LoadPlan(id string) (*Plan, error) {
 		if n > 0 {
 			p.Shots[i].H3Prompt = cleaned
 			p.StrippedDirectives += n
+		}
+		// 占位台词标签（`<d>[Chinese]…</d>`）：给模型一个"这里要说点什么"的空标签，
+		// 它就会自己编一句或发出怪声 —— 实测那一集 36/74 个 <d> 都是这种（用户报"重复配音"）。
+		// 与上一条同源：都在**唯一读取边界**收口，四条消费路径一起干净（见 h3_clean.go）。
+		cleaned2, n2 := StripPlaceholderDialogue(p.Shots[i].H3Prompt)
+		if n2 > 0 {
+			p.Shots[i].H3Prompt = cleaned2
+			p.StrippedPlaceholders += n2
 		}
 	}
 	return &p, nil
