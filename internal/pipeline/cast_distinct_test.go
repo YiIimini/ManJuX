@@ -181,7 +181,7 @@ func TestCastPeersSkipsSameCharacterVariants(t *testing.T) {
 	}
 	peers := castPeers(dir, plan, assets, "char:char_01")
 	if len(peers) != 1 || peers[0].name != "守钟女" {
-		t.Fatalf("只该比「守钟女」一个（排除自己的造型档与 Q 版），实际 %+v", peers)
+		t.Fatalf("只该比「守钟女」一个（排除自己的造型档、chibi_ 前缀的 Q 版、kind=chibi 的卡），实际 %+v", peers)
 	}
 	// 反向也成立：从造型档出发时，主卡同样不算"别人"
 	peers2 := castPeers(dir, plan, assets, "char:char_01v2")

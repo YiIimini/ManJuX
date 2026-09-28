@@ -67,3 +67,31 @@ func TestCharFamilyIndexStages(t *testing.T) {
 		t.Errorf("应算 3 个人（沈砚 / 周廷 / 沈砚Q版），实际 %d", n)
 	}
 }
+
+// TestIsChibiCardBothNamings 两套命名都要认 —— 且**必须由共用助手判**。
+//
+// 【2026-09-28 用户报障】「角色相似度判断这个问题貌似有点严重，不能自己跟自己进行判断」。
+// 根因：撞脸自检用 `strings.HasSuffix(id, "_chibi")` 排除 Q 版，而技能侧命名是**前缀**
+// `chibi_char_01` ⇒ 本人和自己的 Q 版被拿去互比（Q 版就是同一个人 ⇒ 必然报"像同一个人"）。
+// 更麻烦的是平台自己早先派生 Q 版用的是**后缀** `char_01_chibi` —— 两套命名并存，
+// 判据只认一套就漏。所以这里把**三种形态**都钉住，且要求只有一处实现。
+func TestIsChibiCardBothNamings(t *testing.T) {
+	cases := []struct {
+		name, kind, id string
+		want           bool
+	}{
+		{"技能侧前缀命名", "", "chibi_char_01", true},
+		{"平台侧后缀命名", "", "char_01_chibi", true},
+		{"kind 标了 chibi（id 随便是啥）", "chibi", "person_01", true},
+		{"Kind 大小写", "Chibi", "person_01", true},
+		{"普通角色", "human", "char_01", false},
+		{"造型档", "human", "char_01v2", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := IsChibiCard(tc.kind, tc.id); got != tc.want {
+				t.Errorf("IsChibiCard(%q,%q) = %v,期望 %v", tc.kind, tc.id, got, tc.want)
+			}
+		})
+	}
+}

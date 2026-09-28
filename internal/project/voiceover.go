@@ -102,17 +102,23 @@ func (p *Plan) HasPropID(id string) bool {
 	return false
 }
 
-// IsChibiCard 这张角色卡是不是 **Q 版形象**（技能侧 `kind: "chibi"`，id 约定 `chibi_<原角色id>`）。
+// IsChibiCard 这张角色卡是不是 **Q 版形象**（技能侧 `kind: "chibi"`；id 约定 `chibi_<原角色id>`）。
+//
+// 【两套命名都要认】技能侧用**前缀**（`chibi_char_01` = 沈砚·Q版），平台自己早先派生 Q 版时
+// 用的是**后缀**（`char_01_chibi`）—— 判据只认一套就会漏：实测撞脸自检因此把**本人和它自己的
+// Q 版**拿去互比（Q 版本来就是同一个人 ⇒ 必然报"长得像同一个人"，用户 2026-09-28 报障）。
+// 所以这个助手同时认 kind / 前缀 / 后缀，**全平台只有这一处判据**。
 //
 // 为什么要一个判据：Q 版**不是造型档**。造型档是"同一个人按场换服装"，而 Q 版是
 // "同一个人的另一种画法"，观众靠它认"这段是心里话"。两者混在一起的两个后果：
 //   - 界面上把 Q 版算成"沈砚的 2 个造型档"（用户看不懂多出来的那张是什么）；
-//   - 资产阶段按"造型档从主卡派生"的顺序生成，给 Q 版套了人像取景与比例（而 Q 版是 2.5–3 头身）。
+//   - 撞脸自检拿本人和它自己的 Q 版互比（比了必然"像"）。
 func IsChibiCard(kind, id string) bool {
 	if strings.EqualFold(strings.TrimSpace(kind), "chibi") {
 		return true
 	}
-	return strings.HasPrefix(strings.TrimSpace(id), "chibi_")
+	s := strings.TrimSpace(id)
+	return strings.HasPrefix(s, "chibi_") || strings.HasSuffix(s, "_chibi")
 }
 
 func containsFold(s, sub string) bool {

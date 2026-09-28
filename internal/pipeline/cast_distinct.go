@@ -71,7 +71,15 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 	var out []castPeer
 	for _, ch := range plan.Characters {
 		id := "char:" + ch.ID
-		if id == selfID || strings.HasSuffix(ch.ID, "_chibi") {
+		// Q 版**永远不比**（2026-09-28 用户：「不能自己跟自己进行判断」）。
+		//
+		// 【这里原来错在哪】旧代码用 `strings.HasSuffix(ch.ID, "_chibi")` 排除 —— 那是**后缀**写法，
+		// 而技能侧的命名是**前缀** `chibi_<原角色id>`（`chibi_char_01` = 沈砚·Q版）。于是 Q 版
+		// 根本没被排除：本人和自己的 Q 版被拿去互比，而 Q 版本来就是同一个人 ⇒ 必然报
+		// 「定妆照「碑生」与「碑生」长得像同一个人」。
+		// 改用平台自己那套判据 project.IsChibiCard（kind=="chibi" 或 chibi_ 前缀，两处口径合一），
+		// 顺带覆盖"kind 标了 chibi 但 id 没按约定写"的卡。
+		if id == selfID || project.IsChibiCard(ch.Kind, ch.ID) {
 			continue
 		}
 		// 同一个人的另一档（或同名）：不是"别的角色"，比了只会得到"长得像同一个人"
@@ -95,6 +103,19 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 		}
 	}
 	return out
+}
+
+// selfChibi 这张卡自己是不是 Q 版（按 id 找它的 kind）。
+func selfChibi(plan *project.Plan, cardID string) bool {
+	if plan == nil {
+		return false
+	}
+	for _, ch := range plan.Characters {
+		if ch.ID == cardID {
+			return project.IsChibiCard(ch.Kind, ch.ID)
+		}
+	}
+	return project.IsChibiCard("", cardID)
 }
 
 // peerLabelByID 从比对对象里取某张卡的 id（告警里用来消除同名歧义）。
@@ -127,6 +148,11 @@ func (c *Coordinator) checkCastDistinctness(ctx context.Context, proj *project.P
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return path, false // 读不到方案就拿不到"别人是谁"：少比几个人，不是没能力
+	}
+	// 本卡是 Q 版 ⇒ 不做撞脸判定：Q 版与它的主卡是**同一个人**（比了必然"像"），
+	// 而 Q 版之间的相似是画风使然、不是身份事故（用户 2026-09-28：「不能自己跟自己进行判断」）。
+	if selfChibi(plan, id) {
+		return path, false
 	}
 	peers := castPeers(c.store.Dir(proj.ID), plan, assets, "char:"+id)
 	if len(peers) == 0 {
