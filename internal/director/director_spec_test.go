@@ -98,3 +98,44 @@ func TestFaceVocabIsOneSection(t *testing.T) {
 		t.Errorf("sysFaceVocabRules 应被三处提示词引用（定义 1 + 引用 3），实际出现 %d 次", n)
 	}
 }
+
+// TestUserInstructionFilesAdaptedIntoH3 用户三份指令（三视图/场景/仿真人10S）的**意图**
+// 必须按 **H3 格式**落在提示词里 —— 不是把即梦那套中文词表搬进来。
+//
+// 依据（用户 2026-09-28 明确要求）：「不是直接落，是参考后整理匹配进 H3 提示词格式」。
+// 三份文件是即梦/Seedance 的字段式写法（【关键道具】【运镜】独立成行、中文负向词表），
+// 而 H3 只有散文段落 + <d> 说话人体系，且**没有独立负向通道** ⇒ 必须转写：
+//
+//	· 负向词（模糊/变形/畸形手指/闪烁/口型不对）→ 正文末尾的**散文排除句**；
+//	· 运镜/角度 → 官方英文词表 + 写进镜头句子里（已在 sysViewRules / sysShotRules 里）；
+//	· 旁白 → 转成**该角色的内心独白**（同一音色 + 闭嘴句）或剧情内字幕，不留独立旁白音色；
+//	· 占位一致性（道具持有者/朝向、角色站位、特效落点）→ 写进每镜散文（H3 逐镜无记忆）。
+func TestUserInstructionFilesAdaptedIntoH3(t *testing.T) {
+	for name, p := range ShotPrompts() {
+		for _, want := range []string{
+			"EXCLUSIONS",                  // 负向词 → 散文排除句（并标明是平台规则，不是官方要求）
+			"PLATFORM rule, not official", // 防止再次把平台自定规则冒充成官方要求（本轮同步抓到两条）
+			"no deformed or fused hands",  // 畸形手指/变形
+			"no extra or missing fingers",
+			"no flicker or strobing",      // 闪烁
+			"no colour banding",           // 色彩失真
+			"no warped or drifting faces", // 变形
+			"blocking",                    // 占位一致性（段落标题是小写词也认）
+		} {
+			if !strings.Contains(strings.ToLower(p), strings.ToLower(want)) {
+				t.Errorf("%s 缺 %q —— 用户三份指令的意图没按 H3 格式落进提示词", name, want)
+			}
+		}
+	}
+	// 旁白口径：不留独立旁白音色
+	if !strings.Contains(SystemPrompt, "NO NARRATOR LANE") {
+		t.Error("旁白要转成内心独白/剧情内字幕（用户指定的《仿真人10S》口径），不能留独立旁白音色")
+	}
+	if strings.Contains(SystemPrompt, "narration (旁白) is an off-screen voiceover; characters' lips stay closed. Use sparingly.") {
+		t.Error("旧的「旁白保留、少用」口径应已被 NO NARRATOR LANE 取代")
+	}
+	// 场景五步公式（四、场景提示词指令 的意图，按英文散文要求落）
+	if !strings.Contains(SystemPrompt, "FIVE STEPS") || !strings.Contains(SystemPrompt, "how the light touches the material") {
+		t.Error("场景板要按五步公式要求（光→主体→材质与光互动→画质后缀→物件），否则就是「简陋单一」")
+	}
+}

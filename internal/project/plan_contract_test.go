@@ -24,7 +24,7 @@ func samplePlan() *Plan {
 			Description: "二十岁男子", ImagePrompt: "a young man ...", Voice: "young male voice",
 		}},
 		Scenes: []Scene{{
-			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙", ImagePrompt: "a ruined temple ...",
+			ID: "scene_room", Name: "荒山破庙·雨夜", Description: "潮湿的破庙", ImagePrompt: "ULTRA-WIDE 45-DEGREE AERIAL VIEW of an abandoned hill temple courtyard at dead-gold dusk: ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot; wet flagstones, a fallen ridge beam, distant blue-grey mountain ridges beyond the courtyard wall; the last sun lies in long bars across the wet stone, dusk running down the rough wall, cold light talking to damp moss; two groups of fixed furnishings — a stone censer and a leaning pillar base in the midground, scattered tiles and a dead cypress at the edge; pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath, no humans, empty, landscape only, UE5 render, 8k, ultimate detail",
 			Landmarks: "门槛与东侧立柱", LightState: "黄昏，主光从门洞斜射",
 		}},
 		// 关键道具：2026-09-28 起"一件道具都没有"会报警（实测那一集 25 镜提到器物、0 张卡 ⇒ 漂移）。
@@ -96,6 +96,18 @@ func compliantH3(body string) string {
 	if !containsAny(body, "clearly visible and adequately lit") {
 		body += " Subjects must remain clearly visible and adequately lit throughout the video; " +
 			"avoid rendering any frame nearly black or overly dark."
+	}
+	// 官方 §5.2 要求正文 350–500 英文词，而"单镜也不能因此写短" ⇒ 夹具的正文也必须**像真东西**：
+	// 真实的单镜正文是几百词，两三句的玩具夹具会被词数门抓住（那不是门太严，是夹具不真）。
+	// 填充句**只能进描述段**（第一次写时直接 append，把配乐段顶到 13 句，被句数门抓住）；
+	// 它不参与任何断言，只负责把"形状"撑对。
+	filler := " The camera holds on the scene as the light shifts slowly across the stone and the dust drifts through it."
+	for H3DescriptionWords(body) < H3WordsFloor+20 {
+		if i := strings.Index(body, "\n\noverall_soundscape:"); i >= 0 {
+			body = body[:i] + filler + body[i:]
+		} else {
+			body += filler
+		}
 	}
 	return body
 }

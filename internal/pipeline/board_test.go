@@ -39,7 +39,8 @@ func TestBoardPromptReplacesPortraitFraming(t *testing.T) {
 	// 以卡片为准（见 BoardPromptWithCard），这段是卡里没有板串时的兜底。
 	for _, want := range []string{
 		"FRONT, LEFT PROFILE and BACK", "six head angles", "six detail tiles",
-		"plain pure white seamless background", "no text, no letters, no watermark",
+		"plain pure white seamless background", "no text, no letters, no numerals, no watermark",
+		"no UI", "no social-media chrome",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("版面清单缺 %q:\n%s", want, got)

@@ -58,7 +58,7 @@ const BoardMarker = "PRODUCTION REFERENCE SHEET"
 // 以及技能侧 §2.2 的三段式数量（3 全身 + 6 头角度 + 6 局部细节）。
 const BoardLayoutClause = "one single production reference sheet of this ONE character on a plain pure white " +
 	"seamless background under flat, even studio lighting — no scene, no other characters, no extra props other " +
-	"than this character's own signature prop, no text, no letters, no watermark, generous margins: " +
+	"than this character's own signature prop, no text, no letters, no numerals, no watermark, no logo, no UI, no like/save buttons, no social-media chrome, no screenshot framing; generous margins so that every figure is complete and never cropped: " +
 	"LEFT (main area): three full-body standing views — FRONT, LEFT PROFILE and BACK of the same character " +
 	"(identical face, hair, costume, build and height proportions), arms hanging naturally, eye-level, no " +
 	"occlusion, no exaggerated perspective, hair parting and strand direction clearly readable; " +

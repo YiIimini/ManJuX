@@ -1095,6 +1095,60 @@ func ValidatePlan(p *Plan) []Issue {
 		}
 	}
 
+	// ── 场景板贫瘠（用户 2026-09-28：「场景简陋单一导致分镜内容一点也不理想」）────────
+	//
+	// 场景板是**每一镜的空间底座**：板子简陋，分镜就只能在简陋的空间里拍（用户原话）。
+	// 判据见 ScenePlateThin（建立镜头串 / 大景元素≥2 / 光的质感），按《四、场景提示词指令》
+	// 的意图翻译成机检，而不是搬它的中文词表。
+	if len(p.Scenes) > 0 {
+		var thin []string
+		for _, sc := range p.Scenes {
+			if lack := ScenePlateThin(sc.ImagePrompt); len(lack) > 0 {
+				thin = append(thin, fmt.Sprintf("「%s」缺 %s", sc.Name, strings.Join(lack, "＋")))
+			}
+		}
+		if len(thin) > 0 {
+			add("warn", "plan.scenes",
+				"%d 个场景板偏**贫瘠**（%s）—— 场景板是每一镜的空间底座，板子简陋，分镜就只能在简陋的空间里拍。"+
+					"按五步公式补全：① 光的质感与情绪 ② 核心主体与背景的精准名词 ③ **光在材质上怎么走** "+
+					"④ 与项目风格匹配的画质后缀 ⑤ 2–4 组固定陈设（前景 1–2 组、中景 1–2 组）",
+				len(thin), strings.Join(firstN(thin, 4), "；"))
+		}
+	}
+
+	// ── H3 正文词数（官方 ref-en.txt §5.2：生成任务 350–500 词，"单镜也不能因此写短"）──
+	//
+	// 2026-09-28 从官方仓库同步时实测：平台把这条当"目标而非配额"，真方案 48 镜落在
+	// 633–1407 词（中位 ~990）≈ 官方上限两倍。太长会摊薄注意力，太短是描写不足 —— 两头都报。
+	if len(p.Shots) > 0 {
+		var short, long []string
+		total := 0
+		for _, sh := range p.Shots {
+			n := H3DescriptionWords(sh.H3Prompt)
+			if n == 0 {
+				continue // 空正文由别的门报，这里不重复
+			}
+			total += n
+			if n < H3WordsFloor {
+				short = append(short, fmt.Sprintf("#%d(%d 词)", sh.ID, n))
+			} else if n > H3WordsCeil {
+				long = append(long, fmt.Sprintf("#%d(%d 词)", sh.ID, n))
+			}
+		}
+		if len(short) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的正文偏短（%s，官方 350–500 词）—— 描写不足时模型只能自己补画面；"+
+					"官方还特别说明「单镜也不能因此写短」，一镜也要按信息量写满",
+				len(short), strings.Join(firstN(short, 6), "、"))
+		}
+		if len(long) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的正文偏长（%s，官方 350–500 词；本方案均值 %d 词）—— 超长会把注意力摊薄在无关句子上，"+
+					"真正该重的动作反而糊过去；把重复的服装/道具复述压掉，只留这一镜自己发生的事",
+				len(long), strings.Join(firstN(long, 6), "、"), total/len(p.Shots))
+		}
+	}
+
 	// 检查 3'（场景卡侧）：官方 STEP 4 要求场景卡写"连续性地标"与"光态"。
 	// 这两项是**跨镜空间一致**的锚点：地标换位置、光态跳时间，观众立刻觉得"不是同一个地方"。
 	if len(p.Scenes) > 0 {

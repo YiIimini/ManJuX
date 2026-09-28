@@ -172,6 +172,90 @@ func bodyReadableText(text string) string {
 	return ""
 }
 
+// ── H3 正文词数（官方 `h3-prompt-writing/references/ref-en.txt` §5.2）────────────────
+//
+// 官方原文：生成任务的 `detailed_description` 通常 **350–500 英文词**，"A single shot does not
+// automatically justify a shorter description"（单镜也不能因此写短）。
+//
+// 【2026-09-28 实测同步】平台此前把这条写成"目标而非配额"，于是真方案里 48 镜的正文落在
+// **633–1407 词（中位 ~990）**，约为官方上限的两倍 —— 超长会把注意力摊薄在无关句子上，
+// 该重的地方反而糊过去。所以这里加一条**双向**门：太少 = 描写不足，太多 = 稀释注意力。
+const (
+	H3WordsFloor = 300 // 官方下限 350，留一点余量（对白密集时官方允许优先排下整条台词线）
+	H3WordsCeil  = 600 // 官方上限 500，留余量；实测中位 990 是明显超标
+)
+
+// H3DescriptionWords 正文的英文词数（只数含拉丁字母的词，中文标点/数字不算）。
+func H3DescriptionWords(prompt string) int {
+	n := 0
+	for _, w := range strings.Fields(prompt) {
+		for _, r := range w {
+			if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+				n++
+				break
+			}
+		}
+	}
+	return n
+}
+
+// ── 场景板"贫瘠"检测（用户 2026-09-28：「解析生成的场景简陋单一导致分镜内容一点也不理想」）──
+//
+// 判据按《四、场景提示词指令》的意图**翻译成可机检的三件**（不是把它的中文词表搬进来 ——
+// 那套是即梦的写法，平台这边是 H3 的英文散文格式）：
+//
+//	① 建立镜头串（官方硬要求，缺了就不是"建立图"）；
+//	② 五项大景元素里**至少两项**（天空/地平线/远山/巨大建筑群/开阔地貌）；
+//	③ 光的质感（不是"白天"这种时间词，而是光的性质：黄昏死寂金光/黎明蓝调/丁达尔/体积光…）。
+//
+// 三条里缺任何一条都报"贫瘠"。宁可少报：词表写宽了会让人不再看这条告警。
+var (
+	// PlanSceneGrandElements 大景五要素。
+	// 词表按**真实写法**放宽（第一版收 "distant mountain" 这种整短语，遇到
+	// "distant blue-grey mountain ridges" 就匹配不上 —— 实测夹具先被自己卡住）。
+	// 放宽的代价只是漏报，而"至少两项"这条约束仍然拦得住只有一面墙的贫瘠板。
+	PlanSceneGrandElements = []string{
+		// 注意**不收** "wall"：单面墙不算"巨大建筑群"，收了它这条门就废了（实测被自己的用例抓到）
+		"sky", "horizon", "mountain", "ridge", "peak", "architecture", "building", "tower", "rooftop",
+		"terrain", "valley", "plain", "field", "sea", "ocean", "river", "cityscape", "skyline",
+		"天空", "地平线", "远山", "山脊", "建筑", "城", "开阔", "原野", "海",
+	}
+	// PlanSceneLightWords 光的质感（不是时间词）。中英都收，因为卡片可能是任一种写法。
+	PlanSceneLightWords = []string{
+		"light", "sunlight", "sunbeam", "god ray", "volumetric", "rim light", "backlight", "gold", "amber",
+		"dusk", "dawn", "blue hour", "twilight", "glow", "shadow", "shine", "gleam", "luminous",
+		"光", "丁达尔", "耶稣光", "逆光", "轮廓光", "体积光", "暮", "晨", "昏", "辉光", "光影",
+	}
+)
+
+// ScenePlateThin 场景板是否贫瘠：返回缺的东西（空 = 不贫瘠）。
+//
+// 只在**有内容**的提示词上判（空串交给"缺提示词"那条门报，不在这里重复）。
+func ScenePlateThin(prompt string) []string {
+	s := strings.TrimSpace(prompt)
+	if s == "" {
+		return nil
+	}
+	low := strings.ToLower(s)
+	var lack []string
+	if !containsAny(s, PlanEstablishingExtra) {
+		lack = append(lack, "建立镜头串")
+	}
+	grand := 0
+	for _, w := range PlanSceneGrandElements {
+		if strings.Contains(low, strings.ToLower(w)) {
+			grand++
+		}
+	}
+	if grand < 2 {
+		lack = append(lack, "大景元素（天空/地平线/远山/建筑群/开阔地貌 至少两项）")
+	}
+	if !hasAnyMarker(s, PlanSceneLightWords) {
+		lack = append(lack, "光的质感（不是「白天」这种时间词）")
+	}
+	return lack
+}
+
 // negatedBefore 命中位置之前一小段里有没有否定词。
 func negatedBefore(low string, idx int) bool {
 	start := idx - 12
