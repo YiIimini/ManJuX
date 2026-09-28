@@ -50,7 +50,13 @@ type Params struct {
 	Transition                  string // cut / fade / dissolve
 	// BGM 成片的**单条**配乐文件路径（项目参数 audio.bgm）。
 	// 空 = 不铺配乐（片段里也不再各带各的：这是官方 qc-checklist 的口径，见 bgm.go）。
-	BGM           string
+	BGM string
+	// BurnSubtitles 是否把字幕烧进成片。**默认开**。
+	//
+	// ⚠ **有意分歧 DEV-03（勿当 bug 修）**：官方 qc-checklist STEP 8 要求"除用户明确要求外不加字幕"，
+	// 平台默认加 —— 官方那套是给创意短片的，而 ManJuX 做的是**竖屏漫剧**：观众静音刷手机，
+	// 字幕是交付的一部分（红果这类平台的标配），且字幕与配音同源于台词的 <d> 段落。
+	// 做纯展示向短片时应当关掉 —— 所以它是开关而不是写死。见 docs/与官方的有意分歧.md。
 	BurnSubtitles bool
 	SubtitleSize  int // 字号(屏高百分比)
 	// SubtitleMarginV 字幕下边距(屏高百分比;0 = 默认 15%)。

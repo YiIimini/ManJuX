@@ -79,6 +79,10 @@ func H3FormatViolations(h3 string) []string {
 	//
 	// 判据一律**宽松**（有即可，不判措辞）：这些是质量级问题，宁少报不误报。
 
+	// ⚠ **有意分歧 DEV-04（勿当 bug 修）**：官方支持 I2VA/FL2VA（首尾帧），平台只走 Ref2VA ——
+	// 首尾帧与参考图**互斥**，而跨镜一致性完全依赖参考图（定妆照/场景板/道具卡）。
+	// 换成首尾帧等于把身份锁丢掉。见 docs/与官方的有意分歧.md。
+	//
 	// ④ 模式判定与段落齐备：Ref2VA 六段 / T2VA 三段，且顺序固定
 	ref2va := containsAny(h3, "subject_definitions:", "retention_analysis:", "detailed_description:")
 	if ref2va {
