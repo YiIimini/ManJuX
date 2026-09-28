@@ -342,6 +342,20 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	}
 
 	finalPath := filepath.Join(outDir, "final.mp4")
+	// **先写 .part 再原子换名**（2026-09-29 运行时审计 P1-4）。
+	//
+	// 原来 ffmpeg 直接写 `final.mp4`：合成中途点「停止」/关窗/拔电/杀进程时，
+	// ffmpeg 被 `CommandContext` 干掉，留下**截断但非零字节**的半成品 ——
+	// 而交付判据 `project.FileOnDisk` 只判"存在、非目录、Size>0"，于是半成品算已交付：
+	//
+	//	① 收尾打「✔ 全流程完成」；
+	//	② 批量产线断点续跑**永久跳过这一集**（它自己注释里承认"跳过的集再也不会被跑"
+	//	   是最坏形态，但只防了 0 字节）；
+	//	③ 用户看到一串完成、成片播不了（`+faststart` 还会把 moov 放最后，
+	//	   半成品大概率连容器都读不了）。
+	//
+	// 同仓对照：`comfyengine/client.go` 的下载早就做对了 `.part` + rename。
+	partPath := finalPath + ".part"
 	args := []string{"-y", "-i", master, "-af", chain}
 	if needEncode {
 		args = append(args, "-vf", vf)
@@ -362,7 +376,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		args = append(args,
 			"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-			"-movflags", "+faststart", finalPath)
+			"-movflags", "+faststart", "-f", "mp4", partPath)
 	} else {
 		// 一个视频滤镜都没有(未烧字幕且未开调色)这一路**视频零滤镜**:master 已经是
 		// 同规格 x264(硬切路 -c:v copy、叠化路 xfade 后 crf18 重编),这里再解一遍码、
@@ -372,7 +386,9 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		args = append(args,
 			"-c:v", "copy",
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-			"-movflags", "+faststart", finalPath)
+			// `-f mp4` 必须显式给：临时文件名以 `.part` 结尾，ffmpeg 从扩展名**推不出**
+			// 封装格式（报 "Unable to choose an output format"）。换名之后扩展名才是 .mp4。
+			"-movflags", "+faststart", "-f", "mp4", partPath)
 	}
 	// 烧字幕这一路必须在 outDir 里跑:libass 只接受相对文件名(规避 Windows 盘符转义)。
 	if burnt {
@@ -381,6 +397,11 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 	} else if _, err := f.Run(ctx, args...); err != nil {
 		return nil, fmt.Errorf("终混失败: %w", err)
+	}
+	// **成片到这里才"存在"**：ffmpeg 正常退出后再换名 —— 上面任何一条 return 都会
+	// 让 `.part` 留在盘上（不会被误判成交付），由下一次合成覆盖或清理带走。
+	if err := os.Rename(partPath, finalPath); err != nil {
+		return nil, fmt.Errorf("成片落盘失败（临时文件 %s 换名失败）: %w", filepath.Base(partPath), err)
 	}
 	if onProgress != nil {
 		onProgress(100, "合成完成")
