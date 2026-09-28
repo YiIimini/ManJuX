@@ -22,7 +22,13 @@ const (
 //
 // 为什么会漏进正文：平台的规则段与 schema 里到处是 `char_xxx` / `scene_xxx` 这类占位写法，
 // 模型有时会把它们当"标签"写进散文里 —— 那会被渲染成画面上的乱码字形（与汉字卫生同一类事故）。
-var h3TraceTags = []string{"[char:", "[scene:", "[shot:", "[prop:", "<char:", "<scene:", "<prop:"}
+var h3TraceTags = []string{
+	// 官方 model-selection.md 的 per-shot 规则点名的**五个**双向绑定标签：
+	// "[char:…] [scene:…] [shot:…] [dur:…] [hook:…]" —— 这些只属于分镜表，
+	// 绝不许出现在成片提示词里。平台此前的词表只有前三个（[dur:/[hook: 漏了）。
+	"[char:", "[scene:", "[shot:", "[dur:", "[hook:", "[prop:",
+	"<char:", "<scene:", "<prop:",
+}
 
 // storyboardTraceIn 正文里出现的分镜/内部标签（空 = 没有）。
 func storyboardTraceIn(h3 string) string {

@@ -99,3 +99,27 @@ func TestUnusedSpeakerID(t *testing.T) {
 		}
 	}
 }
+
+// TestStoryboardLabelsAllBanned 官方 model-selection.md 的 per-shot 规则点名五个双向绑定标签：
+// "[char:…] [scene:…] [shot:…] [dur:…] [hook:…]" —— 一个都不许进成片提示词。
+//
+// 平台此前的词表只有前三个（[dur: 与 [hook: 漏了）——"抄清单只抄一半"的典型。
+func TestStoryboardLabelsAllBanned(t *testing.T) {
+	official := []string{"[char:", "[scene:", "[shot:", "[dur:", "[hook:"}
+	for _, tag := range official {
+		if !containsAny(strings.ToLower(strings.Join(h3TraceTags, " ")), tag) {
+			t.Errorf("官方点名的标签 %s 必须在禁用词表里", tag)
+		}
+		// 真造一条正文，确认门真的会响
+		h3 := "detailed_description:\nThe style is cinematic.\n[Shot 1] he stands " + tag + "x]."
+		found := false
+		for _, v := range H3FormatViolations(h3) {
+			if strings.Contains(v, "内部标签") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("正文里出现 %s 时要报"+"内部标签", tag)
+		}
+	}
+}

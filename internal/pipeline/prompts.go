@@ -990,7 +990,12 @@ func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKi
 		// 里一条"脸必须与角色卡逐项一致"的约束都没有 —— 定妆照是全片身份的权威,
 		// 它一偏,成片与角色卡就永远对不上,而提示词里没有任何痕迹可查。
 		// PortraitPrompt 的注释本来就写着分工是"只有 SheetLook 看 FacesOn"。
-		return prof.SheetIdentity
+		// **官方 per-shot 前缀里与画风无关的那几句**（`model-selection.md` STEP 7 的 H3 prompt prefix：
+		// "strong character design language, clean motion, on-brand color palette"）——
+		// 官方那段是给皮克斯风 3D 的（含 "Pixar-inspired / Q-version proportions"，不能照抄到国漫项目），
+		// 但**这几句与画风无关**：设计语言要强、动态要干净、配色要同品牌 —— 任何画风都成立，
+		// 且正好治"画面平、没有辨识度"这类观感问题。
+		return prof.SheetIdentity + "\n" + officialPrefixEssentials
 	}
 	s := strings.ToLower(style)
 	// has3D 只认"明确要 3D CG 虚拟人 / 手办"的写法。
@@ -1368,3 +1373,13 @@ func PortraitFaceIDClause(selfLock string, others []string) string {
 		"(是脸不一样,不是衣服不一样)。理想化不等于可以互换,不许退回通用帅哥脸。)\n")
 	return sb.String()
 }
+
+// officialPrefixEssentials 官方 per-shot 前缀里**与画风无关**的那部分（见上方 styleExpandFor 的说明）。
+//
+// 出处：MiniMax H3 官方 `skills/3d-animation-short-generator/references/model-selection.md`
+// STEP 7「H3 prompt prefix」：`strong character design language, clean motion, on-brand color palette`。
+// 只取这三句：官方那段还带 "Pixar-inspired 3D cartoon rendering / C4D + Octane / Q-version
+// proportions" —— 那是**皮克斯风**的介质描述，照抄到国漫二维/写实项目上会直接改掉用户的画风。
+const officialPrefixEssentials = "STRONG CHARACTER DESIGN LANGUAGE (the silhouette and costume read instantly), " +
+	"CLEAN MOTION (clean, readable movement; no smearing, no strobing), ON-BRAND COLOUR PALETTE (the palette stays " +
+	"consistent with the project's approved look)."
