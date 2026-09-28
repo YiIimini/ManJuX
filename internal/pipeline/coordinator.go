@@ -125,6 +125,25 @@ func (c *Coordinator) HasRunning() bool {
 	return len(c.runs) > 0
 }
 
+// RunningPhase 返回**正在跑指定阶段**的项目 id(没有则空串)。
+//
+// 用途只有一个:批量产线在"预解析下一集"之前问一句"此刻有没有别的 LLM 解析在跑"
+// —— 用户 2026-09-28:「提前预解析那也是当前没有相同任务的条件下才去执行啊」。
+//
+// 判据取 Run.Phase 这个**实时**字段(setRunPhase 随阶段推进更新),而不是启动时传进来的
+// phase:第 N 集从 all 起步,进了资产阶段之后它就不再占用 script 这个"工位"了 ——
+// 正是这一刻,LLM 空出来、可以安全地去解析下一集。
+func (c *Coordinator) RunningPhase(phase string) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for id, r := range c.runs {
+		if r.Phase == phase {
+			return id
+		}
+	}
+	return ""
+}
+
 // Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段);
 // engineOverride 非空时本次运行覆盖项目引擎(镜头级分派:auto/comfy/api)。
 //

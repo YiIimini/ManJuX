@@ -107,10 +107,14 @@ func jsonUnmarshalStrict(s string, v any) error {
 //     下一集的 LLM 解析后进行渲染管线顺序,后面依次顺序,流水线一样到了那一步就做那一步」。
 //
 // 落地成两条硬约束:① 集数照常全部入队、一路顺下去(不等人点「开始」);
-// ② **一集的 LLM 解析只属于那一集** —— 轮到第 N 集才解析第 N 集,轮到之前不许替它抢跑。
-// 第 ② 条曾被我自己破坏:这里一度有个"顺手把下一集剧本解析掉"的优化,症状是第 1 集刚开跑、
-// 第 2 集的剧本分镜也跟着跑(2026-09-28 用户报「说了 LLM 解析按集来,为什么一来就直接两集
-// 开始解析」)。优化已删除,守卫见 batch_serial_test.go。
+// ② **一集的 LLM 解析只属于那一集** —— 轮到第 N 集才解析第 N 集;替下一集提前解析**只在
+// 安全窗口里**做(上一集方案已落盘 + 此刻没有别的 LLM 解析在跑,判据见 canPreparse)。
+//
+// 第 ② 条在同一天里被用户纠了两次,两次都记在这儿,免得再走回去:
+//   - 「说了 LLM 解析按集来,为什么一来就直接两集开始解析」—— 违规的是**两集同时解析**;
+//   - 「提前预解析那也是当前没有相同任务的条件下才去执行啊」—— **有条件的提前是允许的**。
+//
+// 第一版把它读成"不许提前",把预解析整个删掉了;这一版把门补齐,守卫见 batch_serial_test.go。
 type novelBatch struct {
 	mu       sync.Mutex
 	prefix   string
@@ -322,10 +326,10 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 				Message: fmt.Sprintf("⏳ 《%s》已在运行(不是本产线启动的),产线等它跑完再续下一集", ep)})
 		}
-		// **一集的 LLM 解析只属于那一集**(见 novelBatch 的逐集串行铁律):这里只起 `ep`,
-		// 绝不提前起第 N+1 集 —— 此处曾调过 preparseNextScript(「顺手把下一集解析掉」),
-		// 症状就是"第 1 集刚开跑,第 2 集的分镜也在解析"(2026-09-28 用户报「一来就直接两集」),
-		// 已删除;守门见 batch_serial_test.go(产线里的启动点只能有一处,且只能是当前集)。
+		// **一集的 LLM 解析只属于那一集**(见 novelBatch 的逐集串行铁律):这里只起 `ep`。
+		// 替下一集提前解析的事**不在这儿做** —— 它要等到"本集方案已落盘、LLM 空出来"的安全
+		// 窗口(见下面等待循环里的 preparseNextScript)。在起集之前就动手,正是"第 1 集刚开跑、
+		// 第 2 集的分镜也在解析"那个形态(2026-09-28 用户报「一来就直接两集开始解析」)。
 		startPhase := pipeline.PhaseAll
 		if hasUsablePlan(s.store.Dir(ep)) {
 			// 方案已在(上次跑过留下,或用户单独跑过这一集)⇒ 不必再解析一遍,直接从资产开始。
@@ -348,6 +352,9 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		hardDeadline := epStart.Add(batchEpisodeHardCap)
 		fresh := projectFreshest(s.store.Dir(ep))
 		lastActive := time.Now()
+		// 预解析下一集:只在 canPreparse 定义的**安全窗口**里做(见 preparseNextScript)。
+		// 一集只试一次;窗口一直不出现就算了 —— 轮到下一集时它自己会按正常流程解析。
+		preparsed := false
 		for time.Now().Before(hardDeadline) {
 			time.Sleep(10 * time.Second)
 			batch.mu.Lock()
@@ -360,6 +367,11 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			}
 			if s.pipe.Running(ep) == nil {
 				break
+			}
+			// LLM 空出来了吗:本集已进入资产/渲染阶段(方案早就落盘)、且此刻没有任何
+			// script 阶段在跑 —— 这就是预解析下一集的安全窗口。
+			if !preparsed {
+				preparsed = s.preparseNextScript(i)
 			}
 			if f := projectFreshest(s.store.Dir(ep)); f.After(fresh) {
 				fresh, lastActive = f, time.Now()
@@ -462,12 +474,69 @@ func projectFreshest(dir string) time.Time {
 	return newest
 }
 
-// 此处曾有 preparseNextScript:「起第 N 集之前,顺手把第 N+1 集的剧本分镜也启动」。
+// canPreparse 现在能不能预解析下一集的剧本分镜?三个条件缺一不可。
 //
-// 2026-09-28 删除。它当时的理由是"解析是纯 LLM、不碰显卡,与渲染互不争用",但用户要的是
-// **一集一集来**(原话见 novelBatch 的逐集串行铁律):轮到第 N 集才解析第 N 集。删掉的代价
-// 是每集少赚一段"提前解析"的时间,换来的是同一时刻只有一集在做 LLM 解析、日志不串台。
-// 别再把它加回来 —— batch_serial_test.go 会当场变红。
+// 用户 2026-09-28 两次定调都指向这里:
+//   - 「说了 LLM 解析按集来,为什么一来就直接两集开始解析」—— 两集**同时**解析是违规的;
+//   - 「提前预解析那也是当前没有相同任务的条件下才去执行啊」—— **有条件的提前是允许的**。
+//
+// 上一版(同一天)把这两句读成了"不许提前",于是把预解析整个删掉 —— 读窄了:该修的是**门**,
+// 不是机制。这一版把门补齐:
+//
+//   - prevPlanReady:上一集的方案已落盘。这是**跨集一致性的补给线** —— script 阶段开头会扫
+//     兄弟集的 plan.json,把"已确立的角色名 + 形象描述"注入提示词(见 pipeline.bookRoster),
+//     而 plan.json 是 script 阶段**末尾**才落盘的(stages_script.go 的 SavePlan)。上一集方案
+//     还没落盘就解析下一集 ⇒ 下一集读不到上一集的角色 ⇒ 它自己发明角色名与形象 ⇒ 跨集漂移
+//     (2026-09-09 用户实证「貅兜兜跨集飘逸」;实测第01集「貅满堂」到第02集被写成「貅满仓」,
+//     一字之差即匹配失效、重生成)。这条门把时机天然推到"本集已进入资产/渲染阶段"。
+//   - !llmBusy:此刻没有任何 script 阶段在跑 —— 一集一集来,同一时刻只有一集在做 LLM 解析。
+//   - nextNeedsPlan:下一集存在、且它还没有可用方案(有就不必再解析一遍)。
+//
+// 纯函数,便于穷举(见 batch_serial_test.go)。
+func canPreparse(prevPlanReady, llmBusy, nextNeedsPlan bool) bool {
+	return nextNeedsPlan && prevPlanReady && !llmBusy
+}
+
+// preparseNextScript 在**安全窗口**里预解析下一集的剧本分镜(纯 LLM,与当前集的显卡阶段并行)。
+//
+// 窗口由 canPreparse 定义;**不满足就什么都不做** —— 轮到下一集时它自己按正常流程解析
+// (产线是逐集串行的:一集的解析只属于那一集,见 novelBatch 的逐集串行铁律)。
+// 窗口通常出现在"本集已进入资产/渲染、LLM 空出来了"的时候,于是轮到下一集时它已经有方案,
+// 直接从资产阶段起步,等于每集白赚一段解析时间。
+//
+// 返回值=这次真的启动了(产线用它记"一集只试一次")。
+func (s *Server) preparseNextScript(cur int) bool {
+	batch.mu.Lock()
+	curID, next := "", ""
+	if cur >= 0 && cur < len(batch.projects) {
+		curID = batch.projects[cur]
+	}
+	if cur+1 < len(batch.projects) {
+		next = batch.projects[cur+1]
+	}
+	batch.mu.Unlock()
+	if next == "" {
+		return false
+	}
+	ok := canPreparse(
+		hasUsablePlan(s.store.Dir(curID)),               // 上一集方案已落盘(跨集角色锚定读得到)
+		s.pipe.RunningPhase(pipeline.PhaseScript) != "", // 此刻没有别的 LLM 解析在跑
+		!hasUsablePlan(s.store.Dir(next)),               // 下一集确实还缺方案
+	)
+	if !ok {
+		return false
+	}
+	if err := s.pipe.Start(next, pipeline.PhaseScript, nil, "", 0); err != nil {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 下一集《%s》的剧本预解析没抢到(%v)—— 不影响主流程,轮到它时按正常顺序解析", next, err)})
+		return false
+	}
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+		Message: fmt.Sprintf("🧠 本集方案已就绪、LLM 空出来了:顺手把下一集《%s》的**剧本分镜**解析掉"+
+			"(纯 LLM,不占显卡,与当前渲染并行;轮到它时直接从资产阶段起步)", next)})
+	return true
+}
+
 // hasUsablePlan 这一集是否已有可用的 plan.json（有就跳过解析、直接从资产阶段起步）。
 func hasUsablePlan(dir string) bool {
 	st, err := os.Stat(filepath.Join(dir, "plan", "plan.json"))
