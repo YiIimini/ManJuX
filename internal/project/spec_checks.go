@@ -294,6 +294,9 @@ var PlanPropWords = []string{
 	"knife", "blade", "sword", "dagger", "staff", "ledger", "scroll", "letter", "talisman", "lantern", "mirror",
 }
 
+// FirstPropWord 动作里命中的第一个器物词（空 = 没提到器物）。告警与预检都用它。
+func FirstPropWord(s string) string { return firstPropWord(s) }
+
 // firstPropWord 动作里命中的第一个器物词（给人看的告警里指个位置）。
 func firstPropWord(s string) string {
 	low := strings.ToLower(s)
