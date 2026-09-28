@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -141,6 +142,38 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 	if ptCount > 0 {
 		add(fmt.Sprintf("条件缓存数据文件 %d 个(.pt;目录 %s)", ptCount, strings.Join(ptDirs, "、")), ptSize)
+	}
+
+	// ⑤b 活项目里**过期**的条件缓存（2026-09-29 性能审计 #8）。
+	//
+	// ③ 清"项目已删的孤儿"、⑤ 清"没被任何 .ok 引用的数据"，但**仍在被引用的旧条目**
+	// 从来没人清：改一次提示词重渲，同一镜会生成新的 `s{shot}_{hash}`，旧的那份
+	// sidecar 还在、.pt 也还在 —— 一集 60 镜就是 60 个 .pt（每个 20MB 上下），
+	// 40 集 ≈ 2400 个。代码注释里记的历史实测是 **838 文件 / 17.4GB**。
+	//
+	// 判据取"每个项目保留最近 N 份"：缓存是**可重算**的（下次渲染会重新预编码），
+	// 留最近的那批就够"接着渲"用；更早的条目只有在"把镜头改回原样再渲"时才会命中，
+	// 而那种情况下重算一次的代价远小于长期占着几 GB。
+	liveOld := collectStaleCondNames(condDir, condCacheKeepPerProject)
+	var oldCount int
+	var oldSize int64
+	for _, ptDir := range comfyModelDirs(g.Comfy.RootDir, "conditioning") {
+		for name := range liveOld {
+			p := filepath.Join(ptDir, name+".pt")
+			st, err := os.Stat(p)
+			if err != nil {
+				continue
+			}
+			if os.Remove(p) == nil {
+				oldCount++
+				oldSize += st.Size()
+			}
+		}
+	}
+	if oldCount > 0 {
+		// 同步清掉 sidecar（否则下次会按"有 .ok 没 .pt"当成缓存损坏）
+		removeCondSidecars(condDir, liveOld)
+		add(fmt.Sprintf("过期条件缓存 %d 个(.pt;每项目只留最近 %d 份)", oldCount, condCacheKeepPerProject), oldSize)
 	}
 
 	// ④ 系统临时文件(mx-* 前缀,应用自身产生的)
@@ -283,6 +316,74 @@ func collectLiveCondNames(condDir string) map[string]bool {
 //
 // 目录不存在或不可读返回错误,由调用方决定是否提示(不影响其它清理项)。
 // 返回 (删除数, 释放字节, 错误)。
+// condCacheKeepPerProject 每个项目保留最近多少份条件缓存（见 ⑤b 的说明）。
+//
+// 120 ≈ 两集的量：够"接着上次渲到的地方继续"用，而更早的条目只有在"把镜头改回原样
+// 再渲一次"时才会命中 —— 那种情况下重算一次的代价远小于长期占着几 GB。
+const condCacheKeepPerProject = 120
+
+// collectStaleCondNames 找出"活项目里**过期**的条件缓存名"（每个项目保留最近 keep 份，
+// 更早的返回）。返回的是 `.ok` 的基名（= `.pt` 的文件名主干），调用方据此删两侧。
+//
+// 只处理**仍存在**的项目目录：项目已删的整目录由上面的 ③ 清掉。
+// 排序按 sidecar 的修改时间（写入时就是它被用到的时刻）。
+func collectStaleCondNames(condDir string, keep int) map[string]int {
+	stale := map[string]int{} // 缓存名 → 无用（值占位，调用方只关心 key）
+	projs, err := os.ReadDir(condDir)
+	if err != nil {
+		return stale
+	}
+	for _, pj := range projs {
+		if !pj.IsDir() {
+			continue
+		}
+		dir := filepath.Join(condDir, pj.Name())
+		ents, rerr := os.ReadDir(dir)
+		if rerr != nil {
+			continue
+		}
+		type okFile struct {
+			name string
+			mod  time.Time
+		}
+		var oks []okFile
+		for _, e := range ents {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".ok") {
+				continue
+			}
+			info, ierr := e.Info()
+			if ierr != nil {
+				continue
+			}
+			oks = append(oks, okFile{name: e.Name(), mod: info.ModTime()})
+		}
+		if len(oks) <= keep {
+			continue
+		}
+		sort.Slice(oks, func(i, j int) bool { return oks[i].mod.After(oks[j].mod) })
+		for _, o := range oks[keep:] {
+			stale[strings.TrimSuffix(o.name, ".ok")] = 1
+		}
+	}
+	return stale
+}
+
+// removeCondSidecars 删掉这些缓存名对应的 sidecar（`.ok` 与当前版本的键标记不动）。
+func removeCondSidecars(condDir string, names map[string]int) {
+	projs, err := os.ReadDir(condDir)
+	if err != nil {
+		return
+	}
+	for _, pj := range projs {
+		if !pj.IsDir() {
+			continue
+		}
+		for name := range names {
+			_ = os.Remove(filepath.Join(condDir, pj.Name(), name+".ok"))
+		}
+	}
+}
+
 func cleanCondCacheFiles(ptDir string, live map[string]bool) (int, int64, error) {
 	ents, err := os.ReadDir(ptDir)
 	if err != nil {
