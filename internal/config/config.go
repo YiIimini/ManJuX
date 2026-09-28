@@ -180,26 +180,43 @@ type Settings struct {
 }
 
 // Default 返回带默认值的设置。
+// boolPtr 取一个 bool 的地址（给 `*bool` 型设置项在默认值里写显式开关用）。
+func boolPtr(b bool) *bool { return &b }
+
+// Default 出厂默认设置。
+//
+// ## 这些值是怎么定下来的（2026-09-29 用户要求「将目前的系统设置参数设置为默认配置参数」）
+//
+// 下面这些不再是"我猜的合理值"，而是**用户这台机器上跑通了的那一套**：
+// 换过的底模 / Turbo LoRA、显存预留、Sage 加速、LLM 与 VLM 的接入点、五步会话开关 ——
+// 用户怎么调的，默认就是什么。好处是**重装/换机/新建配置时不用再手工调一遍**。
+//
+// **三类刻意不固化**：
+//
+//	· `APIKey`（llm / vlm / minimax 三处）—— 凭据不进代码。空值 + 设置页填写。
+//	· `DataDir` / `NovelDir` / `Comfy.RootDir` —— 它们是**本机路径**，
+//	  由 Manager 按 exe 位置自动探测/填充；写死会把别人的机器带到我的盘上。
+//	· `Render.Width/Height` 之外的画幅类 —— 保持出厂值（用户没改）。
 func Default() *Settings {
 	return &Settings{
 		ServerPort: 8790,
 		DataDir:    "", // 由 Manager 依 exe 位置填充
-		NovelDir:   "", // 由 Manager 默认填 <DataDir>/Novel(存在时)
+		NovelDir:   "", // 由 Manager 默认填 <DataDir>/小说(存在时)
 		LLM: LLMSettings{
 			BaseURL: "https://api.deepseek.com/v1",
-			APIKey:  "",
+			APIKey:  "", // 凭据不进默认值
 			Model:   "deepseek-flash",
-			Timeout: 600,
+			Timeout: 1200, // 用户实调值：推理模型分镜直出用 600 会超时
 		},
 		Comfy: ComfySettings{
 			BaseURL:         DefaultComfyBaseURL,
 			RootDir:         "", // 由 Manager 自动探测填充
 			AutoStart:       true,
 			IdleFreeMin:     10,
-			UNetRef2VA:      "MiniMax_H3_ref2va_pruned_int8_convrot.safetensors",
+			UNetRef2VA:      "Minimax-h3_Singularity_ref2va_Pruned_v1.3_int8.safetensors",
 			UNetFL2VA:       "MiniMax_H3_fl2va_pruned_int8_convrot.safetensors",
 			TurboLoRARef2VA: "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
-			TurboLoRAFL2VA:  "minimax_h3_fl2v_turbo_4step_v1.1_768p_comfyui_bf16.safetensors",
+			TurboLoRAFL2VA:  "minimax_h3_fl2v_turbo_4step_v1.2_768p_comfyui_bf16.safetensors",
 			VideoVAE:        "minimax_h3_video_vae_fp16.safetensors",
 			AudioVAE:        "minimax_h3_audio_vae_fp32.safetensors",
 			CLIP:            "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
@@ -221,18 +238,22 @@ func Default() *Settings {
 			EditVAE:           "qwen_image_2.1_vae_bf16.safetensors",
 			EditTurboLoRA:     "",
 			EditAnglesLoRA:    "",
-			ReserveVRAMGB:     1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
+			ReserveVRAMGB:     4, // 用户实调值（本机 5090 Laptop 24G，给系统留 4G）
+			// 用户实调值（已装 sageattention，生成约快一倍）。
+			// 字段是 `*bool`：nil = 未表态（装了包就自动启用），这里给**显式 true**
+			// 是因为用户的设置文件里就是显式 true —— 默认值要与他的实际配置一致。
+			SageAttention: boolPtr(true),
 		},
 		MiniMax: MiniMaxSettings{
 			BaseURL:    "https://api.minimax.cn",
-			APIKey:     "",
+			APIKey:     "", // 凭据不进默认值
 			Model:      "MiniMax-H3",
 			Resolution: "768P",
 		},
 		VLM: VLMSettings{
-			BaseURL: "https://open.bigmodel.cn/api/paas/v4",
-			APIKey:  "",
-			Model:   "glm-4.6v-flash",
+			BaseURL: "https://api.deepseek.com/v1", // 用户实调值（与 LLM 同一接入点）
+			APIKey:  "",                            // 凭据不进默认值
+			Model:   "deepseek-flash",
 		},
 		Render: RenderSettings{
 			DefaultEngine: "auto",
@@ -254,6 +275,8 @@ func Default() *Settings {
 			BriefMin:     400,
 			BriefMax:     700,
 			ShotLimit:    0, // 0=内容驱动(用内置安全网 120);与其字段说明同源
+			// 用户实调值：开着五步专职会话（②人物道具 / ④场景 / ⑤分镜 同时跑）。
+			FiveSessions: true,
 		},
 	}
 }

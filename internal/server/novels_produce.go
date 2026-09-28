@@ -182,8 +182,13 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			for _, ep := range newEps {
 				dst := filepath.Join(s.store.Dir(ep), "assets", "cover"+ext)
 				if b, e := os.ReadFile(cover); e == nil {
-					_ = os.MkdirAll(filepath.Dir(dst), 0o755)
-					_ = os.WriteFile(dst, b, 0o644)
+					_ = os.MkdirAll(filepath.Dir(dst), 0o755) // 目录已存在是常态，失败会在下面 WriteFile 上暴露
+					// 【2026-09-29 审计】原来是 `_ = os.WriteFile(...)` —— 封面没拷进去时
+					// 该集在界面上就是"没有封面"，而拆集流程照报成功（用户以为设了封面）。
+					if werr := os.WriteFile(dst, b, 0o644); werr != nil {
+						s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", ProjectID: ep,
+							Message: fmt.Sprintf("⚠ 分集《%s》的封面没拷进去(%v)——该集在列表里会显示成没有封面", ep, werr)})
+					}
 				}
 			}
 		}

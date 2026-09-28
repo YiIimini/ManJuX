@@ -109,7 +109,6 @@ type RenderParams struct {
 	Height    int    `json:"height"`
 	Steps     int    `json:"steps"`      // turbo 4-8 / 基线 20
 	Seed      int64  `json:"seed"`       // 0=每镜随机;非 0=全项目固定
-	Turbo     bool   `json:"turbo"`      // 是否挂加速 LoRA(全局 Comfy 设置提供文件名)
 	CondCache *bool  `json:"cond_cache"` // 两阶段渲染(条件缓存);nil = 未表态,回退全局设置
 	Seam      bool   `json:"seam"`       // 镜间连续接缝(MotionContext;仅本地 ComfyUI;相邻镜同分辨率)
 	// SeamResetEvery 接缝重置间隔(镜):接缝把上一镜尾部的 22 帧钉进本镜头部,
@@ -377,7 +376,7 @@ func DefaultStageParams() StageParams {
 			// Seam 默认开:镜间连续(MotionContext)让相邻镜头运镜/画面延续,
 			// 配合音频中点切与叠化,整片观感丝滑;上一镜无存档自动降级普通
 			// 渲染,云端/混合链安全(2026-09-09 用户定调直接升级)。
-			Steps: 8, Seed: 0, Turbo: true, CondCache: Bool(true), Seam: true,
+			Steps: 8, Seed: 0, CondCache: Bool(true), Seam: true,
 			// SeamResetEvery 默认 0 = 每场戏重置(同场景 + 有共同出场角色才接缝,
 			// 见 pipeline.seamBlockers):接缝只在"同一场戏的连续镜头"之间才有意义,
 			// 换场/换人时钉进去的 22 帧是另一处画面,误差还会逐链累积。

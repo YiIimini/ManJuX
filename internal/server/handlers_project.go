@@ -170,7 +170,13 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 		m["id"] = filepath.Base(dest)
 		m["name"] = filepath.Base(dest)
 		if raw, err := json.MarshalIndent(m, "", "  "); err == nil {
-			_ = os.WriteFile(filepath.Join(dest, "project.json"), raw, 0o644)
+			// 【2026-09-29 审计】原来是 `_ = os.WriteFile(...)` —— 回写失败时**目录名与
+			// project.json 里的 id/name 不一致**：项目在列表里叫一个名字、点进去是另一个
+			// （后续按 id 找资产的调用会全落空），而导入流程照报成功。
+			if werr := os.WriteFile(filepath.Join(dest, "project.json"), raw, 0o644); werr != nil {
+				writeErr(w, 500, fmt.Errorf("导入：project.json 的 id/name 回写失败:%w（生成的是一个目录名与内部 id 不一致的半个项目）", werr))
+				return
+			}
 		}
 		// 后处理:与分镜阶段同等(台词时长预算 + 中文台词标记),再存盘
 		id := filepath.Base(dest)

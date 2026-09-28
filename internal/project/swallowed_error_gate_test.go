@@ -27,6 +27,11 @@ func TestNoSwallowedPersistenceErrors(t *testing.T) {
 	calls := []string{
 		"SaveAssets(", "SaveManifest(", "SaveSource(", "SaveMeta(", "SavePlan(",
 		"SaveProject(", "SaveClips(", "LoadAssets(", "LoadPlan(", "ReadFile(",
+		// 【2026-09-29 审计扩名单】写盘与改名此前不在名单里 —— 而它们的失败同样是
+		// "事情没做成却报成功"：① 导入时 project.json 的 id/name 回写失败 ⇒ 半个项目
+		// （目录 id 与文件 id 不一致）；② final.srt 没写出来但 SRTPath 照填、导出包照列；
+		// ③ 日志说"已登记别名"而别名没落盘；④ 换封面的旧备份没写成 ⇒ 撤回时无备份。
+		"WriteFile(", "WriteFileAtomic(", "os.Rename(", "Rename(",
 	}
 	// 例外：**测试与工具**不在此门范围。下面这些是"探测式读取"，失败本身就构成完整语义
 	// （不是"该做的事没做成"），加进白名单时都必须写明理由：
@@ -43,6 +48,11 @@ func TestNoSwallowedPersistenceErrors(t *testing.T) {
 		"frame_asset.go",
 		"handlers_asset.go",
 		"novels_cover_redo.go", // 读旧封面备份：备份不存在是正常路径（首次做封面）
+		// 【2026-09-29】引擎侧的三个"标记文件"：写的是**哨兵**，文件本身即在与否就是判据
+		// （读不到 ⇒ 当没缓存/没在跑，重新来过）。写失败不改变任何已下结论，
+		// 所以不报是**正确行为**，不是吞错。
+		"pidfile.go",            // PID 文件：读的时候会校验进程还在不在（"PID 被复用:不认领"）
+		"comfyengine/engine.go", // 启动标记与条件缓存 `.ok`：读不到就当没缓存，重新编码
 	}
 
 	root := ".." // internal/project → internal
@@ -53,8 +63,12 @@ func TestNoSwallowedPersistenceErrors(t *testing.T) {
 			return nil
 		}
 		base := filepath.Base(path)
+		slashed := filepath.ToSlash(path)
 		for _, a := range allow {
-			if base == a {
+			// 白名单项可以是**文件名**（`library.go`）也可以是**带目录的片段**
+			// （`comfyengine/engine.go`）—— 后者用来精确排除某个同名文件，
+			// 不然 `engine.go` 这个名字会同时放过引擎包里那几个真正的落盘点。
+			if base == a || strings.Contains(slashed, a) {
 				return nil
 			}
 		}

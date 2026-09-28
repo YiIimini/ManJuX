@@ -290,9 +290,18 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 
 	srtPath := filepath.Join(outDir, "final.srt")
 	if plan != nil {
-		_ = os.WriteFile(srtPath, []byte(buildSRT(plan, starts, durations, cues)), 0o644)
+		// 【2026-09-29 审计】原来是 `_ = os.WriteFile(...)` —— 写失败也照填 `res.SRTPath`，
+		// 于是导出包/产物面板会把一个**不存在的字幕文件**列成已完成，
+		// 用户去文件夹里找不到，只能怀疑自己眼瞎。
+		if werr := os.WriteFile(srtPath, []byte(buildSRT(plan, starts, durations, cues)), 0o644); werr != nil {
+			res.AudioNotes = append(res.AudioNotes,
+				fmt.Sprintf("⚠ 字幕文件没写出来（%v）——成片里没有对外字幕", werr))
+			srtPath = "" // 没写成就别把它当成产物路径交出去
+		}
 	}
-	res.SRTPath = srtPath
+	if srtPath != "" {
+		res.SRTPath = srtPath
+	}
 
 	chain, _, note := prepareAudio(ctx, f, master, p)
 	res.AudioNotes = append(res.AudioNotes, note)

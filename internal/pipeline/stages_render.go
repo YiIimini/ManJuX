@@ -49,13 +49,22 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	// 单镜渲染超时取自设置页(全局),此前该配置项被引擎写死忽略 —— 用户怎么改
 	// 都不生效,只能吃 45 分钟硬编码。现在经 Job.Timeout 透传给各引擎。
 	shotTimeout := time.Duration(g.Render.ShotTimeout) * time.Minute
-	if rp.Turbo && rp.Accel != "refine" {
-		// turbo LoRA 生效时步数钳到 4-8。
-		// refine 档例外:那一档**不挂蒸馏 LoRA**(见 accelLoraFor),步数不能被 4step/8step
-		// 的锚定值压回去 —— 否则"精修档"名存实亡,渲出来还是 8 步的糊图。
-		if rp.Steps > 8 {
-			rp.Steps = 8
-		}
+	// 蒸馏 LoRA 生效时步数钳到 4–8；`accel=refine` 例外 —— 那一档**不挂蒸馏 LoRA**
+	// （见 accelLoraFor），步数不能被 4step/8step 的锚定值压回去，否则"精修档"名存实亡。
+	//
+	// 【2026-09-29 审计】原来这里判的是 `rp.Turbo && rp.Accel != "refine"`，
+	// 而 `Turbo` 字段名说"是否挂加速 LoRA"、**实际挂不挂由 accel 单点决定** ——
+	// 字段名不副实，它唯一的作用就是放开这段钳制。于是它成了一个"关不掉、也不该关"的开关：
+	// 界面没有入口，手改 JSON 关掉反而更糟（挂着 4 步蒸馏 LoRA 跑 20 步，画质比 8 步还差）。
+	// 字段已删，判据直接看 accel。
+	//
+	// **钳制必须播报**：原来静默改数，用户在步数框里填 20、跑出来是 8，没有任何提示 ——
+	// 那是"假开关"的另一种形态（设置项能填、实际被覆盖）。每阶段报一次即可，不逐镜刷屏。
+	if rp.Accel != "refine" && rp.Steps > 8 {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+			"⚠ 采样步数 %d → 8：当前加速档（%s）挂的是蒸馏 LoRA（锚定 4/8 步），步数更高只是白烧时间。"+
+				"要跑完整步数，请把加速档切成「精修（refine）」", rp.Steps, rp.Accel)
+		rp.Steps = 8
 	}
 
 	// 档位可见性（ComfyUI 侧整改单 2026-09-27 · P0-2）：选了「画质档」但底模是量化版时，
