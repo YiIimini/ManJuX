@@ -49,8 +49,17 @@ type ComfySettings struct {
 	// **Qwen-Image-2.1**(7B,生成与编辑同一个权重,中文文字与指令遵循最强)。
 	ImageFamily string `json:"image_family"` // 默认 qwen_image_2_1
 	ImageUNet   string `json:"image_unet"`   // 默认 qwen_image_2.1_int8_convrot.safetensors
-	ImageCLIP   string `json:"image_clip"`   // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
-	ImageVAE    string `json:"image_vae"`    // 默认 qwen_image_2.1_vae_bf16.safetensors
+	// 配乐（ACE-Step 1.5，ComfyUI 原生节点）的四个模型文件。出厂值 = 官方 Comfy-Org repack
+	// 的文件名，与本机实测一致（见 docs/ACE-Step接入记录.md）。
+	//
+	// 为什么写进配置而不是写死在代码里：上游 repack 会改名（本周已经踩过一次"以为 4B
+	// 编码器可选"的教训 —— 实际 DualCLIPLoader 两个都要），写进配置至少能改，不用重编译。
+	MusicDiffusion    string `json:"music_diffusion"`      // models/diffusion_models/
+	MusicTextEncoder1 string `json:"music_text_encoder_1"` // models/text_encoders/（0.6B）
+	MusicTextEncoder2 string `json:"music_text_encoder_2"` // models/text_encoders/（4B）
+	MusicVAE          string `json:"music_vae"`            // models/vae/
+	ImageCLIP         string `json:"image_clip"`           // 默认 qwen3vl_8b_int8_convrot.safetensors(type=qwen_image)
+	ImageVAE          string `json:"image_vae"`            // 默认 qwen_image_2.1_vae_bf16.safetensors
 	// 图像编辑(多视角重绘 / 上传图白底化 / 换姿势)—— 2026-09-25 起**与生成同一个
 	// Qwen-Image-2.1 权重**:一个模型既出定妆照也做编辑,资产链只对一个家族,
 	// 少一层"生成一套画风、编辑另一套画风"的漂移源。
@@ -190,16 +199,21 @@ func Default() *Settings {
 			// 图像模型家族。**这里刻意写字符串字面量**:comfyengine 反向 import 了本包
 			// (取 ComfySettings),本包再 import 它就成了循环依赖。两处取值由
 			// comfyengine 的 TestDefaultImageFamilyMatchesConfig 钉住,改一处漏一处会红。
-			ImageFamily:    "qwen_image_2_1",
-			ImageUNet:      "qwen_image_2.1_int8_convrot.safetensors",
-			ImageCLIP:      "qwen3vl_8b_int8_convrot.safetensors",
-			ImageVAE:       "qwen_image_2.1_vae_bf16.safetensors",
-			EditUNet:       "qwen_image_2.1_int8_convrot.safetensors",
-			EditCLIP:       "qwen3vl_8b_int8_convrot.safetensors",
-			EditVAE:        "qwen_image_2.1_vae_bf16.safetensors",
-			EditTurboLoRA:  "",
-			EditAnglesLoRA: "",
-			ReserveVRAMGB:  1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
+			ImageFamily: "qwen_image_2_1",
+			ImageUNet:   "qwen_image_2.1_int8_convrot.safetensors",
+			// 配乐模型（ACE-Step 1.5）：四个文件缺一不可 —— 官方蓝本的 DualCLIPLoader 要两个文本编码器。
+			MusicDiffusion:    "acestep_v1.5_turbo.safetensors",
+			MusicTextEncoder1: "qwen_0.6b_ace15.safetensors",
+			MusicTextEncoder2: "qwen_4b_ace15.safetensors",
+			MusicVAE:          "ace_1.5_vae.safetensors",
+			ImageCLIP:         "qwen3vl_8b_int8_convrot.safetensors",
+			ImageVAE:          "qwen_image_2.1_vae_bf16.safetensors",
+			EditUNet:          "qwen_image_2.1_int8_convrot.safetensors",
+			EditCLIP:          "qwen3vl_8b_int8_convrot.safetensors",
+			EditVAE:           "qwen_image_2.1_vae_bf16.safetensors",
+			EditTurboLoRA:     "",
+			EditAnglesLoRA:    "",
+			ReserveVRAMGB:     1, // 给系统/浏览器留 1GB,避免渲染时把桌面一起拖卡
 		},
 		MiniMax: MiniMaxSettings{
 			BaseURL:    "https://api.minimax.cn",
