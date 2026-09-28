@@ -643,7 +643,42 @@ func ValidatePlan(p *Plan) []Issue {
 				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
 		}
 
-		// ── 运镜（camera）的三条门（2026-09-28 加）──────────────────────────────
+		// ── 场景板与道具卡的补充门（2026-09-28 用户问「道具和场景的呢」）──────────
+		//
+		// 判据在 `asset_gate.go`（返回**数据**），文案在这里 —— 理由同运镜那三条：
+		// `docs/门目录.md` 由 gatecat 用 AST 扫**字面格式串**生成，写成 `"%s", msg`
+		// 那几条门在目录里就看不出来。
+		for _, iss := range SceneIssues(p.Scenes) {
+			switch iss.Kind {
+			case SceneHasPeople:
+				add("warn", "plan.scenes",
+					"场景「%s」的板面文本里有 %d 个人物词（%s）—— 场景板必须是**空场**："+
+						"板上的人会被 H3 当作「这个地方本来就有的陌生人」带进该地点的每一镜，"+
+						"与角色的身份锁直接打架（用户《四》§4.1 严禁人影）",
+					iss.Name, len(iss.Words), strings.Join(iss.Words, "/"))
+			case SceneHasEvent:
+				add("warn", "plan.scenes",
+					"场景「%s」的板面文本里有 %d 个事件痕迹词（%s）—— 场景板只画"+
+						"「事件发生前的地点固有状态」：板上带着血渍/尸体/破碎物/遗落道具，"+
+						"那一集每一镜都像「事情已经发生过」（用户《四》§4.3 事件隔离）",
+					iss.Name, len(iss.Words), strings.Join(iss.Words, "/"))
+			}
+		}
+		if issues := PropFeatureIssues(p.Props); len(issues) > 0 {
+			var parts []string
+			for i, iss := range issues {
+				if i >= 4 {
+					break
+				}
+				parts = append(parts, PropIssueText(iss))
+			}
+			add("warn", "plan.props",
+				"%d 件道具缺「功能作用」或「独有特征」（%s）—— 用户《二》要求八项、"+
+					"此前只查了六项：功能边界常常是后面情节的钥匙（「托不起人」这种限制往往就是钥匙），"+
+					"而独有特征是它在画面里被认出来的唯一依据",
+				len(issues), strings.Join(parts, "；"))
+		}
+		// ── 运镜（camera）的三条门（2026-09-28 用户问「运镜是否合理」）──────────────
 		//
 		// 判据在 `camera_gate.go`（返回**数据**），播报文案在这里 —— 因为 `docs/门目录.md`
 		// 由 gatecat 扫**字面格式串**生成，写成 `add(..., "%s", msg)` 那条门在目录里就看不出来。

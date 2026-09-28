@@ -42,7 +42,10 @@ func samplePlan() *Plan {
 		// 夹具照**真实形态**写：一部戏总有几件反复出现的器物，样本里也得有。
 		Props: []Prop{{
 			ID: "prop_knife", Name: "旧柴刀", EN: "a short worn chopping knife with a hemp-wrapped handle",
-			Description: "磨薄的旧柴刀，柄缠麻布", ImagePrompt: "a short worn chopping knife, 1:1 square, isolated on plain white background",
+			// 用户《二》要求**八项**，「功能作用」与「独有特征」是其中两项 ——
+			// 合规样本必须写全，否则新的"道具八项"门会（正确地）报它不完整。
+			Description: "磨薄的旧柴刀，柄缠麻布；功能作用：劈柴与防身，砍不动硬木；独有特征：刀背有一道豁口",
+			ImagePrompt: "a short worn chopping knife with a chipped spine, 1:1 square, isolated on plain white background",
 		}},
 		Shots: []Shot{{
 			ID: 1, Scene: "scene_room", Characters: []string{"char_a"}, PropIDs: []string{"prop_knife"},
