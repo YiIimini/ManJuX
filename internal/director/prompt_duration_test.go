@@ -49,8 +49,8 @@ func TestRenderShotRulesUsesDurationConstants(t *testing.T) {
 // 分批路径(长文默认走的那条)会继续按旧口径出镜。
 func TestBothPromptPathsShareShotRules(t *testing.T) {
 	for name, prompt := range map[string]string{
-		"SystemPrompt":      SystemPrompt,
-		"batchSystemPrompt": batchSystemPrompt,
+		"SystemPrompt":                         SystemPrompt,
+		"batchSystemPrompt__OUTPUT_THIS_BATCH": batchSystemPrompt,
 	} {
 		if !strings.Contains(prompt, sysShotRules) {
 			t.Errorf("%s 没有内嵌渲染后的分镜规则段(时长文案可能各写了一份)", name)

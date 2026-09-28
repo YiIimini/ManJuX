@@ -21,9 +21,9 @@ import (
 
 // SystemPrompt 直出系统提示(知识库 H3 官方规范全量内嵌)。
 // SystemPrompt 拆段定义(拼接还原,内容与单轮路径完全一致):
-var sysHeader = promptText("sysHeader")
+var sysHeader = promptText("sysHeader__YOU_ARE_AN_ELITE")
 
-var sysOutputFull = promptText("sysOutputFull")
+var sysOutputFull = promptText("sysOutputFull__OUTPUT")
 
 // sysPropRules 关键道具卡（用户口径：**关键物品必须生成道具**，且跨镜不许漂）。
 //
@@ -34,7 +34,7 @@ var sysOutputFull = promptText("sysOutputFull")
 //
 // 这一段把"什么该收成道具、每件要写什么、怎么保证跨镜一致"讲清楚；跨镜一致靠的是
 // 装配层（`pipeline/prop_anchor.go`：把卡片原文逐字锚进引用它的每一镜），不靠 LLM 每镜自觉复述。
-var sysPropRules = promptText("sysPropRules") + "`id: \"prop_xxx\"`" + promptText("sysPropRules_2") + "`prop_ids`" + promptText("sysPropRules_3")
+var sysPropRules = promptText("sysPropRules__PROP_CARDS_THE_SERIES") + "`id: \"prop_xxx\"`" + promptText("sysPropRules__PROP_CARDS_THE_SERIES_p2") + "`prop_ids`" + promptText("sysPropRules__PROP_CARDS_THE_SERIES_p3")
 
 // sysShotRulesTpl 分镜规则段**模板**:时长数字全部用 {{MIN}}/{{MAX}}/{{CPS}} 占位,
 // 由 renderShotRules() 从常量渲染 —— 这段文案里**不许**再出现写死的时长数字。
@@ -49,7 +49,7 @@ var sysPropRules = promptText("sysPropRules") + "`id: \"prop_xxx\"`" + promptTex
 // 不再用一个比契约更窄的硬区间逼 LLM 多拆镜;"宁可拆短"这个**负载偏好**由下面那句
 // "costs grow faster than linear … split a long beat" 表达(它是实测结论,见 CHANGELOG
 // 「单镜负载引导」),不靠一个跟契约打架的数字。
-var sysShotRulesTpl = promptText("sysShotRulesTpl") + "`vo_kind=inner`" + promptText("sysShotRulesTpl_2")
+var sysShotRulesTpl = promptText("sysShotRulesTpl__SHOT_PLAN_RULES") + "`vo_kind=inner`" + promptText("sysShotRulesTpl__SHOT_PLAN_RULES_p2")
 
 // sysShotRules 渲染后的分镜规则段(单轮 SystemPrompt 与分批 batchSystemPrompt **共用同一段**,
 // 不各写一份 —— 写两份就又是一处会漂的口径)。
@@ -79,7 +79,7 @@ func renderShotRules() string {
 //
 // `view` 字段与提示词里的串必须**逐字一致**：字段是自检/审计的入口，提示词是渲染读的东西，
 // 两者不一致时自检面板就在骗人（契约里有一条专门判这个）。
-var sysViewRules = promptText("sysViewRules")
+var sysViewRules = promptText("sysViewRules__VIEWPOINT_CAMERA_ANGLE_WRITE")
 
 // sysContinuityRules 尾帧状态与跨镜连贯段（2026-09-27 技能侧整改单 §1.2）。
 //
@@ -95,9 +95,9 @@ var sysViewRules = promptText("sysViewRules")
 //
 // 为什么值得单列一段：H3 逐镜独立生成，没有"上一镜记忆"，跨镜一致**全靠每一镜自己写全**。
 // 缺了它，道具的持有手、角色的相对站位、特效的落点每一镜都会漂。
-var sysBlockingRules = promptText("sysBlockingRules")
+var sysBlockingRules = promptText("sysBlockingRules__BLOCKING_PROP_HANDLING_WRITE")
 
-var sysContinuityRules = promptText("sysContinuityRules")
+var sysContinuityRules = promptText("sysContinuityRules__SHOT_END_STATE_CROSS")
 
 // sysShotTableRules 官方「标准镜头信息表」段（六列 + STEP 5.5 自检）。
 //
@@ -109,18 +109,18 @@ var sysContinuityRules = promptText("sysContinuityRules")
 //
 // 最容易被忽略的是**钩子类型**：没有它，"这一集是不是平的"只能靠感觉说；
 // 有了它，密度（每三镜至少一个 reveal/reversal/callback）与两端强钩子都是可判的。
-var sysShotTableRules = promptText("sysShotTableRules")
+var sysShotTableRules = promptText("sysShotTableRules__SHOT_TABLE_THE_OFFICIAL")
 
-var sysH3Format = promptText("sysH3Format") + "`<d>`" + ` tag is an instruction to VOICE that text. Never write a placeholder tag — ` + "`<d>[Chinese]…</d>`" + `, ` + "`<d></d>`" + `, ` + "`<d>（无）</d>`" + promptText("sysH3Format_2") + "`<d>`" + promptText("sysH3Format_3")
+var sysH3Format = promptText("sysH3Format__H3_PROMPT_FORMAT_CRITICAL") + "`<d>`" + ` tag is an instruction to VOICE that text. Never write a placeholder tag — ` + "`<d>[Chinese]…</d>`" + `, ` + "`<d></d>`" + `, ` + "`<d>（无）</d>`" + promptText("sysH3Format__H3_PROMPT_FORMAT_CRITICAL_p2") + "`<d>`" + promptText("sysH3Format__H3_PROMPT_FORMAT_CRITICAL_p3")
 
-var sysHard = promptText("sysHard")
+var sysHard = promptText("sysHard__HARD_CONSTRAINTS")
 
 // sysCastRules 选角差异化(2026-09-11 用户定调「不同角色脸不能相似」):
 // 实证 LLM 写了 fat/scar/narrow face 等差异化特征,但 image_prompt 以巨型
 // 统一风格前缀开头、身份特征挤尾部,Krea-2 渲染时全部丢弃(肥胖→清瘦、
 // 疤→无疤,三张脸收敛成同一款标准帅哥)。规则:身份特征前置主导渲染,
 // 全剧角色脸型/年龄/体格/记号互不相同,原文写明的外貌禁止美化抹平。
-var sysCastRules = promptText("sysCastRules")
+var sysCastRules = promptText("sysCastRules__CAST_DISTINCTNESS_CRITICAL_CHARACTERS")
 
 // sysSceneRules 场景卡 image_prompt 的写作规则。
 //
@@ -140,10 +140,10 @@ var sysCastRules = promptText("sysCastRules")
 // 在视频里可以流动起来。两边的约束方向相反，而先前平台的分镜提示词**一句都没提** ——
 // 模型会从参考图（静态卡）里继承那份"站定不动"的气质，成片就是一屋子人僵着说话。
 // 这条影响的是**每一镜的画面**，属于"看不见但看得见"的那类默认值：不写出来就自动站错边。
-var sysDynamicShotRules = promptText("sysDynamicShotRules")
+var sysDynamicShotRules = promptText("sysDynamicShotRules__THE_SHOT_MUST_MOVE")
 
 // sysSceneRules 场景卡规则。
-var sysSceneRules = promptText("sysSceneRules")
+var sysSceneRules = promptText("sysSceneRules__SCENE_CARDS_THE_LOCATION")
 
 // animeFaceLock 角色画风锁(注入到用户附加要求最前面)。
 //
@@ -159,7 +159,7 @@ var sysSceneRules = promptText("sysSceneRules")
 // 而技能侧《立项.json》要的是 photoreal 3D + 国风电影,两套打架。用户 2026-09-26 规则
 // 「一切创作产物的电影级画面风格必须是国风系」→ 统一到国风电影级 3D 写实 + 半风格化脸。
 // 变量名保留(调用点与测试都在用),语义已从"动画脸锁"变成"电影脸锁"。
-var animeFaceLock = promptText("animeFaceLock")
+var animeFaceLock = promptText("animeFaceLock__CHARACTER_STYLE_LOCK_MANDATORY")
 
 // SystemPrompt 单轮直出(完整 schema + 全部规则)。
 //
@@ -176,12 +176,12 @@ var animeFaceLock = promptText("animeFaceLock")
 //	② 敏感词禁止表：赤足/深V/低胸/超模身材/大眼长腿/半透/毛孔可见… 云端会拦，本地也照写
 //	   —— 免得换后端才发现。规范给了**安全替代写法**（高领/小立领、立体剪裁、写成头身比而不是"大长腿"），
 //	   照抄即可，不是"自己发明一套更保守的说法"。
-var sysFaceVocabRules = promptText("sysFaceVocabRules")
+var sysFaceVocabRules = promptText("sysFaceVocabRules__FACE_VOCABULARY_SAFE_WORDING")
 
 var SystemPrompt = sysHeader + "" + sysOutputFull + "" + sysShotRules + "" + sysViewRules + "" + sysContinuityRules + "" + sysShotTableRules + "" + sysDynamicShotRules + "" + sysHighlightRules + "" + sysBlockingRules + "" + sysH3Format + "" + sysHard + "" + sysCastRules + "" + sysFaceVocabRules + "" + sysPropRules + "" + sysSceneRules
 
 // UserPromptFmt 用户提示模板。
-var UserPromptFmt = promptText("UserPromptFmt")
+var UserPromptFmt = promptText("UserPromptFmt__SOURCE_TEXT_CHINESE")
 
 // Options 直出选项。
 type Options struct {
@@ -401,7 +401,7 @@ func styleHint(opt Options) string {
 // 区别是不写死镜头数:只给总时长,或连时长也交给内容决定,镜头数交由
 // sysShotRules 的「镜头数由内容决定、不设上限」
 // 按原文节拍自行判定。
-var contentDrivenPromptFmt = promptText("contentDrivenPromptFmt")
+var contentDrivenPromptFmt = promptText("contentDrivenPromptFmt__SOURCE_TEXT_CHINESE")
 
 // buildSingleUserPrompt 组装单批直出的用户提示词。contentDriven 时不预设镜头
 // 数;secondsGiven 决定要不要给时长约束(用户没给时长则连时长也交给内容决定)。
@@ -670,11 +670,11 @@ func SanitizeForCache(s string) string {
 // ---------- 分批生成:规划轮 + 分批出镜轮 ----------
 
 // planSystemPrompt 规划轮:通读全文,只产出轻量头部(剧名/角色/场景/切分计划)。
-var planSystemPrompt = sysHeader + promptText("planSystemPrompt") + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + "\n\n" + sysPropRules + "\n\n" + sysHighlightRules + "" + sysSceneRules
+var planSystemPrompt = sysHeader + promptText("planSystemPrompt__OUTPUT_BATCH_PLAN") + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + "\n\n" + sysPropRules + "\n\n" + sysHighlightRules + "" + sysSceneRules
 
 // batchSystemPrompt 分镜轮:按已定头部与本段 brief,只产出指定区间的 shots。
 // var 的理由同 SystemPrompt:内嵌的 sysShotRules 由常量渲染。
-var batchSystemPrompt = sysHeader + promptText("batchSystemPrompt") + sysShotRules + "" + sysViewRules + "" + sysContinuityRules + "" + sysShotTableRules + "" + sysDynamicShotRules + "" + sysHighlightRules + "" + sysBlockingRules + "" + sysH3Format + "" + sysHard + "" + sysFaceVocabRules + "" + sysPropRules + "" + sysHighlightRules + promptText("batchSystemPrompt_13")
+var batchSystemPrompt = sysHeader + promptText("batchSystemPrompt__OUTPUT_THIS_BATCH") + sysShotRules + "" + sysViewRules + "" + sysContinuityRules + "" + sysShotTableRules + "" + sysDynamicShotRules + "" + sysHighlightRules + "" + sysBlockingRules + "" + sysH3Format + "" + sysHard + "" + sysFaceVocabRules + "" + sysPropRules + "" + sysHighlightRules + promptText("batchSystemPrompt__OUTPUT_THIS_BATCH_p13")
 
 // ShotPrompts 产出 **shots[]** 的两条直出路径（单轮整体直出 / 分批分镜），供双侧同源测试取用。
 //
@@ -708,9 +708,9 @@ func buildPlanUserPrompt(sourceText string, opt Options, contentDriven bool) str
 	if contentDriven {
 		// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,
 		// 只保留「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出)。
-		return fmt.Sprintf(promptText("buildPlanUserPrompt"), sourceText, batchMaxShots, hint)
+		return fmt.Sprintf(promptText("buildPlanUserPrompt__SOURCE_TEXT_CHINESE"), sourceText, batchMaxShots, hint)
 	}
-	return fmt.Sprintf(promptText("buildPlanUserPrompt_2"), sourceText, opt.MaxShots, opt.TotalSeconds, batchMaxShots, opt.MaxShots, hint)
+	return fmt.Sprintf(promptText("buildPlanUserPrompt__SOURCE_TEXT_CHINESE_p2"), sourceText, opt.MaxShots, opt.TotalSeconds, batchMaxShots, opt.MaxShots, hint)
 }
 
 // decodePlanHead 直接解析并校验(错误信息按**缺什么**分别说明)。
@@ -801,7 +801,7 @@ func callPlanRound(ctx context.Context, client *llm.Client, sys, user string, no
 	if perr != nil {
 		why = perr.Error()
 	}
-	fixUser := fmt.Sprintf(promptText("callPlanRound"), why, shrink, prev)
+	fixUser := fmt.Sprintf(promptText("callPlanRound__YOUR_PREVIOUS_REPLY_COULD"), why, shrink, prev)
 	if fix, ferr := client.ChatEx(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: fixUser},
@@ -879,7 +879,7 @@ func generateBatched(ctx context.Context, client *llm.Client, sourceText string,
 			segSeconds = (seg.To - seg.From + 1) * 7
 		}
 		prevSummary := previousShotsSummary(plan.Shots)
-		user := fmt.Sprintf(promptText("generateBatched"), cards, head.Style, hint, seg.From, seg.To,
+		user := fmt.Sprintf(promptText("generateBatched__ESTABLISHED_PLAN_HEAD_STRICT"), cards, head.Style, hint, seg.From, seg.To,
 			seg.To-seg.From+1, segSeconds, seg.Brief, prevSummary)
 
 		raw, err := client.Chat(ctx, []llm.Message{
@@ -1047,4 +1047,4 @@ func previousShotsSummary(shots []project.Shot) string {
 //	· 砍冗余铺垫支线冗长对话 → 本段规则 + 分镜预算（信息密度优先，宁短勿平）
 //	· 放大情绪反差 / 反转密集 → sysDynamicShotRules 与钩子密度规则
 //	· 合规零风险 → sysHard 既有合规段
-var sysHighlightRules = promptText("sysHighlightRules")
+var sysHighlightRules = promptText("sysHighlightRules__GRAB_THE_POINT")

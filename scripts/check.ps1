@@ -165,6 +165,28 @@ if (-not (Test-Path $patchFile)) {
   }
 }
 
+# ---------- 8. 脚本文本编码（BOM 在位）----------
+# 为什么要有这一道（2026-09-28 用户点破：这个错反复犯，说明我一直在修症状没加守卫）：
+# 本机的 `powershell` 是 Windows PowerShell **5.1**，它对**没有 BOM** 的 .ps1 按 ANSI(GBK) 解析；
+# 而 pwsh 7 的 `Set-Content -Encoding UTF8` 写出的是**不带 BOM** 的 UTF-8 ⇒ 中文注释全变乱码、
+# 脚本语法直接崩（实测 1 秒即挂）。这类"用会重写编码的工具改文件"的坑靠人记得没用，放进闸门。
+# 判据：含非 ASCII 字节的脚本文件**必须**有 UTF-8 BOM（纯 ASCII 的文件不需要，也不该被强加）。
+Step "脚本文本编码 (BOM)"
+$encBad = @()
+foreach ($f in (Get-ChildItem (Join-Path $root "scripts") -File -Include *.ps1, *.cmd, *.bat -Recurse -ErrorAction SilentlyContinue)) {
+  $bytes = [IO.File]::ReadAllBytes($f.FullName)
+  $hasBom = ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+  $nonAscii = $false
+  foreach ($b in $bytes) { if ($b -gt 0x7F) { $nonAscii = $true; break } }
+  if ($nonAscii -and -not $hasBom) { $encBad += $f.Name }
+}
+if ($encBad.Count -gt 0) {
+  Bad ("这些脚本含中文却没有 UTF-8 BOM，Windows PowerShell 5.1 会按 ANSI 解析而崩: " + ($encBad -join ", "))
+  Write-Host "       修法: 用 edit/write 工具改（它们保留原编码），不要用 Set-Content 写回" -ForegroundColor DarkGray
+} else {
+  Ok "脚本编码正确（含中文的都有 BOM）"
+}
+
 # ---------- 汇总 ----------
 Write-Host ""
 if ($fails.Count) {

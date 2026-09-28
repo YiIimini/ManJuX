@@ -102,17 +102,21 @@ func TestFaceVocabIsOneSection(t *testing.T) {
 	// Markdown（根因治理：raw string 里出现反引号会截断编译，一天栽了七次）⇒ 判据随之改成
 	// "载体文件恰好一份、且源码里仍是同一个符号"。
 	src := mustReadFile(t, "director.go")
+	// 判据用**变量名**（`sysFaceVocabRules`）：变量名是稳定的，而提示词**文件名**会随命名规范
+	// 调整（2026-09-28 刚从 `sysFaceVocabRules` 改成 `sysFaceVocabRules__FACE_VOCABULARY_…`）——
+	// 把文件名写进断言等于给每次改名埋一颗假红。
 	if n := strings.Count(src, "sysFaceVocabRules"); n < 4 {
 		t.Errorf("sysFaceVocabRules 应被三处提示词引用（定义 1 + 引用 3），实际出现 %d 次", n)
 	}
 	files := 0
 	for _, name := range PromptNames() {
-		if name == "sysFaceVocabRules" {
+		// 同样用前缀：载体文件名 = 变量名 + "__" + 标题短语
+		if name == "sysFaceVocabRules" || strings.HasPrefix(name, "sysFaceVocabRules__") {
 			files++
 		}
 	}
 	if files != 1 {
-		t.Fatalf("sysFaceVocabRules 的载体文件应恰好 1 份（prompts/sysFaceVocabRules.md），实际 %d 份", files)
+		t.Fatalf("sysFaceVocabRules 的载体文件应恰好 1 份（prompts/sysFaceVocabRules__*.md），实际 %d 份", files)
 	}
 }
 

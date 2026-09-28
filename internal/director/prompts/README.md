@@ -14,14 +14,14 @@
 ## 纪律
 
 1. **正文原样进模型**：`.md` 内容不做二次加工（拼接顺序在 `director.go`，它是唯一的加工点）。
-2. **文件名对不上调用点**：文件按"定义处的声明/函数名 + 序号"命名（`sysH3Format.md`、`sysH3Format_3.md`）。
-   知道某段在哪个调用点附近时，用 `grep -n 'promptText("sysH3Format_3")' director.go` 定位。
+2. **文件名 = 声明名 + 标题短语**（2026-09-28 起）：`sysH3Format__H3_PROMPT_FORMAT_CRITICAL.md`。
+   前半段是 Go 里的变量名（`grep -n 'sysH3Format' director.go` 就能找到调用点），
+   后半段是第一行的标题短语；续段带 `_p2/_p3` 后缀，紧挨着父文件排。
+   命名由 `tools/renameprompts` 生成（规则写在它的头注释里），不要手改名 ——
+   改名前先想清楚：全仓的 `promptText("…")` 引用都要跟着动。
 3. **不许在 `director.go` 里再写散文型 raw string**：守卫 `TestNoRawStringPromptsInDirector` 会红
    （判据：raw string 内容 ≥120 字符或含换行 = 散文；短单行的正则/格式串不算）。
 4. **每段必须有正文**：守卫 `TestEveryPromptSegmentHasText` 会红。
 5. 搬运工具：`tools/extractprompts`（一次性工具，留着是为了记录这件事是怎么做的、以及踩过的三个坑）。
 
-## 待办（队列里有）
 
-文件名现在是"声明名＋序号"，可读性一般。想做的话可以按每段首行内容重命名
-（如 `sysH3Format_3.md` → `sysH3Format_BATCH_SCOPE.md`），并把 `promptText("…")` 一起改。
