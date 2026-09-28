@@ -242,6 +242,35 @@ function openCreate() {
   dlg.value = true
 }
 
+// openImport 导入技能端产出的**项目包目录**（单集包或整个系列根）。
+//
+// 为什么要有这个按钮：后端 `POST /api/projects/import-package` 一直是完整的
+// （支持单集包、系列根、按 series.json 对账、整批校验后落盘），连用例都是按
+// "用户点导入"写的 —— 但界面上没有入口，用户只能自己把包拷进 data/projects，
+// 而那正是端点注释里说要避免的事。
+const importing = ref(false)
+async function openImport() {
+  let dir = ''
+  try {
+    const r = await ElMessageBox.prompt(
+      '填技能端产出的**项目包目录**（单集包＝含 plan/plan.json 的那一层；整个系列＝含 series.json 的根目录）。' +
+      '平台会把包拷进数据目录并注册，不用你手动搬文件。',
+      '导入项目包', { inputPlaceholder: '例如 D:\\Ai\\Datas\\漫剧制作\\输出\\名册之外，八万零一号', confirmButtonText: '导入', cancelButtonText: '取消' })
+    dir = (r.value || '').trim()
+  } catch { return }
+  if (!dir) return
+  importing.value = true
+  try {
+    await api.importPackage(dir)
+    ElMessage.success('导入完成（逐集校验，坏包会单独报出原因）')
+    await refreshProjects()
+  } catch (e) {
+    ElMessage.error('导入失败：' + e.message)
+  } finally {
+    importing.value = false
+  }
+}
+
 async function doCreate() {
   if (novelMode.value) { await doNovelSplit(); return }
   if (!newName.value.trim()) { ElMessage.warning('请输入项目名'); return }
@@ -378,6 +407,11 @@ async function removeSeries(prefix, eps) {
           <el-tooltip content="单集项目(粘贴文本/AI 创作/导方案)或整本小说一键拆集" placement="bottom">
             <el-button type="primary" size="large" @click="openCreate">
               <el-icon class="mr-1"><Plus /></el-icon>新建项目
+            </el-button>
+          </el-tooltip>
+          <el-tooltip content="把技能端产出的项目包目录拉进来(单集包或整个系列根)" placement="bottom">
+            <el-button size="large" plain :loading="importing" @click="openImport">
+              <el-icon class="mr-1"><FolderOpened /></el-icon>导入项目包
             </el-button>
           </el-tooltip>
         </div>

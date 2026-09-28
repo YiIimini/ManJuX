@@ -140,6 +140,16 @@ const modelFields = [
   { key: 'edit_vae', label: '多视角编辑 VAE(qwen_image_vae)' },
   { key: 'edit_turbo_lora', label: '多视角加速 LoRA(Lightning 4 步)' },
   { key: 'edit_angles_lora', label: '多视角转角度 LoRA(Multiple-Angles)' },
+  // 配乐（ACE-Step 1.5）：四个文件缺一不可 —— 官方蓝本的 DualCLIPLoader 要两个文本编码器，
+  // 少任何一个都是**配乐静默不可用**。此前这四项只在 data/settings.json 里，
+  // 上游 repack 改名时用户只能手改配置文件，改错也不报。
+  { key: 'music_diffusion', label: '配乐模型(ACE-Step 扩散)' },
+  { key: 'music_text_encoder_1', label: '配乐编码器 1(qwen 0.6b)' },
+  { key: 'music_text_encoder_2', label: '配乐编码器 2(qwen 4b)' },
+  { key: 'music_vae', label: '配乐 VAE(ACE 1.5)' },
+  // 定妆照/抽卡用的**图像模型家族**（决定用哪套 CLIP/VAE 组合，选错会出现
+  // "文件在盘上但加载失败"）。它同样只有配置文件、没有界面。
+  { key: 'image_family', label: '定妆照图像家族(决定 CLIP/VAE 组合)' },
 ]
 // 从 st.models 里拿 ComfyUI 实际注册的文件名清单(下拉选项)
 function modelOptions(key) {

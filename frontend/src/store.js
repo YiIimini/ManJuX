@@ -122,6 +122,9 @@ export const api = {
   getSettings: () => req('GET', '/api/settings'),
   putSettings: (s) => req('PUT', '/api/settings', s),
   projects: () => req('GET', '/api/projects'),
+  // 导入项目包目录（单集包或整个系列根）—— 技能端产出的包还在别处时由平台主动拉进来，
+  // 用户不必先手动拷进 data/projects。
+  importPackage: (path) => req('POST', '/api/projects/import-package', { path }),
   createProject: (name) => req('POST', '/api/projects', { name }),
   project: (id) => req('GET', `/api/projects/${encodeURIComponent(id)}`),
   deleteProject: (id) => req('DELETE', `/api/projects/${encodeURIComponent(id)}`),
@@ -208,7 +211,11 @@ export const api = {
   libraryCreateAsset: (kind, payload) => req('POST', `/api/library/${encodeURIComponent(kind)}`, payload),
   putShot: (id, shot) => req('PUT', `/api/projects/${encodeURIComponent(id)}/shot`, shot),
   deleteShot: (id, shotID) => req('DELETE', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}`),
-  maskFix: (id, shotID, target) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`, { target }),
+  // 局部重绘：target＝要重绘的**区域**（英文名词短语，SAM3 的词表）；
+  // prompt＝**修正后的画面描述**（可选）——不传就沿用原提示词，于是只能限区域、改不了内容。
+  maskFix: (id, shotID, target, prompt, objectIndex) =>
+    req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/mask-fix`,
+      { target, prompt: prompt || '', object_index: objectIndex || '' }),
   audioDrive: (id, shotID, audioPath) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/audio-drive`, { audio_path: audioPath }),
   // 2× 放大后处理:传 opts({type, model, ltx_vae}) 覆盖默认;不传则后端用 esrgan + 4x-UltraSharp。
   // 结果作为独立文件产出,原镜头不动,音轨沿用源片。

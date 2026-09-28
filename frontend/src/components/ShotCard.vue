@@ -34,13 +34,25 @@ async function maskFix() {
     target = (r.value || '').trim()
   } catch { return }
   if (!target) { ElMessage.warning('未填写要重绘的目标'); return }
+  // **可选：改成什么**。后端一直收 `prompt`（修正后的画面描述），而前端此前不传 ——
+  // 于是局部重绘永远拿"当初画坏的那句话"重绘：能限定区域，却改不了内容，功能只有一半。
+  // 留空＝沿用原提示词（与从前行为一致），想改内容时才填。
+  let fixPrompt = ''
+  try {
+    const r2 = await ElMessageBox.prompt(
+      `要让这一块**变成什么样**?填英文描述。\n\n留空＝沿用原提示词(只重绘这一块,不改内容)。`,
+      '修正后的画面描述(可选)',
+      { confirmButtonText: '开始重绘', cancelButtonText: '取消',
+        inputPlaceholder: 'a bronze sparrow orb with a warm inner glow', inputValue: '' })
+    fixPrompt = (r2.value || '').trim()
+  } catch { return }
   // 管线闲不闲与"重绘什么"无关,所以排在问完目标之后、提交之前 ——
   // 用户已经想清楚要改哪儿了,这时告知代价才有意义(而不是先拦一道再问)。
   if (!(await confirmGpuContention(`局部重绘 · 镜头 ${props.shot.id}`))) return
   enhanceBusy.value = true
   try {
-    const d = await api.maskFix(pj.value.project.id, props.shot.id, target)
-    ElMessage.success(`局部重绘完成(目标:${target}):` + (d.file || ''))
+    const d = await api.maskFix(pj.value.project.id, props.shot.id, target, fixPrompt)
+    ElMessage.success(`局部重绘完成(目标:${target}${fixPrompt ? '·已改用修正描述' : ''}):` + (d.file || ''))
     refreshProject()
   } catch (e) { ElMessage.error('局部重绘失败:' + e.message) }
   enhanceBusy.value = false
