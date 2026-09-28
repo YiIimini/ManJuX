@@ -19,13 +19,13 @@ func TestSeedOverrideEntersRenderFingerprint(t *testing.T) {
 
 	// 没显式换 seed:指纹里的种子与旧版逐字一致(rp.Seed)——
 	// 否则升级一版就会让存量项目的已渲镜头全部判失效(几十集全量重渲)。
-	if got, want := fingerprintSeed(rp, 0, shot), rp.Seed; got != want {
+	if got, want := fingerprintSeed(rp, 0, shot, nil), rp.Seed; got != want {
 		t.Errorf("未覆盖时指纹种子应为项目配置值 %d(保持与旧指纹串一致),实际 %d", want, got)
 	}
 
 	// 显式换 seed:必须变成真正参与采样的那个值
 	const override = 12345
-	got := fingerprintSeed(rp, override, shot)
+	got := fingerprintSeed(rp, override, shot, nil)
 	if got == rp.Seed {
 		t.Fatal("单镜 seed 覆盖没有进指纹 —— 换 seed 重渲会被断点续跑判成'产物有效'而跳过")
 	}
@@ -33,20 +33,20 @@ func TestSeedOverrideEntersRenderFingerprint(t *testing.T) {
 		t.Errorf("指纹里的种子应与实际采样种子一致(%d),实际 %d", want, got)
 	}
 	// 稳定性:同参数必须稳定,否则每次续跑都全量重渲
-	if again := fingerprintSeed(rp, override, shot); again != got {
+	if again := fingerprintSeed(rp, override, shot, nil); again != got {
 		t.Error("同参数两次指纹种子不一致 —— 续跑判据会永远失配")
 	}
 	// 换一个 seed 值必须换指纹(这才是"抽卡/微调"的意义)
-	if fingerprintSeed(rp, override+1, shot) == got {
+	if fingerprintSeed(rp, override+1, shot, nil) == got {
 		t.Error("不同 seed 覆盖应得到不同指纹种子")
 	}
 	// 换镜号/换角色组合也要变(ShotSeed 的既有语义)
-	if fingerprintSeed(rp, override, project.Shot{ID: 8, Characters: shot.Characters}) == got {
+	if fingerprintSeed(rp, override, project.Shot{ID: 8, Characters: shot.Characters}, nil) == got {
 		t.Error("不同镜号应得到不同指纹种子")
 	}
 	// 整串指纹层面再钉一次:端到端可复现
-	fpA := renderFingerprint("p", nil, rp, "ref2va", fingerprintSeed(rp, override, shot))
-	fpB := renderFingerprint("p", nil, rp, "ref2va", fingerprintSeed(rp, 0, shot))
+	fpA := renderFingerprint("p", nil, rp, "ref2va", fingerprintSeed(rp, override, shot, nil))
+	fpB := renderFingerprint("p", nil, rp, "ref2va", fingerprintSeed(rp, 0, shot, nil))
 	if fpA == fpB {
 		t.Error("换 seed 后整串指纹必须不同,否则跳过判据仍会命中旧产物")
 	}

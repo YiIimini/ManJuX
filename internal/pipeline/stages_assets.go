@@ -1076,12 +1076,43 @@ func cardSeedKey(id, name string) string {
 	return strings.TrimSpace(name)
 }
 
+// ShotSeedKeys 本镜角色的**锚定键**（有卡片 id 用 id，没有才用名字）。
+//
+// 【2026-09-28 审计 B6 的同类残留】镜头种子原先按 `shot.Characters`（**名字列表**）锚定，
+// 而名字是最容易漂的：同一角色换个集多一个「（丙十七）」注解、标点繁简不同，种子就变 ——
+// 落在渲染主链路上就是"**同一镜重渲得到另一张脸**"，而日志与契约门都看不出问题。
+// id 才是平台里"同一个人"的稳定真源（与 `cardSeedKey` / `CharFamilyKey` 同一套口径）。
+func ShotSeedKeys(plan *project.Plan, shot *project.Shot) []string {
+	if shot == nil {
+		return nil
+	}
+	if plan == nil {
+		return shot.Characters
+	}
+	byName := map[string]string{}
+	for _, c := range plan.Characters {
+		if n := strings.TrimSpace(c.Name); n != "" {
+			byName[n] = cardSeedKey(c.ID, c.Name)
+		}
+	}
+	out := make([]string, 0, len(shot.Characters))
+	for _, n := range shot.Characters {
+		if k, ok := byName[strings.TrimSpace(n)]; ok {
+			out = append(out, k)
+			continue
+		}
+		out = append(out, strings.TrimSpace(n)) // 名单外的角色（群演/临时）：按名字锚定
+	}
+	return out
+}
+
 // ShotSeed 镜头种子派生(fnv 锚定 + 镜号步进)。
 //
-// 参数:override = 本次运行的种子覆盖(0=不覆盖);base = 项目固定种子(0=按角色组合派生)。
+// 参数:override = 本次运行的种子覆盖(0=不覆盖);base = 项目固定种子(0=按角色组合派生);
+// keys = **本镜角色的锚定键**（请用 ShotSeedKeys 算，别自己拼名字）。
 // 三条出像素的路径(主渲染、单镜 2K、局部重绘/音频驱动经 ShotRenderPrompt 的渲染调用)
 // 都必须用它,否则"同一镜重渲"会得到不同的脸。
-func ShotSeed(base, override int64, shotID int, characters []string) int64 {
+func ShotSeed(base, override int64, shotID int, keys []string) int64 {
 	if override > 0 {
 		return override + int64(shotID)*101 // 单镜微调:同值同镜稳定复现
 	}
@@ -1090,7 +1121,7 @@ func ShotSeed(base, override int64, shotID int, characters []string) int64 {
 	}
 	// 角色锚定种子:按镜头角色组合派生 —— 同角色组合跨集得到同基种子,
 	// 配合同一张库定妆照,一致性最强;shot.ID 项保住集内镜头间的多样性。
-	return nameSeed("shot", strings.Join(characters, "+")) + int64(shotID)*101
+	return nameSeed("shot", strings.Join(keys, "+")) + int64(shotID)*101
 }
 
 // RandomSeed 每次都不同的种子(重新生成 / 抽卡这类"就是要换一张"的场景)。

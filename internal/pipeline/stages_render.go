@@ -259,8 +259,10 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			mode = "t2va"
 		}
 
-		// 镜头种子:唯一收口点 ShotSeed(override > 项目固定种子 > 按角色组合派生)
-		seed := ShotSeed(rp.Seed, seedOverride, shot.ID, shot.Characters)
+		// 镜头种子:唯一收口点 ShotSeed(override > 项目固定种子 > 按角色组合派生)。
+		// 角色键用 `ShotSeedKeys`（**有卡片 id 用 id**）：原来直接传 `shot.Characters`（名字），
+		// 名字写法一漂种子就变 —— 表现为"同一镜重渲换了一张脸"（审计 B6 的同类残留）。
+		seed := ShotSeed(rp.Seed, seedOverride, shot.ID, ShotSeedKeys(plan, &shot))
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
 		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
 		// 渲染提示词:身份锚定 + 画风硬约束(动漫化/哑光)+ 台词语言标记,四路渲染共用
@@ -304,7 +306,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 时**完全不生效**:inputFP 与上一次逐字相同 → 走"产物有效,跳过(断点续跑)"
 		// 分支 → 视频还是旧的那条,而前端弹「已按微调参数重渲」。判据见
 		// fingerprintSeed(未显式换 seed 时与旧指纹串逐字一致,存量项目不会被判失效)。
-		inputFP := renderFingerprint(prompt, refs, rp, mode, fingerprintSeed(rp, seedOverride, shot))
+		inputFP := renderFingerprint(prompt, refs, rp, mode, fingerprintSeed(rp, seedOverride, shot, plan))
 		outName := fmt.Sprintf("shot_%03d", shot.ID)
 
 		// 断点续跑:同输入指纹 + 帧数对得上 + 文件存在 → 跳过
@@ -528,11 +530,14 @@ func engineLabel(name string) string {
 //
 // 随机种子绝不会流到这里:渲染链路用的 seed 由 ShotSeed 派生(确定性),随机种子只
 // 出现在 RandomSeed() 那类显式抽卡动作里(见 stages_assets.go 的说明)。
-func fingerprintSeed(rp project.RenderParams, seedOverride int64, shot project.Shot) int64 {
+//
+// **plan 必须传**：角色键要走 `ShotSeedKeys`（有卡片 id 用 id）。它与 :263 那处渲染种子
+// 用的是**同一个公式** —— 两边不一致会让"该重渲的判成没变、没变的判成要重渲"。
+func fingerprintSeed(rp project.RenderParams, seedOverride int64, shot project.Shot, plan *project.Plan) int64 {
 	if seedOverride <= 0 {
 		return rp.Seed
 	}
-	return ShotSeed(rp.Seed, seedOverride, shot.ID, shot.Characters)
+	return ShotSeed(rp.Seed, seedOverride, shot.ID, ShotSeedKeys(plan, &shot))
 }
 
 func renderFingerprint(prompt string, refs []engine.RefImage, rp project.RenderParams, mode string, seed int64) string {
