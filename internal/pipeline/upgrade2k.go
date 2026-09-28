@@ -27,10 +27,12 @@ func (c *Coordinator) StartUpgrade2K(projectID string, shotID int) error {
 		return fmt.Errorf("项目不存在: %s", projectID)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c.runs[projectID] = &Run{Cancel: cancel, Phase: "upgrade2k", StartedAt: time.Now()}
+	self := &Run{Cancel: cancel, Phase: "upgrade2k", StartedAt: time.Now()}
+	c.runs[projectID] = self
 	c.mu.Unlock()
 	go func() {
-		defer c.finish(projectID)
+		// 带身份收尾（见 finish 的注释）：只摘掉**自己这一次**的登记。
+		defer c.finish(projectID, self)
 		if err := c.Upgrade2K(ctx, projectID, shotID); err != nil && ctx.Err() == nil {
 			c.emit(projectID, "pipeline", shotID, "error", 0, "✕ 2K 定稿失败:%v", err)
 		}

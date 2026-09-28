@@ -177,7 +177,7 @@ func (c *Coordinator) Start(projectID, phase string, only []int, engineOverride 
 	c.runs[projectID] = run
 	c.mu.Unlock()
 
-	go c.execute(ctx, proj, phase, only, nil, engineOverride, seedOverride)
+	go c.execute(ctx, proj, phase, only, nil, engineOverride, seedOverride, run)
 	return nil
 }
 
@@ -354,6 +354,21 @@ func (c *Coordinator) setRunPhase(projectID, phase string) {
 }
 
 // Stop 停止项目运行。
+//
+// ## 为什么不能无条件打断 ComfyUI（2026-09-29 运行时审计 P1-1）
+//
+// `Start()` 明确放行"非显卡阶段与显卡阶段并行"（见 :163 的判据）。于是存在这种局面：
+// 甲集在渲染（一镜要跑 20 分钟 GPU），用户对**乙集**点「停止」—— 乙集只是 script 阶段，
+// 跟 ComfyUI 一点关系都没有。而原来这里无条件调 `interruptComfy()`，
+// 后果是**甲集那一镜被掐**：`execution_interrupted` → 该镜判失败 → 写黑场占位进成片，
+// 或整阶段 failed → 批量产线卡住不跳集。用户花 20+ 分钟机时换一个黑镜，
+// 顺带把他在 ComfyUI WEB 里排的队也清了。
+//
+// 反证它本来就不该这样：`interruptComfy` 自己的注释写着"**仅在确有 comfy 运行管线时发**"
+// —— 代码里一直没有这个判断；而 `stages_render.go` 渲染起点做同一件事时**是有护栏的**。
+//
+// 现在只在两个条件同时成立时才发：① 被停的这次 run **确实要用显卡**；
+// ② 没有**别的** GPU run 在跑（别人在渲染时，中断等于误伤）。
 func (c *Coordinator) Stop(projectID string) bool {
 	c.mu.Lock()
 	r, ok := c.runs[projectID]
@@ -362,8 +377,22 @@ func (c *Coordinator) Stop(projectID string) bool {
 		return false
 	}
 	r.Cancel()
+	phase := r.Phase
+	// 还有谁在用显卡（排除自己）
+	othersGPU := false
+	for id, o := range c.runs {
+		if id == projectID {
+			continue
+		}
+		if phaseNeedsGPU(o.Phase) {
+			othersGPU = true
+			break
+		}
+	}
 	c.mu.Unlock()
-	c.interruptComfy() // 服务端同步中断+清队,防重开渲染堵在旧任务后面
+	if phaseNeedsGPU(phase) && !othersGPU {
+		c.interruptComfy() // 服务端同步中断+清队,防重开渲染堵在旧任务后面
+	}
 	return true
 }
 
@@ -399,9 +428,28 @@ func (c *Coordinator) interruptComfy() {
 	eng.ClearQueue(ctx)
 }
 
-func (c *Coordinator) finish(projectID string) {
+// finish 收尾时把这次 run 从登记表里摘掉。
+//
+// ## 为什么要校验身份（2026-09-29 运行时审计 P1-2）
+//
+// `Stop()` 只 `Cancel()` 就返回，**不等 goroutine 收尾**；而收尾路径里还要走
+// `releaseVRAM()`（若干次带超时的引擎调用，实测窗口 0.1–2.5s，最坏 ~27s）。
+// 用户在这个窗口里点「开始」（"看着像卡住了就停掉重来"是最常见的动作）时：
+// 新 run 已经写进 `c.runs`，旧 run 的 defer 才跑 —— 按 projectID 无条件删，
+// **删掉的是新那一次的登记**。后果三连：
+//
+//	① 界面上项目显示"未运行"，其实在跑；
+//	② `HasRunning()` 假 false → `ReleaseVRAMIfIdle` / 关窗保护会在渲染中卸显存
+//	   （正是 `releaseVRAM` 注释里那个"150s/步、45 分钟超时"的坑）；
+//	③ `Start()` 的"一卡一管线"判据看不到这次 run → 还能起第三条，
+//	   或批量产线判"这集跑完了"直接开下一集 → **两集并发抢一张卡**。
+//
+// 所以只删**自己那一次**：指针相等才算我的。
+func (c *Coordinator) finish(projectID string, r *Run) {
 	c.mu.Lock()
-	delete(c.runs, projectID)
+	if cur, ok := c.runs[projectID]; ok && cur == r {
+		delete(c.runs, projectID)
+	}
 	c.mu.Unlock()
 }
 
@@ -449,7 +497,7 @@ func hasUsablePlan(st *project.Store, projectID string) bool {
 	return err == nil && plan != nil && len(plan.Shots) > 0
 }
 
-func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string, seedOverride int64) {
+func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase string, only []int, onlyAssets []string, engineOverride string, seedOverride int64, self *Run) {
 	// 记录结束原因(completed/stopped/failed)供批量排队判断:中止或失败不得被当作"完成"而自动跳集
 	ended := ResultCompleted
 	defer func() {
@@ -458,7 +506,10 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		// 专职某一项,避免资源抢占」)。渲染结束后 H3 常驻显存对用户没有任何价值 ——
 		// 桌面/浏览器/其它工具都在等这块显存,而下一集渲染前重新加载只要几十秒。
 		c.releaseVRAM(proj.ID, "管线结束")
-		c.finish(proj.ID)
+		// **带上自己那次的登记**：`Stop()` 只 Cancel 不等收尾，而这段收尾要花
+		// 0.1–2.5s（最坏 ~27s）—— 用户在窗口里点「开始」的话，这里按 id 无条件删
+		// 会把**新那一次**的登记删掉（见 finish 的注释）。
+		c.finish(proj.ID, self)
 	}()
 	plan, planErr := c.store.LoadPlan(proj.ID)
 	hasPlan := planErr == nil && plan != nil && len(plan.Shots) > 0
