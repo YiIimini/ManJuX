@@ -161,6 +161,19 @@ func TestImportFromShotDetail(t *testing.T) {
 	if _, err := s.store.LoadPlan(ep2); err != nil {
 		t.Errorf("第 2 集应按清洗后的标题建出来（%s）：%v", ep2, err)
 	}
+	// ⑥ **显示名保留原始集名**（2026-09-28 用户定调：名称问题平台侧自行解决、不必两端严丝合缝）。
+	// 做法是"目录名走安全名、显示名存原名"：目录/ID 必须文件系统安全，而用户在界面上看到的
+	// 集名不该被平台改字。这条钉住"信息不丢" —— 将来谁把 Name 也一并清洗掉，这里会红。
+	if p, ok := s.store.Get(ep2); ok && p != nil {
+		if !strings.Contains(p.Name, "骂人一处") {
+			t.Errorf("显示名应保留原始集名，实际 %q", p.Name)
+		}
+		if p.ID != ep2 {
+			t.Errorf("ID 与会话目录名必须一致，实际 %q vs %q", p.ID, ep2)
+		}
+	} else {
+		t.Errorf("应能取到第 2 集项目：%s", ep2)
+	}
 }
 
 // TestImportRefusesWhenNameImpossible 书名本身带非法字符 ⇒ **整批拒收**，一个项目都不落盘。

@@ -248,10 +248,14 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 		Fails   []string `json:"fails,omitempty"`
 	}
 	type staged struct {
-		no    int
-		name  string
-		plan  *project.Plan
-		issue []project.Issue
+		no   int
+		name string
+		// display 界面上显示的集名（**原始章名，一字不改**）。
+		// 目录名（name/ID）必须是文件系统安全的，显示名不必受这个限制 —— 两者分开，
+		// 平台就能接住技能侧的任何名字，不必要求对方改名（2026-09-28 用户定调）。
+		display string
+		plan    *project.Plan
+		issue   []project.Issue
 	}
 	var stage []staged
 	var results []result
@@ -264,28 +268,23 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 			}
 		}
 		title := titles[no]
-		// 集标题必须**清洗后**再进项目名：技能侧的集名是给人读的自然语言
-		// （实测《求你们骂我》第02集「骂人一处，现钱五文」带全角逗号），
-		// 而项目名只允许 中文/字母/数字/`_`/`-`/`·` —— 直接拼会让**整批导入**失败在
-		// "项目名仅允许…"上（用户点一次导入是 40 集）。清洗口径与拆集那条路**同一份实现**
-		// （safeSeries：非法字换成 `·`、合并连续 `·`、去掉首尾 `·`）。
-		// **先报，不改**（技能侧 2026-09-28 通知的明确要求）：集名里若含平台不接受的字
-		// （ASCII 标点 / 空格 / 控制字符 —— 技能侧的符号规定只准全角标点），
-		// 就拒收这一集并说清是哪个字符，让技能侧改名后重跑；**不做静默替换** ——
-		// 章名就是集名，改字会让成片与集号记录对不上（盘上已出现过 `坏书·带·尖括号` 这种谁也对不上的名字）。
-		if bad := seriesNameProblem(title); bad != "" && strings.TrimSpace(title) != "" {
-			results = append(results, result{
-				Package: fmt.Sprintf("%s·第%02d集", namePrefix, no),
-				ID:      fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, title),
-				Fails: []string{fmt.Sprintf(
-					"集标题含平台不接受的字符 %q：「%s」。技能侧的符号规定是章名/书名只准全角标点"+
-						"（禁一切 ASCII 标点与空格）—— 请让技能侧改名后重跑；平台不静默替换"+
-						"（改字会让成片与集号记录对不上）", bad, title)},
-			})
-			fails++
-			continue
+		// 【2026-09-28 用户定调：**名称问题平台侧自行最优解决**，不必两端严丝合缝】
+		//
+		// 做法：**目录名（ID）走安全名，显示名（Name）保留原始集名**。
+		//   · ID 只是磁盘路径，必须文件系统安全 ⇒ `safeSeries` 清洗（不安全字符换成 `·`）
+		//   · Name 是用户在界面上看到的集名 ⇒ **一字不改**，原样写进 project.json
+		// 于是技能侧输出什么名字平台都接得住：不拒收、不要求对方改名、信息一点不丢
+		// （哪个集是哪个集，靠 `Name` 与 `Chapters` 认，不靠目录名猜）。
+		//
+		// 此前那版"判到非法字就拒收整集、请技能侧改名"是把问题推回给对面，**已撤**。
+		safeTitle := orDefault(safeSeries(title), "未命名")
+		name := fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, safeTitle)
+		displayName := fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, orDefault(strings.TrimSpace(title), "未命名"))
+		if displayName != name {
+			// 不拦、不静默：改了什么、为什么改、原名是什么 —— 一次说清
+			s.opLog("ℹ 第%02d集原始标题含文件系统不安全字符，目录用安全名「%s」，"+
+				"界面仍按原名「%s」显示（不拒收、不改内容）", no, name, displayName)
 		}
-		name := fmt.Sprintf("%s·第%02d集·%s", namePrefix, no, title)
 		if !project.ValidProjectName(name) {
 			// 兜底：真遇上没见过的情况也**只退这一集的名字**，不拖累整批。
 			s.opLog("⚠ 第%02d集标题 %q 清洗后仍不合规，本集退用「未命名」", no, title)
@@ -320,7 +319,7 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 			results = append(results, res)
 			continue
 		}
-		stage = append(stage, staged{no: no, name: name, plan: plan, issue: issues})
+		stage = append(stage, staged{no: no, name: name, display: displayName, plan: plan, issue: issues})
 	}
 	if fails > 0 {
 		s.opLog("⛔ 导入脚本明细:有 %d 集未过契约校验,本次**全部不导入**", fails)
@@ -353,6 +352,17 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 			return true
 		}
 		createdIDs = append(createdIDs, st.name)
+		// 目录名（ID）是安全名，**显示名写回元信息**：界面/结果里显示的是原始集名。
+		// 这样"改了什么"只发生在磁盘路径上，用户看到的内容不受影响；重新扫描也读得回来
+		// （Project.Name 从 project.json 装载，不像 ID 那样由目录名决定）。
+		if st.display != "" && st.display != st.name {
+			if p, ok := s.store.Get(st.name); ok && p != nil {
+				p.Name = st.display
+				if err := s.store.SaveMeta(p); err != nil {
+					s.opLog("⚠ 第%02d集显示名写入失败(%v)：目录名不变，界面会显示目录名", st.no, err)
+				}
+			}
+		}
 	}
 	s.store.Rescan()
 	for i := range stage {
