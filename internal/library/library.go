@@ -824,7 +824,14 @@ func (l *Library) FindForCard(kind, cardID, name, description string) (*Entry, s
 	if e, img, ok := l.matchByID(kind, cardID); ok {
 		return e, img, true
 	}
-	return l.Find(kind, name, description)
+	// 【2026-09-28 审计 B11】落到模糊匹配时**必须把"id 明确不同的条目"排除掉**。
+	//
+	// 不排的后果：本集新角色认领库里**另一个人**的条目 —— 典型形态是「山贼甲」撞上库里的
+	// 「山贼」：两者 `CharVariantLabel` 都是空（`sameVariantCard` 恒真）、名字互为子串、
+	// 描述若又都是"粗布短打的中年汉子"（`descSimilar` ≥0.6）就会并上，
+	// 于是这个角色被锚到别人的脸上，还会把"山贼甲"写进那条目的别名表。
+	// **有 id 的场合这条根本不该发生：id 不同就是两张卡。**
+	return l.findWith(kind, name, description, strings.TrimSpace(cardID))
 }
 
 // MatchCard 按卡片 ID 精确取条目（ID 优先，没有 ID / 还没入库时退回名字精确匹配）。
@@ -836,8 +843,33 @@ func (l *Library) MatchCard(kind, cardID, name string) (*Entry, string, bool) {
 	return l.Match(kind, name)
 }
 
+// sameCardIDOrUnknown 两张卡的 id 是否"算同一张"。
+//
+// 只在这一种情形下返回 true：**对方没有 id**（老条目/手工建的）—— 那时只能按名字判。
+// 两边都有 id 就必须相等；不等 = 两张卡，模糊匹配再像也不认领（2026-09-28 审计 B11）。
+func sameCardIDOrUnknown(candID, selfID string) bool {
+	c, s := strings.TrimSpace(candID), strings.TrimSpace(selfID)
+	if s == "" {
+		return true // 自己没 id：没有判据，退回老行为
+	}
+	if c == "" {
+		return true // 对方没 id（存量条目）：同上
+	}
+	return c == s
+}
+
 func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
-	if e, img, ok := l.Match(kind, name); ok {
+	return l.findWith(kind, name, description, "")
+}
+
+// findWith 模糊匹配的**唯一实现**；selfID 非空时跳过"id 明确不同"的条目（见 FindForCard）。
+func (l *Library) findWith(kind, name, description, selfID string) (*Entry, string, bool) {
+	if selfID == "" {
+		if e, img, ok := l.Match(kind, name); ok {
+			return e, img, true
+		}
+	} else if e, img, ok := l.Match(kind, name); ok && sameCardIDOrUnknown(e.ID, selfID) {
+		// 精确名命中也要过 id 这一关：**同名不同人**时"名字一样"恰恰是最强的假信号。
 		return e, img, true
 	}
 	l.mu.Lock()
@@ -864,6 +896,10 @@ func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 		}
 		var e Entry
 		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		// id 明确不同 ⇒ 这不是要找的那张卡，模糊匹配再像也不认领（见 FindForCard）。
+		if selfID != "" && !sameCardIDOrUnknown(e.ID, selfID) {
 			continue
 		}
 		img := filepath.Join(l.root, filepath.FromSlash(e.Image))
