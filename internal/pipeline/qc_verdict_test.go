@@ -134,19 +134,30 @@ func TestShotIDList(t *testing.T) {
 //
 // 这里做源码级钉住(execute 需要真实阶段才能跑起来):只要有人把 qcFailed 的留痕
 // 逻辑删掉,这条就红。
+//
+// 【2026-09-28 更新】收尾从 `if qcFailed != nil { … } else { 报完成 }` 改成了三路 switch ——
+// 中间多插了一路「各阶段都绿、但 output/ 里没有成片」（交付判据，见 project.DeliveredFinal）。
+// 所以断言的锚点跟着换成 `case qcFailed != nil:`；**意图一字不变**：qcFailed 有值时
+// 必须留痕、必须不计为完成，且「报完成」那一路必须是 switch 的最后一支（不能挡在
+// qcFailed 和 delivered 之前）。
 func TestAllModeQCFailureIsRemembered(t *testing.T) {
 	src := coordinatorSource(t)
 	for _, want := range []string{
-		"qcFailed = err",       // 质检错误被留住
-		"if qcFailed != nil {", // 收尾时按它判断
-		"ended = ResultFailed", // 批产线据此停住(不自动跳集)
+		"qcFailed = err",        // 质检错误被留住
+		"case qcFailed != nil:", // 收尾时按它判断
+		"ended = ResultFailed",  // 批产线据此停住(不自动跳集)
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("全流程收尾缺少 %q —— 坏镜拼进成片却仍报「全流程完成」", want)
 		}
 	}
-	if !strings.Contains(src, "if qcFailed != nil {") || !strings.Contains(src, "全流程跑完但**质检未通过**") {
+	if !strings.Contains(src, "全流程跑完但**质检未通过**") {
 		t.Error("带瑕疵收尾必须如实说明「质检未通过」,不能只留一个被清成 nil 的 error")
+	}
+	// 「报完成」只许出现在三路 switch 都通过之后：它前面必须先经过成片判据
+	// （否则"没成片"又会掉进"完成"那一路）。
+	if !strings.Contains(src, "project.DeliveredFinal") {
+		t.Error("全流程收尾必须查成片在不在（project.DeliveredFinal）—— 各阶段都绿不等于盘上有片子")
 	}
 }
 

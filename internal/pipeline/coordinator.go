@@ -125,25 +125,6 @@ func (c *Coordinator) HasRunning() bool {
 	return len(c.runs) > 0
 }
 
-// RunningPhase 返回**正在跑指定阶段**的项目 id(没有则空串)。
-//
-// 用途只有一个:批量产线在"预解析下一集"之前问一句"此刻有没有别的 LLM 解析在跑"
-// —— 用户 2026-09-28:「提前预解析那也是当前没有相同任务的条件下才去执行啊」。
-//
-// 判据取 Run.Phase 这个**实时**字段(setRunPhase 随阶段推进更新),而不是启动时传进来的
-// phase:第 N 集从 all 起步,进了资产阶段之后它就不再占用 script 这个"工位"了 ——
-// 正是这一刻,LLM 空出来、可以安全地去解析下一集。
-func (c *Coordinator) RunningPhase(phase string) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for id, r := range c.runs {
-		if r.Phase == phase {
-			return id
-		}
-	}
-	return ""
-}
-
 // Start 启动阶段执行。phase=all 为全流程;only 为镜头过滤(render 阶段);
 // engineOverride 非空时本次运行覆盖项目引擎(镜头级分派:auto/comfy/api)。
 //
@@ -532,14 +513,24 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		}
 	}
 	if phase == PhaseAll {
-		if qcFailed != nil {
+		// **交付判据只看成片在不在**（2026-09-28 全面审计补上的一道）：各阶段都没返回 error，
+		// 不等于盘上有片子 —— 修之前这里会直接报「✔ 全流程完成」，批量产线据此推进下一集，
+		// 用户最后看到的是一串"完成"、output/ 里却没有成片（用户原话：「交付的逻辑搞的跟个啥一样」）。
+		_, delivered := project.DeliveredFinal(c.store.Dir(proj.ID))
+		switch {
+		case qcFailed != nil:
 			// 带瑕疵收尾:成片产出了,但这次运行**不算完成**(批产线据此停住不自动跳集,
 			// 状态与结尾文案也如实说明成片里含不合格镜头)。
 			ended = ResultFailed
 			c.emit(proj.ID, "pipeline", 0, "warn", 100,
 				"⚠ 全流程跑完但**质检未通过**:%v —— 成片已按现有镜头合成(带瑕疵),请按报告单镜重渲后重新合成;本次不计为完成",
 				qcFailed)
-		} else {
+		case !delivered:
+			ended = ResultFailed
+			c.emit(proj.ID, "pipeline", 0, "error", 100,
+				"✕ 各阶段都跑完了,但项目 output/ 里**没有成片**（final.mp4 / final_2k.mp4 都不在）—— "+
+					"本次**不计为完成**,批量产线不会推进下一集;请到合成阶段看报告并按提示重跑")
+		default:
 			c.emit(proj.ID, "pipeline", 0, "success", 100, "✔ 全流程完成,耗时 %s", time.Since(started).Round(time.Second))
 		}
 	}

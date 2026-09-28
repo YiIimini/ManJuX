@@ -236,17 +236,68 @@ func bindSubjectsToPictures(prompt string, roles []RefRole) string {
 
 // authorityPictures 名字 → 该对象的"身份权威"图片编号。拼合图不给编号:官方明确它只
 // 提供角度,而让它当身份源正是 2026-09-25 镜头6 漂移的根因。
+//
+// **名字要连别名一起登记**（2026-09-28 用户报「subject_definitions 一行都没能绑到参考图」）：
+// 角色卡名常带括号注解（本机实例：`碑生（丙十七）`、`沈砚（human）`），而 LLM 在
+// subject_definitions 里往往只写其中一半 —— 实测写的是 `丙十七`，整名对不上 ⇒ 一行都不绑
+// ⇒ 模型按文字重画 ⇒ 同一角色逐镜不同人（正是这条修复本该拦住的那个后果）。
+// 展开成「整名 / 括号前主名 / 括号内注解」三种写法；命中仍按**最长者胜**
+// （nameInSubjectTail），短别名抢不走长名。
 func authorityPictures(roles []RefRole) map[string]int {
 	auth := map[string]int{}
 	for _, r := range roles {
 		switch r.Kind {
 		case "character_front", "character_front_in_strip", "scene":
-			if _, ok := auth[r.Name]; !ok {
-				auth[r.Name] = r.Picture
+			for _, alias := range nameAliases(r.Name) {
+				if _, ok := auth[alias]; !ok {
+					auth[alias] = r.Picture
+				}
 			}
 		}
 	}
 	return auth
+}
+
+// nameAliases 一个角色名的全部写法：整名、括号前的主名、括号里的注解。
+//
+// 只做**去括号**这一种展开（不做分词、不做模糊匹配）：它确定、可穷举、也不会把两个真不同的
+// 角色混成一个。`碑生（丙十七）` → {碑生（丙十七）, 碑生, 丙十七}；没有括号时只有整名。
+//
+// 单字别名一律丢掉（`甲`／`乙` 这种太容易在描述正文里撞上）；括号在开头时整名照用、不展开。
+//
+// 一律按 **rune** 切（第一版按字节切，`name[i+1:]` 把全角括号切成半个字，展开出的是乱码别名——
+// 于是"提示词只写注解"那条仍然一个都绑不上，被测试当场抓住）。
+func nameAliases(name string) []string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil
+	}
+	out := []string{name}
+	r := []rune(name)
+	open := -1
+	for i, ch := range r {
+		if ch == '（' || ch == '(' {
+			open = i
+			break
+		}
+	}
+	if open <= 0 {
+		return out
+	}
+	if main := strings.TrimSpace(string(r[:open])); len([]rune(main)) >= 2 {
+		out = append(out, main)
+	}
+	inner := r[open+1:]
+	for i, ch := range inner {
+		if ch == '）' || ch == ')' {
+			inner = inner[:i]
+			break
+		}
+	}
+	if s := strings.TrimSpace(string(inner)); len([]rune(s)) >= 2 {
+		out = append(out, s)
+	}
+	return out
 }
 
 // subjectNameWindow 「is」之后多长的窗口内认名字(字符数)。

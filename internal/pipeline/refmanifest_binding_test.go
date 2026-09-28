@@ -120,3 +120,56 @@ func TestEnsureRefManifestBindsAndKeepsManifest(t *testing.T) {
 		t.Error("原文不得被吃掉(清单是并列其后的一段结构性声明)")
 	}
 }
+
+// 【2026-09-28 用户报 · 照真实数据写的回归】角色卡名带括号注解，而 LLM 只写其中一半。
+//
+// 实测：角色卡名 `碑生（丙十七）`，LLM 在 subject_definitions 里写的是
+// `<Subject 1> is 丙十七, a twenty-year-old stele-quarry youth: …`。
+// 整名对不上 ⇒ authorityPictures 里没有一个 key 命中 ⇒ **一行都没能绑到参考图**
+// （渲染阶段那条告警）⇒ 模型按文字重画 ⇒ 同一角色逐镜不同人。
+func TestSubjectBindingMatchesNameAnnotations(t *testing.T) {
+	roles := []RefRole{
+		{Picture: 1, Kind: "character_front", Name: "碑生（丙十七）", ID: "char_bingsheng"},
+		{Picture: 2, Kind: "character_front", Name: "邢五", ID: "char_xingwu"},
+		{Picture: 3, Kind: "scene", Name: "西坡碑林", ID: "scene_beilin"},
+	}
+	cases := []struct{ name, prompt, want string }{
+		{
+			name:   "提示词只写括号里的注解",
+			prompt: "subject_definitions:\n<Subject 1> is 丙十七, a twenty-year-old stele-quarry youth.\n",
+			want:   "<Subject 1> is 丙十七 in <Picture 1>,",
+		},
+		{
+			name:   "提示词只写括号前的主名",
+			prompt: "subject_definitions:\n<Subject 1> is 碑生, a stele-quarry youth.\n",
+			want:   "<Subject 1> is 碑生 in <Picture 1>,",
+		},
+		{
+			name:   "整名照旧（且按最长者胜绑整名）",
+			prompt: "subject_definitions:\n<Subject 1> is 碑生（丙十七）— 石场少年。\n",
+			want:   "<Subject 1> is 碑生（丙十七） in <Picture 1>",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := bindSubjectsToPictures(tc.prompt, roles); !strings.Contains(got, tc.want) {
+				t.Fatalf("应绑成含 %q，实际:\n%s", tc.want, got)
+			}
+		})
+	}
+	// 反向：名字真不在这一行里时不许硬塞编号（把碑生的脸绑到别人行上比不绑更坏）
+	miss := bindSubjectsToPictures("subject_definitions:\n<Subject 2> is 一个没登记的路人, walking.\n", roles)
+	if strings.Contains(miss, "in <Picture") {
+		t.Errorf("对不上的行不许硬塞编号：%s", miss)
+	}
+	// 别名展开只做去括号这一种，别把真不同的角色混成一个
+	if aliases := nameAliases("碑生（丙十七）"); len(aliases) != 3 {
+		t.Errorf("`碑生（丙十七）` 应展开为 3 个写法（整名/主名/注解），实际 %v", aliases)
+	}
+	if aliases := nameAliases("邢五"); len(aliases) != 1 {
+		t.Errorf("没有括号时只该有整名，实际 %v", aliases)
+	}
+	if aliases := nameAliases("小乔（甲）"); len(aliases) != 2 {
+		t.Errorf("单字注解太容易误伤，不该当别名，实际 %v", aliases)
+	}
+}

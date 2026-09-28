@@ -8,98 +8,65 @@ import (
 	"testing"
 )
 
-// 逐集串行 + 预解析安全窗口的守卫。
+// 逐集串行的守卫：**一集的活只属于那一集，主线跑完之前不许插别的**。
 //
-// 背景（2026-09-28 同一天里被用户纠了两次）：
-//   - 第一次「说了 LLM 解析按集来，为什么一来就直接两集开始解析」—— 违规的是**两集同时解析**；
-//   - 第二次「提前预解析那也是当前没有相同任务的条件下才去执行啊」—— **有条件的提前是允许的**，
-//     该修的是门，不是机制（我第一版把整个预解析删掉了，读窄了）。
+// 用户在同一天里连纠三次，三次都是"趁主线忙着先做点别的"：
 //
-// 所以规则落成两条，各自可机检：
-//  ① 预解析必须过 canPreparse：上一集方案已落盘 + 此刻没有别的 LLM 解析在跑 + 下一集确实缺方案；
-//  ② 产线启动点只有两处（当前集、预解析的下一集），而且预解析必须在**等本集跑完的循环内**动手
-//     —— 起当前集之前就动手，就是"第 1 集刚开跑、第 2 集也在解析"那个形态。
-
-// ① 判据穷举：只有"下一集缺方案 + 上一集方案已就绪 + LLM 空闲"才放行。
+//	①「说了 LLM 解析按集来，为什么一来就直接两集开始解析」
+//	②「资产渲染完成，咋直接 LLM 解析下一集，分镜渲染进程又干嘛了」
+//	③「我有没有说合理分配任务，有叫你主线任务流程中断不做吗？」
 //
-// 三个条件各自对应一次真实翻车：LLM 忙 ⇒ 两集同时解析（用户第一次报）；上一集方案没落盘
-// ⇒ 跨集角色锚定读不到（bookRoster 扫的就是兄弟集的 plan.json）⇒ 下一集自己发明角色名与
-// 形象 ⇒ 跨集漂移；下一集已有方案 ⇒ 白烧一遍 token。
-func TestCanPreparseRequiresSafeWindow(t *testing.T) {
-	cases := []struct {
-		prevReady, llmBusy, nextNeeds bool
-		want                          bool
-	}{
-		{true, false, true, true},   // 唯一放行的组合：本集方案已就绪 + LLM 空闲 + 下一集缺方案
-		{true, true, true, false},   // LLM 还在解析 ⇒ 不许再起一集的解析（"一来就两集"）
-		{false, false, true, false}, // 上一集方案还没落盘 ⇒ roster 断链，会跨集漂移
-		{false, true, true, false},
-		{true, false, false, false}, // 下一集已有方案 ⇒ 不必再解析
-		{true, true, false, false},
-		{false, false, false, false},
-		{false, true, false, false},
-	}
-	for _, c := range cases {
-		if got := canPreparse(c.prevReady, c.llmBusy, c.nextNeeds); got != c.want {
-			t.Errorf("canPreparse(prevPlanReady=%v, llmBusy=%v, nextNeedsPlan=%v) = %v，想要 %v",
-				c.prevReady, c.llmBusy, c.nextNeeds, got, c.want)
-		}
-	}
-}
-
+// 前两次我都在给"提前解析下一集"加条件（先加门、再挪到安全窗口），方向就是错的：
+// 用户要的是**主线不被打断**，不是"有条件地插队"。所以那段逻辑现在是**不存在的**。
+//
+// 判据收在"产线的启动点"上（源码扫描，与 frontend_guard_test.go 同一路数）：
+//
+//	① novel_split.go 里 `s.pipe.Start(` 只能出现 1 次，且第一个实参必须是当前集 ep；
+//	② 这个文件里不许出现 pipeline.PhaseScript（"提前点名解析某一集"的指纹）；
+//	③ 不许出现 preparseNextScript / canPreparse 这类名字（那段逻辑已经两度复活）。
+//
+// 为什么不写成行为测试：真把产线拉起来（startBatch）在测试进程里会一路走到
+// quitApp(os.Exit) 掀掉整个测试进程（见 reap_batch_test.go 的说明），所以取源码级判据。
 var rePipeStart = regexp.MustCompile(`s\.pipe\.Start\(([^)]*)\)`)
 
-// ② 源码守卫：启动点的数量与位置、预解析的调用时机、以及"预解析必须过门"。
-//
-// 为什么不写成行为测试：真把产线拉起来（startBatch）在测试进程里会一路走到 quitApp(os.Exit)
-// 掀掉整个测试进程（见 reap_batch_test.go 的说明），所以取源码级判据。
 func TestProductionStartsOneEpisodeAtATime(t *testing.T) {
 	src := readNovelSplit(t)
 
-	// (a) 产线只许启动两种东西：当前集 ep、预解析的下一集 next。别的集一律不许被这里启动。
+	// (a) 启动点有且只有一处，且只能是当前集。
 	calls := rePipeStart.FindAllStringSubmatch(src, -1)
-	if len(calls) != 2 {
+	if len(calls) != 1 {
 		var got []string
 		for _, c := range calls {
 			got = append(got, "Start("+c[1]+")")
 		}
-		t.Fatalf("产线的启动点应是 2 处（当前集 + 预解析的下一集），实际 %d 处：%v", len(calls), got)
+		t.Fatalf("产线的启动点必须**有且只有一处**（起当前集），实际 %d 处：%v —— "+
+			"多出来的那处就是趁主线忙着去动别的集", len(calls), got)
 	}
-	for _, c := range calls {
-		arg := strings.TrimSpace(c[1])
-		if !strings.HasPrefix(arg, "ep,") && !strings.HasPrefix(arg, "next,") {
-			t.Errorf("产线不许启动别的集，实际启动的是：%s", arg)
+	if arg := strings.TrimSpace(calls[0][1]); !strings.HasPrefix(arg, "ep,") {
+		t.Errorf("产线只允许启动**当前集** ep，实际启动的是：%s", arg)
+	}
+
+	// (b) 不许再出现"点名解析某一集"的相位，也不许再长出提前解析那套名字。
+	if strings.Contains(src, "PhaseScript") {
+		t.Error("novel_split.go 里不该出现 pipeline.PhaseScript —— 那是「提前把某一集解析掉」的指纹；" +
+			"轮到哪一集才解析哪一集")
+	}
+	for _, banned := range []string{"preparseNextScript", "canPreparse"} {
+		if strings.Contains(src, banned) {
+			t.Errorf("%s 又回来了 —— 它两度把主线插断（用户在同一天里点名三次）", banned)
 		}
 	}
 
-	// (b) 预解析必须在**等本集跑完的循环内**动手：挪回"起当前集之前"，就是"一来就两集"。
-	call := strings.Index(src, "s.preparseNextScript(")
-	loop := strings.Index(src, "for time.Now().Before(hardDeadline) {")
-	if call < 0 || loop < 0 {
-		t.Fatalf("找不到预解析调用点或等待循环（call=%d loop=%d）—— 这段结构变了，守卫要跟着更新", call, loop)
+	// (c) 产线起当前集必须是**全流程 PhaseAll** —— 它会自己按"这一集有没有方案"决定跳不跳 script
+	//     （见 pipeline.pipelineStages）。2026-09-28 用户报「资产渲染完成，咋直接 LLM 解析下一集」：
+	//     根因就是这里曾降级成 `PhaseAssets`（**单阶段**语义）⇒ 任何「已有方案」的集在产线里只出完
+	//     资产就被当成跑完、产线立刻推进下一集，一个镜头都没渲。
+	if !strings.Contains(src, `s.pipe.Start(ep, pipeline.PhaseAll, nil, "", 0)`) {
+		t.Error("产线起当前集必须用 pipeline.PhaseAll（全流程）：有方案的集由 pipelineStages 自动跳过 script，" +
+			"而不是由这里降级成单阶段")
 	}
-	if call < loop {
-		t.Error("preparseNextScript 必须在等本集跑完的循环内调用：起当前集之前就动手，" +
-			"等于第 1 集刚开跑就去解析第 2 集（用户报的「一来就直接两集开始解析」）")
-	}
-
-	// (c) 预解析必须过 canPreparse 的两道门，且"LLM 是否空闲"要问 Coordinator 的**实时**阶段。
-	fn := functionBody(src, "func (s *Server) preparseNextScript")
-	if fn == "" {
-		t.Fatal("找不到 preparseNextScript 函数体")
-	}
-	for _, want := range []string{"canPreparse(", "RunningPhase(", "hasUsablePlan("} {
-		if !strings.Contains(fn, want) {
-			t.Errorf("preparseNextScript 里缺少 %s —— 预解析必须过门（上一集方案已落盘 + 此刻无别的 LLM 解析在跑）", want)
-		}
-	}
-
-	// (d) pipeline.PhaseScript（点名"只跑解析阶段"）只许出现在预解析里：产线起当前集走的是
-	//     PhaseAll/PhaseAssets，不需要点名 script 阶段。
-	total := strings.Count(src, "pipeline.PhaseScript")
-	if n := strings.Count(fn, "pipeline.PhaseScript"); n != total {
-		t.Errorf("pipeline.PhaseScript 只能出现在 preparseNextScript 里（产线起当前集走 PhaseAll/PhaseAssets）："+
-			"文件里 %d 处，其中预解析内 %d 处", total, n)
+	if strings.Contains(src, "pipeline.PhaseAssets") {
+		t.Error("产线不许把当前集降级成单阶段 PhaseAssets —— 那会让「已有方案」的集只出资产就当成跑完，一个镜头都不渲")
 	}
 }
 
@@ -110,17 +77,4 @@ func readNovelSplit(t *testing.T) string {
 		t.Fatalf("读不到产线源码 novel_split.go: %v", err)
 	}
 	return string(raw)
-}
-
-// functionBody 取某个顶层函数从签名到下一个顶层 func 之间的源码。
-func functionBody(src, sig string) string {
-	i := strings.Index(src, sig)
-	if i < 0 {
-		return ""
-	}
-	rest := src[i+len(sig):]
-	if j := strings.Index(rest, "\nfunc "); j >= 0 {
-		return rest[:j]
-	}
-	return rest
 }
