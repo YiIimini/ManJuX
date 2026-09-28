@@ -99,6 +99,7 @@ func EnsureAnchorCast(plan *project.Plan, src string) []string {
 		plan.Characters = append(plan.Characters, project.Character{
 			ID:          AnchorCardID(a.Name),
 			Name:        a.Name,
+			Kind:        anchorCardKind(a),
 			Description: a.Raw,
 			// **英文画图提示词**：没有它，出图时模型拿不到任何外貌依据（用户报的
 			// 「中年人渲染出来跟个小年轻一样」就是这么来的）。见 anchorImagePrompt 的说明。
@@ -108,6 +109,28 @@ func EnsureAnchorCast(plan *project.Plan, src string) []string {
 		added = append(added, a.Name)
 	}
 	return added
+}
+
+// anchorCardKind 锚表补出来的卡片的**实体类型**。
+//
+// 【2026-09-29 真机实测】锚表是《**人物**外形锚表》，但补出来的卡没有 kind 字段，
+// 于是出图时按整段描述推断 —— 而描述里写着「义体接缝纹 / 黑色机械护颈项圈 / 机能外套」，
+// 命中 `objectStrongWords` 里的「机械」⇒ **第二主角霜见被判成器物**：定妆照走器物那套
+// 取景（"a clean three-quarter product view of the object"，没有脸的身份条款），
+// 实测出图是个全身立绘、与本人设定完全不是一回事。
+//
+// 判据：只看**名字与定位行**（锚表每个小节标题括号里那句「定位：…」）。
+// 表里的人是"人"，除非它自己写着别的（器物 / 灵体 / 妖兽 / 灵宠 / 无实体…）；
+// 说不清就返回空串，让常规推断接手（那时它会用完整描述）。
+func anchorCardKind(a project.SettingChar) string {
+	hay := strings.TrimSpace(a.Name) + "\n" + strings.TrimSpace(a.Note)
+	if hay == "" {
+		return ""
+	}
+	if InferEntityKind(hay, "", "") == KindHuman {
+		return string(KindHuman)
+	}
+	return ""
 }
 
 // anchorImagePrompt 从锚表字段拼出**英文**画图提示词（确定性翻译，不调模型）。
