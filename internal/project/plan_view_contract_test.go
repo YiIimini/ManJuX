@@ -168,8 +168,10 @@ func TestValidatePlanEstablishingShot(t *testing.T) {
 	// 正向：首镜没有建立镜头串
 	p := viewShotPlan(3, true)
 	p.Shots[0].H3Prompt = strings.Replace(p.Shots[0].H3Prompt, PlanEstablishingExtra, "", 1)
-	if !hasIssue(ValidatePlan(p), "warn", "建立镜头串") {
-		t.Fatalf("建立镜头缺串必须报：%v", PlanIssuesText(ValidatePlan(p)))
+	// 级别是 **info**：装配点会确定性追加这段串（pipeline/prompts.go 的 EnsureEstablishingExtra），
+	// 用户没有可做的事 ⇒ 只做告知，不冒充需要处理的问题（2026-09-28 降噪）
+	if !hasIssue(ValidatePlan(p), "info", "建立镜头串") {
+		t.Fatalf("建立镜头缺串必须报（info 级）：%v", PlanIssuesText(ValidatePlan(p)))
 	}
 	// 正向：建立镜头用了特写
 	p = viewShotPlan(3, true)

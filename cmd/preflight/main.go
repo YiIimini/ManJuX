@@ -106,17 +106,27 @@ func main() {
 	// ② 契约自检（平台全部门）
 	fmt.Println("\n【契约自检】")
 	issues := project.ValidatePlan(&plan)
-	fails, warns := 0, 0
+	fails, warns, infos := 0, 0, 0
 	for _, is := range issues {
-		if is.Level == "fail" {
+		switch is.Level {
+		case "fail":
 			fails++
 			fmt.Printf("  ✕ [fail] %s: %s\n", is.Where, oneLine(is.Msg))
-		} else {
+		case "info":
+			// info = 平台**已经自动处理**或仅供参考的提醒：如实说出来，但不计入"要你处理的问题"。
+			// 为什么要有这一级（2026-09-28）：把"平台自己会补齐"的事报成 warn，会让真正的
+			// 警告淹在噪音里（用户会整体忽略这一列）—— 平台自己的话就是"假告警会让人不再看告警"。
+			infos++
+		default:
 			warns++
 		}
 	}
 	for _, is := range issues {
-		if is.Level != "fail" {
+		switch is.Level {
+		case "fail":
+		case "info":
+			fmt.Printf("  ℹ [info] %s: %s\n", is.Where, oneLine(is.Msg))
+		default:
 			fmt.Printf("  ⚠ [warn] %s: %s\n", is.Where, oneLine(is.Msg))
 		}
 	}
@@ -132,7 +142,7 @@ func main() {
 
 	// ④ 结论
 	fmt.Println("\n【结论】")
-	fmt.Printf("  契约 fail=%d / warn=%d；H3 格式违规=%d / %d 镜\n", fails, warns, bad, len(plan.Shots))
+	fmt.Printf("  契约 fail=%d / warn=%d / info=%d（info = 平台已自动处理或仅供参考）；H3 格式违规=%d / %d 镜\n", fails, warns, infos, bad, len(plan.Shots))
 	switch {
 	case fails > 0:
 		fmt.Println("  ✕ **先别渲**：有 fail（导入/建项目那一层就该拦住的问题），按上面逐条修。")

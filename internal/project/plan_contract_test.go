@@ -243,7 +243,8 @@ func TestValidatePlanVoiceLayer(t *testing.T) {
 				p.Shots[0].Dialogue = []Line{{Speaker: "旁白", Text: "雨一直在下。", OS: true}}
 				p.Shots[0].H3Prompt = "subject_definitions:\n<d>[Chinese]雨一直在下。</d>"
 			},
-			level: "warn", wantSub: "lips remain completely closed",
+			// 级别是 **info**：平台会确定性补齐这一句 ⇒ 用户无事可做（2026-09-28 降噪）
+			level: "info", wantSub: "lips remain completely closed",
 		},
 	}
 	for _, tc := range cases {

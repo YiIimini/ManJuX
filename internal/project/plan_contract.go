@@ -417,10 +417,13 @@ func ValidatePlan(p *Plan) []Issue {
 			add("fail", where,
 				"本镜有台词/旁白,h3_prompt 里却没有任何 <d> 标记 —— 成片会说成听不懂的话")
 		}
-		// 画外音镜:提示词里必须有"嘴唇闭合"子句(平台后处理会补,但产出侧就该写对)。
+		// 画外音镜:提示词里必须有"嘴唇闭合"子句。
+		// 级别是 **info**：`HealPlan → FillVoiceoverAssets` 会**确定性补齐**这一句
+		// ⇒ 用户没有任何可做的事（2026-09-28 降噪：把"平台自己会补"的事报成 warn，
+		// 会让真正的警告淹在噪音里 —— 平台自己的话就是"假告警会让人不再看告警"）。
 		if HasVoiceover(sh) && !strings.Contains(sh.H3Prompt, VoiceoverClauseMarker) {
-			add("warn", where,
-				"本镜有画外音但 h3_prompt 没写「%s」—— 平台后处理会补齐,产出侧写对更稳",
+			add("info", where,
+				"本镜有画外音但 h3_prompt 没写「%s」—— 平台会**自动补齐**（这一步不需要你做什么）；产出侧写对更稳",
 				VoiceoverClauseMarker)
 		}
 		// ── 汉字卫生（2026-09-26 用户报障「成片出现无名字幕」）──────────────────
@@ -526,9 +529,12 @@ func ValidatePlan(p *Plan) []Issue {
 			}
 		}
 		if len(establishingBad) > 0 {
-			add("warn", "plan.shots",
-				"%d 个建立镜头没写建立镜头串 —— 观众第一次看见一个地点时得先交代地点："+
-					"逐字写上 %q（%s）", len(establishingBad), PlanEstablishingExtra, strings.Join(establishingBad, "、"))
+			// info 而不是 warn：装配时 `EnsureEstablishingExtra`（pipeline/prompts.go）会**确定性追加**
+			// 这段串 ⇒ 用户没有可做的事。与"画外音闭嘴句"同一条政策：平台已处理的事只做告知，
+			// 不冒充需要处理的问题（否则真正的警告会淹在噪音里）。
+			add("info", "plan.shots",
+				"%d 个建立镜头没写建立镜头串 —— 平台会**自动追加**（这一步不需要你做什么）；"+
+					"产出侧逐字写上更稳：%q（%s）", len(establishingBad), PlanEstablishingExtra, strings.Join(establishingBad, "、"))
 		}
 		if len(establishingClose) > 0 {
 			add("warn", "plan.shots",
