@@ -168,6 +168,15 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			} else {
 				c.emit(proj.ID, PhaseAssets, 0, "success", 0, "♻ 资产库复用:%s「%s」%s(跨项目共享,免生成)", kindLabel(kind), name, via)
 			}
+			// **跨项目复用的来源必须说清**（2026-09-28 全面审计）：库按 kind+name 精确匹配，
+			// 于是"不同项目里同名"会直接共用同一张脸 —— 网文里撞名很常见（林昭/苏婉）。
+			// 同项目内复用不必啰嗦，**跨项目**才提示，并且提示方式要能让人一眼核对。
+			if src := strings.TrimSpace(r.SourceProject); src != "" && src != filepath.Base(c.store.Dir(proj.ID)) {
+				c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+					"⚠ %s「%s」复用自**另一个项目**《%s》（库按同名匹配，与本项目是否同一角色请核对）：%s —— "+
+						"若只是重名，请对这条资产点「重新生成」（会写成本项目的版本），或在方案里换个不重名的名字",
+					kindLabel(kind), name, src, firstSentence(r.Description))
+			}
 			return
 		}
 		// ② Krea-2 生成缺失参考图;成功后自动入库供后续项目复用
@@ -231,6 +240,13 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				}
 				if c.lib != nil {
 					if _, err := c.lib.Put(kind, name, description, imagePrompt, path, proj.ID, c.imageSourceKey()); err == nil {
+						// **跨项目同名覆盖要如实说**（2026-09-28 全面审计）：库按 kind+name 精确匹配
+						// 且**同名覆盖** —— B 项目生成同名角色会把 A 的库条目换成 B 的脸，A 此后重渲
+						// 就拿到 B 的脸，而两边界面都看不出异常。Put 把这次覆盖记进条目，这里播报出来。
+						if e, _, ok := c.lib.Match(kind, name); ok && e != nil && strings.TrimSpace(e.OverwriteNote) != "" {
+							c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+								"⚠ %s —— 那部戏之后的重渲会拿到这张新脸", e.OverwriteNote)
+						}
 						c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(后续项目自动复用)", kindLabel(kind), name)
 					}
 				}
@@ -695,11 +711,18 @@ func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Proje
 
 // libReuse 一次成功的库复用:项目侧落点 + 配对元数据。
 type libReuse struct {
-	Dest   string // 项目侧主图绝对路径
-	Rel    string // 项目侧主图相对路径(斜杠分隔,写进资产表用)
-	Name   string // 库条目的**权威名字**(别名命中时与本集叫法不同)
-	Prompt string // 库条目自己的 image_prompt(空 = 条目没记)
-	Copied int    // 一并带进项目的多视角/转台图张数
+	// SourceProject 这条库资产**首次入库的项目名**；Description 是库条目自己的描述。
+	//
+	// 为什么要带出来（2026-09-28 全面审计）：库按 kind+name **精确匹配**，于是"不同项目里同名"
+	// 会直接共用同一张脸 —— 网文里撞名很常见（林昭/苏婉），而此前只播报"资产库复用"，
+	// 用户看不出这张脸来自哪部戏。跨项目复用时把来源项目名与描述一起说清楚，让人能一眼核对。
+	SourceProject string
+	Description   string
+	Dest          string // 项目侧主图绝对路径
+	Rel           string // 项目侧主图相对路径(斜杠分隔,写进资产表用)
+	Name          string // 库条目的**权威名字**(别名命中时与本集叫法不同)
+	Prompt        string // 库条目自己的 image_prompt(空 = 条目没记)
+	Copied        int    // 一并带进项目的多视角/转台图张数
 }
 
 // PromptFor 复用时的 imagePrompt 取值:条目自带提示词时以**条目**为准。
@@ -754,6 +777,8 @@ func (c *Coordinator) reuseFromLibrary(projID, kind, id, name, description strin
 	r := libReuse{Dest: dest, Name: libName, Copied: copied}
 	if e != nil {
 		r.Prompt = strings.TrimSpace(e.ImagePrompt)
+		r.SourceProject = strings.TrimSpace(e.SourceProject)
+		r.Description = strings.TrimSpace(e.Description)
 	}
 	if rel, err := filepath.Rel(c.store.Dir(projID), dest); err == nil {
 		r.Rel = filepath.ToSlash(rel)
@@ -1187,4 +1212,22 @@ func assetShapeMismatch(kind string, iw, ih, projW, projH int) (bool, string) {
 		return true, fmt.Sprintf("方向与本项目画幅不一致（本项目是%s）", dir)
 	}
 	return false, ""
+}
+
+// firstSentence 取描述的第一句（播报里给人一眼核对的抓手，太长会淹没日志）。
+func firstSentence(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return "(这条资产没有描述)"
+	}
+	for _, sep := range []string{"。", "；", "\n"} {
+		if i := strings.Index(s, sep); i > 0 {
+			s = s[:i]
+		}
+	}
+	r := []rune(s)
+	if len(r) > 40 {
+		s = string(r[:40]) + "…"
+	}
+	return s
 }

@@ -37,7 +37,17 @@ type Entry struct {
 	Aliases       []string `json:"aliases,omitempty"`
 	Fingerprint   string   `json:"fingerprint"`    // 内容指纹
 	SourceProject string   `json:"source_project"` // 首次入库项目
-	Source        string   `json:"source"`         // krea2 / upload / ...
+	// OverwroteProjects 这个条目在**跨项目**入库时覆盖掉过的项目名（去重、按时间追加）。
+	//
+	// 为什么必须记（2026-09-28 全面审计）：库是按 kind+name 精确匹配的，而 Put 是**同名覆盖** ——
+	// 两个项目各有一个叫「林昭」的角色（网文里撞名很常见）时，B 项目一生成就把 A 的条目**改成
+	// B 的脸**，A 此后的重渲会拿到 B 的脸，而两边都看不到任何异常。留下这份"被覆盖过"的名单，
+	// 至少让后来的人/后来的重渲能查出来"这张脸换过主人"。
+	OverwroteProjects []string `json:"overwrote_projects,omitempty"`
+	// OverwriteNote 最近一次跨项目覆盖的可读说明（"这条资产原本属于《X》，已被《Y》覆盖"）。
+	// 给调用方播报用，避免为了一句话改 Put 的签名。
+	OverwriteNote string `json:"overwrite_note,omitempty"`
+	Source        string `json:"source"` // krea2 / upload / ...
 	// EntityKind **生效实体类型**(human/object/spirit_pet/beast/incorporeal/chibi)。
 	// 上传图由视觉模型**看图**判定后记在这里 —— 不能拿名字猜:用户上传一张铜雀,
 	// 名字叫「阿凿」,按文本推断会当成"人"去做原地转身,而器物该走转台自转。
@@ -383,11 +393,30 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 	// 保留已有 UsedCount 与指纹
 	used := 0
 	prevFP := ""
+	var overwrote []string
+	overwriteNote := ""
 	if prev, err := os.ReadFile(filepath.Join(dir, "asset.json")); err == nil {
 		var p Entry
 		if json.Unmarshal(prev, &p) == nil {
 			used = p.UsedCount
 			prevFP = p.Fingerprint
+			overwrote = append(overwrote, p.OverwroteProjects...)
+			// **跨项目覆盖必须留痕**（2026-09-28 全面审计）：库按 kind+name 精确匹配、Put 同名覆盖，
+			// 于是"B 项目生成同名角色「林昭」"会把 A 项目的条目改成 B 的脸，A 此后重渲就拿到 B 的脸，
+			// 而两边界面都看不到异常。这里记下被覆盖的项目名 + 一句可读说明，由调用方播报。
+			if old := strings.TrimSpace(p.SourceProject); old != "" && old != sourceProject {
+				overwriteNote = fmt.Sprintf("这条资产原本属于《%s》，已被《%s》覆盖（同名不同项目）", old, sourceProject)
+				dup := false
+				for _, s := range overwrote {
+					if s == old {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					overwrote = append(overwrote, old)
+				}
+			}
 		}
 	}
 	e := Entry{
@@ -395,6 +424,7 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 		Description: description, ImagePrompt: imagePrompt,
 		Image:         filepath.ToSlash(filepath.Join(kind, safeName(name), imgName)),
 		SourceProject: sourceProject, Source: source,
+		OverwroteProjects: overwrote, OverwriteNote: overwriteNote,
 		CreatedAt: time.Now(), UsedCount: used,
 	}
 	// 关联图入库:多视角原图与转台图(由资产阶段生成,与定妆照同目录同主名)。
