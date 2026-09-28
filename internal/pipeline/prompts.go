@@ -907,7 +907,7 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	if filepath.Base(series) == "projects" {
 		return "", 0
 	}
-	type charInfo struct{ name, desc string }
+	type charInfo struct{ key, name, desc string }
 	chars := []charInfo{}
 	scenes := []string{}
 	seenC, seenS := map[string]bool{}, map[string]bool{}
@@ -925,6 +925,7 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 		}
 		var plan struct {
 			Characters []struct {
+				ID          string `json:"id"`
 				Name        string `json:"name"`
 				Description string `json:"description"`
 			} `json:"characters"`
@@ -937,16 +938,23 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 		}
 		for _, ch := range plan.Characters {
 			n := strings.TrimSpace(ch.Name)
-			if n == "" || seenC[n] {
+			// **去重键按 id 优先**（2026-09-28 审计 B5）。
+			//
+			// 原来直接 `seenC[名字]` —— 同名不同人时**第二个人整个被丢掉**：
+			// 它的描述根本不进名单，于是本集里那个同名的角色拿不到自己的设定，
+			// 只能被模型按第一个人的形象写（"锚到别人身上"）。
+			// 有卡片 id 就用 id 当键：同名不同人是两个条目，本来就该各列一条。
+			key := cardSeedKey(ch.ID, n)
+			if n == "" || seenC[key] {
 				continue
 			}
-			seenC[n] = true
+			seenC[key] = true
 			if len(chars) < 8 {
 				d := strings.TrimSpace(ch.Description)
 				if r := []rune(d); len(r) > 110 {
 					d = string(r[:110]) + "…"
 				}
-				chars = append(chars, charInfo{n, d})
+				chars = append(chars, charInfo{key, n, d})
 			}
 		}
 		for _, sc := range plan.Scenes {
@@ -962,12 +970,24 @@ func (c *Coordinator) bookRoster(projectID string) (string, int) {
 	if len(chars) == 0 && len(scenes) == 0 {
 		return "", 0
 	}
+	// 同名计数：给下面的输出用（同名不同人要显式提示模型"这是两个人"）。
+	sameNameCount := map[string]int{}
+	for _, ch := range chars {
+		sameNameCount[ch.name]++
+	}
 	var sb strings.Builder
 	sb.WriteString("【系列角色一致性·必须遵守】以下角色已在前几集登场并定妆,本集若出现这些角色:" +
 		"①必须严格沿用原名(不得增减字/换同音字/另起别名);" +
 		"②**同一个人可能以不同称呼出现**(名字与代号/编号并存,如 机关人 / 阿枢 / 一三七四一号)——只要判定是同一人,就必须共用同一张角色卡的同一个名字与同一份形象设定,不得因为换了称呼就新建一个角色、另起一份设定;" +
 		"③角色表描述与每镜 H3 提示词中的形象必须与下面给出的设定逐项一致(毛色/服饰/年龄/特征细节不得改动):\n")
 	for i, ch := range chars {
+		// 同名不同人时**必须点名"这是两个人"**：名单里出现两条同名记录，
+		// 模型第一反应是"同一个人的两种写法"从而合并 —— 那正好是我们丢掉第二个人设定的原因。
+		if sameNameCount[ch.name] > 1 {
+			fmt.Fprintf(&sb, "%d. %s【注意：本剧有 %d 个同名但**不同**的角色，本条是其中一张卡，"+
+				"不要把这几条当成同一个人的多种写法】:%s\n", i+1, ch.name, sameNameCount[ch.name], ch.desc)
+			continue
+		}
 		fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, ch.name, ch.desc)
 	}
 	if len(scenes) > 0 {

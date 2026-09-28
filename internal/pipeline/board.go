@@ -302,7 +302,7 @@ func BoardPromptWithCard(masterPrompt, cardBoard string) string {
 // 增强项语义：失败只告警，绝不阻断资产阶段（与多视角转台图同一条政策 —— 定妆照才是必需的）。
 // 触发条件：人形角色，且「板不存在」或「板比定妆照旧」（定妆照因朝向自检换种子重出过，
 // 旧板已经是另一个人的脸）。已经是最新的板不重出，这条让"续跑/重进项目"不烧重复 GPU。
-func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Project, ce engine.Engine, name, imagePrompt, masterPath, cardBoard string, ek EntityKind) {
+func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Project, ce engine.Engine, id, name, imagePrompt, masterPath, cardBoard string, ek EntityKind) {
 	if ctx.Err() != nil || !HumanoidBoardKind(ek) || strings.TrimSpace(masterPath) == "" {
 		return
 	}
@@ -332,7 +332,10 @@ func (c *Coordinator) genCharacterBoard(ctx context.Context, proj *project.Proje
 		}
 	}
 	p, err := GenerateBoard(ctx, ce, BoardOptions{
-		Master: masterPath, Canvas: canvas, Prompt: imagePrompt, CardBoard: cardBoard, Out: out, Seed: nameSeed("board", name),
+		Master: masterPath, Canvas: canvas, Prompt: imagePrompt, CardBoard: cardBoard, Out: out,
+		// 种子锚定键有 id 用 id（2026-09-28 审计 B6）：名字写法一漂种子就变，
+		// 板子就会跟着换一张脸，而日志与契约门都看不出问题。
+		Seed: nameSeed("board", cardSeedKey(id, name)),
 		OnProgress: func(pct int, note string) {
 			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "三视图板「%s」:%s(%d%%)", name, note, pct)
 		},

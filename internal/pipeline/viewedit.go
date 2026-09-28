@@ -171,7 +171,9 @@ func GenerateViewsEdit(ctx context.Context, ce engine.Engine, f *ff.FF, o Turnar
 	}
 	baseSeed := o.Seed
 	if baseSeed == 0 {
-		baseSeed = nameSeed("viewedit", o.Name)
+		// 锚定键有 id 用 id（2026-09-28 审计 B6）：名字写法一漂种子就变，
+		// "同名必同图"这道跨集一致性的保险会静默失效。
+		baseSeed = nameSeed("viewedit", cardSeedKey(o.ID, o.Name))
 	}
 	attempts := verifyAttempts(o)
 	emit("多视角:「%s」(%s)改用图像编辑逐角度生成(Qwen-Image-Edit,每张数秒)…", o.Name, kindLabel)

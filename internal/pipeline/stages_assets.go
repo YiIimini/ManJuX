@@ -686,7 +686,7 @@ func (c *Coordinator) genAssetImage(ctx context.Context, proj *project.Project, 
 	// 从刚出的定妆照派生，供人审一致性与建模向参考。它不是 H3 的参考图
 	// （refs.go 只认 <base>.png / <base>_turnaround.png），失败只告警。
 	if kind == "characters" {
-		c.genCharacterBoard(ctx, proj, ce, name, imagePrompt, path, cardBoard, ek)
+		c.genCharacterBoard(ctx, proj, ce, id, name, imagePrompt, path, cardBoard, ek)
 	}
 	return path, nil
 }
@@ -746,14 +746,16 @@ func (c *Coordinator) genCharacterViews(ctx context.Context, proj *project.Proje
 	turn, err := GenerateTurnaround(ctx, ce, c.ff, TurnaroundOptions{
 		MasterPath: masterPath,
 		Name:       name,
-		Prompt:     imagePrompt,
-		Kind:       kind,
-		Source:     proj.Config.Params.Assets.ViewsSourceOf(),
-		Realistic:  !proj.Config.Params.Script.FacesOn(),
-		Steps:      proj.Config.Params.Render.Steps,
-		Accel:      proj.Config.Params.Render.Accel,
-		Verify:     TurnaroundVerifier(c.cfg.Get().VLM),
-		Emit:       func(f string, a ...any) { c.emit(proj.ID, PhaseAssets, 0, "info", 0, f, a...) },
+		// 卡片 id 一并传下去：多视角（视频路与编辑路）的默认种子按它锚定，有 id 用 id。
+		ID:        id,
+		Prompt:    imagePrompt,
+		Kind:      kind,
+		Source:    proj.Config.Params.Assets.ViewsSourceOf(),
+		Realistic: !proj.Config.Params.Script.FacesOn(),
+		Steps:     proj.Config.Params.Render.Steps,
+		Accel:     proj.Config.Params.Render.Accel,
+		Verify:    TurnaroundVerifier(c.cfg.Get().VLM),
+		Emit:      func(f string, a ...any) { c.emit(proj.ID, PhaseAssets, 0, "info", 0, f, a...) },
 	})
 	if err != nil {
 		c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角生成失败(不影响定妆照):%v", err)

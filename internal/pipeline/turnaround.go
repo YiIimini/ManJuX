@@ -49,7 +49,10 @@ type TurnaroundOptions struct {
 	VideoDir   string // 转身视频落地目录;空 = <Dir>/<Base>_views
 	TempVideo  bool   // VideoDir 由本函数建临时目录并在结束时清理(库内生成用,不把 30MB 视频留在库里)
 	Name       string // 角色名(日志与默认种子)
-	Prompt     string // 定妆照提示词(取身份描述用)
+	// ID 卡片 id（2026-09-28 审计 B6）：默认种子**按它锚定，有 id 就用 id、没有才用 Name**。
+	// 名字写法一漂种子就变，"同名必同图"这道跨集一致性的保险会静默失效。
+	ID     string
+	Prompt string // 定妆照提示词(取身份描述用)
 	// Kind 实体类型:决定用哪一套"多视角方法" —— 人原地转身、器物转台自转、
 	// 妖兽绕行/转身、无实体原地旋动、Q 版 Q 版转身(见 entity_prompts.go)。
 	// 零值("")按 human 处理,保证老调用方行为不变。
@@ -181,7 +184,7 @@ func GenerateTurnaround(ctx context.Context, ce engine.Engine, f *ff.FF, o Turna
 	turnVerb := o.Kind.TurnVerb()
 	baseSeed := o.Seed
 	if baseSeed == 0 {
-		baseSeed = nameSeed("turnaround", o.Name)
+		baseSeed = nameSeed("turnaround", cardSeedKey(o.ID, o.Name))
 	}
 	attempts := verifyAttempts(o)
 	if o.Verify == nil {
