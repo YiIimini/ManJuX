@@ -432,7 +432,12 @@ const sysFaceVocabRules = `## FACE VOCABULARY & SAFE WORDING (mandatory — thes
 
 ### Anchor sheet is the ONLY authority for a face (卡从表来)
 - The character sheet under 设定集 (人物外形锚表) outranks everything else: copy its fields **item by item**, add no adjectives of your own, and never reword them. Its 11 fields are: 年龄 / 身形 / 脸型 / 眉眼 / 鼻唇 / 肤色肤质 / 独特记号 / 发型三要素(束法+长度+额前状态) / 首套服装 / 气质 (plus name and role). A purely background character may carry only four: 年龄 / 身形 / 脸型 / 首套服装.
-- Changing the anchor sheet = changing the face: if you must differ, say so explicitly in the description; never silently drift. Costume may change between 造型档, the face and hair may not.`
+- Changing the anchor sheet = changing the face: if you must differ, say so explicitly in the description; never silently drift.
+- **SAME PERSON AT ANOTHER TIME (造型档 / 不同时期) — the split line is fixed** (用户 2026-09-28：「主角不同时期会存在差异，但相似度不能走样」):
+  · **INVARIANT (must survive every period)**: face shape and bone structure, brow shape, eye shape and pupil colour, nose and lip shape, skin tone family, height/build family, AND every signature mark (scar, brand, mole, missing tooth). These are what tells the audience "this is still him" — if a later card loses them, the character has silently been re-cast.
+  · **VARIABLE (must actually change with the period)**: age read (a boy's soft jaw vs a man's defined one — same bone structure, different maturity), hair length/tie/state (shaved, grown out, greying, wet), costume and its wear, posture, and the body's condition (wounds, gauntness, muscle).
+  · Write BOTH halves into the card: the IDENTITY LOCK carries the invariants, and the description states the period ("thirty-one, three years in the stone camp") so the change is deliberate rather than accidental.
+  · A variant card is NOT a copy: if the new period only differs by costume, say so and keep the invariant list identical word for word. Never let two periods of one person render as the same image, and never let them render as two different people.`
 
 var SystemPrompt = sysHeader + `
 

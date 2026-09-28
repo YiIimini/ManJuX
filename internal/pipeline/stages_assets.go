@@ -196,6 +196,9 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					// 与已生成的其他角色定妆照逐张比一次；判成"同一个人"就带上分离指令换种子重出一次。
 					var castNoCap bool
 					path, castNoCap = c.checkCastDistinctness(ctx, proj, assets, kind, id, name, imagePrompt, ek, path, genAsset)
+					// 跨期造型档的**两向复核**（用户 2026-09-28：「不同时期会存在差异，但相似度不能走样」）:
+					// 该变的要真变(SSIM)、不该变的字字不动(VLM 同人判定)。与撞脸自检方向相反，各管一事。
+					path, _ = c.checkVariantIdentity(ctx, proj, assets, kind, id, name, path, genAsset)
 					if castNoCap && !castNoCapWarned {
 						castNoCapWarned = true
 						c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ %s", CastSkipNoCapability)
