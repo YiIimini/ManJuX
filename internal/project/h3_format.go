@@ -3,6 +3,8 @@ package project
 import (
 	"fmt"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -159,6 +161,152 @@ func H3FormatViolations(h3 string) []string {
 				break
 			}
 		}
+	}
+	// ⑪–⑮ 官方 §2/§5.4 里**有要求、此前没有门**的五条（2026-09-28 全面审计补齐）。
+	// 这五条都属于"写错了不报错、只是成片变差/听感变怪"的那一类，所以必须机器判。
+	out = append(out, h3DialogueTagViolations(h3)...)
+	out = append(out, h3LabelNumberingViolations(h3)...)
+	out = append(out, h3SpeakerIDViolations(h3)...)
+	return out
+}
+
+// h3DialogueTagViolations ⑪⑫ `<d>` 标签的两条官方要求（`ref-en.txt` §5.4）：
+//   - 每段台词必须带**语言标签**（`<d>[Chinese]…</d>`）—— 模型靠它决定用哪种语言发声；
+//   - 标点**归一化**到 , . ? !，去掉波浪号与重复装饰标点，且整句以 . ? ! 收尾
+//     （原文："Standardize punctuation to the basic written marks … remove repeated tildes,
+//     emoji, bullets, and repeated or decorative punctuation. End complete statements … with
+//     `.`, `?`, or `!` before </d>"）。
+func h3DialogueTagViolations(h3 string) []string {
+	var out []string
+	noLang, badPunct := 0, 0
+	for _, m := range h3DialogueRe.FindAllStringSubmatch(h3, -1) {
+		body := strings.TrimSpace(m[1])
+		if body == "" {
+			continue // 空标签由占位符那条管
+		}
+		if !strings.HasPrefix(body, "[") {
+			noLang++
+			continue
+		}
+		// 去掉语言标签后看标点
+		if i := strings.Index(body, "]"); i > 0 {
+			body = strings.TrimSpace(body[i+1:])
+		}
+		if body == "" {
+			continue
+		}
+		if h3BadDialoguePunct(body) {
+			badPunct++
+		}
+	}
+	if noLang > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d 段台词没有**语言标签**（写成 <d>[Chinese]台词</d>）—— 官方 §5.4：语言标签决定这段用什么语言发声，"+
+				"缺了模型会自己猜（中英混排时最明显）", noLang))
+	}
+	if badPunct > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d 段台词的标点不规范 —— 官方 §5.4：统一到基本书面标点（, . ? !），去掉波浪号、表情、项目符号与"+
+				"重复/装饰性标点，整句以 . ? ! 收尾", badPunct))
+	}
+	return out
+}
+
+// h3BadDialoguePunct 台词标点是否违反官方归一化要求。
+func h3BadDialoguePunct(s string) bool {
+	if strings.ContainsAny(s, "~～") {
+		return true
+	}
+	// 重复标点：！！ ?? 。。。 ，，
+	for _, pair := range []string{"!!", "??", "。。", "，，", "！！", "？？", "……"} {
+		if strings.Contains(s, pair) {
+			return true
+		}
+	}
+	// 结尾必须是句末标点
+	end := []rune(strings.TrimRight(s, " \t"))
+	if len(end) == 0 {
+		return false
+	}
+	switch end[len(end)-1] {
+	case '.', '?', '!', '。', '？', '！':
+		return false
+	}
+	return true
+}
+
+// h3LabelNumberingViolations ⑬ `<Picture N>` / `<Subject N>` 的编号必须**连续且不跳号**
+// （官方 §2.1/§2.2：标签按出现顺序编号，模型靠编号认"这是第几张参考图"）。跳号会让模型
+// 去猜一个不存在的参考图，或者把两张图对错号 —— 那是"人物乱配"的经典成因。
+func h3LabelNumberingViolations(h3 string) []string {
+	var out []string
+	for _, kind := range []struct {
+		name string
+		re   *regexp.Regexp
+	}{
+		{"<Picture N>", h3PictureRe},
+		{"<Subject N>", h3SubjectRe},
+	} {
+		nums := map[int]bool{}
+		max := 0
+		for _, m := range kind.re.FindAllStringSubmatch(h3, -1) {
+			n, err := strconv.Atoi(m[1])
+			if err != nil || n <= 0 {
+				continue
+			}
+			nums[n] = true
+			if n > max {
+				max = n
+			}
+		}
+		if max == 0 {
+			continue
+		}
+		for i := 1; i <= max; i++ {
+			if !nums[i] {
+				out = append(out, fmt.Sprintf(
+					"%s 编号跳号：用到 %d 号却没有 %d 号 —— 官方 §2 要求标签按出现顺序连续编号，"+
+						"跳号会让模型去猜一张不存在的参考图（人物/道具对错号的经典成因）", kind.name, max, i))
+				break
+			}
+		}
+	}
+	return out
+}
+
+// h3SpeakerIDViolations ⑭⑮ 说话人 ID：**分配了就必须用**，且只许用正文里分配过的号。
+//
+// 官方 §5.4：「Assign (Sx) once according to the order of actual vocal events … Reuse the
+// corresponding ID at every actual vocal event」。分配了却从没用过 = 有台词没写（那几句会被
+// 说成听不懂的话，与"缺 <d> 标记"同一后果）；正文用了没分配过的号 = 模型自造说话人。
+func h3SpeakerIDViolations(h3 string) []string {
+	var out []string
+	assigned := map[string]bool{}
+	used := map[string]bool{}
+	desc, ok := sectionOf(h3, "detailed_description")
+	if !ok {
+		desc = h3
+	}
+	for _, m := range h3SpeakerRe.FindAllStringSubmatch(h3, -1) {
+		id := "S" + strings.TrimSpace(m[1]) // 标记本体是 `(S1)` —— 只取数字会拼出 "(1)"，判不出来
+		// 出现在 detailed_description 里的算"用过"，其余（subject_definitions 等）算"已分配"
+		if strings.Contains(desc, "("+id+")") {
+			used[id] = true
+		} else {
+			assigned[id] = true
+		}
+	}
+	var unused []string
+	for id := range assigned {
+		if !used[id] {
+			unused = append(unused, id)
+		}
+	}
+	if len(unused) > 0 {
+		sort.Strings(unused)
+		out = append(out, fmt.Sprintf(
+			"定义了说话人 %s 却**从未在正文里说话** —— 官方 §5.4：分配了 (Sx) 就要在每次实际发声处复用；"+
+				"分配了不用，说明有台词没写进正文（那几句会被说成听不懂的话）", strings.Join(unused, "、")))
 	}
 	return out
 }

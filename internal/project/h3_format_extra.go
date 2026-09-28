@@ -102,6 +102,11 @@ func speakerTagOutsideDescription(h3 string) string {
 var (
 	// h3ShotTimeRe `[Shot N] At MM:SS.mmm`
 	h3ShotTimeRe = regexp.MustCompile(`\[Shot\s+(\d+)\]\s+At\s+(\d{1,2}):(\d{2})\.(\d{3})`)
+	// h3PictureRe / h3SubjectRe / h3SpeakerRe / h3DialogueRe：官方标签（§2.1/§2.2/§5.4）。
+	h3PictureRe  = regexp.MustCompile(`<Picture\s+(\d+)>`)
+	h3SubjectRe  = regexp.MustCompile(`<Subject\s+(\d+)>`)
+	h3SpeakerRe  = regexp.MustCompile(`\(S(\d+)\)`)
+	h3DialogueRe = regexp.MustCompile(`<d>([^<]{0,400})</d>`)
 	// h3ShotHeadRe 行首的 `[Shot N]` 标题（`[Shot 1]` 不带时间戳也算一个镜头）
 	h3ShotHeadRe = regexp.MustCompile(`(?m)^\s*\[Shot\s+\d+\]`)
 )
