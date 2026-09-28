@@ -37,13 +37,43 @@ func TierOf(level string) string {
 	return "craft"
 }
 
+// DefaultSources 门所在的源文件（**唯一出处**：工具、测试、文档都从这里取）。
+//
+// 【2026-09-29】原来是单个 `plan_contract.go` —— 而 `ValidatePlan` 拆分之后（审计 P2-11），
+// 判据搬到了 `plan_checks.go`，所有写死旧路径的地方当场从"106 道门"变成"3 道门"。
+//
+// **这类"扫源码的工具"必须有一个共享的清单**：写死路径的地方每多一处，搬家时就多一个
+// 安静失效的点。现在工具与测试都读这一份。
+var DefaultSources = []string{
+	"internal/project/plan_contract.go",
+	"internal/project/plan_checks.go",
+}
+
 // Collect 扫源码，按出现顺序收集所有契约门。
-func Collect(srcPath string) ([]Gate, error) {
-	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, srcPath, nil, 0)
-	if err != nil {
-		return nil, err
+//
+// **可以传多个文件**（2026-09-29）：`ValidatePlan` 拆分后判据分布在
+// `plan_contract.go`（入口）与 `plan_checks.go`（各分组），单文件签名会让这个工具
+// 安静地少报（门目录从 106 道变成 3 道，而没有任何测试会因此变红 ——
+// 除了 `TestCatalogueCoversRealGates`，那条门正是为这种情况写的）。
+// 顺序 = 传入顺序 = 执行顺序，与门目录里的编号含义一致。
+func Collect(srcPaths ...string) ([]Gate, error) {
+	var gates []Gate
+	for _, srcPath := range srcPaths {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, srcPath, nil, 0)
+		if err != nil {
+			return nil, err
+		}
+		// **编号跨文件连续**：把已有门的个数传进去当起点，否则每个文件都从 G001 重来
+		// （门目录里会出现两个 G001，而"编号稳定"正是它被引用的前提 —— 注释里写
+		// "见 G057"这种事全靠编号不漂）。
+		gates = append(gates, collectFrom(fset, f, len(gates))...)
 	}
+	return gates, nil
+}
+
+// collectFrom 从单个已解析的文件里收门（`from` 是已收集的个数，用于续编号）。
+func collectFrom(fset *token.FileSet, f *ast.File, from int) []Gate {
 	var gates []Gate
 	ast.Inspect(f, func(n ast.Node) bool {
 		call, ok := n.(*ast.CallExpr)
@@ -79,7 +109,7 @@ func Collect(srcPath string) ([]Gate, error) {
 			where = "（动态）"
 		}
 		gates = append(gates, Gate{
-			ID:    fmt.Sprintf("G%03d", len(gates)+1),
+			ID:    fmt.Sprintf("G%03d", from+len(gates)+1),
 			Level: level,
 			Tier:  TierOf(level),
 			Where: where,
@@ -87,12 +117,12 @@ func Collect(srcPath string) ([]Gate, error) {
 		})
 		return true
 	})
-	return gates, nil
+	return gates
 }
 
-// Render 生成 Markdown 目录。
-func Render(srcPath string) (string, error) {
-	gates, err := Collect(srcPath)
+// Render 生成 Markdown 目录（可传多个源文件，见 Collect 的说明）。
+func Render(srcPaths ...string) (string, error) {
+	gates, err := Collect(srcPaths...)
 	if err != nil {
 		return "", err
 	}
@@ -120,9 +150,9 @@ func Render(srcPath string) (string, error) {
 	return b.String(), nil
 }
 
-// Write 直接落盘。
-func Write(srcPath, outPath string) error {
-	md, err := Render(srcPath)
+// Write 直接落盘（可传多个源文件）。
+func Write(outPath string, srcPaths ...string) error {
+	md, err := Render(srcPaths...)
 	if err != nil {
 		return err
 	}

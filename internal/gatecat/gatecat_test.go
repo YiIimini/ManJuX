@@ -10,10 +10,12 @@ import (
 //  1. 它必须与源码**一致** —— 手写清单一定会过期（本周就栽过"文档说有、代码里没有"）；
 //  2. 它必须真的覆盖住了门 —— 数量太少说明扫描失效（那时测试会静默通过，比红更糟）。
 func TestCatalogueMatchesPlanContract(t *testing.T) {
-	const src = "../project/plan_contract.go"
+	// 源文件清单**从 DefaultSources 取**（不写死路径）：判据按域拆分后散在多个文件里，
+	// 写死一处就多一个"搬家后安静失效"的点 —— 2026-09-29 拆分时正是这样从 106 道掉到 3 道。
+	srcs := absSources(t)
 	const doc = "../../docs/门目录.md"
 
-	want, err := Render(src)
+	want, err := Render(srcs...)
 	if err != nil {
 		t.Fatalf("生成目录失败:%v", err)
 	}
@@ -27,8 +29,23 @@ func TestCatalogueMatchesPlanContract(t *testing.T) {
 	}
 }
 
+// absSources 把 DefaultSources 转成相对本测试目录的路径，并确认它们真的存在
+// （文件改名/搬家时要红在这里，而不是"门变少了"）。
+func absSources(t *testing.T) []string {
+	t.Helper()
+	out := make([]string, 0, len(DefaultSources))
+	for _, s := range DefaultSources {
+		p := "../../" + s
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("DefaultSources 里的 %s 不存在（文件搬家了？请同步 internal/gatecat/DefaultSources）:%v", s, err)
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
 func TestCatalogueCoversRealGates(t *testing.T) {
-	gates, err := Collect("../project/plan_contract.go")
+	gates, err := Collect(absSources(t)...)
 	if err != nil {
 		t.Fatalf("扫描失败:%v", err)
 	}
