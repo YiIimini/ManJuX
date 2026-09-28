@@ -235,6 +235,56 @@ func screenTextNear(low string) bool {
 // isASCIILetter 只把 a–z 当"字母"：中文与标点都算边界（判据要能在中英混排里工作）。
 func isASCIILetter(b byte) bool { return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' }
 
+// EmotionShotIssues 承载**核心情绪**的镜头时长不够的（返回人话，空 = 没问题）。
+//
+// 出处（用户文件，三份都在说同一件事）：
+//
+//	《【额外】测试版30S分镜指令》：「承载核心情绪反应的镜头（特写面部微表情、沉默对峙、
+//	  泪目、咬牙、握拳颤抖等），其镜头时长不得少于 **5 秒**。这类镜头是"戏眼"，
+//	  快切会直接消解情感浓度。宁愿压缩前面的动作铺垫，也要给足情绪发酵时间。」
+//	《五、最新豆包十秒指令》：「使用慢动作运镜，保持静止镜头聚焦说话者面部微表情，
+//	  延长环境氛围渲染」（同一诉求的另一种说法）
+//
+// 识别方式：钩子类型（`tender` / `climax`）+ 景别（特写/近景）。
+// **不靠正文里有没有"泪目"这类词**去猜 —— 那是模型写不写的问题，不是镜头语言的问题。
+func EmotionShotIssues(p *Plan) []string {
+	if p == nil {
+		return nil
+	}
+	var ids []string
+	for _, sh := range p.Shots {
+		if !isEmotionShot(sh) {
+			continue
+		}
+		if float64(sh.Duration) < PlanEmotionMinSeconds {
+			ids = append(ids, fmt.Sprintf("#%d(%ds)", sh.ID, sh.Duration))
+		}
+	}
+	return ids
+}
+
+// isEmotionShot 这一镜是不是"戏眼"（核心情绪镜）。
+func isEmotionShot(sh Shot) bool {
+	h := strings.ToLower(strings.TrimSpace(sh.HookType))
+	emotionHook := false
+	for _, t := range PlanEmotionHookTypes {
+		if h == t {
+			emotionHook = true
+			break
+		}
+	}
+	// 情绪钩子 + 小景别（脸在画面里）才算戏眼：一个 `climax` 的远景是"事件"，
+	// 不是"情绪" —— 远景本来就该短，要求它 ≥5 秒反而会拖节奏。
+	near := false
+	for _, s := range PlanFaceCloseSizes {
+		if strings.Contains(sh.ShotSize, s) {
+			near = true
+			break
+		}
+	}
+	return emotionHook && near
+}
+
 // hasAnyFold 文本里是否含列表里任一项（忽略大小写；文本须已小写）。
 func hasAnyFold(low string, words []string) bool {
 	for _, w := range words {

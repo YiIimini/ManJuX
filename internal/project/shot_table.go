@@ -53,6 +53,20 @@ const (
 	PlanBeatGapSeconds = 30
 )
 
+// PlanEmotionMinSeconds 承载**核心情绪**的镜头时长下限（用户《【额外】测试版30S分镜指令》：
+// 「承载核心情绪反应的镜头（特写面部微表情、沉默对峙、泪目、咬牙、握拳颤抖等），
+// 其镜头时长不得少于 **5 秒**。这类镜头是"戏眼"，快切会直接消解情感浓度」）。
+//
+// 【2026-09-29】这条口径此前只记在 `director/mode.go` 的 `Rhythm30` 表里（30 秒档），
+// 而**平台一条判据都没有** —— 60 秒档与仿真人档的用户文件里写着同一件事
+// （"给足情绪发酵时间，宁愿压缩前面的动作铺垫"），不止 30 秒档。
+// 判据本身是**判得了**的（情绪镜由钩子类型 + 景别识别），所以它不是"结构不支持"那一类，
+// 是单纯没做。见 `EmotionShotIssues`。
+const PlanEmotionMinSeconds = 5
+
+// PlanEmotionHookTypes 承载核心情绪的钩子类型（`tender` 情绪戏 / `climax` 高潮戏眼）。
+var PlanEmotionHookTypes = []string{"tender", "climax"}
+
 // PlanPreferredShotSeconds 非末尾片段的**期望时长下限**（用户《【额外】仿真人10S分镜头指令》：
 // 「非最后一个片段时长优先在 7、8、9、10 秒中选择，以结束于动作自然停顿点为准」）。
 const PlanPreferredShotSeconds = 7

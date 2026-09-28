@@ -643,6 +643,15 @@ func ValidatePlan(p *Plan) []Issue {
 				n, runSize, runStart, PlanMaxConsecutiveSameShotSize)
 		}
 
+		// ── 核心情绪镜的时长下限（2026-09-29：用户三份文件都写了，平台一直没有判据）──
+		if ids := EmotionShotIssues(p); len(ids) > 0 {
+			add("warn", "plan.shots",
+				"%d 个**戏眼镜头**短于 %d 秒（%s）—— 用户文件：「承载核心情绪反应的镜头"+
+					"（特写面部微表情、沉默对峙、泪目、咬牙、握拳颤抖）不得少于 5 秒。这类镜头是「戏眼」，"+
+					"快切会直接消解情感浓度，宁愿压缩前面的动作铺垫也要给足发酵时间」",
+				len(ids), PlanEmotionMinSeconds, strings.Join(firstN(ids, 6), "、"))
+		}
+
 		// ── 必填字段（规范 §6.2，审计 #15「只查 action 一个字段」的收口）────────
 		//
 		// 判据在 `required_fields.go`。那里只列**还没有专门门**的字段（其余各项各有门，

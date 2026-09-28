@@ -82,3 +82,35 @@ func TestContractGatesBatch2(t *testing.T) {
 		t.Errorf("signature/design 不是「要读的字」，裸 Contains 会误报，实际 %v", ids)
 	}
 }
+
+// 戏眼镜头（核心情绪镜）的时长下限。
+//
+// 用户三份文件都写了这件事，平台此前一条判据都没有：
+// 《【额外】测试版30S分镜指令》「承载核心情绪反应的镜头（特写面部微表情、沉默对峙、
+// 泪目、咬牙、握拳颤抖等）不得少于 **5 秒** …… 快切会直接消解情感浓度」。
+func TestEmotionShotMinDuration(t *testing.T) {
+	// 戏眼：情绪钩子 + 小景别，短于 5 秒要报
+	bad := &Plan{Shots: []Shot{
+		{ID: 1, HookType: "tender", ShotSize: "特写", Duration: 3},
+		{ID: 2, HookType: "climax", ShotSize: "近景", Duration: 2},
+	}}
+	if got := EmotionShotIssues(bad); len(got) != 2 {
+		t.Errorf("两个戏眼都短于 5 秒，该报两条，实际 %v", got)
+	}
+	// 够长就不报
+	ok := &Plan{Shots: []Shot{{ID: 1, HookType: "tender", ShotSize: "特写", Duration: 6}}}
+	if got := EmotionShotIssues(ok); len(got) != 0 {
+		t.Errorf("6 秒的戏眼不该报，实际 %v", got)
+	}
+	// **远景的情绪钩子不是戏眼**：一个 climax 的远景是事件不是情绪，
+	// 远景本来就该短，要求它 >=5 秒反而会拖节奏
+	far := &Plan{Shots: []Shot{{ID: 1, HookType: "climax", ShotSize: "远景", Duration: 2}}}
+	if got := EmotionShotIssues(far); len(got) != 0 {
+		t.Errorf("远景的 climax 不该按戏眼要求时长，实际 %v", got)
+	}
+	// **小景别但没有情绪钩子**也不是戏眼（一个 reveal 的特写是看清了什么）
+	plain := &Plan{Shots: []Shot{{ID: 1, HookType: "reveal", ShotSize: "特写", Duration: 2}}}
+	if got := EmotionShotIssues(plain); len(got) != 0 {
+		t.Errorf("reveal 的特写不是情绪戏眼，实际 %v", got)
+	}
+}
