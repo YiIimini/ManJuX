@@ -21,34 +21,9 @@ import (
 
 // SystemPrompt 直出系统提示(知识库 H3 官方规范全量内嵌)。
 // SystemPrompt 拆段定义(拼接还原,内容与单轮路径完全一致):
-const sysHeader = `You are an elite AI short-drama director and H3 prompt engineer.
-You turn a Chinese story/idea/outline into a complete shot plan (Storyboard) with
-production-ready MiniMax-H3 video prompts. All structural fields must be in the
-required language as specified; NEVER translate dialogue.`
+var sysHeader = promptText("sysHeader")
 
-const sysOutputFull = `## OUTPUT
-Return STRICT JSON only (no markdown fences, no commentary):
-{
-  "title": "剧名(中文,≤12字)",
-  "logline": "一句话故事(中文,≤40字)",
-  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits. IMPORTANT: if the source text contains 【全局风格】, COPY that style EXACTLY — do NOT invent a different one. The style must be IDENTICAL across all episodes of the same series. It must be a CINEMATIC GUOFENG (Chinese period) style with a photoreal 3D surface and IDEALISED, SEMI-STYLISED faces — e.g. 'GUOFENG ANIMATED-FEATURE ART DIRECTION … a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces; muted celadon-grey and ink-wash palette; real materials with visible craft; soft motivated key light; matte finish, natural film grain, shallow depth of field; a Chinese period film, not a western fantasy, not cyberpunk neon, not japanese anime'. Write it as ENGLISH prose, never as a 2D cartoon / cel-shaded / hand-drawn-anime style, and never as photorealistic live-action with real actors.",
-  "characters": [
-    {"id":"char_xiaofan","name":"小凡","kind":"human","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt. It MUST contain the literal block "IDENTITY LOCK (do not change): " followed by the distinctive physical identity (age, face shape, brows/eyes, nose/lips, skin, hair, signature mark, costume) AND **the body-proportion anchor "eight and a half heads tall"** — the renderer reads THAT block to anchor identity across shots and to tell characters apart; a card without it silently loses both. Then:  shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style field above EXACTLY — same art style as the series]' then 'plain background' ONLY (never write framing, crop or camera angle — the renderer adds the framing that matches the kind and the project's aspect ratio). NEVER open with style words; NEVER use a different art style from the global style.","voice":"ENGLISH voice description, e.g. 'calm young male voice'"}
-  ],
-  "scenes": [
-    {"id":"scene_inn","name":"悦来客栈","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向(如 黄昏,主光从西侧门洞斜射)"}
-  ],
-  "core_beats": [
-    "本集核心冲突：一句话",
-    "爽点①/②/③：谁在何时逆袭/打脸/揭秘/升阶（2-3 个，宁少勿凑）"
-  ],
-  "props": [
-    {"id":"prop_xxx","name":"中文名","en":"ENGLISH look phrase for the picture model","description":"中文外观/材质/配色/尺寸/记号","image_prompt":"ENGLISH 1:1 white-background single-object prompt (see PROP CARDS)"}
-  ],
-  "shots": [
-    {"id":1,"scene":"scene_inn","characters":["char_xiaofan"],"prop_ids":["prop_xxx"],"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{"char_yyy":"上一镜在场、本镜已出画，走向门洞（本镜保留一行）"},"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{},"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"小凡","text":"你怎么也来这里了?"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:这一镜最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text as defined below"}
-  ]
-}`
+var sysOutputFull = promptText("sysOutputFull")
 
 // sysPropRules 关键道具卡（用户口径：**关键物品必须生成道具**，且跨镜不许漂）。
 //
@@ -59,15 +34,7 @@ Return STRICT JSON only (no markdown fences, no commentary):
 //
 // 这一段把"什么该收成道具、每件要写什么、怎么保证跨镜一致"讲清楚；跨镜一致靠的是
 // 装配层（`pipeline/prop_anchor.go`：把卡片原文逐字锚进引用它的每一镜），不靠 LLM 每镜自觉复述。
-const sysPropRules = `## PROP CARDS (the series' signature objects — required, not optional)
-
-- **Extract props**: any object that RECURS, is HANDLED in key beats, or is the SIGNATURE of a character or of the series (a weapon, a tool, a talisman, a letter, a token, a book, a lamp). Typical episodic drama has 2-6 of them. An episode with NONE is almost always a miss: a blade that a man carves his own stele with IS a prop, and so is the iron brand in the fire, the ledger the antagonist reads from, the cloth wound round a wrist.
-- **Not props**: one-off clutter, scenery and fixed furnishings (those belong to the scene card), and anything that is part of a costume (that belongs to the character card).
-- One card per prop, ` + "`id: \"prop_xxx\"`" + `, with: **name** (Chinese), **en** (one ENGLISH look phrase — form + material + colour), **description** (Chinese: 外观/材质/配色/尺寸/记号), **image_prompt** (ENGLISH, 1:1, single object, centred, plain pure white background, no hands, no text). Give the object ONE canonical look here — marks, wear, knots, inlay, its exact size against a hand.
-- **Every shot that shows a prop must list it in ` + "`prop_ids`" + `** (by id). A shot that mentions the object in its action but leaves prop_ids empty is the drift bug: the model then invents a fresh object for that shot.
-- **Consistency is by TEXT**: props never get a picture slot in the video reference set, so the SAME object must be described with the SAME words wherever it appears. Do not restyle, re-colour, resize or re-decorate it between shots, and never let one shot's object become a different one.
-- A prop that is really an interface/screen (a holographic panel) has its interior left BLANK — never letter anything into it.
-- The object's own story wear is fine (chipped edge, scorch mark, ink stain) as long as the same wear is written every time.`
+var sysPropRules = promptText("sysPropRules") + "`id: \"prop_xxx\"`" + promptText("sysPropRules_2") + "`prop_ids`" + promptText("sysPropRules_3")
 
 // sysShotRulesTpl 分镜规则段**模板**:时长数字全部用 {{MIN}}/{{MAX}}/{{CPS}} 占位,
 // 由 renderShotRules() 从常量渲染 —— 这段文案里**不许**再出现写死的时长数字。
@@ -82,34 +49,7 @@ const sysPropRules = `## PROP CARDS (the series' signature objects — required,
 // 不再用一个比契约更窄的硬区间逼 LLM 多拆镜;"宁可拆短"这个**负载偏好**由下面那句
 // "costs grow faster than linear … split a long beat" 表达(它是实测结论,见 CHANGELOG
 // 「单镜负载引导」),不靠一个跟契约打架的数字。
-const sysShotRulesTpl = `## SHOT PLAN RULES
-- **CLIP LENGTH RULE (user's own storyboard spec, 2026-09-28)**: a non-final clip is **7, 8, 9 or 10 seconds** —
-  pick whichever ends on a natural stop (a person settles, a turn completes, a gaze lands, a line finishes).
-  The FINAL clip takes whatever remains of the episode. So the **clip count follows from the episode length**:
-  roughly "episode seconds / 8.5", not "one clip per story beat". Measured before this rule: 35 clips at an
-  average of 6.8 s (and 55 on an earlier episode) — every extra clip is one more GPU generation, one more
-  seam, one more chance to drift, and the episode feels choppy instead of tight.
-- Within each clip, split into **2-4 internal shots of 1.5-4 s** (see 抓重点纪律 §10). Length lives at the
-  **clip** level; rhythm lives at the **internal cut** level. Do not confuse the two: many short clips is slow,
-  few long clips with internal cuts is fast. If the source has many beats, use more shots — a dense chapter may legitimately need 15-30 shots, and that is fine. Always prefer MORE, smaller shots over fewer overloaded ones; never compress several actions into one shot to save shot count. Each shot {{MIN}}-{{MAX}} seconds (integer): local H3 rendering costs grow faster than linear with frame count (a 10s shot is ~2.8x the load of a 6s one on the same card), so split a long beat into two shots instead of stretching one. Hook in shot 1, payoff at the end.
-- CONTINUITY (critical, 2026-09-10): consecutive shots must read as ONE continuous flow. Each shot's action must BEGIN where the previous shot ENDED — same location (unless a deliberate scene change), carried-over posture/emotion/props, coherent time-of-day and lighting. NEVER skip a narrative beat the audience needs; if a beat needs two camera moments, split it into two shots with one clear action each. On scene changes, bridge with narration or a matching visual anchor, never jump-cut blind.
-- shot_size 景别用中文:远景/全景/中景/近景/特写。Emotional beats and dialogue MUST use 近景/特写 (H3 face tokens are scarce; closer framing beats wider framing).
-- NO CARD, NO FACE (critical, 2026-09-27): 特写/近景 puts a face on screen, and a face can only come from a reference image — those are attached from THIS SHOT's characters list, nothing else. So before writing 特写/近景, make sure every person whose face is visible is listed in characters (bound to their approved card). If a person has no card (or you deliberately do not want to fix their identity), then do NOT frame them close: use a back view, a partial body, or an anonymous crowd — AND DO NOT describe their face at all. When a shot genuinely needs a person on screen with no card, keep the framing off their face AND mark it explicitly with "unbound": true plus "unbound_reason": "no_card" (the person is not in this episode's cast) or "faceless_by_design" (you chose to keep them faceless) — that flag is what tells the contract check this is deliberate, not a forgotten binding. Never pair a close framing with an anchor that denies the person ("empty frame, no people") while the action describes a face: that contradiction makes the model paint a brand-new stranger's face on every take, and the audience sees a different person each time.
-- One camera move per shot, written as a **natural English action inside the shot** (never stacked as labels at the end of a sentence), from the official motion vocabulary ONLY: Zoom In / Zoom Out (focal length changes, camera body still), Push In / Pull Out (camera moves forward / backward), Pan Left / Pan Right (lens pivots horizontally), Truck Left / Truck Right (camera translates sideways), Tilt Up / Tilt Down (lens pivots vertically), Pedestal Up / Pedestal Down (whole camera rises / descends), Arc Shot (arcs around the subject), Tracking Shot (follows a moving subject), Static Shot (camera and lens still), Shake Slightly / Shake Strongly, POV, Roll Clockwise / Roll Counterclockwise. Add amplitude ("with small amplitude" / "with large amplitude") and speed ("at slow speed" / "at fast speed") ONLY when they carry meaning — the official guide omits medium amplitude and normal speed. NEVER use jargon like dolly, crane, whip pan.
-- CUTS have their own vocabulary (official §4.2): "the camera cuts to" / "the shot cuts to" / "the shot transitions to" / "the shot changes to" / "the shot switches to". A cut must introduce NEW information — subject, space, state, viewpoint or time; if only the distance or a slight angle needs to change, prefer CAMERA MOTION over a cut. Cross-dissolve / fade / wipe only where they are deliberately asked for (our between-scene rule asks for a fade — see the continuity section).
-- mode: "ref2va" when character/scene reference images will be provided (any shot with on-screen characters); "t2va" for pure text-to-video shots without references.
-- dialogue speaker must match a character name, or use speaker "旁白" for narration. Keep spoken lines short (≤20 chars), punchy, ending with 。?! naturally. At most 2 speakers per shot.
-- DIALOGUE MUST FIT THE SHOT (critical): Mandarin delivery runs about {{CPS}} characters per second, and H3 needs roughly one extra second of headroom to start and settle. The shot's duration MUST be at least ceil(total_dialogue_chars / {{CPS}}) + 1 (rounded up to a whole second, min {{MIN}}, max {{MAX}}). A 20-character line therefore needs 6 seconds — never park a 20-character line in a {{MIN}}-second shot: the speech gets cut off and the finished video loses the end of the line. If a line cannot fit {{MAX}} seconds, split the beat into two shots, each carrying part of the line.
-- NO NARRATOR LANE (口径调整 2026-09-28，用户指定): do NOT create a standalone narrator/旁白 voice. Convert it instead:
-  · subjective material (what a character feels, remembers or judges) becomes that character's **inner monologue** — an off-screen line in the SAME character's own voice, written inside <d> with that character''s (Sx), and the shot states that their lips stay closed (see ` + "`vo_kind=inner`" + ` and the INNER MONOLOGUE rule);
-  · objective, world-level information becomes either a **diegetic caption** (a location/time card the shot itself carries) or a line spoken by an on-screen character.
-  A separate narrator timbre is never used: it flattens every episode into the same voice and the audience stops hearing whose head they are in.
-- SELF-CONTAINED (critical — one shot = one generation, the model has NO memory of the previous shot): every field must be written out in full. NEVER write "同上" / "如上" / "same as above" / "as before" / "…" and NEVER leave a field empty or fill it with a placeholder like "N/A" or "-" when the field asks for content. Location, people, light, time of day and prop state must all be stated in THIS shot.
-- SHOT LENGTH = MAX(dialogue time, action time) (official rule, applies at every duration): first compute the spoken line (total characters ÷ the character's emotional speaking rate — 低沉/哽咽 2.5-3.5, 威严/宣告 3-4, 正常叙事 3.5-4.5, 轻松/调侃 4-5, 愤怒/争吵 5-6.5 chars per second), then the time the on-screen action needs, and take the LARGER. If it exceeds {{MAX}} seconds, split at a sentence boundary — NEVER speed up dialogue and never cut a line in half.
-- PACING QUOTAS (official, scaled to our shot length): the first MEANINGFUL line of dialogue must arrive within 12 seconds of the episode start; never leave a stretch longer than 12 seconds with no dialogue at all (insert a line, a caption or a reaction beat); the emotional core (戏眼 — a held close-up, a silent stand-off, tears, a clenched fist) lasts AT LEAST 5 seconds, never a quick cut.
-- When the action is shorter than the dialogue, DO NOT pad with talk: add reaction shots (a listener's face, an environment detail, a close-up of a prop), slow the movement (a turn, a raised hand), use a slow camera move, or hold on a micro-expression.  When the dialogue is short, the action sets the length and the line sits in the gap.
-- Keep the framing varied: never the SAME shot_size (景别) more than 6 shots in a row.
-- Write only actions a real actor performs easily. Exact physical interactions and micro-movements (睫毛颤, 手指细小动作, 精密的持物角度) always break: externalise the emotion as body language instead (tension = glancing at a timepiece, eyes darting; anger = fists clenched, jaw tight; grief = head down, shoulders trembling), and give amplitude + speed + what it continues from.`
+var sysShotRulesTpl = promptText("sysShotRulesTpl") + "`vo_kind=inner`" + promptText("sysShotRulesTpl_2")
 
 // sysShotRules 渲染后的分镜规则段(单轮 SystemPrompt 与分批 batchSystemPrompt **共用同一段**,
 // 不各写一份 —— 写两份就又是一处会漂的口径)。
@@ -139,24 +79,7 @@ func renderShotRules() string {
 //
 // `view` 字段与提示词里的串必须**逐字一致**：字段是自检/审计的入口，提示词是渲染读的东西，
 // 两者不一致时自检面板就在骗人（契约里有一条专门判这个）。
-const sysViewRules = `## VIEWPOINT (camera angle — write it where it applies, OMIT it where it does not)
-
-The official list of nine view strings is a **large-viewpoint / camera-setup table**. Write ONE of them, word-for-word, into the shot's h3_prompt AND into the shot's "view" field (byte-identical) — but ONLY when the shot is actually one of those setups:
-  ultra-wide 45-degree aerial view | ultra-wide aerial view | low-altitude flying aerial view | ultra-wide eye-level deep perspective | compressed distant depth | low-angle upward view | low-angle peeking upward view | low-angle strong perspective | telephoto compression
-
-- **MANDATORY** on the shots that carry the space: the ESTABLISHING SHOT (first shot of a scene) and every 远景/全景 (long shot / full shot). Leaving those empty removes the one thing that tells the audience where they are.
-- **OPTIONAL — leave the field EMPTY** on the framings the official table has no entry for: 平视中景 / 平视中近景 / 俯拍特写 and their kind. The table contains no "eye-level medium shot" and no "high-angle looking down", so picking something anyway means writing a WRONG word (a close-up labelled "ultra-wide 45-degree aerial view") — and a wrong word is worse than an empty field: empty just means one less camera cue, wrong actively misdirects the shot.
-- Pick by WHAT THE SHOT MUST SHOW, never by habit:
-  · terrain / building layout / roads / courtyards -> "ultra-wide 45-degree aerial view" (preferred opener for a place)
-  · city / sect / battlefield / wasteland / large building complex -> "ultra-wide aerial view"
-  · grassland / forest / mountains / canyon (a sense of flying over) -> "low-altitude flying aerial view"
-  · hall / long corridor / street / canyon / bridge (linear depth into the frame) -> "ultra-wide eye-level deep perspective"
-  · distant mountains / ruins / stacked fog layers -> "compressed distant depth"
-- The last four — "low-angle upward view", "low-angle peeking upward view", "low-angle strong perspective", "telephoto compression" — are CONDITIONAL. Use them only when the content genuinely asks for that look (a tower, a mountain gate, a colossus, ruins, a deliberate near/far contrast). They turn an ordinary beat into a spectacle shot, so never make them your default.
-- VARY IT. Among the shots that DO carry a view, use at least six DIFFERENT viewpoints across an episode (two or three if the episode is short), and never run more than six consecutive shots at the same shot_size — a long run of identical framing is what makes an episode feel like one unbroken take.
-- ESTABLISHING SHOT — the FIRST shot of every scene, and the first shot after any scene change. The audience is seeing this place for the first time, so establish it: add this string VERBATIM to that shot's description: "ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot". Never open a location on 特写 or another small framing — a face or a single prop tells the audience nothing about where they are.
-
-Do not confuse viewpoint with camera movement: "view" is where the camera IS and what it looks at; "camera" is how it moves (push in / pan / truck …). A shot needs both.`
+var sysViewRules = promptText("sysViewRules")
 
 // sysContinuityRules 尾帧状态与跨镜连贯段（2026-09-27 技能侧整改单 §1.2）。
 //
@@ -172,32 +95,9 @@ Do not confuse viewpoint with camera movement: "view" is where the camera IS and
 //
 // 为什么值得单列一段：H3 逐镜独立生成，没有"上一镜记忆"，跨镜一致**全靠每一镜自己写全**。
 // 缺了它，道具的持有手、角色的相对站位、特效的落点每一镜都会漂。
-const sysBlockingRules = `## BLOCKING & PROP HANDLING (write these INTO each shot's description)
+var sysBlockingRules = promptText("sysBlockingRules")
 
-H3 renders every shot independently and keeps no memory of the previous one, so each shot must state, in prose:
-- **Who holds what, in which hand, facing where**: e.g. "in his right hand he holds the thin stone-cutting blade, its edge turned toward the stele". A prop mentioned without a holder/hand/orientation is a prop the model re-invents.
-- **Relative staging when two or more people share the frame**: who is in the foreground, who is behind whom, how far apart, which side of frame each occupies: e.g. "he stands at the centre of the lane, the old woman three paces in front of him, the boy half a step to her right rear".
-- **Special effects: origin, shape, colour**: e.g. "a thin gold light leaves his knuckles in a spray and lights the right side of his face".
-- On a return to the same location within the same scene, restate that staging rather than saying "as before" (there is no "before" for this generation).
-- One main action per shot; the action is performed with the hands and body at ARM level, never at finger level (see THE SHOT MUST MOVE).
-- **Two structured fields carry the anchors** (official shot-table-spec.md STEP 5 requires four sub-fields
-  in every row; the platform had landmarks and lighting but **no field at all** for these two, so "someone
-  appeared out of nowhere / vanished" had no judgement to catch it):
-  · 「positions」例：{"char_id": "画面左三分之一、前景、面朝右"} — EVERY on-screen character gets an entry:
-    which third of the frame, which depth layer (前景/中景/后景), and which way they face/stand at the start.
-    Camera-view wording, not story wording.
-  · 「offscreen」例：{"char_id": "上一镜在场、本镜已出画，走向门洞"} — a character who was on screen in the
-    PREVIOUS shot but is not in this one must be listed here with where they went and why.
-    Official discipline: keep that row for **at least one shot**; only drop it after two consecutive shots
-    clearly place them off screen. This is what turns "the person is gone" from an audience guess into data.`
-
-const sysContinuityRules = `## SHOT END STATE & CROSS-SHOT CONTINUITY
-
-- EVERY shot carries an "end_state" (尾帧状态): what the LAST FRAME of this shot shows. Write only what a camera can see — where each character stands in frame, their pose, facial expression, gaze direction, and the state of the environment (door standing open, water still dripping, lantern lit, dust settled).
-- NEVER put hearing, mood or atmosphere words in end_state (no 寂静 / 安静 / 沉默 / 压抑 / 气氛 / 氛围 …). The next shot is written FROM this text: a downstream model cannot draw "silence", so those words only dilute the visual facts the next shot needs.
-- WITHIN ONE SCENE: the next shot's description begins where the previous shot ended — read the previous shot's end_state and continue from it ("然后 …" / "紧接着 …"), carrying over position, pose and props.
-- SAME SCENE, ACROSS SEGMENTS OR BATCHES: the first shot of the new batch starts with "接上一片段结尾，" and RESTATES the previous end_state before continuing with the new action.
-- ACROSS SCENES: do NOT force action continuity. Cut with a fade-out/fade-in and a location-and-time caption ([地点·时间]) so the audience knows the place and time changed; pick up the new scene's own first action instead of the previous scene's pose.`
+var sysContinuityRules = promptText("sysContinuityRules")
 
 // sysShotTableRules 官方「标准镜头信息表」段（六列 + STEP 5.5 自检）。
 //
@@ -209,131 +109,18 @@ const sysContinuityRules = `## SHOT END STATE & CROSS-SHOT CONTINUITY
 //
 // 最容易被忽略的是**钩子类型**：没有它，"这一集是不是平的"只能靠感觉说；
 // 有了它，密度（每三镜至少一个 reveal/reversal/callback）与两端强钩子都是可判的。
-const sysShotTableRules = `## SHOT TABLE (the official six columns — every shot must fill them)
+var sysShotTableRules = promptText("sysShotTableRules")
 
-The per-shot JSON below IS the official standardized shot table. Each field maps to one of its six columns, and the official self-check has to pass before anything is rendered:
-  · Shot ID & Duration      → id + duration
-  · Continuity Handoff      → end_state (see SHOT END STATE & CROSS-SHOT CONTINUITY)
-  · Reference Anchors       → scene (its landmarks + light_state) + characters (approved card names) + the reference pictures attached to this shot
-  · Hook Type               → hook_type: ONE label, from this controlled vocabulary ONLY: setup / visual-joke / reversal / reveal / callback / suspense / tender / chase / expression-beat / climax
-  · Shot Description        → action + h3_prompt (keep the detail inside the shot paragraph, second by second where the beat needs it)
-  · Audio & Dialogue Track  → dialogue / narration, and the <d> blocks inside h3_prompt
+var sysH3Format = promptText("sysH3Format") + "`<d>`" + ` tag is an instruction to VOICE that text. Never write a placeholder tag — ` + "`<d>[Chinese]…</d>`" + `, ` + "`<d></d>`" + `, ` + "`<d>（无）</d>`" + promptText("sysH3Format_2") + "`<d>`" + promptText("sysH3Format_3")
 
-Self-check (official STEP 5.5 — the three checks a table can fail on):
-  1. HOOK DENSITY: every shot carries a hook_type; every THREE consecutive shots include at least one reveal / reversal / callback; the opening shot and the closing shot each carry a strong hook (visual-joke / reversal / reveal / suspense / tender). A stretch of shots with no strong hook reads as flat, no matter how good the pictures are.
-  2. CAST PER SHOT: no shot has more than THREE important characters (characters with on-screen action or dialogue). More than that dilutes attention — everyone renders worse and faces start swapping. Split the beat, or leave the extras as environment instead of cast.
-  3. SPATIAL ANCHORS: every shot inherits its scene card's landmarks and its light state. If a shot deliberately moves a landmark on screen or changes the light, say so inside that shot's description (e.g. "the door frame moves from the right third to centre as the camera arcs left").`
-
-const sysH3Format = `## H3 PROMPT FORMAT (critical - follow EXACTLY)
-mode=ref2va => SIX sections in this exact order, separated by one blank line:
-
-subject_definitions:
-REFERENCE ORDER (strict, but a character may occupy ONE OR TWO pictures, so the scene index is NOT fixed): pictures are attached in this order — for each character listed in the shot's "characters" array, in array order, FIRST that character's front sheet (the sharp reference for its face, body form, or material and structure — whichever its kind calls for), and THEN, if that character has a multi-view strip, ONE extra picture of the SAME subject (a horizontal strip whose LEFTMOST cell is that same front sheet; for a person or a creature the remaining cells show it turned to other angles, for an artefact it is a turntable strip, for a bodiless entity the same form from other angles). It is always the SAME subject, never a second character. After all character pictures comes exactly ONE scene picture, always LAST. Props never get a <Picture> — describe props in text only.
-Locate every subject by PICTURE CONTENT, not by index: a front sheet and its multi-view strip are the SAME subject — never treat a strip as a second character. NEVER reason "N characters, therefore the scene is <Picture N+1>": with N characters the scene is the LAST picture, which is <Picture N+1> only when no character has a turnaround. You CANNOT see how many pictures are actually attached (whether a character has a multi-view strip is decided by the asset pipeline, not by you), so NEVER write a sentence about the total number of pictures and NEVER assert which <Picture> number the scene is — the renderer appends an authoritative PICTURE MANIFEST at render time that fixes the numbering. Always name the subject in words too (character name, scene name), so the manifest can correct any number you used.
-<Subject 1> is [full description of the FIRST character listed in "characters"]; its front sheet is the first attached picture, and it is the SAME subject in every other picture that shows it.
-<Subject 2> is [full description of the SECOND listed character, or the scene description when the shot has only one character] — identify it by its picture content, never by counting indexes.
-The scene is the LAST attached picture.
-Official label discipline (§2.1–§2.5): give every referenced item that must be tracked later its OWN line — what the label denotes, its reference role, and the main features to follow. One subject may be defined by SEVERAL reference assets and one asset may supply several subjects (a front sheet plus its multi-view strip is ONE subject). If a <Picture N> only identifies the source of some other referenced item and will never be analysed on its own, cite it INSIDE that item's definition instead of giving it its own line. A <Subject N> that physically speaks keeps both labels — <Subject N> (Sx). A reference audio definition states the audio's role and reuses the target speaker's global ID, e.g. <Audio 1> is the voice-timbre reference for <Subject 1> (S1).
-Every <Subject> must map to a picture that exists in the order above; never invent <Picture> tags beyond that count. Picture tags appear ONLY here as a Subject's source, never standalone — with ONE exception: a FRAME ANCHOR. When a picture is used as the first frame, a keyframe, the last frame or a composition anchor, reference it on its own line inside detailed_description as <Picture N>; an anchor line says WHEN that frame is used, and is never a way to define a character, a scene or a style (those definitions belong here in subject_definitions). A multi-view strip is never a separate subject: the subject and its strip share one description — the strip only supplies the other viewing angles, and the FRONT SHEET is the authority.
-
-summary:
-[<task-type prefix>] One English paragraph summarising the target video and how the reference materials are used. Never introduce a reference label here that subject_definitions did not define.
-Task-type prefix (official §3; combine several with " + ", never repeat one — and the mere presence of a video or audio file does NOT create a type): keyframe completion (an image serves as the first frame, a keyframe, the last frame or a composition anchor) · reference generation (an image / video / audio only GUIDES character, scene, style, action, camera movement or storyboard — it is not a concrete frame and not a source video being edited) · video editing · video continuation · audio reuse (the same audio signal is reused in full or in part) · audio reference (only timbre, music style, dialogue content, sound texture, beat or continuity is referenced; the signal is not copied). Our shots are normally driven by character + scene reference images → "reference generation"; when a reference audio is attached, append " + audio reuse" if that track is reused as the shot's own final audio, or " + audio reference" if only the voice timbre and delivery are referenced.
-
-retention_analysis:
-- One line per reference picture, numbered EXACTLY as in subject_definitions. Name the subject in words in every line (character name / scene name) so the render-time PICTURE MANIFEST can correct the numbering if it differs. A character may contribute TWO pictures (front sheet + multi-view strip): give BOTH that character's fully_preserved line and never describe the strip as a different or additional character. The FRONT SHEET is the authority; the strip only supplies the other viewing angles.
-- The scene index is not fixed: count the pictures actually attached (a character with a strip contributes two), and confirm by CONTENT rather than assuming an index.
-- Every character picture: fully_preserved - identity must stay identical to the reference image throughout every frame, WHERE IDENTITY MEANS: for a person or a Q-version figure the face shape, hairstyle and costume; for a creature its species, body form, coat or scale pattern; for an artefact its silhouette, every part, material and finish; for a bodiless entity its form, transparency and glow. Copy that exactly — do NOT blend, average, restyle or substitute anything.
-- The scene picture: weak_reference - scene layout and mood referenced, camera free.
-(Use official markers: fully_preserved / partially_preserved / attribute_transfer / weak_reference)
-(Entry format, official §4.1 — name the label, then where it appears, then the marker: "<Subject 1> (appears in [Shot 1], [Shot 3]): fully_preserved - …" · "<Picture 2> ([Shot 1] first frame): fully_preserved - …" · "<Video 1> (cut and pacing structure): weak_reference - …". For a reference AUDIO the markers are different (official §4.2): fully_copy - the complete source audio becomes the target video's complete final audio track · partially_copy - only part of the timeline or some layers are copied, or other sounds are added/removed/replaced · reference - the signal is not copied, only timbre, rhythm, music style, dialogue content or sound texture · weak_reference - only broad category or atmosphere similarity. Choose a marker only within the role that subject_definitions already gave that label, and do NOT treat newly added actions, backgrounds or plot events in the target video as losses of reference fidelity — they are new content, not damage.)
-- NEVER write speaker tags — (S1), (S2), (S1,S2) — or any custom line in THIS section: retention_analysis only says what each reference picture preserves (identity, layout, material). The speaker and entity locking sentences belong at the START of detailed_description, not here.
-(For multi-character shots: EVERY character gets its own fully_preserved line. Characters WITHOUT a reference picture must NOT borrow features from any reference image — generate them from the text description only.)
-The attached character sheets are the AUTHORITY on how each character looks: with reference pictures, everything the sheet shows comes from the sheet and not from your prose — describe wardrobe, props, pose and emotion, and never add marks (moles, scars, blush, red noses, extra parts or ornaments) that the sheet does not show. **Never describe a non-human subject in human terms** (no face, no skin, no age, no hair for an artefact; no solid body for a bodiless entity) — that is what makes a bronze sparrow come out as a person. Characters without a sheet are the only ones whose look may be described in prose.
-
-detailed_description:
-[Style sentence(s) first: use the global style]. Then for every shot:
-[Shot 1] with NO timestamp for the first shot; subsequent shots "[Shot 2] At 00:06.000" with strictly increasing timestamps.
-**Style opening (official §5.2)**: in full-reference mode the style IS established in one or two English sentences **before [Shot 1]** (this is a difference from T2VA, where the style is written after [Shot 1] — see the mode=t2va section below). Lead those sentences with the official style token that matches this series' medium — "Cinematic, 3D CG" — and then the GUOFENG specifics (the official style vocabulary is Cinematic / live-action / 2D-animated / 3D CG / claymation / watercolor / vintage film; never invent a medium outside it).
-Every detail you write must correspond to something VISIBLE or AUDIBLE (official §4.1): visual style, composition, subject appearance and position, scene and key props, actions and reactions, shot changes, spoken language, synchronised diegetic sound.
-Each shot paragraph — **350-500 English words (the official range for a generation task)**. Official §5.2: "A single shot does not automatically justify a shorter description" — one shot still gets a full description, distributed by information load. Dialogue-dense content prioritises fitting the complete spoken timeline over the word count, and you never pad to reach it; but do NOT run long either: measured on a real episode, our 5-10 s shot prompts ran **633-1407 words (median ~990)**, roughly double the official range, and every extra sentence dilutes attention on the beats that matter. Land in the range; describe: shot size and composition -> the shot's viewpoint (the verbatim string from VIEWPOINT) -> subject positions -> restate the subject's wardrobe, props, pose and state on first appearance in this shot -> ONE main action per shot (split complex actions into sub-moves) -> visible emotional change (show, don't label) -> camera motion with amplitude and speed -> sound events. The description must COVER THE WHOLE REQUESTED DURATION of the video: with dense dialogue, making every spoken line fit takes priority over the word count — never pad mechanically to reach 350-500 words, and never leave the tail of the requested time undescribed.
-Dialogue lines: <Subject 1> (S1) says in a [voice description]: <d>[Chinese]台词原文</d>. Assign (S1)(S2) by order of first utterance and NEVER renumber within the video.
-  **Speakers (official §4.4)**: give every speaking/singing character a stable ID (S1), (S2) — a speaker keeps the SAME id across shots, characters who never vocalise get no id, and simultaneous speakers use a compound id like (S1,S2). Establish the voice once, at that speaker's first appearance, as a short identifying phrase placed BEFORE <d> (character type, age, gender, on/off-screen, pitch, timbre, speaking rate, accent) — e.g. "The young woman with a quiet, breathy voice (S1) says: <d>[Chinese]…</d>". That phrase MUST be copied verbatim from that character's "voice" field in the cast list: never reword it, and never give two characters the same voice description (H3 uses this text as audio conditioning — rewording it changes the timbre). Inside <d> put only the language tag and the user's spoken words, verbatim. When a line continues across a cut, mark the joint with <scenetrans> in both parts and say the audio continues across the cut; use <cutoff> when speech is truncated by the end of the video. Keep every SPOKEN WORD inside <d> verbatim (official §4.4): never rewrite, translate, summarise or paraphrase it. Punctuation is the one exception (official §5.4): normalise it to the basic written marks , . ? ! so the line is delivered cleanly — write an unintelligible span as [unclear] instead of guessing at it, strip repeated tildes, emoji, bullets and decorative punctuation, and end every complete statement, question or exclamation with . ? or ! respectively before </d>.
-  **NO EMPTY DIALOGUE TAGS (learned from a real 48-shot episode, 2026-09-28)**: a ` + "`<d>`" + ` tag is an instruction to VOICE that text. Never write a placeholder tag — ` + "`<d>[Chinese]…</d>`" + `, ` + "`<d></d>`" + `, ` + "`<d>（无）</d>`" + ` — because the model reads it as "say something here" and improvises a line, a sigh or a filler syllable; the audience hears unscripted, repeated dubbing. If the shot has no line, write NO ` + "`<d>`" + ` tag at all and let the ambience carry it. The tags you do write must be exactly the shot's dialogue lines plus its narration — verbatim, no more and no fewer.
-  **Reference numbering (official)**: <Video k> and <Audio j> are numbered INDEPENDENTLY — k counts reference VIDEOS only, j counts reference AUDIO only; a reference video that happens to carry a soundtrack does NOT automatically create an <Audio j>. Speech that lives only inside the background music or a whole-track voiceover does not go inside <d> and gets no (Sx): describe it as reference audio (<Audio j>) instead.
-  **Reference audio (official §5.4)**: when only timbre, rhythm, emotion or delivery is referenced, do NOT carry the original dialogue from that reference audio into the target video — write the target video's own lines. When dialogue from the reference audio IS directly reused (or the request explicitly asks for a reperformance), keep those words verbatim inside <d> in their original language. A speaking referenced subject keeps BOTH labels — "<Subject N> (Sx) says …" — and the same form with "off-screen" when it speaks from outside the frame; a speaker that has no subject definition uses a stable voice description followed by (Sx). (Sx) is assigned once, by the order of actual vocal events, and every later vocal event reuses that ID.
-Off-screen narration: The narrator (S1) says in an off-screen voiceover: <d>[Chinese]旁白原文</d> while the on-screen characters' lips remain completely closed.
-ON-SCREEN TEXT (official rule): any text actually visible in frame - signage, banners, plaques, labels, subtitles, neon - MUST be written out inside ENGLISH DOUBLE QUOTATION MARKS, verbatim, one quoted string per piece of text, original characters and punctuation preserved, never translated (e.g. a red neon sign reading "营业中" glows above the doorway). Text you do not quote this way must not appear anywhere in the frame: unquoted text is what the model turns into garbled glyphs. Then end the section with an exclusions sentence in prose covering everything else (no watermarks, no logos, no captions, no added lettering on clothing or props).
-BRIGHTNESS GUARD (a PLATFORM rule, not an official H3 requirement — kept because it measurably helps) as the final sentence: "Subjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark."
-
-overall_soundscape:
-1-4 English sentences in ONE continuous paragraph (official §4.6) summarising diegetic ambience plus physical and non-verbal human sound across the whole video (wind, rain, traffic, footsteps, fabric movement, impacts, breathing, laughter). Dialogue, singing and diegetic music already live in the description above — never repeat them here. Write "N/A" only when the video is explicitly silent throughout.
-
-non_diegetic_music:
-1-3 English sentences (official §4.7). Write "N/A" when there is no non-diegetic music; when there is, describe instruments + tempo + rhythm + dynamic changes and do NOT use abstract mood words or explain the score's emotional function. Do not score every shot: a short drama reads better with music only where it is genuinely wanted, and the same cue must not run across unrelated shots.
-
-mode=t2va => THREE sections in this exact order, separated by one blank line:
-
-integrated_multimodal_description:
-[Shot 1] opens with the same style sentence(s) — **in T2VA the style is written AFTER [Shot 1], not before it** (official §4.1/§5.2: "at the beginning of [Shot 1], state the overall style and initial composition"), e.g. "[Shot 1] Cinematic, 3D CG, a medium-wide shot frames…". Then [Shot 2] At MM:SS.mmm … Same rules as detailed_description above (word count 350-500 total, dialogue tags, camera vocabulary, exclusions sentence, brightness guard at the end).
-
-overall_soundscape:
-(1-4 sentences in ONE continuous paragraph; ambience + physical / non-verbal human sound; never repeat dialogue, singing or diegetic music)
-
-non_diegetic_music:
-(1-3 sentences: instruments, tempo, rhythm, dynamics — or N/A when there is none)`
-
-const sysHard = `## HARD CONSTRAINTS
-- English structural prose. Spoken words stay verbatim inside <d>[Chinese]...</d>; only their punctuation is normalised to , . ? ! (write an unintelligible span as [unclear] rather than guessing).
-- EXCLUSIONS (also a PLATFORM rule, not official: H3 has no separate negative channel, so defects are excluded in PROSE at the end of the description): the closing exclusions sentence must name the artefacts this renderer actually produces — every shot ends with a sentence covering that, so the list is the same everywhere: no deformed or fused hands, no extra or missing fingers, no melted or shapeless props, no duplicated limbs, no flicker or strobing, no colour banding, no frame jumps, no warped or drifting faces, no plastic or over-glossy surfaces, no visible lettering other than the text quoted above, no watermarks, no logos, no captions, no UI or social-media chrome.
-- The [Chinese] tag inside <d>...</d> is MANDATORY on every spoken line and every voiceover: it is what makes the voice speak Mandarin. A missing tag makes the model improvise a random language and the final video ends up with unintelligible gibberish speech. Write <d>[Chinese]台词原文</d> literally, every single time.
-- Appearance facts must come from the source story ONLY. Never invent distinguishing marks the source does not mention (moles, scars, birthmarks, red noses, tattoos, unusual hair or eye colours). Invented marks show up in the video and clash with the fixed character sheets.
-- Cast members must be easy to tell apart on screen: when creating character cards, avoid two leads that share the same age band, build and palette (e.g. two grey-bearded old men in brown robes). Differentiate by age, build, hair, silhouette and clothing colour; give each one a memorable marker taken from the source text. This is a design rule, not an invention licence: still describe only what the source supports.
-- ONE character = ONE card. The same person may be referred to both by a name and by a code or serial number (e.g. 机关人 / 阿枢 / 一三七四一号): that is ONE person. Keep a single character card, pick the most informative name, and reuse it verbatim in every shot; never create a second card for another appellation of the same person.
-- KIND (mandatory, drives the renderer): every character card MUST carry a "kind" field, exactly one of:
-  "human" | "object" | "spirit_pet" | "beast" | "incorporeal" | "chibi".
-  Classify by WHAT THE THING PHYSICALLY IS, never by whether it is named, speaks, or has a personality:
-  · human — an ordinary living person (any age).
-  · object — an artefact or made thing that is not alive: a machine, puppet, marionette, statue, lantern, talisman, coin, tool, or a constructed body (一只铜雀 = object; 木偶 / 机关人 / 傀儡 = object; a walking statue = object).
-  · spirit_pet — a SMALL companion creature, animal or spirit (a spirit fox cub, a pet bird, a little moon rabbit).
-  · beast — a LARGE or monstrous non-human creature (a dragon, a demon wolf, a mountain serpent).
-  · incorporeal — a ghost, soul, spirit, voice, memory or projection with NO solid body.
-  · chibi — the character is deliberately drawn in Q / SD proportions.
-  Getting this wrong is not cosmetic: the renderer gives each kind its own reference-sheet framing, its own multi-view method and its own identity lock, so a bronze sparrow marked "human" is drawn as a half-length human portrait instead of a sparrow. When in doubt about a named non-human "character", ask what it physically is and classify that.
-- KIND AND FRAMING go together, but **you do not write the framing** — the renderer adds it, per kind and per the project's aspect ratio (a vertical frame gets a chest-up portrait with the whole head inside; a wide frame gets head-and-shoulders). Writing your own crop here is exactly what produced reference sheets with the top of the head cut off, so keep image_prompt framing-free:
-  · human / chibi → a chest-up portrait with the whole head inside the frame (the renderer adds it; a Q-version figure gets its whole small body instead).
-  · spirit_pet / beast → the WHOLE creature with head, body, limbs and tail inside the frame.
-  · object → the whole object centred with margin, a three-quarter product view; and the prompt must lead with the object's material, structure and parts (never with a face, an upper body or an age).
-  · incorporeal → the whole translucent form centred, edges dissolving into mist.
-  End image_prompt with a background phrase ONLY: "plain background" (use "plain dark background" for incorporeal). No "front-facing", no "upper-body", no "full body", no crop words — those come from the renderer.
-  Also pick the right "voice": a non-speaking entity gets a sound description (e.g. "tiny metallic chirp, no human words"), never a spoken voice, and such a character must NOT be given full spoken <d> lines — at most one short vocalisation, otherwise convey it as a sound event or in narration.
-- h3_prompt total length 2500-6000 characters; detailed_description body 350-500 English words **as a target**: when the shot carries dense dialogue, covering the whole requested duration and finishing every spoken line comes FIRST — never pad to hit the count.
-- No negative-prompt syntax, no CFG hints, no technical parameters - exclusions go as prose at the end.
-- Consistency: same character keeps identical appearance words every shot; same scene name reused.
-- Sound: dialogue only via <d> tags; ambience in overall_soundscape; music in non_diegetic_music; never duplicate.
-- Music (official §4.7): non_diegetic_music describes music that only the audience can hear — instruments, tempo, rhythm, dynamic changes; write "N/A" when there is none. Do not use abstract mood words, do not explain the score's emotional function, and do not score every shot: continuous background music buries the dialogue and makes every episode sound the same. Singing/instruments/radio audible to the characters are DIEGETIC and belong in the multimodal description instead.
-- **MUSIC IS NOT WRITTEN PER SHOT (PLATFORM RULE, taken from the official qc-checklist STEP 8)**: write
-  「non_diegetic_music: N/A」for EVERY shot. Official wording: "Do not generate BGM per shot" — one
-  continuous BGM track is matched to the assembled film instead. Reason: every clip is generated
-  independently, so per-shot music means the finished film changes tune at every cut (30+ clips = 30+
-  tunes fighting each other). Ambience still belongs in 「overall_soundscape」— that one IS per shot and
-  should be written well. The platform beds ONE music track at compose time (project param audio.bgm),
-  ducked under the dialogue.
-- Soundscape discipline (the finished video must not sound noisy): stay at the LOW end of the official 1-4 sentence range — 1-2 short sentences describing a QUIET, low-level background bed (e.g. "distant street hum, faint wind") is usually right. Do not stack many simultaneous sound sources, do not ask for loud machinery, crowd chatter, alarms or continuous heavy noise: constant loud ambience buries the dialogue and reads as hiss in the final mix. Silence or near-silence is a perfectly good choice where it fits.
-- Screen-visible text must be quoted exactly and kept in original language.`
+var sysHard = promptText("sysHard")
 
 // sysCastRules 选角差异化(2026-09-11 用户定调「不同角色脸不能相似」):
 // 实证 LLM 写了 fat/scar/narrow face 等差异化特征,但 image_prompt 以巨型
 // 统一风格前缀开头、身份特征挤尾部,Krea-2 渲染时全部丢弃(肥胖→清瘦、
 // 疤→无疤,三张脸收敛成同一款标准帅哥)。规则:身份特征前置主导渲染,
 // 全剧角色脸型/年龄/体格/记号互不相同,原文写明的外貌禁止美化抹平。
-const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same series must NEVER look alike)
-- Every named character gets a UNIQUE physical identity. For people and Q-version figures: no two may share the same face template — vary face shape (round / square / long / narrow / heart), age (child / teen / young adult / middle-aged / elderly), build (slim / average / stocky / burly), skin tone, hairstyle & hair color, and give each at least ONE signature marker (scar, mole, freckles, glasses, beard, tooth gap, dyed streak, bandage, tattoo...). For non-human kinds differentiate the thing itself instead: an artefact by shape, material, colour and part count; a creature by species, size class and coat or scale pattern; a bodiless entity by form, colour and glow — two artefacts must never be interchangeable, and no artefact may be given a human face to make it recognisable.
-- image_prompt STRUCTURE (identity first): open with this character's distinctive physical identity (age, face shape, build, hair, eyes, skin, signature marker), then costume, then "in [COPY the global style EXACTLY]", end with "plain background" ONLY (never a crop / camera-angle phrase — the renderer adds the framing). Do NOT open the portrait prompt with style words — identity traits must LEAD the prompt so they dominate the render. **Never describe where the character is looking or a head turn either** — a reference sheet is always a straight-on front view: identity traits only, never which way they face (the renderer fixes the framing; 2026-09-27 实测: 剥掉卡里的正面约束后模型画出了四分之三侧脸).
-- HAIR MUST BE UNAMBIGUOUS — three things, every time (2026-09-25 事故): the **TIE** (low ponytail / high ponytail / bun / loose), the **LENGTH** (to the jaw / shoulder / waist), and the **FOREHEAD STATE** (combed back and clear, or exactly how many wisps fall where). Never write just "ponytail", "hair tied up" or "short hair": an unstated forehead is what the image model fills in with invented strands over the face, and the video model then amplifies those strands into long flowing hair — the character's hair visibly changes from one shot to the next. If the design does cover the forehead, say how; if it does not, write "combed back, forehead clear, no strands over the face". Put the same three facts in the character's "description" field so both the sheet and every shot prompt agree.
-- If the source states a character's appearance (age, build, hair color, scars...), follow it EXACTLY; never beautify or average it away. A fat character stays fat, an old character stays old, a scarred character keeps the scar.
-- **A character sheet may be supplied with the source** (人物外形锚表, under 设定集). When it is present, EVERY character's appearance must be copied from it field by field — face shape, brows and eyes, nose and lips, skin, the signature marker, and the three hair facts (tie / length / forehead state). Never invent a different look for a character the sheet already describes, never beautify it away, and never merge two characters' traits. If the source mentions a character the sheet does not cover, design them by the same rules and keep them clearly unlike every other character.
-- Faces are ORIGINAL DESIGNS (avoid infringing anyone's likeness): never model a character on a real person, actor, singer, celebrity or public figure, never name a character after one, and never write "looks like <real person>" in any field.`
+var sysCastRules = promptText("sysCastRules")
 
 // sysSceneRules 场景卡 image_prompt 的写作规则。
 //
@@ -353,45 +140,10 @@ const sysCastRules = `## CAST DISTINCTNESS (critical - characters of the same se
 // 在视频里可以流动起来。两边的约束方向相反，而先前平台的分镜提示词**一句都没提** ——
 // 模型会从参考图（静态卡）里继承那份"站定不动"的气质，成片就是一屋子人僵着说话。
 // 这条影响的是**每一镜的画面**，属于"看不见但看得见"的那类默认值：不写出来就自动站错边。
-const sysDynamicShotRules = `## THE SHOT MUST MOVE (the reference cards are intentionally static - lift that here)
-
-- The character sheets and turnaround boards are deliberately INERT: arms hanging naturally, no flutter, no dynamic action. **A shot is the opposite** — the cards exist to fix identity, not to fix posture. In every shot: cloth must hang, sway or flutter with the movement, hair and hems react, and people carry real body motion with amplitude and speed.
-- Any "static shimmer / static glow" wording on a card becomes ANIMATED here (light pulses, holograms flicker, runes drift) unless the shot says otherwise.
-- Do NOT copy a card's neutral studio pose into a shot: if a shot's action is walking, turning, kneeling or fighting, write the pose the action needs. The only thing the cards lock is the FACE, hair and costume design.
-- Keep the camera free: the shot's framing is decided by the shot (size, viewpoint, camera move), never inherited from the reference plate.
-
-## TWO THINGS THAT ALWAYS BREAK (learned from a real 48-shot episode, 2026-09-28)
-
-**① HANDS + TOOLS — never frame them close, never write finger-level action.**
-Real damage report: of 48 rendered shots, the four lowest-scoring ones all failed the same way — "fingers fused into one mass, wrong finger count, the hand welded to the blade". Every one of them was a 特写/近景 of a hand working a tool. The model cannot resolve which finger does what, so it melts them together.
-- Tool work (carving a stele, chiselling, whittling, writing, threading, tying a knot) must be framed at **中景 or wider** — the hands stay small in the frame. Never park a 特写/近景 on a hand holding a tool.
-- Describe the motion at the **arm / wrist / shoulder** level ("he leans in and drives his right wrist down the stone"), NEVER at finger level ("he lifts the final stroke out of the groove with the tip of his index finger"). Do not name individual fingers, knuckles or degrees of grip, and do not describe how a tool is held.
-- If the story needs the RESULT of the work (a stroke opened, a character cut), show it as a change in the STONE or the surface, held in a medium shot, not as the fingers doing it.
-
-**② READABLE CHARACTERS ON SKIN, CLOTH OR PROPS — do not ask for them.**
-The same episode produced AI pseudo-hanzi on a forehead brand and on stele faces ("丙十七" came out as invented glyphs), because the character sheet said the brand "reads 丙十七".
-- A scar, brand, tattoo or embroidery is a **worn, illegible mark**: "a pale ragged brand mark, the characters long since worn smooth". Never write that such a mark "reads X", and never ask for specific strokes to be cut or changed.
-- A surface the audience genuinely must read (one stele inscription the plot turns on) is quoted **once, verbatim, inside English double quotation marks** exactly as the ON-SCREEN TEXT rule requires. Every other stele face, plaque, book page and banner stays **blank, weathered or out of focus** — say so explicitly ("the other stele faces are wind-worn and blank").
-- Never describe a tool "opening a stroke out of a character": that is finger-level action AND legible text at once — the single worst combination the model can be handed.
-
-**③ LIGHT: name the source.** Every shot states where the light comes from (a lamp, a shaft, the moon, firelight) and keeps the subject's face readably lit. Do not write "night" and leave the frame to go black: a real 48-shot episode had 18 shots whose sampled frames were over 45% near-black. Darkness is fine as a MOOD, never as the absence of a visible source.`
+var sysDynamicShotRules = promptText("sysDynamicShotRules")
 
 // sysSceneRules 场景卡规则。
-const sysSceneRules = `## SCENE CARDS (the location reference plates)
-- Every location that appears in any shot gets ONE scene card. Its image_prompt describes **the place itself and nothing else**: spatial layout and de
-- **EXTRACT IMPLICIT LOCATIONS TOO (not just named places)**: a card is required whenever the text lets the audience sense "where this is / what surrounds them / what the weather and light are" — even when the place has no name. Treat any of these as a location: the subject stands or moves inside a specific environment ("he walks across the stone bridge"); the passage describes space, terrain, architecture, weather or atmosphere systematically ("mist crawling over the waste", "the last light on a broken wall"); an action, a gaze or a state implies the surroundings ("he looks up at the sky"); someone crosses or passes through a space ("she pushes the door open"); a memory or inner thought carries a place image ("she remembers the locust tree at home"). **Missing a place means every shot set there renders with no reference plate.**pth, architecture and building materials, ground surface, fixed props, the direction and quality of the light, time of day and weather.
-- **Never put people in a scene card** — no crowd, no passers-by, no vendors, no silhouettes, no "a scattered crowd of villagers". The scene plate is an EMPTY stage: every person in the finished video comes from a character sheet, so anyone drawn into the scene plate would be reused as an anonymous stranger in every shot at that location and would fight the cast's identity lock.
-- **EVENT ISOLATION (mandatory)**: the plate shows the location **as it is BEFORE anything happens there** — its timeless state. FORBIDDEN: blood, corpses, fresh fight damage, freshly broken objects, burning embers, footprints, dropped props, quest items, anything a character carries. ALLOWED: weathering, old rust, moss, long cracks, faded paint, settled dust — the marks of time, not of an event. Why it matters: the plate is fed to every shot at that location, so a scene rendered with the aftermath already in it makes the whole episode look like it happens after the event.
-  Put this string VERBATIM in image_prompt: "pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath".
-  **ALSO put the establishing string VERBATIM in the scene image_prompt** — "ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot" (official §4.4: the scene plate IS the establishing view; a plate without it renders as a corner, not a location, and every shot set there inherits that poverty). Measured on a real episode: **0 of 4 scene cards carried it**, while the shots were required to — the requirement had never been stated for the card itself.
-- **PROP BUDGET**: name **2-4 groups** of FIXED furnishings, architectural parts or natural attachments (foreground and midground combined) — a table, a railing, a well, a wall niche, a dead tree. Never list story props or character-held objects: they belong to the prop cards and to the shot description. Fewer than two groups reads as an empty modelling shell; more than four turns the plate into a prop inventory and the model draws every single one. Give **foreground 1-2 groups and midground 1-2 groups** (the far layer is not required), each with a short material + light note, and describe same-kind objects as a GROUP — never item by item.
-- **FIVE STEPS (the difference between a crude plate and a film plate)**: build every scene prompt in this order, in English prose — ① key light and mood (not "daytime" but the quality of the light: a dead gold dusk, the cold blue hour before dawn, visible god rays); ② the core subject and background as precise nouns (glazed eaves, flying-apsara motifs, a blossoming peach tree, a rusted bronze altar); ③ **how the light touches the material** (this is what turns "pretty" into "alive"); ④ the render and quality suffix that matches the project style; ⑤ 2-4 groups of fixed furnishings. A plate that only does ① and ② is the "bare and monotonous scene" the reviewer keeps rejecting.
-- **FOUR ELEMENTS (all four, never fewer)** environment type + specific time + spatial mood + main visual features. The main picture must carry all three depth layers (foreground / midground / background) and include **at least 2 of these five**: sky, horizon, distant mountains, large architecture, open terrain. A plate with only one of them reads as a corner, not a location.
-- **WORTH LOOKING AT (the difference between "nice" and "alive")**: write the light as emotion, not as a timestamp — dawn's dead gold, the cold blue hour before sunrise, visible god rays through dust. State **how the light travels across the material** (light pooling on glazed tile, dusk running down rough stone, cold light talking to wet moss). Write colour poetically and specifically (faded vermilion + rusted celadon + cold grey-blue) and REQUIRED phrasing for the light-vs-shadow is an **A-versus-B** construction ("a warm golden lattice gently merging with warm grey shadow"). Add 2-4 strong mood words, one or two live atmosphere details (drifting leaves, rising mist, a guttering candle, suspended dust), and keep it clean and film-set tidy: designed space, no litter, no clutter, no broken junk. Prefer side light / back light / volumetric light; avoid flat top light.
-- **ALLOWED decay (the reverse whitelist)**: weathering, old rust, moss, old cracks, fading, settled dust, worn edges — the timeless wear of a place is fine and welcome. What is forbidden is only the **event aftermath** (the previous bullet).
-- **CONTINUITY LANDMARKS**: name the one or two fixed things whose screen position must stay the same every time we return to this location (a door frame, a central island, a mooring post, a specific tree). The audience re-identifies a place by them — if they move between shots, the space falls apart.
-- **LIGHT STATE**: state the time of day and the main light direction for this location (which side the key light comes from). Adjacent shots at the same location must not jump from noon to dusk.
-- Write it as a plain establishing view of the empty location, in the same art style as the series. Do not write framing, crop, camera angle or aspect ratio — the renderer adds those (per the project's aspect ratio), exactly as it does for character cards.`
+var sysSceneRules = promptText("sysSceneRules")
 
 // animeFaceLock 角色画风锁(注入到用户附加要求最前面)。
 //
@@ -407,10 +159,7 @@ const sysSceneRules = `## SCENE CARDS (the location reference plates)
 // 而技能侧《立项.json》要的是 photoreal 3D + 国风电影,两套打架。用户 2026-09-26 规则
 // 「一切创作产物的电影级画面风格必须是国风系」→ 统一到国风电影级 3D 写实 + 半风格化脸。
 // 变量名保留(调用点与测试都在用),语义已从"动画脸锁"变成"电影脸锁"。
-const animeFaceLock = `CHARACTER STYLE LOCK (MANDATORY, highest priority):
-- The 'style' field, EVERY character image_prompt and EVERY shot h3_prompt must use the SAME cinematic GUOFENG (Chinese period) art style: a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces, real materials with visible craft, soft motivated key light, matte finish, natural film grain and shallow depth of field. It is a Chinese period film — not a western fantasy, not cyberpunk neon, not japanese anime.
-- Faces are idealised and semi-stylised: a clean graphic facial structure with simplified, readable features, rendered with real skin texture and fine grain. Never write a flat cel-shaded cartoon or hand-drawn manga/anime look, and never write a photorealistic live-action actor, a photographic face, glossy or oily skin, wet highlights, or a plastic/wax finish.
-- Every face is an ORIGINAL design: never describe a character as looking like a real person, actor, singer, celebrity or public figure, and never use such a name as a character name.`
+var animeFaceLock = promptText("animeFaceLock")
 
 // SystemPrompt 单轮直出(完整 schema + 全部规则)。
 //
@@ -427,98 +176,12 @@ const animeFaceLock = `CHARACTER STYLE LOCK (MANDATORY, highest priority):
 //	② 敏感词禁止表：赤足/深V/低胸/超模身材/大眼长腿/半透/毛孔可见… 云端会拦，本地也照写
 //	   —— 免得换后端才发现。规范给了**安全替代写法**（高领/小立领、立体剪裁、写成头身比而不是"大长腿"），
 //	   照抄即可，不是"自己发明一套更保守的说法"。
-const sysFaceVocabRules = `## FACE VOCABULARY & SAFE WORDING (mandatory — these are controlled lists)
+var sysFaceVocabRules = promptText("sysFaceVocabRules")
 
-### Face features: pick a SPECIFIC type name, never a size word or an abstract compliment
-- FACE SHAPE: 鹅蛋脸 / 瓜子脸(下巴微尖不过分) / 圆润苹果脸 / 方中带圆脸(柔和方颌) / 长菱形脸(颧骨微宽下颌收窄) / 心形脸 / 瘦长脸. Bone structure must read: defined but not hard, moderate cheekbone and jaw presence — NEVER an inflated face or a cone chin (锥子下巴).
-- BROWS: 远山眉 / 柳叶眉 (清冷疏离) · 剑眉 / 水弯眉 (英气干练) · 秋波眉 / 挑眉 (妩媚) · 野生平眉 (中性少年感). Hair-by-hair texture must be visible; never one identical brow for everyone.
-- EYES: 丹凤眼 / 桃花眼 / 杏眼 / 瑞凤眼 / 狐狸眼 / 下垂眼 / 柳叶眼 / 细长单眼皮 — plus the gaze/expression that matches the character's temperament (清冷/凌厉/温柔/狡黠/迷茫/坚毅/空洞).
-- NOSE: 高挺直鼻 / 微驼峰鼻 / 小巧翘鼻 / 鼻头圆润带肉感 / 希腊鼻 / 鼻梁低平. NEVER a cone or over-narrow nose.
-- LIPS: 薄唇轻抿 / 厚唇微翘 / M 唇 / 嘴角平直或下垂 / 嘴角一边习惯性上挑.
-- BANNED as feature words: "large eyes", "big bright eyes", "绝美", "精致五官", "眉目如画", "完美脸型", "supermodel face" and any pure size adjective. Saying "精致五官" tells the model NOTHING and pushes every character toward one template.
-- DIFFERENTIATE (critical): face shape / brows / eyes / nose / lips must be chosen per character (age, temperament, role) — characters of the same kind must NEVER all get the same combination.
-
-### Banned words and their safe replacements (verbatim from 人物道具提取指令)
-- 赤足/光脚/barefoot → the character MUST wear shoes: "cloth shoes", mud-caked hem; never bare feet.
-- 深V/低胸/露乳/low neckline → collar wording only: high collar / small stand collar / layered lapels / 一字领(非低胸). Never any chest-revealing design.
-- 宽腰封/紧束/勒紧 → 立体剪裁贴合身形 / 衣料垂坠自然收窄 (tailoring, not tightness); if a belt is needed it is at most a palm-wide thin cord or chain — preferably no belt at all.
-- 半透/透视装/sheer → opaque matte fabric with a woven texture (state explicitly that it is NOT see-through).
-- 超模身材/大长腿/legs 60% of height → express as proportions instead: "**eight and a half heads tall**, lean,
-  straight-backed, shoulders about two head-widths".
-  【口径来源，2026-09-28 更正】用户《二、人物道具提取指令》写"九头身"、《【额外】人物道具场景提取》写"身材比例 8.5 头身"
-  —— 两处都是**用户定的口径**。平台此前写 7.5 是**我自己**在用户报"比例太丑"时拍的，把"丑"误当成"头身数太高"：
-  真正的病根是**比例失真**（Q 版比例混进真人卡、取景与全身比例打架），那两条现在各有专门的自检与锚点。
-  头身数回到用户文件的口径；若哪天用户说"就是要 7.5"，改这里并注明是用户拍板。
-- 毛孔可见/汗毛/visible pores → matte skin with a soft natural finish (never realistic pores).
-- 血管可见/visible veins → drop it; if needed: faint blue veins at the temple, subtle.
-- Also banned: 性感暴露, 沟, 翘臀/蜜桃臀, 巨乳, 网衣/链式衣饰/蛛网衣, 大面积镂空, 暗示性动作, 不雅姿态, 低俗图案.
-- 年龄口径（用户《【额外】人物道具场景提取》：「预估年龄（**不低于20岁**）」）：人形角色的卡面
-  年龄一律 **20 岁及以上**（写"二十出头 / 二十三"这类），不要写 19 岁或更小 —— 这是用户定的
-  合规向设定。剧情原文里若提到更小的年龄，卡面仍写 ≥20（角色外形按 ≥20 画）。
-- 立绘构图口径：**定妆照是半身像**（它是"脸部身份锚"，渲染时挂给每一镜认脸；全身会令脸变小、
-  认脸失效），**全身立绘由三视图板承担**（3 全身 ＋ 6 头角度 ＋ 6 局部）。这是与
-  《【额外】人物道具场景提取》「正面站立、全身完整」的**有意偏离**，理由见
-  「docs/口径对账-平台vs用户参考库.md」，不要当成 bug 改回去。- Costume quality (keeps the design rich without exposure): 立体剪裁(流畅衣身线条、侧身拼接、内藏式收省)、材质对撞至少 4 种高级材质、外层自然过渡到腰胯；女装必须有内搭。
-- Make-up and pupils: make-up is style-adaptive — period xianxia/fantasy uses an upturned eyeliner tail, huadian forehead mark, bitten-lip colour and a brow ornament; modern/urban uses earth-tone eyeshadow, a very fine liner, natural lip colour and a clean base. Pupil colour is one of 深黑 / 浅褐 / 琥珀 / 灰蓝 / 血红, and the GAZE must match the temperament (清冷 / 凌厉 / 温柔 / 狡黠 / 迷茫 / 坚毅 / 空洞) — a character with the wrong gaze reads as the wrong person.
-
-### Character quality bar (verbatim essentials; the style-related parts follow the project style string)
-- SKIN: cold porcelain or healthy wheat, luminous like jade — **plastic or silicone skin is forbidden**. Use "matte skin with a soft natural finish".
-- HAIR: layered, smooth and full, **individual strands readable** (毛流感清晰), and the parting plus strand direction must stay readable.
-- COSTUME: sculpted tailoring (flowing body lines, side panel seams, hidden darts), shoulders flowing naturally into the waist and hips, a waistline that follows real human proportions, and the natural slimness of well-cut clothing. Women's wear MUST have an inner layer. Mix **at least 4 premium materials**. Collar wording stays safe: high collar / small stand collar / shirt collar / 一字领(非低胸). No belt wider than a palm (prefer none), and the character MUST wear shoes.
-- POSE ON A CARD (static image): full-body standing, shoulders relaxed and level, hands folded in front or hanging at the sides, body turned a natural 3/4 toward the camera, chin slightly raised, robe hanging naturally — **no flutter, no dynamic action** (shots lift this, see THE SHOT MUST MOVE).
-- LIGHT on a card: even soft frontal light plus a fine rim / side-back light — **no harsh shadows**.
-- QUALITY WORDS: next-gen high-poly model, ray tracing, 8K, extreme detail (matched to the project style string).
-- Mood words: 1-2 at most, and they must fit the style.
-
-### Anchor sheet is the ONLY authority for a face (卡从表来)
-- The character sheet under 设定集 (人物外形锚表) outranks everything else: copy its fields **item by item**, add no adjectives of your own, and never reword them. Its 11 fields are: 年龄 / 身形 / 脸型 / 眉眼 / 鼻唇 / 肤色肤质 / 独特记号 / 发型三要素(束法+长度+额前状态) / 首套服装 / 气质 (plus name and role). A purely background character may carry only four: 年龄 / 身形 / 脸型 / 首套服装.
-- Changing the anchor sheet = changing the face: if you must differ, say so explicitly in the description; never silently drift.
-- **SAME PERSON AT ANOTHER TIME (造型档 / 不同时期) — the split line is fixed** (用户 2026-09-28：「主角不同时期会存在差异，但相似度不能走样」):
-  · **INVARIANT (must survive every period)**: face shape and bone structure, brow shape, eye shape and pupil colour, nose and lip shape, skin tone family, height/build family, AND every signature mark (scar, brand, mole, missing tooth). These are what tells the audience "this is still him" — if a later card loses them, the character has silently been re-cast.
-  · **VARIABLE (must actually change with the period)**: age read (a boy's soft jaw vs a man's defined one — same bone structure, different maturity), hair length/tie/state (shaved, grown out, greying, wet), costume and its wear, posture, and the body's condition (wounds, gauntness, muscle).
-  · Write BOTH halves into the card: the IDENTITY LOCK carries the invariants, and the description states the period ("thirty-one, three years in the stone camp") so the change is deliberate rather than accidental.
-  · A variant card is NOT a copy: if the new period only differs by costume, say so and keep the invariant list identical word for word. Never let two periods of one person render as the same image, and never let them render as two different people.`
-
-var SystemPrompt = sysHeader + `
-
-` + sysOutputFull + `
-
-` + sysShotRules + `
-
-` + sysViewRules + `
-
-` + sysContinuityRules + `
-
-` + sysShotTableRules + `
-
-` + sysDynamicShotRules + `
-
-` + sysHighlightRules + `
-
-` + sysBlockingRules + `
-
-` + sysH3Format + `
-
-` + sysHard + `
-
-` + sysCastRules + `
-
-` + sysFaceVocabRules + `
-
-` + sysPropRules + `
-
-` + sysSceneRules
+var SystemPrompt = sysHeader + "" + sysOutputFull + "" + sysShotRules + "" + sysViewRules + "" + sysContinuityRules + "" + sysShotTableRules + "" + sysDynamicShotRules + "" + sysHighlightRules + "" + sysBlockingRules + "" + sysH3Format + "" + sysHard + "" + sysCastRules + "" + sysFaceVocabRules + "" + sysPropRules + "" + sysSceneRules
 
 // UserPromptFmt 用户提示模板。
-const UserPromptFmt = `Source text (Chinese):
-"""
-%s
-"""
-
-Additional requirements:
-- Target: short video, total duration about %d seconds (%d shots).
-%s
-Produce the STRICT JSON plan now.`
+var UserPromptFmt = promptText("UserPromptFmt")
 
 // Options 直出选项。
 type Options struct {
@@ -738,15 +401,7 @@ func styleHint(opt Options) string {
 // 区别是不写死镜头数:只给总时长,或连时长也交给内容决定,镜头数交由
 // sysShotRules 的「镜头数由内容决定、不设上限」
 // 按原文节拍自行判定。
-const contentDrivenPromptFmt = `Source text (Chinese):
-"""
-%s
-"""
-
-Additional requirements:
-%s
-%s
-Produce the STRICT JSON plan now.`
+var contentDrivenPromptFmt = promptText("contentDrivenPromptFmt")
 
 // buildSingleUserPrompt 组装单批直出的用户提示词。contentDriven 时不预设镜头
 // 数;secondsGiven 决定要不要给时长约束(用户没给时长则连时长也交给内容决定)。
@@ -1015,85 +670,11 @@ func SanitizeForCache(s string) string {
 // ---------- 分批生成:规划轮 + 分批出镜轮 ----------
 
 // planSystemPrompt 规划轮:通读全文,只产出轻量头部(剧名/角色/场景/切分计划)。
-const planSystemPrompt = sysHeader + `
-
-## OUTPUT (BATCH PLAN)
-Return STRICT JSON only (no markdown fences, no commentary):
-{
-  "title": "剧名(中文,≤12字)",
-  "logline": "一句话故事(中文,≤40字)",
-  "style": "global visual style in ENGLISH, 1 main style + 1-2 texture traits",
-  "characters": [
-    {"id":"char_xxx","name":"中文名","description":"中文外貌/服装/气质,固定不变的关键特征(含至少一个独特记号)","image_prompt":"ENGLISH portrait prompt. It MUST contain the literal block "IDENTITY LOCK (do not change): " followed by the distinctive physical identity (age, face shape, brows/eyes, nose/lips, skin, hair, signature mark, costume) AND **the body-proportion anchor "eight and a half heads tall"** — the renderer reads THAT block to anchor identity across shots and to tell characters apart; a card without it silently loses both. Then:  shape, build, hair, eyes, skin, signature marker] then [costume] then 'in [COPY the global style EXACTLY]' then 'plain background' ONLY (no framing or crop words — the renderer adds them)","voice":"ENGLISH voice description"}
-  ],
-  "scenes": [
-    {"id":"scene_xxx","name":"中文名","description":"中文场景描述","image_prompt":"ENGLISH establishing-shot image prompt for this location, pre-event and unpeopled (see SCENE CARDS)","landmarks":"连续性地标:同场景跨镜屏幕位置必须不变的固定物(门框/中岛/系船桩/树)","light_state":"光态:日/夜 + 主光方向"}
-  ],
-  "core_beats": [
-    "本集核心冲突：一句话",
-    "爽点①/②/③：谁在何时逆袭/打脸/揭秘/升阶（2-3 个，宁少勿凑）"
-  ],
-  "props": [
-    {"id":"prop_xxx","name":"中文名","en":"ENGLISH look phrase for the picture model","description":"中文外观/材质/配色/尺寸/记号","image_prompt":"ENGLISH 1:1 white-background single-object prompt (see PROP CARDS)"}
-  ],
-  "core_beats": [
-    "本集核心冲突：一句话（≤30字）",
-    "爽点①：谁在什么时候逆袭/打脸/揭秘/升阶（≤30字，标类型）",
-    "爽点②：同上",
-    "爽点③：同上（2-3 个即可，宁少勿凑）"
-  ],
-  "segments": [
-    {"from":1,"to":3,"brief":"本段剧情要点(中文,≤160字):发生什么、关键台词原文、情绪转折、结局钩子"}
-  ]
-}
-
-## SEGMENT RULES
-- segments 的 from/to 是分镜镜号区间:从 1 开始连续覆盖到总镜数,不重叠不留空。
-- 每段 3-6 镜;段与段之间是清晰的故事节拍(开场钩子/升级/转折/高潮/收尾)。
-- **segments 必须围绕 core_beats 组织**：每个大爽点要有对应段落，铺垫与过渡段能省则省（用户口径：抓重点，不照搬原文）。
-- brief 必须自足:仅凭 brief(不看全文)就能写好本段每一镜。关键台词必须原文引用。
-- characters/scenes/props 覆盖全片所有出场者与关键器物;角色外貌描述具体可画,全片复用。` + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + "\n\n" + sysPropRules + "\n\n" + sysHighlightRules + `
-
-` + sysSceneRules
+var planSystemPrompt = sysHeader + promptText("planSystemPrompt") + "\n\n" + sysCastRules + "\n\n" + sysFaceVocabRules + "\n\n" + sysPropRules + "\n\n" + sysHighlightRules + "" + sysSceneRules
 
 // batchSystemPrompt 分镜轮:按已定头部与本段 brief,只产出指定区间的 shots。
 // var 的理由同 SystemPrompt:内嵌的 sysShotRules 由常量渲染。
-var batchSystemPrompt = sysHeader + `
-
-## OUTPUT (THIS BATCH)
-Return STRICT JSON only (no markdown fences, no commentary):
-{"shots":[
-  {"id":N,"scene":"scene_xxx","characters":["char_xxx"],"prop_ids":["prop_xxx"],"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{"char_yyy":"上一镜在场、本镜已出画，走向门洞（本镜保留一行）"},"positions":{"char_xxx":"画面左三分之一、前景、面朝右"},"offscreen":{},"shot_size":"中景","camera":"slow push-in, small amplitude","view":"主视角,逐字取自官方 9 条词表(见 VIEWPOINT)","action":"中文一句话画面动作","dialogue":[{"speaker":"中文名","text":"台词"}],"narration":"","duration":6,"mode":"ref2va","hook_type":"官方钩子词表之一(见 SHOT TABLE)","end_state":"尾帧状态:最后一帧看得见的东西(位置/姿态/表情/视线/环境),禁写听觉与氛围词","h3_prompt":"FULL H3 prompt text"}
-]}
-
-` + sysShotRules + `
-
-` + sysViewRules + `
-
-` + sysContinuityRules + `
-
-` + sysShotTableRules + `
-
-` + sysDynamicShotRules + `
-
-` + sysHighlightRules + `
-
-` + sysBlockingRules + `
-
-` + sysH3Format + `
-
-` + sysHard + `
-
-` + sysFaceVocabRules + `
-
-` + sysPropRules + `
-
-` + sysHighlightRules + `
-
-## BATCH SCOPE
-- Produce ONLY the shots whose ids are inside the given range; do NOT invent shots outside it.
-- ids must be integers inside the range, sequential, no gaps.
-- Story continuity: respect the PREVIOUS SHOTS summary if provided (do not repeat events; keep character states consistent).`
+var batchSystemPrompt = sysHeader + promptText("batchSystemPrompt") + sysShotRules + "" + sysViewRules + "" + sysContinuityRules + "" + sysShotTableRules + "" + sysDynamicShotRules + "" + sysHighlightRules + "" + sysBlockingRules + "" + sysH3Format + "" + sysHard + "" + sysFaceVocabRules + "" + sysPropRules + "" + sysHighlightRules + promptText("batchSystemPrompt_13")
 
 // ShotPrompts 产出 **shots[]** 的两条直出路径（单轮整体直出 / 分批分镜），供双侧同源测试取用。
 //
@@ -1127,27 +708,9 @@ func buildPlanUserPrompt(sourceText string, opt Options, contentDriven bool) str
 	if contentDriven {
 		// 内容驱动时不预设总镜头数:由规划轮自己决定拍多少镜才 cover 完整,
 		// 只保留「每段 3-N 镜」这个分批粒度 —— 它是技术参数(保证单次输出不溢出)。
-		return fmt.Sprintf(`Source text (Chinese):
-"""
-%s
-"""
-
-Additional requirements:
-- Target: short video. Decide the TOTAL shot count YOURSELF from the source text's natural story beats — there is NO upper limit; cover the story completely and clearly.
-- Then split it into consecutive segments of 3-%d shots each, so the segments continuously cover shot ids 1..N where N is the total you decided.
-%s
-Produce the STRICT BATCH PLAN JSON now.`, sourceText, batchMaxShots, hint)
+		return fmt.Sprintf(promptText("buildPlanUserPrompt"), sourceText, batchMaxShots, hint)
 	}
-	return fmt.Sprintf(`Source text (Chinese):
-"""
-%s
-"""
-
-Additional requirements:
-- Target: short video, total %d shots, total duration about %d seconds.
-- Split the story into segments of 3-%d shots each (segments must continuously cover shot ids 1..%d).
-%s
-Produce the STRICT BATCH PLAN JSON now.`, sourceText, opt.MaxShots, opt.TotalSeconds, batchMaxShots, opt.MaxShots, hint)
+	return fmt.Sprintf(promptText("buildPlanUserPrompt_2"), sourceText, opt.MaxShots, opt.TotalSeconds, batchMaxShots, opt.MaxShots, hint)
 }
 
 // decodePlanHead 直接解析并校验(错误信息按**缺什么**分别说明)。
@@ -1238,14 +801,7 @@ func callPlanRound(ctx context.Context, client *llm.Client, sys, user string, no
 	if perr != nil {
 		why = perr.Error()
 	}
-	fixUser := fmt.Sprintf(`Your previous reply could not be parsed as a complete JSON object: %s.
-Return ONLY the JSON object — no markdown fences, no commentary, no text before or after — with exactly these top-level keys:
-{"title":"…","logline":"…","style":"…","characters":[…],"scenes":[…],"segments":[{"from":1,"to":3,"brief":"…"}]}%s
-
-Keep every id/name you already decided. Previous reply:
-"""
-%s
-"""`, why, shrink, prev)
+	fixUser := fmt.Sprintf(promptText("callPlanRound"), why, shrink, prev)
 	if fix, ferr := client.ChatEx(ctx, []llm.Message{
 		{Role: "system", Content: sys},
 		{Role: "user", Content: fixUser},
@@ -1323,18 +879,7 @@ func generateBatched(ctx context.Context, client *llm.Client, sourceText string,
 			segSeconds = (seg.To - seg.From + 1) * 7
 		}
 		prevSummary := previousShotsSummary(plan.Shots)
-		user := fmt.Sprintf(`Established plan head (STRICT, reuse ids verbatim):
-%s
-
-Global style: %s
-%s
-This batch: shots %d-%d (%d shots), total duration about %d seconds.
-Segment brief (the ONLY story source for this batch):
-"""
-%s
-"""
-%s
-Produce ONLY this batch's shots as STRICT JSON now.`, cards, head.Style, hint, seg.From, seg.To,
+		user := fmt.Sprintf(promptText("generateBatched"), cards, head.Style, hint, seg.From, seg.To,
 			seg.To-seg.From+1, segSeconds, seg.Brief, prevSummary)
 
 		raw, err := client.Chat(ctx, []llm.Message{
@@ -1502,32 +1047,4 @@ func previousShotsSummary(shots []project.Shot) string {
 //	· 砍冗余铺垫支线冗长对话 → 本段规则 + 分镜预算（信息密度优先，宁短勿平）
 //	· 放大情绪反差 / 反转密集 → sysDynamicShotRules 与钩子密度规则
 //	· 合规零风险 → sysHard 既有合规段
-const sysHighlightRules = `## 抓重点纪律 (改编方法论 — 用户定的口径, 违反即返工)
-
-这份文件把"网文 → 漫剧"的改编规则写死了。**忠实不是优点,平才是缺点** —— 观众划走只需要 3 秒。
-
-1. **开篇 3 秒爆点(硬性)**: [Shot 1] 的第一句画面/动作必须是极致冲突、绝境、反转或悬念 ——
-   绝境受辱、生死危机、惊天揭秘、逆袭打脸、天降机缘。**无任何铺垫、无多余旁白**,
-   直接切进高潮名场面。慢热开场 = 整集白做。
-2. **爽点密度(硬性)**: 每 80 字内容要有 1 个小爽点,每 200 字要有 1 个大爽点。
-   主角全程不憋屈、不拖沓: 逆袭、打脸、揭秘、升阶的节奏要拉满。
-   (平台按台词字数累计做机器门: 连续超过 200 字没有强节拍就报警。)
-3. **段段留钩(硬性)**: 每一段(segment)结尾必须留悬念/伏笔/反转预告,杜绝平淡收尾。
-4. **砍冗余(硬性)**: 砍掉所有冗余铺垫、无关支线、冗长对话。保留核心主线,快速推进。
-   **判断标准: 这一镜不推进冲突、不抛信息、不给情绪,就该并进相邻镜或直接删。**
-   宁可少一镜,不要多一镜水戏 —— 短视频里"平稳过渡"就是流失点。
-5. **放大反差**: 主角的绝境/屈辱与逆袭/碾压要形成尖锐对比;冲突更狠、情绪更极致。
-6. **反转密集不套路**: 每次冲突都要有意外反转;规避俗套桥段。
-7. **人物**: 主角气场拉满、智商在线、行动果决 —— 不写懦弱犹豫、不写反复纠结;
-   对立角色**标签化**(一眼认出他是谁、要什么)。
-8. **补充关键场景/道具/伏笔**: 原文里一带而过但剧情要用的,要补成卡(场景/道具),不冗余。
-9. **语言**: 短句为主、力道足、画面感强;重点剧情突出。
-10. **片段内必须切镜(治拖沓, 硬性)**: 一个片段 5 秒以上就必须在**内部切 2-4 个小镜头**,
-    每个小镜头 1.5-4 秒, 切点落在动作的自然停顿处(人物站定、转身完成、视线定格、台词间隙)。
-    写法用官方多镜形式: 「[Shot 1] ...」然后「[Shot 2] At 00:03.500, ...」(时间戳从 0 开始**严格递增**,
-    且各小镜头时长之和 = 该片段时长)。**第一刀最快**: 开场那一刀 1.5-2.5 秒就把信息砸出去。
-    为什么: 平台实测每镜正文只有一个「[Shot 1]」—— 一个 6-8 秒片段从头到尾演一个连续动作,
-    观众感觉就是"全程慢动作"; 用户自己的《仿真人10S分镜头指令》也写着"每片段内拆成若干小镜头,
-    每镜 1.5-4 秒"。**切镜是节奏, 不是特效**: 同样的内容切三刀就是快, 一镜到底就是拖。
-11. **重点配重(抓重点)**: 一集里挑出 2-3 个**大爽点**(逆袭/打脸/揭秘/升阶), 给它们**更多镜与更长的
-    停留**; 其余过渡内容压到最省 —— 不要把镜数平均分给每一段, 平均就是没有重点。`
+var sysHighlightRules = promptText("sysHighlightRules")

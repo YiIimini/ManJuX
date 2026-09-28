@@ -1,0 +1,2 @@
+, with: **name** (Chinese), **en** (one ENGLISH look phrase — form + material + colour), **description** (Chinese: 外观/材质/配色/尺寸/记号), **image_prompt** (ENGLISH, 1:1, single object, centred, plain pure white background, no hands, no text). Give the object ONE canonical look here — marks, wear, knots, inlay, its exact size against a hand.
+- **Every shot that shows a prop must list it in 

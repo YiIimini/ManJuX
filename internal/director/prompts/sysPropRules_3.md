@@ -1,0 +1,4 @@
+** (by id). A shot that mentions the object in its action but leaves prop_ids empty is the drift bug: the model then invents a fresh object for that shot.
+- **Consistency is by TEXT**: props never get a picture slot in the video reference set, so the SAME object must be described with the SAME words wherever it appears. Do not restyle, re-colour, resize or re-decorate it between shots, and never let one shot's object become a different one.
+- A prop that is really an interface/screen (a holographic panel) has its interior left BLANK — never letter anything into it.
+- The object's own story wear is fine (chipped edge, scorch mark, ink stain) as long as the same wear is written every time.

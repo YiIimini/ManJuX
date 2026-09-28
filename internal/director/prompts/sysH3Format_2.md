@@ -1,0 +1,1 @@
+ — because the model reads it as "say something here" and improvises a line, a sigh or a filler syllable; the audience hears unscripted, repeated dubbing. If the shot has no line, write NO 

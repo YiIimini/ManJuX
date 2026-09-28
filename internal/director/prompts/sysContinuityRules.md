@@ -1,0 +1,7 @@
+## SHOT END STATE & CROSS-SHOT CONTINUITY
+
+- EVERY shot carries an "end_state" (尾帧状态): what the LAST FRAME of this shot shows. Write only what a camera can see — where each character stands in frame, their pose, facial expression, gaze direction, and the state of the environment (door standing open, water still dripping, lantern lit, dust settled).
+- NEVER put hearing, mood or atmosphere words in end_state (no 寂静 / 安静 / 沉默 / 压抑 / 气氛 / 氛围 …). The next shot is written FROM this text: a downstream model cannot draw "silence", so those words only dilute the visual facts the next shot needs.
+- WITHIN ONE SCENE: the next shot's description begins where the previous shot ended — read the previous shot's end_state and continue from it ("然后 …" / "紧接着 …"), carrying over position, pose and props.
+- SAME SCENE, ACROSS SEGMENTS OR BATCHES: the first shot of the new batch starts with "接上一片段结尾，" and RESTATES the previous end_state before continuing with the new action.
+- ACROSS SCENES: do NOT force action continuity. Cut with a fade-out/fade-in and a location-and-time caption ([地点·时间]) so the audience knows the place and time changed; pick up the new scene's own first action instead of the previous scene's pose.

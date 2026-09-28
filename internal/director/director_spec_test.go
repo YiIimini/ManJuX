@@ -1,6 +1,9 @@
 package director
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"strings"
 	"testing"
@@ -93,13 +96,78 @@ func TestFaceVocabIsOneSection(t *testing.T) {
 	if n := strings.Count(batchSystemPrompt, "## FACE VOCABULARY"); n != 1 {
 		t.Errorf("分批提示词里 FACE VOCABULARY 段出现 %d 次（应恰好 1 次）", n)
 	}
-	// 三处（单轮/分批/计划）都引用同一个常量：源文件里 const 定义只有一处
+	// 三处（单轮/分批/计划）都引用同一个载体：正文只有**一份**（prompts/sysFaceVocabRules.md）。
+	//
+	// 【2026-09-28 改口径】此前钉的是"源文件里 const 定义只有一处"。提示词已搬进 go:embed 的
+	// Markdown（根因治理：raw string 里出现反引号会截断编译，一天栽了七次）⇒ 判据随之改成
+	// "载体文件恰好一份、且源码里仍是同一个符号"。
 	src := mustReadFile(t, "director.go")
-	if n := strings.Count(src, "const sysFaceVocabRules"); n != 1 {
-		t.Fatalf("sysFaceVocabRules 应只有一处 const 定义，实际 %d 处", n)
-	}
 	if n := strings.Count(src, "sysFaceVocabRules"); n < 4 {
 		t.Errorf("sysFaceVocabRules 应被三处提示词引用（定义 1 + 引用 3），实际出现 %d 次", n)
+	}
+	files := 0
+	for _, name := range PromptNames() {
+		if name == "sysFaceVocabRules" {
+			files++
+		}
+	}
+	if files != 1 {
+		t.Fatalf("sysFaceVocabRules 的载体文件应恰好 1 份（prompts/sysFaceVocabRules.md），实际 %d 份", files)
+	}
+}
+
+// TestNoRawStringPromptsInDirector 源码里**不许再出现反引号**。
+//
+// 这是给"反引号陷阱"上的永久锁：提示词原本写成 Go raw string（反引号定界），正文里出现任何一个
+// 反引号都会截断字符串、编译报错 —— 2026-09-28 一天为此栽了七次。搬进 go:embed 的 Markdown 之后，
+// director.go 里不该再有 raw string；哪天有人又在里面写 `...`，这条守卫会立刻红。
+func TestNoRawStringPromptsInDirector(t *testing.T) {
+	// 用 AST 判，而不是字符扫描：提示词正文搬到 prompts/*.md 之后，director.go 里不该再有任何
+	// **散文型** raw string（≥120 字符或含换行）。字符扫描会把字符串字面量/注释里的反引号误判，
+	// 第一版就是这么被测出来的（守卫自己先假红）。
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "director.go", mustReadFile(t, "director.go"), 0)
+	if err != nil {
+		t.Fatalf("解析 director.go 失败:%v", err)
+	}
+	var bad []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING || !strings.HasPrefix(lit.Value, "`") {
+			return true
+		}
+		body := strings.TrimSuffix(strings.TrimPrefix(lit.Value, "`"), "`")
+		if len(body) >= 120 || strings.Contains(body, "\n") {
+			bad = append(bad, firstLineOf(body))
+		}
+		return true
+	})
+	if len(bad) > 0 {
+		t.Errorf("director.go 里还有 %d 段**散文型 raw string**（首行：%s）—— 提示词请写进 prompts/*.md；"+
+			"这种写法里出现任何反引号都会截断编译（一天栽过七次）", len(bad), strings.Join(bad, " / "))
+	}
+}
+func firstLineOf(s string) string {
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		s = s[:i]
+	}
+	if len([]rune(s)) > 40 {
+		s = string([]rune(s)[:40])
+	}
+	return s
+}
+
+// TestEveryPromptSegmentHasText 每段提示词都要有正文，且不得为空（空提示词比编译不过更危险：
+// 模型会凭感觉干活，而且没有痕迹）。
+func TestEveryPromptSegmentHasText(t *testing.T) {
+	names := PromptNames()
+	if len(names) < 20 {
+		t.Fatalf("提示词载体过少（%d 段），搬运动作可能没跑完", len(names))
+	}
+	for _, name := range names {
+		if strings.TrimSpace(promptText(name)) == "" {
+			t.Errorf("提示词段 %s 是空的", name)
+		}
 	}
 }
 
