@@ -48,14 +48,14 @@ func TestProjectPackageImportStartsProduction(t *testing.T) {
 	if p := (*got)[0].Prefix; p != "书A" {
 		t.Fatalf("开跑的书名应是《书A》(从项目 id 的「·第」前截出),实际 %q", p)
 	}
-	// 【2026-09-28 用户口径】「LLM 一集一集地去解析，不要直接一上来就全解析了，太慢了」——
-	// 导入**只把第 1 集交给产线**，其余集等用户点「开始」再逐集跑。
-	// 这条断言此前钉的是旧行为（2 集一起交），按新口径改写：产线要的是"先端出第 1 集"，
-	// 而不是"一次排满整本"。
-	if eps := (*got)[0].Eps; len(eps) != 1 {
-		t.Fatalf("导入只该把第 1 集交给产线(不要把整本一次排满),实际 %d 集:%v", len(eps), eps)
-	} else if !strings.Contains(eps[0], "第01集") {
-		t.Fatalf("交给产线的应是第 1 集,实际 %v", eps)
+	// 【2026-09-28 用户口径（第二版）】集数照常全部入队、一路顺下去（不等人点），
+	// 但**解析是即时的**：轮到第 N 集才做第 N 集的 LLM 解析（ensureEpisodeBrief），
+	// 解析完紧接着跑这一集的渲染管线 —— 防"一上来全解析"的点在**这里**，不在入队范围。
+	if eps := (*got)[0].Eps; len(eps) != 2 {
+		t.Fatalf("导入应把各集都交给产线(逐集流水线,不等人点),实际 %d 集:%v", len(eps), eps)
+	}
+	if !strings.Contains(strings.Join((*got)[0].Eps, " "), "第01集") {
+		t.Fatalf("队列里应含第 1 集:%v", (*got)[0].Eps)
 	}
 	// 交给产线的集名必须是**真的能对上项目**的 id —— 否则产线会空转(启动横幅说 N 集,
 	// 逐集处理时一个都找不到)。

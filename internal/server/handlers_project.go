@@ -228,13 +228,18 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 	s.autoStartBatch(bookPrefix)
 }
 
-// autoStartBatch 导入成功后启动产线 —— **只启动第 1 集**（单集模式）。
+// autoStartBatch 导入成功后启动产线：**逐集流水线**。
 //
-// 【2026-09-28 用户指示】「LLM 一集一集地去解析，不要直接一上来就全解析了，太慢了」。
-// 此前这里把**整本书的集**一次性入队（且拆集边跑边入队），于是点一次「导入」= 排了
-// 几十集的队：每集 ~20 分钟解析 + 数小时渲染，用户想看的第 1 集反而排在最后面。
-// 现在：导入只把**第 1 集**端出来，跑完就收；其余集到首页点那张卡的「开始」再逐集跑
-// （产线仍是单例、仍逐集串行，只是不再自动排满整本）。
+// 【2026-09-28 用户口径（第二版，纠正我上一版的理解）】原话：
+// 「不是等我点开始，是批量跑一集进行这一集的 LLM 解析后进行渲染管线顺序，到下一集就是
+//
+//	下一集的 LLM 解析后进行渲染管线顺序，后面依次顺序，流水线一样到了那一步就做那一步」。
+//
+// 所以**不是**"跑完第 1 集就停 ✗"（我上一版理解错了），而是：
+//
+//	· 整本集数照常排队、一路顺下去（不等人点）；
+//	· 但**解析是即时的**：轮到第 N 集才做第 N 集的 LLM 解析（见 ensureEpisodeBrief），
+//	  解析完紧接着跑这一集的渲染管线，然后第 N+1 集 —— 而不是导入时把整本一次性解析掉。
 func (s *Server) autoStartBatch(prefix string) {
 	if strings.TrimSpace(prefix) == "" {
 		return
@@ -244,10 +249,10 @@ func (s *Server) autoStartBatch(prefix string) {
 		return
 	}
 	s.reapStaleBatch() // 先请走死批次,否则单例被占着永远起不来
-	if s.startProdSingle(prefix, eps[:1]) {
+	if s.startProd(prefix, eps) {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-			Message: fmt.Sprintf("📜 已导入并启动第 1 集:《%s》共 %d 集 —— 本次只跑第 1 集(%s),"+
-				"其余集到首页点那张卡的「开始」再逐集跑(避免一上来就把整本排满)", prefix, len(eps), filepath.Base(eps[0]))})
+			Message: fmt.Sprintf("📜 已导入并启动产线:《%s》共 %d 集 —— **逐集流水线**:到第 N 集才做第 N 集的 LLM 解析,"+
+				"解析完接着跑这一集的渲染管线,再进第 N+1 集(不再一上来就把整本解析掉)", prefix, len(eps))})
 		return
 	}
 	batch.mu.Lock()

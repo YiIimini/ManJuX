@@ -542,6 +542,11 @@ func TestH3FormatViolations(t *testing.T) {
 			"排除句",
 		},
 		{
+			"正文里混进分镜标签（官方终检：不许有分镜痕迹）",
+			strings.Replace(ok, "[Shot 1] he stands.", "[Shot 1] he stands beside [scene:scene_room].", 1),
+			"内部标签",
+		},
+		{
 			// 递增判据要**两个以上**带时间戳的镜才谈得上：这里造一个回退的第三镜
 			"时间戳不递增",
 			strings.Replace(ok, "At 00:06.000 he walks.", "At 00:06.000 he walks. [Shot 3] At 00:03.000 he stops.", 1),

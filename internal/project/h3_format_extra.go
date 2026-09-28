@@ -17,6 +17,24 @@ const (
 	h3MaxMusicSentences = 3
 )
 
+// h3TraceTags 分镜/内部标签：官方 `qc-checklist.md` STEP 8 明说成片要"clean animation visuals
+// and no storyboard traces, including no `[char:…] [scene:…] [shot:…]` labels"。
+//
+// 为什么会漏进正文：平台的规则段与 schema 里到处是 `char_xxx` / `scene_xxx` 这类占位写法，
+// 模型有时会把它们当"标签"写进散文里 —— 那会被渲染成画面上的乱码字形（与汉字卫生同一类事故）。
+var h3TraceTags = []string{"[char:", "[scene:", "[shot:", "[prop:", "<char:", "<scene:", "<prop:"}
+
+// storyboardTraceIn 正文里出现的分镜/内部标签（空 = 没有）。
+func storyboardTraceIn(h3 string) string {
+	low := strings.ToLower(h3)
+	for _, t := range h3TraceTags {
+		if strings.Contains(low, t) {
+			return t
+		}
+	}
+	return ""
+}
+
 // timestampParts 一个带时间戳的镜头号。
 type timestampParts struct {
 	n   int

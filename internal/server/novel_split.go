@@ -304,6 +304,9 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 			continue
 		}
 
+		// **流水线的一步**（用户 2026-09-28）：轮到这一集了，先做它的 LLM 解析（剧情 brief），
+		// 再进渲染管线 —— 而不是导入时就把整本书的集全解析掉（那是"一上来就全解析，太慢了"）。
+		s.ensureEpisodeBrief(ep)
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 			Message: fmt.Sprintf("▶ 批量产线 %d/%d:开始《%s》", i+1, batchTotal(), ep)})
 		if s.pipe.Running(ep) != nil {

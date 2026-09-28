@@ -3,16 +3,19 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/fsutil"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 )
 
@@ -246,6 +249,88 @@ func (s *Server) startBatch(prefix string, eps []string, single bool) bool {
 	batch.mu.Unlock()
 	go s.runNovelBatch(prefix, uniq)
 	return true
+}
+
+// epBriefMinRunes / epBriefMaxRunes 剧情 brief 的目标字数（与拆集默认 400–700 对齐；
+// 低于 minRunes 视为"没写过"，触发解析）。
+const (
+	epBriefMinRunes = 400
+	epBriefMaxRunes = 700
+)
+
+// ensureEpisodeBrief 轮到这一集时**才**给它补写剧情 brief（流水线的一步）。
+//
+// 为什么从"导入时批量补"改成"轮到才补"（用户 2026-09-28）：
+// 批量补 = 点一次导入就把整本书的集全部丢给 LLM（每集最多 1.2 万字原文），既慢又挤占产线；
+// 而用户要的是**流水线**：到第 N 集就解析第 N 集、接着渲它、完了再第 N+1 集。
+//
+// 自包含：读这一集项目自己的 `source.txt`（里面已经有【本集原文】），不依赖拆集时的内存状态
+// —— 产线可能跨重启、跨入口被拉起，靠闭包捕获上下文会丢。
+// 已有像样 brief 的集（技能侧交付 or 上次跑过）直接跳过，不重复烧 token。
+func (s *Server) ensureEpisodeBrief(projID string) {
+	dir := s.store.Dir(projID)
+	srcPath := filepath.Join(dir, "source.txt")
+	raw, err := os.ReadFile(srcPath)
+	if err != nil {
+		return
+	}
+	src := string(raw)
+	if brief, ok := episodeBriefOf(src); ok && len([]rune(brief)) >= epBriefMinRunes {
+		return // 已经有像样的剧情 brief
+	}
+	orig := episodeOrigOf(src)
+	if len([]rune(orig)) < 200 {
+		return // 没有原文可解析（技能侧包/空壳），不硬造
+	}
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+		Message: fmt.Sprintf("🧭 轮到这一集了,先做它的 LLM 解析(剧情节拍 brief):%s", filepath.Base(dir))})
+	g := s.cfg.Get()
+	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
+	if !client.Configured() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(g.LLM.Timeout)*time.Second)
+	defer cancel()
+	sys := fmt.Sprintf("你在为一集短视频写「剧情节拍 brief」(中文,%d-%d 字):按该集原文的先后顺序逐拍列出事件、出场人物、"+
+		"关键台词(逐字保留重要对白)、情绪转折与结尾悬念;只写这一集的内容,不要扩写、不要引用其它集。",
+		epBriefMinRunes, epBriefMaxRunes)
+	user := "【本集原文】\n" + clampRunes(orig, 12000)
+	out, err := client.Chat(ctx, []llm.Message{{Role: "system", Content: sys}, {Role: "user", Content: user}}, false)
+	if err != nil || strings.TrimSpace(out) == "" {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 本集 brief 解析失败(%v),先用原文节拍继续(不阻断)", err)})
+		return
+	}
+	if err := os.WriteFile(srcPath, []byte(replaceEpisodeBrief(src, strings.TrimSpace(out))), 0o644); err != nil {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: "⚠ brief 回写失败:" + err.Error()})
+		return
+	}
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+		Message: fmt.Sprintf("✔ 本集 brief 已解析并回填(%d 字)", len([]rune(strings.TrimSpace(out))))})
+}
+
+// episodeBriefOf 取 source.txt 里【本集剧情】那一段。
+func episodeBriefOf(src string) (string, bool) {
+	const mark = "【本集剧情】"
+	i := strings.Index(src, mark)
+	if i < 0 {
+		return "", false
+	}
+	rest := src[i+len(mark):]
+	if j := strings.Index(rest, "\n\n"); j >= 0 {
+		return strings.TrimSpace(rest[:j]), true
+	}
+	return strings.TrimSpace(rest), true
+}
+
+// episodeOrigOf 取 source.txt 里【本集原文】那一段（没有标记时退回全文）。
+func episodeOrigOf(src string) string {
+	const mark = "【本集原文】"
+	i := strings.Index(src, mark)
+	if i < 0 {
+		return src
+	}
+	return strings.TrimSpace(src[i+len(mark):])
 }
 
 // splitNovelToProjects 拆集核心(与 /api/novel-split 共用):返回(系列名, 子项目列表)。

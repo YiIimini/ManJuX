@@ -141,6 +141,14 @@ func H3FormatViolations(h3 string) []string {
 				"（retention_analysis 尤其不许），实体锁定句写在正文段开头", m))
 	}
 
+	// ⑨b 分镜/内部标签（官方 qc-checklist STEP 8：成片不许带分镜痕迹）
+	if tag := storyboardTraceIn(h3); tag != "" {
+		out = append(out, fmt.Sprintf(
+			"正文里出现了内部标签 %s —— 官方终检要求成片「no storyboard traces」；"+
+				"这类方括号标签会被渲染成画面上的乱码字形（与汉字卫生同一类事故），请改成自然语言描述",
+			tag))
+	}
+
 	// ⑩ 时间戳必须**严格递增**（此前只判形态）
 	if times := shotTimestamps(h3); len(times) > 1 {
 		for i := 1; i < len(times); i++ {
