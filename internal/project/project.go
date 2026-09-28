@@ -496,13 +496,41 @@ func (s *Store) metaPath(id string) string {
 	return filepath.Join(s.Dir(id), "project.json")
 }
 
+// loadMeta 读项目元数据。
+//
+// ## 两处自愈（2026-09-29 数据完整性审计 #1）
+//
+// **① `id` 与目录名不一致时以目录名为准。**
+// 盘上的目录名才是"这个项目住在哪"，而 `project.json` 里的 `id` 是**可能过期的副本**：
+// 技能端产出的包写的是 `id = 标题`（≠ 目录名），导入时靠 `handlers_project.go` 补写一次；
+// 那次补写如果没成功（非原子写、被打断），盘上就留下"目录叫 A、文件说自己是 B"的项目 ——
+// 平台以 `id` 为键登记它，于是 `Dir(id)` 指向**不存在的路径**：项目点得开，
+// 方案/资产/产物**全读不到**，而界面上看不出任何异常。
+//
+// 自愈是安全的方向：目录名是平台自己用的地址，文件里的 id 只是个字段。
+// （反过来"按文件里的 id 去改名目录"才是危险的 —— 那会在两处不一致时挑一个可能错的名字。）
+//
+// **② `json` 坏掉时要留下痕迹。**
+// 调用方（`NewStore` 的两处 `loadDir`）只看 `err == nil`，失败就**静默跳过**这个项目 ——
+// 用户看到的是"盘上明明有目录，列表里没有它"，一行日志都没有。这里补一条播报，
+// 让"项目消失了"至少能在运行日志里查到原因（对比：`library.go` 对损坏的 `asset.json`
+// 早就是"专门记 log 并写明理由"的做法）。
 func (s *Store) loadMeta(p *Project) error {
+	dirID := p.ID // 调用方用目录名填进来的
 	raw, err := os.ReadFile(s.metaPath(p.ID))
 	if err != nil {
 		return err
 	}
 	if err := jsonUnmarshal(string(raw), p); err != nil {
-		return err
+		return fmt.Errorf("项目元数据损坏（%s/project.json）：%w —— 该目录在列表里会被跳过", dirID, err)
+	}
+	if p.ID != dirID {
+		log.Printf("[store] 项目「%s」的 project.json 里写着 id=%q（与目录名不一致）—— 以目录名为准自愈",
+			dirID, p.ID)
+		p.ID = dirID
+	}
+	if strings.TrimSpace(p.Name) == "" {
+		p.Name = dirID
 	}
 	p.ensureDefaultParams()
 	return nil

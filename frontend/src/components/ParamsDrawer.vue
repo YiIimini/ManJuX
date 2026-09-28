@@ -25,8 +25,16 @@ watch(stageId, () => {
     form[k] = Object.assign({}, form[k] || {}, copy[k] || {})
   }
   // 多视角:缺省 = **关**（2026-09-27 起三视图细节板接手角度参考；转台图那条要跑一次 H3 转身视频，
-// 是资产阶段最贵的一步）。参考图去冗余:缺省 = 关(与后端 ViewsOn()/CompactRefsOn() 同一语义)
-  form.assets.views = form.assets.views !== false
+  // 是资产阶段最贵的一步）。参考图去冗余:缺省 = 关(与后端 ViewsOn()/CompactRefsOn() 同一语义)
+  //
+  // ⚠️ 【2026-09-29 数据完整性审计 #3】`views` 原来写的是 `!== false`（**缺键 → true**），
+  // 与后端 `ViewsOn() = Views != nil && *Views`（缺键 = 关）**正好反着** —— 而同文件
+  // 上面那句注释、以及下面 `compact_refs` 的写法都是"缺省=关"。
+  //
+  // 后果不是"显示错了"那么轻：用户打开「资产定妆 ⚙」抽屉**哪怕只看一眼**再点保存，
+  // 整份快照回写就把 `views: true` 落了盘 —— 他什么都没改，却把 2026-09-27 特意默认关掉的、
+  // 资产阶段最贵的那一步（每个角色一次 H3 转身视频，数分钟/人）打开了。
+  form.assets.views = form.assets.views === true
   form.assets.compact_refs = form.assets.compact_refs === true // 默认关(只喂转台图会让锁脸变弱)
   // 多视角生成方式:缺省 = auto(与后端 ViewsSourceOf() 的「认不出就当 auto」同一语义)。
   // 必须在这里兜底成字符串:老项目快照里没有这个键,留 undefined 会让下拉显示空白,

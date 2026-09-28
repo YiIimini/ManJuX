@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/fsutil"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
@@ -173,7 +174,13 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 			// 【2026-09-29 审计】原来是 `_ = os.WriteFile(...)` —— 回写失败时**目录名与
 			// project.json 里的 id/name 不一致**：项目在列表里叫一个名字、点进去是另一个
 			// （后续按 id 找资产的调用会全落空），而导入流程照报成功。
-			if werr := os.WriteFile(filepath.Join(dest, "project.json"), raw, 0o644); werr != nil {
+			//
+			// 【数据完整性审计 #1】改成**原子写**：这是全平台唯一一处写 `project.json`
+			// 不走 `fsutil.WriteFileAtomic` 的地方。直接 `os.WriteFile` 被打断（断电/被杀/
+			// 磁盘满）会留下**半截 JSON**，而 `loadMeta` 解析失败时项目会被静默跳过 ——
+			// 用户看到的是"盘上明明有目录、列表里没有它"。
+			// （`loadMeta` 那侧现在也会记日志说明原因，但**不让它坏**才是正解。）
+			if werr := fsutil.WriteFileAtomic(filepath.Join(dest, "project.json"), raw); werr != nil {
 				writeErr(w, 500, fmt.Errorf("导入：project.json 的 id/name 回写失败:%w（生成的是一个目录名与内部 id 不一致的半个项目）", werr))
 				return
 			}

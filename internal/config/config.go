@@ -275,8 +275,17 @@ func Default() *Settings {
 			BriefMin:     400,
 			BriefMax:     700,
 			ShotLimit:    0, // 0=内容驱动(用内置安全网 120);与其字段说明同源
-			// 用户实调值：开着五步专职会话（②人物道具 / ④场景 / ⑤分镜 同时跑）。
-			FiveSessions: true,
+			// ⚠️ **默认必须是 false**（2026-09-29 数据完整性审计 #5 纠正过一次）。
+			//
+			// 我原本按用户"把当前设置固化成默认值"的要求把它写成了 true —— 那是**错的**：
+			// 该字段 2026-09-29 才引入，之前落盘的每一份 settings.json 都**没有这个键**，
+			// 反序列化落到 Default() 就成了 true。于是升级后**分镜阶段悄悄换成新架构**
+			// （调用数、耗时、口径都变），而用户从未开过这个开关。
+			//
+			// "把当前值固化成默认"的正确形态是：**默认保持安全的那一侧**，
+			// 用户的实际选择写进他自己的 settings.json。这条字段的语义是"主动切新路"，
+			// 所以缺键就该是 false；要开的人在设置页开（他的文件里会有显式的 true）。
+			FiveSessions: false,
 		},
 	}
 }
@@ -303,7 +312,29 @@ func NewManager(path, exeDir string) (*Manager, error) {
 		def.Comfy.RootDir = filepath.Join(exeDir, "comfyui")
 	}
 	if def.NovelDir == "" {
-		def.NovelDir = filepath.Join(def.DataDir, "Novel")
+		// **默认目录是 `小说`，不是 `Novel`**（2026-09-29 数据完整性审计 #4）。
+		//
+		// 这里原来写 `Novel`，而三处证据都指向 `小说`：
+		//   · 同文件 Default() 的注释："由 Manager 默认填 <DataDir>/小说(存在时)"；
+		//   · `pipeline/prompts.go` 找设定集时硬编码 `小说`；
+		//   · 实盘：`data/小说/` 有 3 本书 264 个章节文件，`data/Novel` **不存在**。
+		//
+		// 后果只在"全新安装 / 删掉 settings.json / 换机"时出现（那时才会用默认值），
+		// 而表现是"我的书怎么全没了"——小说管理页空白，拆集链路也找不到书。
+		//
+		// 顺带把注释里承诺的"候选检测"落实：`小说` 与 `Novel` 都存在时优先 `小说`
+		// （新约定）；只有 `Novel` 存在时用它（老约定，老用户手填过的目录名）。
+		novelCandidates := []string{
+			filepath.Join(def.DataDir, "小说"),
+			filepath.Join(def.DataDir, "Novel"),
+		}
+		def.NovelDir = novelCandidates[0]
+		for _, p := range novelCandidates {
+			if st, err := os.Stat(p); err == nil && st.IsDir() {
+				def.NovelDir = p
+				break
+			}
+		}
 	}
 	raw, err := os.ReadFile(path)
 	if err == nil && len(raw) > 0 {

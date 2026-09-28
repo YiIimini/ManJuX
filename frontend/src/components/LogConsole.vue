@@ -118,7 +118,11 @@ onBeforeUnmount(() => {
       </div>
       <div class="flex-1 overflow-y-auto py-1.5">
         <div v-if="!G.logs.length" class="log-line info"><span class="t">--:--:--</span><span class="tl-dot"></span><span class="body"><span class="m" style="color:var(--mx-text3)">等待管线事件…(运行任意阶段后实时输出)</span></span></div>
-        <div v-for="(l, i) in reversed" :key="i" class="log-line" :class="l.level">
+        <!-- key 必须用**稳定标识**（`l.seq`），不能用数组下标（2026-09-29 性能审计 #4）。
+             这一列是**倒序**渲染的（见 reversed），来一条新事件整列都往后挪一位 ——
+             用下标当 key 时 Vue 会认为"每一行都变了"，把最多 800 行全部重新 patch。
+             渲染期每 30 秒至少一条进度事件，一集几百次全量重排。 -->
+        <div v-for="l in reversed" :key="l.seq" class="log-line" :class="l.level">
           <span class="t">{{ fmtTime(l.at) }}</span>
           <span class="tl-dot"></span>
           <span class="body">

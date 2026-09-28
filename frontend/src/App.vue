@@ -199,15 +199,37 @@ onMounted(() => {
   refreshStatus()
   refreshProjects()
   timer = setInterval(() => { refreshStatus(); refreshProjects() }, 15000)
-  sysTimer = setInterval(async () => {
-    if (document.hidden) return // 窗口不可见时跳过,避免后台空转轮询
+  // 系统监视轮询（2026-09-29 性能审计 #2）。
+  //
+  // 原来是**固定 2 秒**一次，而每次 `api.sysmon()` 会让后端 spawn 一个 `nvidia-smi`
+  // 进程（实测空载 40~50 ms，满载更久）—— 6 小时渲染 ≈ **1.08 万次进程创建**，
+  // 常驻 2~2.5% 单核。用户报过"渲染时整机都卡"，而这几十分钟的渲染里，
+  // 系统监视的数字**每 2 秒变一次和每 10 秒变一次没有区别**。
+  //
+  // 改成自适应：**管线在跑时 10 秒**（把 CPU 让给渲染与 ComfyUI），空闲时 3 秒
+  // （用户在看仪表盘时仍然跟手）。窗口不可见时照样跳过。
+  let sysBusy = false
+  const sysTick = async () => {
+    if (document.hidden) return
     try {
       const s = await api.sysmon()
       sysmon.cpu = s.cpu; sysmon.cores = s.cores || []; sysmon.ramPct = s.ramPct
       sysmon.ramUsed = s.ramUsed; sysmon.ramTotal = s.ramTotal; sysmon.ramAvail = s.ramAvail
       sysmon.gpu = s.gpu || null; sysmon.coreN = s.coreN || 0
+      // 后端把"有没有管线在跑"带在 sysmon 里，前端据此决定下次的间隔
+      const busy = !!s.busy
+      if (busy !== sysBusy) {
+        sysBusy = busy
+        scheduleSys()
+      }
     } catch { /* 服务重启中 */ }
-  }, 2000)
+  }
+  let sysTimer = null
+  const scheduleSys = () => {
+    if (sysTimer) clearInterval(sysTimer)
+    sysTimer = setInterval(sysTick, sysBusy ? 10000 : 3000)
+  }
+  scheduleSys()
   // 桌面模式:管线运行中拦截关窗(Alt+F4 / 后端事件)→ 二次确认
   if (window.runtime?.EventsOn) {
     offConfirmQuit = window.runtime.EventsOn('confirm-quit', async () => {
