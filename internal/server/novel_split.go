@@ -99,6 +99,18 @@ func jsonUnmarshalStrict(s string, v any) error {
 
 // ---------- 批量产线:逐集串行全流程 ----------
 
+// novelBatch 批量产线(全局单例)。
+//
+// **逐集串行铁律**(用户 2026-09-28 定调,两次强调):
+//   - 第一版原话:「LLM 一集一集地去解析,不要直接一上来就全解析了,太慢了」;
+//   - 第二版原话:「批量跑一集进行这一集的 LLM 解析后进行渲染管线顺序,到下一集就是
+//     下一集的 LLM 解析后进行渲染管线顺序,后面依次顺序,流水线一样到了那一步就做那一步」。
+//
+// 落地成两条硬约束:① 集数照常全部入队、一路顺下去(不等人点「开始」);
+// ② **一集的 LLM 解析只属于那一集** —— 轮到第 N 集才解析第 N 集,轮到之前不许替它抢跑。
+// 第 ② 条曾被我自己破坏:这里一度有个"顺手把下一集剧本解析掉"的优化,症状是第 1 集刚开跑、
+// 第 2 集的剧本分镜也跟着跑(2026-09-28 用户报「说了 LLM 解析按集来,为什么一来就直接两集
+// 开始解析」)。优化已删除,守卫见 batch_serial_test.go。
 type novelBatch struct {
 	mu       sync.Mutex
 	prefix   string
@@ -106,13 +118,6 @@ type novelBatch struct {
 	cur      int // 当前执行到第几个(1 基)
 	stop     bool
 	running  bool
-	// single 单集模式：这一批**只跑入队的那几集**，跑完就收，不等待/不追拆集进度。
-	//
-	// 【2026-09-28 用户指示】「LLM 一集一集地去解析，不要直接一上来就全解析了，太慢了」——
-	// 导入后把整本书连着跑（拆集边跑边入队）意味着：40 集 × 每集 20 分钟解析 + 6 小时渲染，
-	// 用户点一次「导入」就排了几天的队，而他要的只是**先看第 1 集**。
-	// 所以导入只入队第 1 集，其余集等他点「开始」再逐集跑（产线仍是单例、仍逐集串行）。
-	single bool
 }
 
 var batch = &novelBatch{}
@@ -309,25 +314,29 @@ func (s *Server) runNovelBatch(prefix string, eps []string) {
 		s.ensureEpisodeBrief(ep)
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
 			Message: fmt.Sprintf("▶ 批量产线 %d/%d:开始《%s》", i+1, batchTotal(), ep)})
-		if s.pipe.Running(ep) != nil {
-			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: fmt.Sprintf("《%s》已在运行,跳过", ep)})
-			continue
+		// 这一集已经在跑(用户自己单独启动过它,不是本产线起的)⇒ 本轮**不再重复启动**,
+		// 但**也绝不跳过它**:跳过的后果是产线直接去起下一集,两集并发抢同一张显卡
+		// (正是 2026-09-12 那场"定妆照整批失败"的形态)。落到下面等它跑完再续。
+		alreadyRunning := s.pipe.Running(ep) != nil
+		if alreadyRunning {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+				Message: fmt.Sprintf("⏳ 《%s》已在运行(不是本产线启动的),产线等它跑完再续下一集", ep)})
 		}
-		// **任务分配**（用户 2026-09-28：「LLM 继续解析分镜脚本，他们互不影响的，可以分开跑的」）：
-		// 起第 N 集之前，先把第 N+1 集的**剧本分镜**解析掉 —— 剧本是纯 LLM 调用、不碰显卡，
-		// 与正在跑的渲染互不争用（并发规则见 pipeline.Start 的 phaseNeedsGPU）。
-		// 于是轮到 N+1 时它已经有方案，直接从**资产阶段**起步，等于每集白赚一段解析时间。
-		s.preparseNextScript(i)
-
+		// **一集的 LLM 解析只属于那一集**(见 novelBatch 的逐集串行铁律):这里只起 `ep`,
+		// 绝不提前起第 N+1 集 —— 此处曾调过 preparseNextScript(「顺手把下一集解析掉」),
+		// 症状就是"第 1 集刚开跑,第 2 集的分镜也在解析"(2026-09-28 用户报「一来就直接两集」),
+		// 已删除;守门见 batch_serial_test.go(产线里的启动点只能有一处,且只能是当前集)。
 		startPhase := pipeline.PhaseAll
 		if hasUsablePlan(s.store.Dir(ep)) {
-			// 方案已在（上一轮预解析或上次跑过）⇒ 不必再解析一遍，直接从资产开始。
+			// 方案已在(上次跑过留下,或用户单独跑过这一集)⇒ 不必再解析一遍,直接从资产开始。
 			startPhase = pipeline.PhaseAssets
 		}
-		if err := s.pipe.Start(ep, startPhase, nil, "", 0); err != nil {
-			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
-				Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, batchTotal(), ep, err)})
-			return
+		if !alreadyRunning {
+			if err := s.pipe.Start(ep, startPhase, nil, "", 0); err != nil {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "error",
+					Message: fmt.Sprintf("✕ 批量产线暂停于 %d/%d:《%s》启动失败:%v(不自动跳集)", i+1, batchTotal(), ep, err)})
+				return
+			}
 		}
 		epStart := time.Now()
 		// 等本集跑完。判定口径(2026-09-12 重构):**看有没有产物进展,而不是看跑了多久**。
@@ -453,29 +462,12 @@ func projectFreshest(dir string) time.Time {
 	return newest
 }
 
-// preparseNextScript 预解析下一集的剧本（纯 LLM，可与当前集的显卡阶段并行）。
+// 此处曾有 preparseNextScript:「起第 N 集之前,顺手把第 N+1 集的剧本分镜也启动」。
 //
-// 只在"下一集存在、且它还没有可用方案、且没有正在跑的管线"时动手；失败只播报不阻断
-// （预解析是**优化**，不是主流程 —— 抢不到就等轮到它时按正常流程解析）。
-func (s *Server) preparseNextScript(cur int) {
-	batch.mu.Lock()
-	next := ""
-	if cur+1 < len(batch.projects) {
-		next = batch.projects[cur+1]
-	}
-	batch.mu.Unlock()
-	if next == "" || hasUsablePlan(s.store.Dir(next)) || s.pipe.Running(next) != nil {
-		return
-	}
-	if err := s.pipe.Start(next, pipeline.PhaseScript, nil, "", 0); err != nil {
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-			Message: fmt.Sprintf("⚠ 下一集《%s》的剧本预解析没抢到（%v）—— 不影响主流程，轮到它时按正常顺序解析", next, err)})
-		return
-	}
-	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-		Message: fmt.Sprintf("🧠 顺手把下一集《%s》的**剧本分镜**解析掉（纯 LLM，不占显卡，与当前渲染并行）", next)})
-}
-
+// 2026-09-28 删除。它当时的理由是"解析是纯 LLM、不碰显卡,与渲染互不争用",但用户要的是
+// **一集一集来**(原话见 novelBatch 的逐集串行铁律):轮到第 N 集才解析第 N 集。删掉的代价
+// 是每集少赚一段"提前解析"的时间,换来的是同一时刻只有一集在做 LLM 解析、日志不串台。
+// 别再把它加回来 —— batch_serial_test.go 会当场变红。
 // hasUsablePlan 这一集是否已有可用的 plan.json（有就跳过解析、直接从资产阶段起步）。
 func hasUsablePlan(dir string) bool {
 	st, err := os.Stat(filepath.Join(dir, "plan", "plan.json"))
