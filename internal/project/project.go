@@ -386,6 +386,7 @@ func NewStore(root string) (*Store, error) {
 		return nil, err
 	}
 	s.migrateSeriesDirs()
+	s.reportSplitSeriesDirs()
 
 	loadDir := func(dir string) { // 目录下所有含 project.json 的子目录装为项目
 		entries, _ := os.ReadDir(dir)
@@ -534,6 +535,97 @@ func (s *Store) loadMeta(p *Project) error {
 	}
 	p.ensureDefaultParams()
 	return nil
+}
+
+// reportSplitSeriesDirs 检测「同一本书裂成多个书名目录」并**如实播报**（2026-09-29 数据完整性审计 #2）。
+//
+// ## 为什么会裂
+//
+// 书名目录曾经历过两次命名规范化（全角逗号换成间隔号 `·`；2026-09-28 又放行全角标点），
+// 于是同一本书可能留下两个目录。实盘证据：`data/projects/` 下同时存在
+// `补碑人改命，守钟女逆时`（17:04）与 `补碑人改命·守钟女逆时`（15:24）。
+//
+// 裂开的后果：覆盖核对 / 自动补缺 / 按名复用**只看到一半** —— 缺章误报、
+// "重拆不复用旧集"、封面只刷新一半。
+//
+// ## 为什么**只报不合**
+//
+// 合并要改目录名、要把两边的集并到一起，而"两边的集同名"时**必然要覆盖一个** ——
+// 那是不可逆的数据搬迁，不该由平台替用户决定（本仓纪律：涉及用户数据形态的变更要留痕、
+// 要用户拍板；而"改个目录名"看起来无害，实际会连带 `Dir(id)` 的解析与已渲产物的路径）。
+//
+// 所以这里只做**检测与播报**：把"疑似同一本书的多份目录"报出来，
+// 用户想合并时自己在资源管理器里并（本仓对用户数据的处置一贯如此）。
+//
+// 判据：把书名里的标点归一化（全角逗号/顿号/空格/间隔号统一成 `·`）后相同，即视为同一本。
+// 只在**两份及以上的目录里都没有 project.json**（即都是书名目录、不是单集项目）时才报 ——
+// 单集项目名恰好长得像不算。
+func (s *Store) reportSplitSeriesDirs() {
+	for _, msg := range s.splitSeriesDirReports() {
+		log.Printf("[store] %s", msg)
+	}
+}
+
+// splitSeriesDirReports 返回"疑似同一本书多份目录"的播报文本（空 = 没问题）。
+// 拆出来是为了可测：日志没法断言，返回值可以。
+func (s *Store) splitSeriesDirReports() []string {
+	ents, err := os.ReadDir(s.root)
+	if err != nil {
+		return nil
+	}
+	byBook := map[string][]string{} // 归一化书名 → 目录名列表
+	for _, e := range ents {
+		if !e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		// 有 project.json 的是单集项目，不是书名目录
+		if _, err := os.Stat(filepath.Join(s.root, name, "project.json")); err == nil {
+			continue
+		}
+		key := normalizeBookPunct(name)
+		if key == "" {
+			continue
+		}
+		byBook[key] = append(byBook[key], name)
+	}
+	var out []string
+	for key, dirs := range byBook {
+		if len(dirs) < 2 {
+			continue
+		}
+		sort.Strings(dirs)
+		out = append(out, fmt.Sprintf("⚠ 同一本书「%s」在 projects/ 下有 %d 个书名目录：%s —— "+
+			"拆成多份会让覆盖核对/自动补缺/按名复用只看到一半（缺章误报、重拆不复用旧集）。"+
+			"平台**不自动合并**（合并要在同名集之间取舍，那是不可逆的数据搬迁）："+
+			"请在资源管理器里把两份并成一份（建议保留带间隔号「·」的那个名字）",
+			key, len(dirs), strings.Join(dirs, " / ")))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// normalizeBookPunct 把书名里的标点归一化（用于"这是不是同一本书"的比较）。
+//
+// 支持"特殊字符 保留"的用法：把全角逗号、顿号、空格、中点统一成 `·`，
+// 其余原样。归一化后为空（纯标点目录名）时返回空串，调用方跳过。
+func normalizeBookPunct(s string) string {
+	var sb strings.Builder
+	for _, r := range s {
+		switch r {
+		case '，', '、', ' ', '　', '·', '・', ',', '.':
+			sb.WriteRune('·')
+		default:
+			sb.WriteRune(r)
+		}
+	}
+	// 去掉连续的 `·`（"a，，b" → "a·b"）
+	out := sb.String()
+	for strings.Contains(out, "··") {
+		out = strings.ReplaceAll(out, "··", "·")
+	}
+	out = strings.Trim(out, "·")
+	return out
 }
 
 // Create 新建项目:name 仅允许中文/字母/数字/下划线/连字符。
