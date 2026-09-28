@@ -108,21 +108,15 @@ func BoardWhiteBackdropIssues(chars []Character) []string {
 	return out
 }
 
-// PlanScenePropGroupMin / PlanScenePropGroupMax 场景卡"环境配套物件"的组数区间。
-//
-// 【#11】用户《四》§4.6：「每个场景总计控制在 **2-4 组**，前景 1-2 组、中景 1-2 组」。
-// 平台侧原有的常量不在这里 —— 见下方 ScenePropGroupIssues 的说明。
-const (
-	PlanScenePropGroupMin = 2
-	PlanScenePropGroupMax = 4
-)
-
 // scenePropGroupWords 能表达"一组配套物件"的词。
 //
 // 为什么用词表而不是数数：场景卡是散文（"前中景合计 2-4 组"是**写作要求**，
 // 不是结构化字段）。用"有没有成组的物件描写"做判据，是这件事在文本层面**能做到的最好**；
 // 要真数得准，得先让场景卡有 `fixed_props []string` 字段 —— 那是技能侧改口径的事，
 // 平台不单方面编一个（见下方注释）。
+//
+// 组数区间用的是 `view_vocab.go` 的 `PlanSceneFixedPropMin/Max`（那对常量一直就在，
+// 别再另起一对 —— 2026-09-28 我自己就重复定义过一次，扫描"只出现一次的常量"才发现）。
 var scenePropGroupWords = []string{
 	"group of", "groups of", "set of", "sets of", "furnishings", "props", "objects",
 	"foreground", "midground", "mid-ground", "middle ground",

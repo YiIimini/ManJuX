@@ -72,6 +72,10 @@ type AssetsParams struct {
 }
 
 // ViewsSourceOf 归一化多视角生成方式,返回 "auto" / "edit" / "h3"(不识别一律 auto)。
+//
+// 两个取值用 `pipeline` 的常量对照着读（`ViewSourceEdit` / `ViewSourceH3`）——
+// 但**不在 project 里 import pipeline**（那会成环，本仓的依赖纪律是单向无环），
+// 所以这里是字面量；`viewsource_test.go` 有一条门钉住两边的字符串一致。
 func (a AssetsParams) ViewsSourceOf() string {
 	switch strings.ToLower(strings.TrimSpace(a.ViewsSource)) {
 	case "edit", "qwen", "qwen-edit":
