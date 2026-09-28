@@ -19,7 +19,11 @@ import (
 
 // CharsPerSecond 普通话口播速率(字/秒)。取偏保守的中速值:偏慢估比偏快估安全,
 // 宁可镜头长一点也不要截断台词。
-const CharsPerSecond = 4.5
+// 【2026-09-28 校正 4.5 → 4.1】与 project.PlanCharsPerSecond **必须同源**（有测试钉着这一点）。
+// 依据：H3 公开输入契约文档（`drama-skills` 的 `references/minimax-h3.md`）写明"中文约 4.1 可发声字/秒"；
+// 用户《【额外】仿真人10S分镜头指令》给的区间是 3.5~4.5（4.1 在区间内）。取偏小值更安全：
+// 高估语速会让时长预算偏少，台词塞不进镜头（成片里表现为赶词、吞字）。
+const CharsPerSecond = 4.1
 
 // MinShotSeconds / MaxShotSeconds 单镜时长的**渲染窗口**(与计划契约同源的合法区间)。
 //

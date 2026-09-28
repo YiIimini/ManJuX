@@ -52,11 +52,26 @@ func TestDiagPlanRoundLive(t *testing.T) {
 		style = "国漫二维动画,赛璐璐上色,哑光质感,电影级构图"
 	}
 	// 与 server/novels_split.go 的拆集源文同构:标题行 + 全局风格 + 本集剧情 + 本集原文
-	text := fmt.Sprintf(
-		"《天宫是我家盖的》系列短视频 第01 集《三万六千块砖》\n全局风格:%s\n\n【本集剧情】%s\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n%s",
-		style,
-		"少年石匠在宫城工地砌下第一块砖,被工头刁难,却因一块会发光的灵纹砖被监工记住。",
-		strings.TrimSpace(string(b)))
+	//
+	// MANJUX_DIAG_RAW=1：**把章节原文当整篇源**（标题取首行、剧情段留空）。
+	// 为什么要有这个开关（2026-09-28）：默认那条内置样例故事是"石匠砌第一块砖"，本身没几件器物，
+	// 于是"道具提取出没出"这类问题在样例上根本验不出来（道具 0 未必是 bug）。验道具必须用**真书**。
+	text := ""
+	if os.Getenv("MANJUX_DIAG_RAW") != "" {
+		body := strings.TrimSpace(string(b))
+		title := "第01集"
+		if ls := strings.Split(body, "\n"); len(ls) > 0 && strings.TrimSpace(ls[0]) != "" {
+			title = strings.TrimSpace(ls[0])
+		}
+		text = fmt.Sprintf("%s\n全局风格:%s\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n%s",
+			title, style, body)
+	} else {
+		text = fmt.Sprintf(
+			"《天宫是我家盖的》系列短视频 第01 集《三万六千块砖》\n全局风格:%s\n\n【本集剧情】%s\n\n【本集原文】(分镜必须沿此原文节拍逐段改编,覆盖全部关键情节)\n%s",
+			style,
+			"少年石匠在宫城工地砌下第一块砖,被工头刁难,却因一块会发光的灵纹砖被监工记住。",
+			strings.TrimSpace(string(b)))
+	}
 
 	opt := Options{
 		AnimeFaces: true,

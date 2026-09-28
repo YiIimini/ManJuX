@@ -54,7 +54,14 @@ const (
 	// 那类镜头现在的正确处置是**拆镜**（见 NeededShotSeconds 的 warn）。
 	// 这条注释就是"已经定过、别再问"的凭据：要改它必须先有 12/15 秒的实测结论。
 	PlanMaxShotSeconds = 10
-	PlanCharsPerSecond = 4.5
+	// PlanCharsPerSecond 台词**发声字数/秒**，用于把台词长度折算成时长预算。
+	//
+	// 【2026-09-28 校正 4.5 → 4.1】两处来源交叉验证后取 4.1：
+	//   · 用户《【额外】仿真人10S分镜头指令》给的是区间（平静对话 3.5~4.5 字/秒）——4.1 在区间内；
+	//   · H3 的公开输入契约文档（`drama-skills` 的 `references/minimax-h3.md`，MIT）写明
+	//     "中文约 **4.1 可发声字/秒**" —— 那是**针对 H3 这个模型**实测出来的值。
+	// 取偏小的值更安全：高估语速会让时长预算**偏少**，台词塞不进镜头（成片里表现为赶词/吞字）。
+	PlanCharsPerSecond = 4.1
 	// PlanSpeechPadSeconds 每段口播的收尾余量,免得"刚好卡在最后一个字"。
 	PlanSpeechPadSeconds = 0.3
 )

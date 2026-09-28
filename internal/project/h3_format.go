@@ -162,6 +162,29 @@ func H3FormatViolations(h3 string) []string {
 			}
 		}
 	}
+	// ⑯ summary 段必须以 **[任务类型]** 开头（官方 ref-en.txt §3："summary 以方括号任务类型开头"：
+	// [reference generation] / [video editing] / [audio continuation] / [audio reuse] / [audio reference]
+	// / [keyframe completion]，多类型用 " + " 连接且不重复）。缺了它，模型不知道这一次是"生成"还是"改片"。
+	if sec, ok := sectionOf(h3, "summary"); ok {
+		first := ""
+		for _, ln := range strings.Split(strings.TrimLeft(sec, ":： \t"), "\n") {
+			if s := strings.TrimSpace(ln); s != "" {
+				first = s
+				break
+			}
+		}
+		if first != "" && !strings.HasPrefix(first, "[") {
+			out = append(out, "summary 段没有以 [任务类型] 开头（官方 §3：如 [reference generation]）—— "+
+				"模型靠它判断这一次是生成、改片还是续音频，缺了会按默认理解走偏")
+		}
+	}
+	// ⑰ 时间戳的毫秒位必须是**三位**（官方 §4.2/§5.1 的写法是 `At MM:SS.mmm`）。
+	// 两位/一位会让"严格递增"那条判据直接漏判（正则匹配不上，等于没写时间戳）。
+	if bad := h3LooseTimestamp(h3); bad != "" {
+		out = append(out, fmt.Sprintf(
+			"时间戳写法不规范：%s —— 官方要求 `At MM:SS.mmm`（毫秒恰好三位），毫秒位不足会被当成没写时间戳，"+
+				"切点顺序也就无从校验", bad))
+	}
 	// ⑪–⑮ 官方 §2/§5.4 里**有要求、此前没有门**的五条（2026-09-28 全面审计补齐）。
 	// 这五条都属于"写错了不报错、只是成片变差/听感变怪"的那一类，所以必须机器判。
 	out = append(out, h3DialogueTagViolations(h3)...)
@@ -379,3 +402,19 @@ var (
 	// timestampRe MM:SS.mmm（两位小数）
 	timestampRe = regexp.MustCompile(`^\d{2}:\d{2}\.\d{2}\d?$`)
 )
+
+// h3LooseTimestamp 找出毫秒位不足三位的时间戳写法（官方写法是 `At MM:SS.mmm`）。
+//
+// 为什么要单独判：严格递增那条用的是 `\.(\d{3})` 的正则，毫秒位写两位就**匹配不上** ——
+// 于是"时间戳乱序"这件事会静默漏判（看起来像"没有时间戳"，实际有，只是写法不合规）。
+func h3LooseTimestamp(h3 string) string {
+	// 毫秒部分必须**贪婪吃到结尾**（\d+）：写成 \d{1,2} 会回溯，把 00:02.500 只匹配成 00:02.50，
+	// 于是合法写法被误判成"两位毫秒"（实测踩过：我自己的夹具先被冤了一条）。
+	re := regexp.MustCompile(`At\s+(\d{1,2}):(\d{2})(?:\.(\d+))?`)
+	for _, m := range re.FindAllStringSubmatch(h3, -1) {
+		if m[3] == "" || len(m[3]) != 3 {
+			return m[0]
+		}
+	}
+	return ""
+}

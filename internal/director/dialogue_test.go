@@ -9,9 +9,11 @@ import (
 
 // TestSpeechSecondsAndNeededDuration 台词时长预算的核心换算。
 func TestSpeechSecondsAndNeededDuration(t *testing.T) {
-	// 空白与标点里的空白不计;9 字 ≈ 2 秒 + 0.3 秒收尾
-	if got := SpeechSeconds("一二三四五六七八九"); got < 2.2 || got > 2.4 {
-		t.Errorf("9 字台词应约 2.3 秒,实际 %.2f", got)
+	// 空白与标点里的空白不计。期望值**从语速常量推导**，不写死数字 ——
+	// 速度常量一改（2026-09-28：4.5 → 4.1，依据 H3 公开契约文档"中文约 4.1 可发声字/秒"）测试就假红。
+	want9 := 9/CharsPerSecond + 0.3
+	if got := SpeechSeconds("一二三四五六七八九"); got < want9-0.05 || got > want9+0.05 {
+		t.Errorf("9 字台词应约 %.2f 秒(语速 %.1f),实际 %.2f", want9, CharsPerSecond, got)
 	}
 	if got := SpeechSeconds("   \n  "); got != 0 {
 		t.Errorf("纯空白应算 0,实际 %.2f", got)
@@ -20,16 +22,18 @@ func TestSpeechSecondsAndNeededDuration(t *testing.T) {
 	if got := NeededDuration(sh); got != 4 {
 		t.Errorf("9 字台词需 3 秒(含收尾),不应超过 4 秒下限,实际 %d", got)
 	}
-	// 20 字:20/4.5+0.3 = 4.74 → 5 秒
+	// 20 字:20/4.1+0.3 ≈ 5.18 → 6 秒（语速改小后同样的字数需要更长）
 	sh.Dialogue = []project.Line{{Text: strings.Repeat("字", 20)}}
-	if got := NeededDuration(sh); got != 5 {
-		t.Errorf("20 字台词应需 5 秒,实际 %d", got)
+	want := wantSecondsFor(20)
+	if got := NeededDuration(sh); got != want {
+		t.Errorf("20 字台词应需 %d 秒(语速 %.1f),实际 %d", want, CharsPerSecond, got)
 	}
 	// 旁白同样占用时间
 	sh.Dialogue = nil
 	sh.Narration = strings.Repeat("字", 20)
-	if got := NeededDuration(sh); got != 5 {
-		t.Errorf("旁白必须计入时长预算,实际 %d", got)
+	wn := wantSecondsFor(20)
+	if got := NeededDuration(sh); got != wn {
+		t.Errorf("旁白必须计入时长预算(应 %d 秒),实际 %d", wn, got)
 	}
 }
 
@@ -45,8 +49,9 @@ func TestFitDialogueDurations(t *testing.T) {
 	if n != 2 {
 		t.Fatalf("应调整 2 个镜头,实际 %d(%v)", n, details)
 	}
-	if plan.Shots[0].Duration != 5 {
-		t.Errorf("镜 1 应抬到 5 秒(20 字 + 收尾),实际 %d", plan.Shots[0].Duration)
+	wd := wantSecondsFor(20)
+	if plan.Shots[0].Duration != wd {
+		t.Errorf("镜 1 应抬到 %d 秒(20 字 + 收尾),实际 %d", wd, plan.Shots[0].Duration)
 	}
 	if plan.Shots[1].Duration != 8 {
 		t.Errorf("镜 2 已够长,不应被改动,实际 %d", plan.Shots[1].Duration)
@@ -79,4 +84,19 @@ func TestFitDialogueDurationsClampsAtCeiling(t *testing.T) {
 	if DialogueOverflow(project.Shot{Duration: 6, Dialogue: []project.Line{{Text: "短句"}}}) != "" {
 		t.Error("装得下的镜头不该报溢出")
 	}
+}
+
+// wantSecondsFor 按当前语速常量算出"这句话需要多少秒"（向上取整，下限 4）。
+// 测试从常量推导而不是写死数字：语速本身是有出处的口径（H3 公开契约文档 4.1 字/秒），
+// 改它是**有意的**，不该让一堆测试变成假红。
+func wantSecondsFor(chars int) int {
+	raw := float64(chars)/CharsPerSecond + 0.3
+	n := int(raw)
+	if raw > float64(n) {
+		n++
+	}
+	if n < 4 {
+		n = 4
+	}
+	return n
 }

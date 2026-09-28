@@ -36,6 +36,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	reports := map[string]qc.Report{}
 	failed := 0
 	checked := 0
+	landmarkFlagged := 0 // 空间锚点对不上的镜数（官方 STEP 9 第 2 条）
 	// notChecked 本应质检、却因为没有可用产物而根本没被看的镜头(未渲染/失败/文件丢了)。
 	//
 	// 为什么要单独数:旧实现只在 checked==0 时报错,一旦有**一部分**镜头缺席就照旧
@@ -110,6 +111,35 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 				}
 			} else {
 				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0, "镜头 %d VLM 审片失败:%v(不影响机械质检)", shot.ID, verr)
+			}
+		}
+		// **空间锚点核查**（官方 qc-checklist STEP 9 第 2 条：终检要核对"地标是否落在表上写的位置"；
+		// 同一条在 fallback-policy 里对应"Fix spatial anchor drift across clips"）。
+		//
+		// 平台此前只在**输入侧**要求场景卡写 landmarks（契约门管"写了没有"），成片侧从不核对 ——
+		// 于是"同一场景里门槛在东、下一镜跑到西边"这类空间漂移一路无声进成片。
+		//
+		// 只查**每个场景的建立镜**：地标是在那一镜定下来的（后续镜头多半只拍局部、看不到全部地标），
+		// 查它既最有效、又把视觉模型预算压到"一集几个场景就几次"。
+		if vlmClient != nil && r.OK {
+			if sc, ok := sceneByID(plan, shot.Scene); ok && strings.TrimSpace(sc.Landmarks) != "" &&
+				shotEstablishesScene(plan, shot) {
+				at := r.Duration / 2
+				if at < 0.4 {
+					at = 0.4
+				}
+				tmp := filepath.Join(c.store.Dir(proj.ID), "qc", "frames")
+				if frame, ferr := qc.SampleFrameAt(ctx, c.ff, full, at, tmp, fmt.Sprintf("landmark-%d.jpg", shot.ID)); ferr != nil {
+					c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+						"镜头 %d 空间锚点未核查(抽帧失败,不当作通过):%v", shot.ID, ferr)
+				} else if v, verr := qc.DetectLandmarks(ctx, vlmClient, frame, sc.Landmarks); verr != nil {
+					c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+						"镜头 %d 空间锚点未核查(不当作通过):%v", shot.ID, verr)
+				} else if v != nil && len(v.Missing) > 0 {
+					landmarkFlagged++
+					c.emit(proj.ID, PhaseQC, shot.ID, "warn", checked*100/max(1, len(plan.Shots)),
+						"%s", qc.LandmarkWarnText(shot.ID, sc.Name, sc.Landmarks, v))
+				}
 			}
 		}
 		// 画面文字检测(清单 §3.1a):必须在**镜级原始产物**上做 —— 合成会按 BurnSubtitles
@@ -431,4 +461,23 @@ func (c *Coordinator) bgmPathOf(proj *project.Project) string {
 		return raw
 	}
 	return filepath.Join(c.store.Dir(proj.ID), raw)
+}
+
+// shotEstablishesScene 这一镜是不是它所在场景的**建立镜**（该场景第一次出现的镜）。
+//
+// 空间锚点核查只在建立镜上做：地标是在那一镜定下来的，后续镜头多半只拍局部、根本看不到全部地标；
+// 查建立镜既最有效，又把视觉模型调用压到"一集几个场景就几次"。
+func shotEstablishesScene(plan *project.Plan, shot project.Shot) bool {
+	if plan == nil {
+		return false
+	}
+	for _, sh := range plan.Shots {
+		if sh.ID >= shot.ID {
+			break
+		}
+		if strings.EqualFold(strings.TrimSpace(sh.Scene), strings.TrimSpace(shot.Scene)) {
+			return false
+		}
+	}
+	return true
 }

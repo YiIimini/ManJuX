@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -174,6 +175,13 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 			}
 		}
 	}
+	// H3 公开契约的参考图上限（1 首帧 + 1 尾帧 + **9 参考图**）：超了要在这里裁掉并如实说 ——
+	// 不同后端对超额的处理不一样（静默丢弃 ⇒ 编号整体前移、模型对错号；或直接报错），
+	// 把风险留给后端等于把"人物乱配"交给运气。
+	if keptRefs, keptRoles, note := capRefsToLimit(refs, roles); note != "" {
+		refs, roles = keptRefs, keptRoles
+		missing = append(missing, note)
+	}
 	return refs, roles, missing
 }
 
@@ -202,4 +210,37 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 func AssembleShotRefs(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, missing []string) {
 	refs, _, missing = RefPlan(dir, shot, assets, compact)
 	return refs, missing
+}
+
+// MaxH3RefImages H3 公开输入契约的**参考图上限**（1 首帧 + 1 尾帧 + **9 参考图** + 3 视频 + 3 音频）。
+//
+// 出处：`drama-skills`（MIT）的 `skills/short-drama-video-prompts/references/minimax-h3.md` ——
+// 公开文档里唯一把 H3 输入契约写死的一份；平台只走参考图（不用首尾帧），所以能吃满 9 张。
+//
+// 为什么要设上限：一镜里角色多（每人定妆照 + 拼合转身图）+ 场景板 + 道具备注时，参考图会**超**。
+// 超了以后不同后端的行为不一样：有的静默丢掉后面的图（**编号整体前移 ⇒ 模型对错号**，
+// 正是 refs.go 注释里那句"少一张图会让后续 <Picture> 编号整体前移"的同族事故），有的直接报错。
+// 所以在**装配处**就裁掉超额部分并**如实播报**，而不是把风险留给后端。
+const MaxH3RefImages = 9
+
+// capRefsToLimit 把参考图裁到 H3 上限，返回(裁后的图, 裁后的角色, 被裁掉的描述)。
+// 截断从**尾部**来：尾部是场景板与拼合图，角色定妆照在最前面（身份优先）。
+func capRefsToLimit(refs []engine.RefImage, roles []RefRole) ([]engine.RefImage, []RefRole, string) {
+	if len(refs) <= MaxH3RefImages {
+		return refs, roles, ""
+	}
+	dropped := make([]string, 0, len(refs)-MaxH3RefImages)
+	for _, r := range roles[MaxH3RefImages:] {
+		if strings.TrimSpace(r.Name) != "" {
+			dropped = append(dropped, r.Name)
+		} else {
+			dropped = append(dropped, r.Kind)
+		}
+	}
+	kept := refs[:MaxH3RefImages]
+	keptRoles := roles[:MaxH3RefImages]
+	note := fmt.Sprintf("⚠ 这一镜的参考图有 %d 张，超过 H3 公开契约的上限 %d 张 —— 已按**身份优先**裁掉尾部 %d 张（%s）。"+
+		"裁掉的是场景板/拼合图这类非身份参考；若被裁的是角色定妆照，请拆镜或减少同框角色",
+		len(refs), MaxH3RefImages, len(dropped), strings.Join(dropped, "、"))
+	return kept, keptRoles, note
 }

@@ -1,11 +1,12 @@
 package pipeline
 
 import (
+	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/project"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
-
-	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // TestAssembleShotRefsOrder 顺序即契约:<Picture 1..N> = characters 数组顺序,
@@ -179,5 +180,38 @@ func TestCompactRefsDefaultOff(t *testing.T) {
 	}
 	if project.DefaultStageParams().Assets.CompactRefsOn() {
 		t.Error("新建项目默认不应开启去冗余")
+	}
+}
+
+// TestCapRefsToLimit H3 公开契约的参考图上限（1 首帧 + 1 尾帧 + 9 参考图）。
+//
+// 出处：drama-skills(MIT) 的 skills/short-drama-video-prompts/references/minimax-h3.md。
+// 一镜里角色多 + 场景板 + 拼合图时会超；超额交给后端等于把"编号前移、模型对错号"交给运气。
+func TestCapRefsToLimit(t *testing.T) {
+	mk := func(n int) ([]engine.RefImage, []RefRole) {
+		var refs []engine.RefImage
+		var roles []RefRole
+		for i := 1; i <= n; i++ {
+			refs = append(refs, engine.RefImage{Kind: "characters", Path: "p" + itoa(i)})
+			roles = append(roles, RefRole{Picture: i, Kind: "character_front", Name: "角色" + itoa(i), ID: "char_" + itoa(i)})
+		}
+		return refs, roles
+	}
+	// 没超：原样返回、不播报
+	refs, roles := mk(9)
+	if got, gr, note := capRefsToLimit(refs, roles); note != "" || len(got) != 9 || len(gr) != 9 {
+		t.Fatalf("9 张不该被裁，实际 %d 张 note=%q", len(got), note)
+	}
+	// 超了：裁到 9、从尾部裁、并说清裁了谁
+	refs, roles = mk(12)
+	got, gr, note := capRefsToLimit(refs, roles)
+	if len(got) != MaxH3RefImages || len(gr) != MaxH3RefImages {
+		t.Fatalf("应裁到 %d 张，实际 %d", MaxH3RefImages, len(got))
+	}
+	if note == "" || !strings.Contains(note, "角色12") {
+		t.Errorf("要如实说出裁掉了哪些，实际：%s", note)
+	}
+	if gr[0].Name != "角色1" {
+		t.Errorf("身份优先：第一个角色的定妆照必须留下，实际 %s", gr[0].Name)
 	}
 }

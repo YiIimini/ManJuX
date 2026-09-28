@@ -3,6 +3,7 @@ package project
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // plan_contract_test.go 契约校验的**击穿用例**。
@@ -165,7 +166,7 @@ func TestValidatePlanCatches(t *testing.T) {
 		{"台词没有说话人", func(p *Plan) { p.Shots[0].Dialogue[0].Speaker = "" }, "warn", "没有说话人"},
 		{"镜头号不连续", func(p *Plan) { p.Shots[0].ID = 2 }, "warn", "镜头号不连续"},
 		{"台词装不下", func(p *Plan) {
-			// 60 字 ÷ 4.5 + 0.3 ≈ 13.6 秒 > 单镜上限 10 秒
+			// 60 字 ÷ 4.1 + 0.3 ≈ 14.9 秒 > 单镜上限 10 秒
 			p.Shots[0].Dialogue = []Line{{Speaker: "阿甲", Text: strings.Repeat("字", 60)}}
 			p.Shots[0].Duration = 10
 		}, "warn", "超过单镜上限"},
@@ -347,23 +348,38 @@ func TestValidatePlanShotSizeFamily(t *testing.T) {
 	}
 }
 
-// TestNeededShotSeconds 台词时长预算:与 director 同规则(4.5 字/秒 + 0.3 收尾,向上取整)。
+// TestNeededShotSeconds 台词时长预算:与 director 同规则(PlanCharsPerSecond 字/秒 + 0.3 收尾,向上取整)。
+//
+// 【2026-09-28 改成从常量推导】此前这里写死了 4.5 字/秒下的结果 —— 语速一改(4.5 → 4.1,
+// 依据 H3 公开契约文档)测试就假红。测的应该是**公式**,不是某个常数下的数字。
 func TestNeededShotSeconds(t *testing.T) {
 	cases := []struct {
 		text string
 		want int
 	}{
-		{"", PlanMinShotSeconds},     // 无台词 → 下限 4
-		{"我准了。", PlanMinShotSeconds}, // 4 字 ≈ 1.2 秒 → 抬到下限
-		{strings.Repeat("字", 18), 5}, // 18/4.5+0.3 = 4.3 → 5
-		{strings.Repeat("字", 40), 9}, // 40/4.5+0.3 = 9.19 → 10? 见下断言
+		{"", PlanMinShotSeconds},      // 无台词 → 下限 4
+		{"我准了。", PlanMinShotSeconds},  // 4 字 ≈ 1.2 秒 → 抬到下限
+		{strings.Repeat("字", 18), 5},  // 18/4.1+0.3 ≈ 4.7 → 5
+		{strings.Repeat("字", 40), 11}, // 40/4.1+0.3 ≈ 10.06 → 11（不夹上限：一镜装不下要说出来）
 	}
 	for _, c := range cases {
 		sh := Shot{Dialogue: []Line{{Speaker: "x", Text: c.text}}}
 		got := NeededShotSeconds(sh)
-		if c.text == strings.Repeat("字", 40) {
-			if got != 10 {
-				t.Fatalf("40 字应需 10 秒(9.19 向上取整),实际 %d", got)
+		// 公式断言（与语速常量同源）：秒数 = 字数/语速 + 收尾，向上取整后再夹到 [下限, 上限]
+		if c.text != "" {
+			n := utf8.RuneCountInString(c.text)
+			raw := float64(n)/PlanCharsPerSecond + PlanSpeechPadSeconds
+			wantF := int(raw)
+			if raw > float64(wantF) {
+				wantF++ // 向上取整
+			}
+			if wantF < PlanMinShotSeconds {
+				wantF = PlanMinShotSeconds
+			}
+			// **故意不夹上限**：算出 11 秒就是在告诉上层"这句台词一镜装不下"，
+			// 由契约门（台词超单镜上限）去报，而不是在这里悄悄压回 10 秒把问题藏起来。
+			if got != wantF {
+				t.Fatalf("%q：公式应得 %d 秒，实际 %d（语速 %.1f 字/秒）", c.text, wantF, got, PlanCharsPerSecond)
 			}
 			continue
 		}
