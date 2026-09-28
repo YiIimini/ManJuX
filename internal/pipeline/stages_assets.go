@@ -128,8 +128,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				// 只认精确名会拿本集叫法**新建一条**,同一角色在库里变成两条
 				// (描述为空的那条从此再也不会被别名/描述匹配命中)。
 				if c.lib != nil {
-					if _, _, ok := c.lib.Find(kind, name, description); !ok {
-						if _, err := c.lib.Put(kind, name, description, imagePrompt, full, proj.ID, a.Source); err == nil {
+					if _, _, ok := c.lib.FindForCard(kind, cardID, name, description); !ok {
+						if _, err := c.lib.PutCard(kind, cardID, name, description, imagePrompt, full, proj.ID, a.Source); err == nil {
 							c.emit(proj.ID, PhaseAssets, 0, "info", 0, "已入库:%s「%s」(存量回填)", kindLabel(kind), name)
 						}
 					}
@@ -249,11 +249,11 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					})
 				}
 				if c.lib != nil {
-					if _, err := c.lib.Put(kind, name, description, imagePrompt, path, proj.ID, c.imageSourceKey()); err == nil {
+					if _, err := c.lib.PutCard(kind, cardID, name, description, imagePrompt, path, proj.ID, c.imageSourceKey()); err == nil {
 						// **跨项目同名覆盖要如实说**（2026-09-28 全面审计）：库按 kind+name 精确匹配
 						// 且**同名覆盖** —— B 项目生成同名角色会把 A 的库条目换成 B 的脸，A 此后重渲
 						// 就拿到 B 的脸，而两边界面都看不出异常。Put 把这次覆盖记进条目，这里播报出来。
-						if e, _, ok := c.lib.Match(kind, name); ok && e != nil && strings.TrimSpace(e.OverwriteNote) != "" {
+						if e, _, ok := c.lib.MatchCard(kind, cardID, name); ok && e != nil && strings.TrimSpace(e.OverwriteNote) != "" {
 							c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
 								"⚠ %s —— 那部戏之后的重渲会拿到这张新脸", e.OverwriteNote)
 						}
@@ -366,7 +366,7 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			viewsDone++
 			// 多视角写回资产库:同一个角色全局只付一次转身成本,后续项目复用直接带走
 			if c.lib != nil {
-				if _, err := c.lib.Put("characters", v.name, v.description, v.prompt, v.master, proj.ID, c.imageSourceKey()); err != nil {
+				if _, err := c.lib.PutCard("characters", strings.TrimPrefix(v.id, "char:"), v.name, v.description, v.prompt, v.master, proj.ID, c.imageSourceKey()); err != nil {
 					c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "多视角写回资产库失败:角色「%s」:%v", v.name, err)
 				}
 			}
@@ -761,7 +761,10 @@ func (c *Coordinator) reuseFromLibrary(projID, kind, id, name, description strin
 	if c.lib == nil {
 		return libReuse{}, false
 	}
-	e, img, ok := c.lib.Find(kind, name, description)
+	// **按卡片 ID 先命中**（用户 2026-09-28 定调「程序里都以数据ID调用」）：名字会漂
+	// （「碑生（丙十七）」/「丙十七」/「碑生」），ID 不会 —— 命中不上的后果是同一个角色
+	// 被反复当新角色重出定妆照。只有 ID 查不到时才退回按名字/描述匹配（上传资产、存量条目）。
+	e, img, ok := c.lib.FindForCard(kind, strings.TrimPrefix(id, "char:"), name, description)
 	if !ok {
 		return libReuse{}, false
 	}

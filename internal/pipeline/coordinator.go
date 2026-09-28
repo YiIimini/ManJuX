@@ -306,7 +306,9 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 		ClearDerivedViews(path)
 		if c.lib != nil {
 			c.lib.ClearRelated(kind, name)
-			if _, err := c.lib.Put(kind, name, desc, prompt, path, projectID, c.imageSourceKey()); err != nil {
+			// 写回按**卡片 ID**：重生成的是同一张卡，名字可能被重抽改过，ID 不会 ——
+			// 按名字写回会另起一条条目，库里的旧脸仍旧留着被后续剧集复用。
+			if _, err := c.lib.PutCard(kind, strings.TrimPrefix(assetID, "char:"), name, desc, prompt, path, projectID, c.imageSourceKey()); err != nil {
 				c.emit(projectID, PhaseAssets, 0, "warn", 0, "⚠ 写回资产库失败(不影响本项目):%v", err)
 			}
 		}

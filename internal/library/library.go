@@ -22,8 +22,21 @@ import (
 
 // Entry 一条库资产。
 type Entry struct {
-	Kind        string `json:"kind"` // characters / scenes
-	Name        string `json:"name"`
+	Kind string `json:"kind"` // characters / scenes
+	Name string `json:"name"`
+	// ID **卡片 ID**（如 `char_bingsheng`）—— 关联的**真源**。
+	//
+	// 【2026-09-28 用户定调】「资产以元数据保存下来，然后直接以数据ID关联，程序里都以
+	// 数据ID调用，很简单的逻辑啊，这样就不会有什么名称问题」。
+	//
+	// 在这之前，库条目是**按名字**建目录、按名字命中、同名覆盖：名字里多一个括号注解
+	// （卡片叫「碑生（丙十七）」而提示词里写「丙十七」）、换个称呼、繁简/标点差异，全都会
+	// miss 或串到别人身上；两个项目各有一个「林昭」时，后生成的会把前者的条目**改成自己的脸**。
+	// 现在条目目录与命中都以 ID 为准（见 entryKey / FindForCard），Name 只是**显示名**，
+	// 以及无 ID 条目（手动上传、存量）的兜底键。
+	//
+	// 空 = 这条没有 ID，仍走原来的名字路径（不迁移老库，也不强迫上传路径先造 ID）。
+	ID          string `json:"id,omitempty"`
 	Description string `json:"description"`
 	ImagePrompt string `json:"image_prompt"`
 	Image       string `json:"image"` // 主图相对库根路径(characters/x/portrait.png)
@@ -269,8 +282,22 @@ func safeName(name string) string {
 	return sb.String()
 }
 
-func (l *Library) entryDir(kind, name string) (string, error) {
-	sn := safeName(name)
+// entryKey 条目目录名：**ID 优先**。
+//
+// ID（卡片 ID，如 `char_bingsheng`）在同书跨集、跨项目都是稳定的，而名字会随
+// 分集分镜的措辞漂移（「碑生（丙十七）」/「丙十七」/「碑生」）—— 用 ID 做目录名，
+// 命中就与名字怎么写无关，同名不同 ID 的两个角色也各占一个目录、不再互相覆盖。
+// 没有 ID 的条目（手动上传、老库）退回名字。
+func entryKey(cardID, name string) string {
+	if k := safeName(cardID); k != "" {
+		return k
+	}
+	return safeName(name)
+}
+
+// entryDir 条目目录。key 由调用方给：有卡片 ID 时是 ID，否则是名字（见 entryKey）。
+func (l *Library) entryDir(kind, key string) (string, error) {
+	sn := safeName(key)
 	if sn == "" {
 		return "", fmt.Errorf("资产名不可用")
 	}
@@ -359,11 +386,46 @@ func (l *Library) Match(kind, name string) (*Entry, string, bool) {
 	return &e, img, true
 }
 
-// Put 入库/更新:拷贝图片 + 落 asset.json(同名覆盖,更新指纹与提示词)。
+// Put 入库/更新（**无 ID 路径**：手动上传、界面操作、没有卡片的存量条目）。
+//
+// 自动化链路请用 PutCard —— 那一条按卡片 ID 认条目，名字怎么写都不影响命中与复用。
 func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProject, source string) (*Entry, error) {
+	return l.put(kind, safeName(name), "", name, description, imagePrompt, imgPath, sourceProject, source)
+}
+
+// PutCard 入库/更新（**按卡片 ID**）。这是"资产以元数据保存下来、程序里都以数据 ID 调用"
+// 的落地入口（用户 2026-09-28 定调）。
+//
+// **同一张卡永远落在同一条条目上**：先按 ID 找回已有条目、沿用它的目录名 —— 这一集把它叫
+// 「丙十七」、下一集叫「碑生（丙十七）」，既不会新建第二条，也不会互相覆盖。
+// 目录仍按**显示名**建（界面照旧按名字浏览/操作），ID 只做关联；条目元数据里同时留 Name 与 ID。
+func (l *Library) PutCard(kind, cardID, name, description, imagePrompt, imgPath, sourceProject, source string) (*Entry, error) {
+	key := ""
+	if existing, _, ok := l.matchByID(kind, cardID); ok && existing != nil {
+		key = safeName(existing.Name) // 同一张卡：沿用它原有的目录（换了叫法不新建条目）
+	}
+	if key == "" {
+		key = safeName(name)
+		// 这个名字的目录被**别的卡片**占着吗（同名不同 ID）⇒ 另起一个带 ID 的目录。
+		// 绝不覆盖：库里一个目录就是一张脸，覆盖一次就等于把别人的角色永久换脸
+		// （2026-09-28 全面审计记过的"林昭 A 的脸被 B 覆盖"就是这个）。
+		if other, _, ok := l.Match(kind, key); ok && other != nil {
+			oid := strings.TrimSpace(other.ID)
+			if oid != "" && oid != strings.TrimSpace(cardID) {
+				key = key + "__" + safeName(cardID)
+			}
+		}
+	}
+	return l.put(kind, key, cardID, name, description, imagePrompt, imgPath, sourceProject, source)
+}
+
+func (l *Library) put(kind, key, cardID, name, description, imagePrompt, imgPath, sourceProject, source string) (*Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.entryDir(kind, name)
+	if strings.TrimSpace(key) == "" {
+		return nil, fmt.Errorf("资产名不可用")
+	}
+	dir, err := l.entryDir(kind, key)
 	if err != nil {
 		return nil, err
 	}
@@ -432,9 +494,9 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 		}
 	}
 	e := Entry{
-		Kind: kind, Name: strings.TrimSpace(name),
+		Kind: kind, Name: strings.TrimSpace(name), ID: strings.TrimSpace(cardID),
 		Description: description, ImagePrompt: imagePrompt,
-		Image:         filepath.ToSlash(filepath.Join(kind, safeName(name), imgName)),
+		Image:         filepath.ToSlash(filepath.Join(kind, safeName(key), imgName)),
 		SourceProject: sourceProject, Source: source,
 		OverwroteProjects: overwrote, OverwriteNote: overwriteNote,
 		CreatedAt: time.Now(), UsedCount: used,
@@ -465,7 +527,7 @@ func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProje
 	rest := []string{}
 	seen := map[string]bool{e.Image: true}
 	addRel := func(bname string) {
-		rel := filepath.ToSlash(filepath.Join(kind, safeName(name), bname))
+		rel := filepath.ToSlash(filepath.Join(kind, safeName(key), bname))
 		if !seen[rel] {
 			rest = append(rest, rel)
 			seen[rel] = true
@@ -609,6 +671,75 @@ func (l *Library) SetEntityKind(kind, name, ek string) (*Entry, error) {
 // 照旧按描述相似度命中就会把**别的造型档的像素**当成这一档的定妆照 —— 变体的服装
 // 永远不会出现在画面里。要拿同族主卡当**派生起点**请走 FindInFamily(图生图),
 // 那条路不复制像素。
+// matchByID 按**卡片 ID** 在库里找条目（扫元数据，不依赖目录名）。
+//
+// 目录是按显示名建的（界面照旧按名字浏览/操作），所以 ID → 条目只能扫一遍；条目量级是
+// 几十~几百，且只在资产阶段每家角色调用一次，成本可以忽略。
+func (l *Library) matchByID(kind, cardID string) (*Entry, string, bool) {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.matchByIDLocked(kind, cardID)
+}
+
+func (l *Library) matchByIDLocked(kind, cardID string) (*Entry, string, bool) {
+	cardID = strings.TrimSpace(cardID)
+	if cardID == "" || !validKind(kind) {
+		return nil, "", false
+	}
+	dirs, err := os.ReadDir(filepath.Join(l.root, kind))
+	if err != nil {
+		return nil, "", false
+	}
+	for _, de := range dirs {
+		if !de.IsDir() {
+			continue
+		}
+		raw, rerr := os.ReadFile(filepath.Join(l.root, kind, de.Name(), "asset.json"))
+		if rerr != nil {
+			continue
+		}
+		var e Entry
+		if json.Unmarshal(raw, &e) != nil {
+			continue
+		}
+		if strings.TrimSpace(e.ID) != cardID {
+			continue
+		}
+		img := filepath.Join(l.root, filepath.FromSlash(e.Image))
+		if _, serr := os.Stat(img); serr != nil {
+			continue // 条目没有图 = 不可复用，当作没命中（与 Match 同一口径）
+		}
+		e.fillFamily()
+		return &e, img, true
+	}
+	return nil, "", false
+}
+
+// FindForCard 自动化链路专用（资产阶段"先查库、再生成"这一步）。
+//
+// **先按卡片 ID 命中**，没有再退回按名字/描述匹配（手动上传的资产、没有卡片的存量条目、
+// 技能侧没给 ID 的情况）。
+//
+// 为什么必须先在 ID 上命中（用户 2026-09-28 定调「程序里都以数据ID调用」）：名字会漂 ——
+// 卡片叫「碑生（丙十七）」，某一集的分镜把它写成「丙十七」、另一集又写成「碑生」；只按名字
+// 匹配的后果是同一个角色被反复当成新角色生成定妆照（2026-09-12 用户报「相同角色无中生有
+// 多产生出定妆照」），跨项目重名时还会串脸。ID 不漂。
+func (l *Library) FindForCard(kind, cardID, name, description string) (*Entry, string, bool) {
+	if e, img, ok := l.matchByID(kind, cardID); ok {
+		return e, img, true
+	}
+	return l.Find(kind, name, description)
+}
+
+// MatchCard 按卡片 ID 精确取条目（ID 优先，没有 ID / 还没入库时退回名字精确匹配）。
+// 与 PutCard 配对使用：入库按 ID、回查也按 ID，中间不经过名字。
+func (l *Library) MatchCard(kind, cardID, name string) (*Entry, string, bool) {
+	if e, img, ok := l.matchByID(kind, cardID); ok {
+		return e, img, true
+	}
+	return l.Match(kind, name)
+}
+
 func (l *Library) Find(kind, name, description string) (*Entry, string, bool) {
 	if e, img, ok := l.Match(kind, name); ok {
 		return e, img, true
