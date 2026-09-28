@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/fsutil"
@@ -285,9 +286,17 @@ type Library struct {
 	// 漏标只会让索引**迟一点失效**，而所有写方都在同一把 `mu` 下，所以
 	// "写完之后立刻读"能拿到新值（写方自己会 bump，同一个进程内顺序一致）。
 	// 反过来"手工增量更新"漏一处就是永久脏数据 —— 这里选了保守的那一侧。
+	//
+	// 【2026-09-29 补：索引自己一把锁】`idx` / `idxGen` 的**重建会发生在读路径上**
+	// （第一次读、以及任何一次写之后……），而读路径只持有 `mu` 的**读锁** ——
+	// 两个并发的读（界面在列资产、管线在查库）同时重建就是"并发写 map"。
+	// 原来靠"读方也走写锁"是巧合而不是约定（`List` / `matchByID` / `findInFamily`
+	// 都挂着 RLock），`-race` 又恰好不跑这个包 —— 属于**随时会 panic** 的那种潜伏问题。
+	// 现在：索引单独一把 `idxMu`，版本号 `gen` 用原子量，读路径照常并发。
+	idxMu  sync.Mutex
 	idx    map[string][]libEntry
 	idxGen uint64
-	gen    uint64
+	gen    atomic.Uint64
 }
 
 // libEntry 索引里的一条：目录名 + 已解析的条目（省掉重复 unmarshal）。
@@ -297,7 +306,7 @@ type libEntry struct {
 }
 
 // bumpLocked 标记"库变了"（调用方须持写锁）。整份失效——只在拿不准该不该逐条更新时用。
-func (l *Library) bumpLocked() { l.gen++ }
+func (l *Library) bumpLocked() { l.gen.Add(1) }
 
 // reindexLocked 把**一个条目**的最新状态同步进索引（调用方须持写锁）。
 //
@@ -312,7 +321,9 @@ func (l *Library) bumpLocked() { l.gen++ }
 // **写完盘就照着刚写下去的那份文件重建这一条** —— 一致性由这次自查保证，
 // 不靠调用者的记性。删条目（盘上已无 asset.json）时它会把这一条从索引里摘掉。
 func (l *Library) reindexLocked(kind, dir string) {
-	if l.idx == nil || l.idxGen != l.gen {
+	l.idxMu.Lock()
+	defer l.idxMu.Unlock()
+	if l.idx == nil || l.idxGen != l.gen.Load() {
 		return // 索引本来就不新鲜了：下一次读会整份重建，这里不必忙
 	}
 	base := filepath.Base(dir)
@@ -341,12 +352,18 @@ func (l *Library) reindexLocked(kind, dir string) {
 // 而没有任何测试会因此变红。
 var readDirFn = os.ReadDir
 
-// entriesLocked 取某个 kind 的条目列表（调用方须持锁；必要时重建索引）。
+// entriesLocked 取某个 kind 的条目列表（必要时重建索引）。
+//
+// **自己管 `idxMu`，只要求调用方持有 `mu`（读锁或写锁都行）**：重建是写索引，
+// 而读路径只持读锁 —— 靠"读方恰好也拿着写锁"是巧合，两个并发读同时重建就是并发写 map。
 func (l *Library) entriesLocked(kind string) []libEntry {
 	if !validKind(kind) {
 		return nil
 	}
-	if l.idx != nil && l.idxGen == l.gen {
+	gen := l.gen.Load()
+	l.idxMu.Lock()
+	defer l.idxMu.Unlock()
+	if l.idx != nil && l.idxGen == gen {
 		return l.idx[kind]
 	}
 	// 重建（整库一次；读齐所有 asset.json 比"每次查都扫"便宜得多）
@@ -373,7 +390,7 @@ func (l *Library) entriesLocked(kind string) []libEntry {
 		}
 		l.idx[k] = list
 	}
-	l.idxGen = l.gen
+	l.idxGen = gen
 	return l.idx[kind]
 }
 
@@ -509,6 +526,30 @@ func (l *Library) locateByNameLocked(kind, name string) (string, error) {
 	return "", fmt.Errorf("库资产不存在: %s", name)
 }
 
+// locateEntryLocked 解析出条目目录（调用方须持锁）：**id 优先**（与 Match 同一判据），
+// 对不上再退回按名字/别名定位。
+//
+// 【2026-09-29 真机实测】`ImagePathByName` 的 `?file=` 那一路原来只按**名字**定位，
+// 而界面传的是**卡片 id**（`libKey(e)` = `e.id`）—— 于是同一个角色的主图能显示、
+// 详情弹窗里的第二张图（三视图板 / 多视角）**全部 404**。实测：
+//
+//	/api/library/characters/char_qiqi/image                              → 200
+//	/api/library/characters/char_qiqi/image?file=<三视图板文件>            → 404
+//
+// 判据与 `Match` 完全一致（`looksLikeCardID` + 索引按 id 查），一处收口所有"按 id 取图"的路。
+func (l *Library) locateEntryLocked(kind, name string) (string, error) {
+	if looksLikeCardID(name) {
+		if e, _, ok := l.matchByIDLocked(kind, name); ok && e != nil {
+			if d := strings.TrimSpace(e.Dir); d != "" {
+				if dir, err := l.entryDir(kind, d); err == nil {
+					return dir, nil
+				}
+			}
+		}
+	}
+	return l.locateByNameLocked(kind, name)
+}
+
 // ImagePathByName 取库内某张图片的绝对路径;file 为空时返回主图。
 //
 // file 只接受**基名**并限定图片扩展名:挡住 ../ 目录穿越,也避免误取 asset.json。
@@ -527,7 +568,7 @@ func (l *Library) ImagePathByName(kind, name, file string) (string, error) {
 	}
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	dir, err := l.locateByNameLocked(kind, name)
+	dir, err := l.locateEntryLocked(kind, name)
 	if err != nil {
 		return "", err
 	}

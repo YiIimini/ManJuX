@@ -260,6 +260,53 @@ const (
 	DefaultSheetFrameH = 1344
 )
 
+// 两句取景声明单独提出来当常量：板子装配必须**整句剥掉**它们（见 StripPortraitLeadFraming），
+// 否则板子的输入里会留着"裁到胸口、只要头颈胸"这种与人像专属的要求，与"3 个全身 + 6 个头"
+// 直接打架 —— 模型只会二选一地糊。
+const (
+	portraitLeadBust = "BUST PORTRAIT (head, neck and upper chest only - the picture is cropped at mid-chest, " +
+		"pure white seamless backdrop). "
+	portraitLeadHeadShoulders = "HEAD-AND-SHOULDERS PORTRAIT (head and shoulders only, pure white seamless backdrop). "
+)
+
+// StripPortraitLeadFraming 剥掉定妆照提示词**开头**的取景声明（幂等；没有就原样返回）。
+func StripPortraitLeadFraming(prompt string) string {
+	for _, lead := range []string{portraitLeadBust, portraitLeadHeadShoulders} {
+		if strings.HasPrefix(prompt, lead) {
+			return strings.TrimSpace(strings.TrimPrefix(prompt, lead))
+		}
+	}
+	return prompt
+}
+
+// PortraitLeadFraming 人像定妆照**开头**的取景声明（与 PortraitFramingClause 是一对）。
+//
+// 【2026-09-29 用户报「定妆照需要上半身正脸」+ 真机对照实验】
+// 原来的取景纪律只写在**提示词末尾**（PortraitFramingClause），实测**没生效**：
+// 同一张卡出图仍是全身立绘（头到脚，768×1344）。原因不在措辞不够强，而在**位置**——
+// 卡原文（`image_prompt`）用大段篇幅描述**全身**（"long limbs / 大腿外侧装甲 / 腰侧挂记名链 /
+// 靴子"），模型为了让这些部件都入画，选了全身构图；末尾那一句压不住前 4000 字的主题描述。
+//
+// 实测（用库侧"按提示词代生成"，同一张卡、同一 seed 机制，只改取景措辞）：
+//
+//	① 原样（只有末尾取景句）        → 全身立绘（头到脚）
+//	② 末尾换成更强的"裁到胸口中线"   → 仍是全身（头到膝）
+//	③ **开头加一句 + 末尾保留**     → 半身正脸（裁在腰以上、正面、头顶留白）✔
+//
+// 所以：取景必须**开头先声明**（主体是什么），末尾再收一遍纪律。两句都是正面描述
+// （图像侧是 CFG 1.0 的蒸馏模型，否定词不生效还会把名词当指令画出来，见 artstyle.go）。
+func PortraitLeadFraming(kind EntityKind, width, height int) string {
+	switch NormalizeEntityKind(string(kind)) {
+	case KindHuman, KindChibi:
+	default:
+		return "" // 器物/灵宠/妖兽/场景各有自己的取景纪律，不套人像
+	}
+	if height > width {
+		return portraitLeadBust
+	}
+	return portraitLeadHeadShoulders
+}
+
 // PortraitFramingClause 人像定妆照的**构图纪律**,按成片画幅算。
 //
 // 事故(2026-09-27 用户报「角色定妆照应该是角色上半身的正面照片啊,咋现在角色头都顶上

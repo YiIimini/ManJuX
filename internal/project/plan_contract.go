@@ -208,7 +208,7 @@ func familyMatchName(p *Plan, name string) string {
 // ## 结构（2026-09-29 代码健康审计 P2-11）
 //
 // 这里只做**入口与串联**：空方案守卫 + 按域依次调用判据分组（实现在 `plan_checks.go`）。
-// 拆分前它是一个 **1545 行**的函数，107 道门挤在一条直线过程里 —— 改一处要滚半天、
+// 拆分前它是一个 **1545 行**的函数，一百多道门挤在一条直线过程里 —— 改一处要滚半天、
 // 没法按门隔离测试，也藏住了"某一道门的触发分支从没被跑过"这种事
 // （G057 就是这么被发现的：整文件 94.5% 覆盖率，单道门的反例 0 次执行）。
 //
@@ -248,5 +248,8 @@ func ValidatePlan(p *Plan) []Issue {
 	checkKeyProps(p, add)
 	checkSceneBoardRich(p, add)
 	checkH3WordCount(p, add)
+	// **新增的门一律接在最后**：门编号按源码顺序生成（tools/gatecat），插在中间会让
+	// 它后面所有门的编号整体后移 —— 而口头定位（「G014 太严」）与文档引用用的正是编号。
+	checkEntityRefs(p, add)
 	return out
 }

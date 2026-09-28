@@ -1612,3 +1612,29 @@ func checkH3WordCount(p *Plan, add func(level, where, format string, a ...any)) 
 			maxID, len(ids))
 	}
 }
+
+// checkEntityRefs 分镜引用的**人物 / 场景**必须在卡片表里（2026-09-29 真机实测驱动）。
+//
+// 【这条门为什么存在】五步专职会话的 ⑤分镜 输出的是**名字**（「characters」里写角色名），
+// 而上游字段语义是 id。归一（RemapEntityRefs）能把"名字写法"这一类对上号，但**对不上**的
+// 那些是真没有卡：渲染装配取不到参考图 ⇒ 该镜降级 t2va（角色逐镜换脸、场景每镜重编），
+// 而资产阶段照报"资产就绪"，界面上看不出任何异常。
+//
+// 判据取**归一之后**的悬空数：能自动修的（名字→id）不该报警，剩下的才需要人看一眼。
+//
+// **新门接在文件末尾**：门编号按源码顺序生成（tools/gatecat），插在中间会让后面所有门的
+// 编号整体后移 —— 而口头定位（「G014 太严」）与文档引用用的正是编号。
+func checkEntityRefs(p *Plan, add func(level, where, format string, a ...any)) {
+	chars, scenes := DanglingEntityRefs(p)
+	if chars > 0 {
+		add("warn", "plan.shots",
+			"%d 处镜头引用的**人物**对不上角色卡（渲染时这一镜拿不到定妆照参考，会降级成纯文生，"+
+				"同一角色在成片里逐镜换脸）—— 修法：要么把这些人物补进角色卡，要么把这些镜头的人物"+
+				"改成卡片里的写法（平台会把名字自动对号，这里报的是**对不上**的那些）", chars)
+	}
+	if scenes > 0 {
+		add("warn", "plan.shots",
+			"%d 处镜头引用的**场景**对不上场景卡（这一镜拿不到环境参考图，背景会每镜重编）——"+
+				"修法：把场景补成场景卡，或把引用改成卡片里的写法", scenes)
+	}
+}

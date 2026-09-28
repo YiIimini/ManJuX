@@ -233,28 +233,37 @@ func countDanglingPropRefs(plan *Plan) int {
 	return n
 }
 
-// HealResult 自愈三件的计数（各处按需播报，不吞掉信息）。
+// HealResult 自愈各件的计数（各处按需播报，不吞掉信息）。
 type HealResult struct {
 	PropRefs  int // 器物引用对号了几处
 	Dialogue  int // 补了几镜的台词标签
 	Voiceover int // 补了几镜的画外演出素材引用
 	MusicNA   int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
+	// EntityRefs 分镜里的**名字引用**归一成卡片 id 的处数（五步会话输出的是名字，
+	// 见 entity_refs.go）；EntityRefsUnknown 是归一之后仍对不上卡片的引用数。
+	EntityRefs        int
+	EntityRefsUnknown int
 }
 
-// HealPlan **自愈三件**的唯一入口（幂等）：器物引用对号、缺失的台词标签补全、
-// 画外演出素材引用补齐。三条都只把**已知量**写到位，不改任何创作内容。
+// HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
+// 缺失的台词标签补全、画外演出素材引用补齐。都只把**已知量**写到位，不改任何创作内容。
 //
-// 【为什么必须是一个入口】2026-09-28 实测教训：这三个修复先只挂在 director 上，
+// 【为什么必须是一个入口】2026-09-28 实测教训：这些修复先只挂在 director 上，
 // 于是 `cmd/preflight` 直接读 JSON 时看到的是**未修复**的方案 —— 预检报出 5 条 fail，
 // 而渲染器看到的方案是 0 条，用户被假警吓一遍。凡是"读到方案"的地方都必须走同一份。
 func HealPlan(plan *Plan) HealResult {
 	if plan == nil {
 		return HealResult{}
 	}
+	// 实体引用归一**要排在器物对号之前**：器物对号会退回分镜的动作文本里找线索，
+	// 而"这一镜有谁"在归一之前可能还是名字 —— 顺序反了会让它拿着对不上的名单去猜。
+	entFixed, entUnknown := RemapEntityRefs(plan)
 	return HealResult{
-		PropRefs:  RemapPropRefs(plan),
-		Dialogue:  FillMissingDialogueTags(plan),
-		Voiceover: FillVoiceoverAssets(plan),
-		MusicNA:   EnsureMusicNA(plan),
+		EntityRefs:        entFixed,
+		EntityRefsUnknown: entUnknown,
+		PropRefs:          RemapPropRefs(plan),
+		Dialogue:          FillMissingDialogueTags(plan),
+		Voiceover:         FillVoiceoverAssets(plan),
+		MusicNA:           EnsureMusicNA(plan),
 	}
 }

@@ -531,7 +531,22 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 		prompt = StripFullBodyProportions(prompt)
 	}
 	if prof.SheetMarker != "" && strings.Contains(prompt, prof.SheetMarker) {
-		return prompt // 已经是本类型的装配结果:不重复叠加
+		// 已经是本类型的装配结果:不重复叠加。
+		// **但 2026-09-29 新加的开头取景声明要补上**：这一步是后加的，存量成品（库里
+		// 已有的定妆照提示词）里没有它 —— 而"不带它的成品"实测出的是全身立绘。
+		// 幂等判据是**前缀**：已经是当前画幅那一句就原样返回。
+		leadW, leadH := s.FrameW, s.FrameH
+		if leadW <= 0 || leadH <= 0 {
+			leadW, leadH = DefaultSheetFrameW, DefaultSheetFrameH
+		}
+		if lead := PortraitLeadFraming(kind, leadW, leadH); lead != "" {
+			body := StripPortraitLeadFraming(prompt)
+			if strings.HasPrefix(body, lead) {
+				return prompt
+			}
+			return project.DropHanRunes(lead) + body
+		}
+		return prompt
 	}
 	if prof.RewriteSheetFraming {
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
@@ -581,6 +596,13 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 		added.WriteString(PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.ID, s.Name)))
 	}
 	prompt += project.DropHanRunes(added.String())
+	// **取景要开头也声明一次**（2026-09-29 用户报「定妆照需要上半身正脸」）：
+	// 末尾那句压不住卡原文里大段的**全身**描述（长腿 / 大腿装甲 / 腰侧挂链 / 靴子），
+	// 实测同一张卡只加末尾那句仍出全身立绘，把同一句放到**开头**才收住 ——
+	// 对照实验与理由见 PortraitLeadFraming。
+	if lead := PortraitLeadFraming(kind, frameW, frameH); lead != "" {
+		prompt = project.DropHanRunes(lead) + prompt
+	}
 	return prompt
 }
 
@@ -726,8 +748,12 @@ func BoardImagePrompt(masterPrompt string) string {
 	//
 	// 只清**输入**（masterPrompt）与拼装结果，`BoardLayoutClause` / `BoardFraming` 本来就是英文；
 	// 这一刀不碰 `PortraitPrompt`（那里是卡原文，见它的注释：清素材会连有用描述一起删）。
+	//
+	// **开头的定妆取景声明要整句剥掉**（2026-09-29）：定妆照提示词现在以
+	// "BUST PORTRAIT (…cropped at mid-chest…)" 开头，而板子要的是"3 个全身 + 6 个头"——
+	// 留着它就是同一段里两套取景打架（`sheetFramingWords` 只剥词，剥完会剩一堆碎片）。
 	return project.DropHanRunes(BoardMarker + " — " + BoardLayoutClause + "\n\n" +
-		rewriteSheetFraming(project.DropHanRunes(masterPrompt), BoardFraming))
+		rewriteSheetFraming(project.DropHanRunes(StripPortraitLeadFraming(masterPrompt)), BoardFraming))
 }
 
 func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scene) string {

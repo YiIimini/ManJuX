@@ -361,6 +361,15 @@ func normalizePlan(plan *project.Plan, opt Options) {
 	// **自愈三件**（器物对号 / 补台词标签 / 补画外素材）走同一个入口，
 	// 与 project.LoadPlan、cmd/preflight 共用一份实现 —— 三个消费方必须看到同一份方案。
 	if hr := project.HealPlan(plan); opt.OnNote != nil {
+		if hr.EntityRefs > 0 {
+			opt.OnNote("把 %d 处分镜的人物/场景引用**对上了卡片 id**（分镜这一步写的是名字，"+
+				"而装配按 id 取参考图 —— 不对号的话这些镜子在渲染时一张定妆照/场景图都拿不到，"+
+				"整集会降级成纯文生，角色逐镜换脸）", hr.EntityRefs)
+		}
+		if hr.EntityRefsUnknown > 0 {
+			opt.OnNote("分镜里有 %d 处人物/场景引用**对不上任何卡片**（渲染时这些镜子拿不到参考图）"+
+				"—— 群演/临时场景可以不管；要锚定的话把它们补进卡片表", hr.EntityRefsUnknown)
+		}
 		if hr.PropRefs > 0 {
 			opt.OnNote("把 %d 处分镜里的器物引用**对上了卡片**（模型写的 id 与卡片 id 拼法不一致，"+
 				"对不上号的话那几镜的器物又会被重新发明）", hr.PropRefs)

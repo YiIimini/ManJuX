@@ -94,7 +94,13 @@ if (-not $SkipTest) {
 # ---------- 5. 竞态检测 (go test -race) ----------
 # 为什么加这一道（2026-09-28）：pipeline/server 都是并发跑的（协调器、任务分配、资产库共享状态），
 # 而数据竞争**不会**在普通 go test 里暴露 —— 它需要 -race（要 cgo，即本机得有 C 工具链）。
-# 没装工具链时**如实跳过**（不假装验过），装了就跑。实测两个并发最重的包合计约 19 秒，够便宜。
+# 没装工具链时**如实跳过**（不假装验过），装了就跑。实测三个包合计约 21 秒，够便宜。
+#
+# 【2026-09-29 补 internal/library】资产库的进程内索引**把重建放在读路径上**，
+# 而读路径只持读锁 —— 界面上列表在刷、管线在查库时，两个读同时重建就是"并发写 map"
+# （实测：`go test -race ./internal/library/` 在修之前报 5 处 DATA RACE，
+# 而这两道门原来都没跑这个包 ⇒ 可以一直潜伏到现场 panic）。索引是跨项目共享状态，
+# 必须和 pipeline/server 一样进竞态门。
 Step "竞态检测 (go test -race)"
 $raceCC = $null
 foreach ($cand in @("D:\Ai\Tools\mingw64\bin", $env:MANJUX_MINGW)) {
@@ -109,12 +115,12 @@ if (-not $raceCC) {
 } else {
   $env:CGO_ENABLED = "1"
   $env:PATH = "$raceCC;$env:PATH"
-  $raceOut = & go test -race ./internal/pipeline/ ./internal/server/ 2>&1
+  $raceOut = & go test -race ./internal/pipeline/ ./internal/server/ ./internal/library/ 2>&1
   if ($LASTEXITCODE -ne 0) {
     Bad "竞态检测失败（有数据竞争或测试失败）:"
     $raceOut | Where-Object { $_ -match "DATA RACE|WARNING|FAIL|^---" } | Select-Object -First 20 | ForEach-Object { Write-Host "        $_" }
   } else {
-    Ok "无数据竞争（pipeline + server，gcc: $raceCC）"
+    Ok "无数据竞争（pipeline + server + library，gcc: $raceCC）"
   }
 }
 
