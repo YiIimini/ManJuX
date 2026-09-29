@@ -85,6 +85,124 @@ const libCards = computed(() => {
   return out
 })
 
+// 批量删除
+const batch = ref(false)
+const sel = ref(new Set())
+function toggleSel(name) {
+  if (sel.value.has(name)) sel.value.delete(name)
+  else sel.value.add(name)
+  sel.value = new Set(sel.value)
+}
+const allSelected = computed(() => list.value.length > 0 && list.value.every(e => sel.value.has(e.name)))
+function toggleAllSel() {
+  sel.value = allSelected.value ? new Set() : new Set(list.value.map(e => e.name))
+}
+async function batchDelete() {
+  if (!sel.value.size) return
+  try {
+    await ElMessageBox.confirm(`从资产库删除选中的 ${sel.value.size} 项?不影响已使用它们的项目,只影响后续复用。`, '批量删除库资产',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
+  } catch { return }
+  let ok = 0, fail = 0
+  for (const n of sel.value) {
+    try {
+      await api.libraryDelete(kind.value, n)
+      ok++
+    } catch { fail++ }
+  }
+  sel.value = new Set()
+  batch.value = false
+  ElMessage.success(`已删除 ${ok} 项` + (fail ? `,${fail} 个失败` : ''))
+  refresh()
+}
+
+// ---- 抽卡 & 自定义新建(仅角色)----
+const gachaBusy = ref(false)
+const gachaResult = ref(null) // {entry, theme, trait}
+async function gacha() {
+  gachaBusy.value = true
+  gachaResult.value = null
+  try {
+    const d = await api.libraryGacha()
+    gachaResult.value = d
+    ElMessage.success(`抽到「${d.entry.name}」!题材:${d.theme}`)
+    refresh()
+  } catch (e) { ElMessage.error(e.message) } finally { gachaBusy.value = false }
+}
+
+const createOpen = ref(false)
+const createBusy = ref(false)
+const createForm = reactive({ name: '', description: '', image_prompt: '', mode: 'generate', whiten: true })
+const createImage = ref(null)
+const createImageURL = ref('')
+watch(createImage, (f, oldF) => {
+  // 模板里不能直接调 URL.createObjectURL:URL 不在 Vue 模板全局白名单,
+  // 编译成 _ctx.URL → 渲染即抛错,缩略图从未显示过(2026-09-09 实证)
+  if (oldF && createImageURL.value) { try { URL.revokeObjectURL(createImageURL.value) } catch {} }
+  createImageURL.value = f ? URL.createObjectURL(f) : ''
+})
+const createNativePath = ref(null) // 桌面拖放(wails 原生)拿到的本机绝对路径
+const createInput = ref(null)
+function onPickImg(ev) {
+  const f = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!f) return
+  if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { ElMessage.error('仅支持 png/jpg/webp'); return }
+  createImage.value = f
+  createNativePath.value = null
+}
+// 桌面模式拖放:App.vue 把 wails file-drop 事件转发到带 --wails-drop-target 的元素
+function onNativeDrop(ev) {
+  const p = ev.detail?.[0]
+  if (!p) return
+  if (!/\.(png|jpe?g|webp)$/i.test(p)) { ElMessage.error('仅支持 png/jpg/webp'); return }
+  createNativePath.value = p
+  createImage.value = null
+  createForm.mode = 'upload'
+}
+// openCreate 打开创建弹窗,并按当前分类选好默认来源:
+// 角色可以"提示词生成",道具/场景只有上传一条路(代生成用的是角色定妆照那套取景,
+// 拿来画道具会跑偏),所以默认落在上传模式,免得用户填完提示词才发现生成不了。
+function openCreate() {
+  createForm.mode = kind.value === 'characters' ? 'generate' : 'upload'
+  createOpen.value = true
+}
+async function doCreate() {
+  if (!createForm.name.trim()) { ElMessage.warning(`请填写${kindWord.value}名`); return }
+  createBusy.value = true
+  try {
+    // JSON + base64/路径双通道:桌面 webview 的 wails 代理会截断 multipart
+    // 大文件(2026-09-09「源图不存在」根因),浏览器模式同样可用
+    const k = kind.value
+    const body = { name: createForm.name.trim(), description: createForm.description }
+    if (createForm.mode === 'upload') {
+      // 白底化默认开(用户 2026-09-24 定调:上传图也走 Qwen-Image-Edit 生成白底角色);
+      // 非角色分类后端不看这个字段(道具/场景的主图不当锁脸锚点,没必要付编辑开销)
+      body.whiten = createForm.whiten
+      if (createNativePath.value) {
+        body.image_path = createNativePath.value
+      } else if (createImage.value) {
+        body.image_b64 = await fileToB64(createImage.value)
+        body.filename = createImage.value.name
+      } else {
+        ElMessage.warning('请选择或拖入上传图片'); createBusy.value = false; return
+      }
+    } else {
+      if (!createForm.image_prompt.trim()) { ElMessage.warning('请填写生成提示词'); createBusy.value = false; return }
+      body.image_prompt = createForm.image_prompt.trim()
+    }
+    const d = await api.libraryCreateAsset(k, body)
+    // 白底化没做成时后端会如实回 note(降级为原图入库)—— 必须说出来,不能假装成功
+    const done = `${kindLabel[k] || '资产'}「${d.entry.name}」已入库`
+    if (d.note) ElMessage.warning(`${done}:${d.note}`)
+    else ElMessage.success(done)
+    createOpen.value = false
+    createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null; createNativePath.value = null
+    kind.value = k
+    refresh()
+  } catch (e) { ElMessage.error(e.message) } finally { createBusy.value = false }
+}
+
 // ---------- 资产详情弹窗 ----------
 // 展示该角色的**全部图片**(定妆照 + 多视角原图 + 转台图)、中文描述与英文提示词,
 // 并提供管理操作。图片清单由后端 /api/library/{kind}/{name} 给出。

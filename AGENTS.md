@@ -12,6 +12,20 @@
 是靠"测试里那道门怎么不响"才发现的。规则：中文/引号密集的插入一律用 `edit` / `insert` 工具，
 并且**每次插入后立刻 grep 核对**（`Select-String -Pattern '<新代码里的关键词>'`）。
 
+## 删代码块：不许用锚点字符串手术（2026-09-29 事故）
+
+同一天我用「取两个锚点、切掉中间」的办法把资产库详情弹窗搬进共用组件，**多切了一段** ——
+`batch` / `sel` / `toggleSel` / `gacha` / `createForm` … 的声明被删掉，而模板还在用它们。
+后果是资产库页直接白屏：`Cannot read properties of undefined (reading 'has')`（`sel.has(...)`）。
+`vite build` **不会报错**（模板里未声明的标识符只在运行时炸），七门自检也全过。
+
+规矩：**删除整块代码一律用 `edit` 工具逐块删**（或用 `git show HEAD~1:<file>` 先取回旧版对照）。
+删完必须做两件事：
+① `git show HEAD~1:<file>` 与新文件对比**顶层声明清单**（`const/let/function/async function`），
+   确认少掉的恰好是该搬走的那些；
+② 把模板里用到的标识符逐个 grep 一遍，确认都还在（尤其是 `v-if/@click/:model-value` 里那几个）。
+
+
 ## 夹具必须照真实形态写
 
 这一条已在一周内栽过四次（破庙场景名、配乐句数、Q 版命名、镜头时长）。判据：**把真实数据贴进夹具**，
