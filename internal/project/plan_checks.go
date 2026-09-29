@@ -198,6 +198,15 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 		for _, cid := range sh.Characters {
 			charInShot[cid] = true
 		}
+		// **一镜台词条数上限**（2026-09-29 用户：「配音存在重复的」）。实测：一个 9 秒的镜里塞了 4 条台词，
+		// 渲出来 ASR 转成「…碑是你自己刻的, 碑是你自己刻的, 碑号是营里烙的。」—— **同一句念了两遍**。
+		// 机制：模型把每句放在一个内切点上，句子比节拍多时它会重复其中一句。
+		// 判据取 3 条起报（2 条是常见的正反打，合法）。
+		if n := len(sh.Dialogue); n >= 3 {
+			add("warn", where,
+				"这一镜有 %d 条台词 —— 实测 4 条挤在 9 秒里会让模型**把其中一句念两遍**（配音重复）；"+
+					"建议把这一镜拆成两镜（每镜 ≤2 句），或删掉可省的短句", n)
+		}
 		for j, l := range sh.Dialogue {
 			where := fmt.Sprintf("%s.dialogue[%d]", where, j)
 			if strings.TrimSpace(l.Text) == "" {

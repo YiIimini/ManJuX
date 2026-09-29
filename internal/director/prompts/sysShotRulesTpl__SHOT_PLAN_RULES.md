@@ -6,6 +6,7 @@
   - `narration`: the voice-over text, verbatim; empty string when there is none.
   - `chibi_ids`: the Q-version card ids used by an `inner` shot; empty array otherwise.
   - `end_state`: what is visible at the END of the clip (the state the next clip continues from) — only things you can see (positions, posture, props in hand), never mood or sound.
+- **AT MOST TWO LINES PER CLIP, EACH INSIDE ITS OWN INNER SHOT (2026-09-29 user: 「配音存在重复的」)**: measured — one 9-second clip carrying **four** lines came back with one of them spoken **twice** (ASR: 「…碑是你自己刻的, 碑是你自己刻的, 碑号是营里烙的。」). The renderer places each line at a cut, and when the lines outnumber the beats it repeats one. So: **at most two spoken lines per clip**; a beat with more dialogue must be split into more clips. Put each line's `<d>[Chinese]…</d>` **inside the inner-shot block where it is spoken** (`[Shot 2] At 00:03.500 … <d>…</d>`), never all of them bunched at the start — a tag outside a cut has no place on the timeline and gets read out again.
 - **CLIP LENGTH RULE (user's own storyboard spec, 2026-09-28)**: a non-final clip is **7, 8, 9 or 10 seconds** —
   pick whichever ends on a natural stop (a person settles, a turn completes, a gaze lands, a line finishes).
   The FINAL clip takes whatever remains of the episode. So the **clip count follows from the episode length**:
