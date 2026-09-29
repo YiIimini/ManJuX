@@ -447,6 +447,11 @@ async function remove(e) {
                  分类在左上，模型/来源在左下 —— 名字那一行只留名字与状态标签。 -->
             <span class="cov-badge tl">{{ kindWordOf(row.kind) }}</span>
             <span class="cov-badge bl">{{ sourceLabel(row.source) }}</span>
+            <!-- 类型名也放封面（2026-09-29 用户：「『人形机械』和『Q版』也放到封面上去」）——
+                 人（human）不标：那是绝大多数，标出来只是噪音。 -->
+            <el-tooltip v-if="entityKindLabel(row)" :content="entityKindHint(row)" placement="top">
+              <span class="cov-badge tr">{{ entityKindLabel(row) }}</span>
+            </el-tooltip>
             <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:color-mix(in srgb, var(--mx-bg0) 40%, transparent)">
               <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
             </div>
@@ -460,10 +465,8 @@ async function remove(e) {
                  库里 characters 这个分类按存储口径收"一切有个体的东西"，其中有些**不是人**
                  （无实体/器物/灵兽）。不标出来，用户会以为那是一张人脸卡 ——
                  标签取的是**平台判定的生效类型**（落库在条目里），不是名字里猜的。 -->
-            <el-tooltip v-if="row.kind === 'characters' && entityKindLabel(row)"
-                        :content="entityKindHint(row)" placement="top">
-              <el-tag size="small" type="info" effect="plain">{{ entityKindLabel(row) }}</el-tag>
-            </el-tooltip>
+            <!-- 类型名已挪到封面右上角（.cov-badge.tr）：用户 2026-09-29 要求「『人形机械』和『Q版』
+                 也放到封面上去」，名字这一行只留名字与状态。 -->
             <el-tooltip v-if="row.kind === 'characters' && !cardHasViews(row)"
                         content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
               <el-tag size="small" type="warning" effect="plain">单视角</el-tag>

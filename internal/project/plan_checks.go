@@ -251,6 +251,16 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 				"本镜有画外音但 h3_prompt 没写「%s」—— 平台会**自动补齐**（这一步不需要你做什么）；产出侧写对更稳",
 				VoiceoverClauseMarker)
 		}
+		// **画面外说话人**（2026-09-29 用户：「镜头外的说话声音不应该镜头内人动嘴唇」）：
+		// 说话人有角色卡、但这一镜没让他出场 —— 此时画面里的人**不许**对口型。
+		// 与上一条同源（都靠 VoiceoverClauseMarker 那句"闭嘴"），级别同样 info（平台会自动补齐）；
+		// 单独报是为了让"这一镜的台词是别处的人说的"这件事在预检里看得见。
+		if speakers := OffScreenSpeakers(p, sh); len(speakers) > 0 && !strings.Contains(sh.H3Prompt, VoiceoverClauseMarker) {
+			add("info", where,
+				"本镜的台词是**画面外的人**说的（%s 不在本镜出场名单里）但 h3_prompt 没写「%s」—— "+
+					"平台会**自动补齐**（画面内的人保持闭嘴）；产出侧写对更稳",
+				strings.Join(speakers, "、"), VoiceoverClauseMarker)
+		}
 		// ── 汉字卫生（2026-09-26 用户报障「成片出现无名字幕」）──────────────────
 		//
 		// 官方 ON-SCREEN TEXT 规则的判据是：**没被英文引号括起来的文字，就是模型会画成

@@ -461,9 +461,16 @@ func (l *Library) entryDirOfLocked(e *Entry) (string, error) {
 //
 // 只认平台发的几个前缀 —— 显示名（中文或人给的名字）绝不会长成这样，
 // 所以"名字段里混进 id"这件事能被安全地区分出来。
+//
+// 【2026-09-29 补 chibi_】Q 版条目（`chibi_char_qiqi`，资产名「祁七·Q版」）此前不在这张表里，
+// 于是界面按卡片 id 取图时它不被当成 id ⇒ 退回按名字找 ⇒ 名字是 id 不是名 ⇒ **404**：
+// 用户看到的就是「资产库 Q版形象封面显示异常」（真机实测：`/image` 用 id **404**、用名字 **200**）。
 func looksLikeCardID(s string) bool {
 	s = strings.TrimSpace(s)
-	for _, p := range []string{"char_", "char:", "prop_", "prop:", "scene_", "scene:"} {
+	for _, p := range []string{
+		"char_", "char:", "prop_", "prop:", "scene_", "scene:",
+		"chibi_", "chibi:", // Q 版派生条目：id 形如 chibi_char_qiqi
+	} {
 		if strings.HasPrefix(s, p) {
 			return true
 		}

@@ -375,26 +375,47 @@ func EnsureChineseDialogue(prompt string) string {
 	return p
 }
 
-// EnsureVoiceoverClause 画外音镜次的"嘴唇闭合"兜底(幂等)。
+// EnsureVoiceoverClause 画外音 / **画面外说话人**镜次的"嘴唇闭合"兜底(幂等)。
 //
 // 依据:技能端产出的台词里 61% 是画外音(旁白/内心/系统音),而 v1 的提示词把它们
 // 与画内对白写得一模一样 —— H3 只看见一句 <d>[Chinese]…</d>,看不见"谁不许开口",
 // 于是让画面里的角色张嘴把旁白念了出来(用户报的「系统旁白,主角动嘴」)。
 //
+// **2026-09-29 补第二种情形**:说话的人**有角色卡但这一镜没让他出场**(用户报的
+// 「镜头外的说话声音不应该镜头内人动嘴唇」)。那种镜 `HasVoiceover` 是 false,
+// 于是既不写闭嘴句、也没有门 —— 模型照样让画面里的人对口型。判据见 project.OffScreenSpeakers。
+//
 // 措辞照抄 internal/director 的官方式写法("...while the on-screen characters' lips
 // remain completely closed"),两侧同一句:技能端产出时写、平台这里兜底补,幂等可重复调用。
 // 判据是 project.VoiceoverClauseMarker,改文案必须保留那个串。
-func EnsureVoiceoverClause(sh *project.Shot) bool {
-	if sh == nil || !project.HasVoiceover(*sh) {
+func EnsureVoiceoverClause(plan *project.Plan, sh *project.Shot) bool {
+	if sh == nil {
+		return false
+	}
+	voiceover := project.HasVoiceover(*sh)
+	offScreen := len(project.OffScreenSpeakers(plan, *sh)) > 0
+	if !voiceover && !offScreen {
 		return false
 	}
 	if strings.Contains(sh.H3Prompt, project.VoiceoverClauseMarker) {
 		return false
 	}
-	sh.H3Prompt = strings.TrimRight(sh.H3Prompt, "\n") + "\n\n" +
-		"VOICEOVER (mandatory): every line flagged as voice-over in this shot is spoken off-screen — " +
-		"the on-screen characters' lips remain completely closed while that voice is heard; " +
-		"no on-screen character mouths those words, and the voice stays off-frame and disembodied."
+	clause := ""
+	if voiceover {
+		clause = "VOICEOVER (mandatory): every line flagged as voice-over in this shot is spoken off-screen — " +
+			"the on-screen characters' lips remain completely closed while that voice is heard; " +
+			"no on-screen character mouths those words, and the voice stays off-frame and disembodied."
+	}
+	if offScreen {
+		// 说话人这一镜不在画面里：画面内的人一律不许动嘴（嘴型只跟着**画面里真的在说的人**走）
+		if clause != "" {
+			clause += "\n"
+		}
+		clause += "OFF-SCREEN SPEAKER (mandatory): the character who speaks these lines is NOT in this shot — " +
+			"the people on screen keep their lips completely closed and their mouths at rest while that voice is heard; " +
+			"nobody on screen mouths those words, and the speaking voice stays off-frame."
+	}
+	sh.H3Prompt = strings.TrimRight(sh.H3Prompt, "\n") + "\n\n" + clause
 	return true
 }
 
@@ -426,7 +447,7 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 画面重新生成出油光,局部重绘会在脸上补一块写实皮肤。约束只写一处必然如此,
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
-	EnsureVoiceoverClause(shot) // 画外音镜次补"嘴唇闭合"(幂等,在装配点做一次)
+	EnsureVoiceoverClause(plan, shot) // 画外音 / 画面外说话人补"嘴唇闭合"(幂等,在装配点做一次)
 	// casting 清单只列**本镜真的会开口的人**(见 ShotSpeakers 的说明):以前这里传的是
 	// `plan.Characters`(全剧角色),于是每个镜头都背着一份 6 人的音色表 —— 含一个 10 岁
 	// 顽童的童声。没有台词的镜头(本集 54 镜里 17 镜)照样收到"这些人要用这些嗓子说话",

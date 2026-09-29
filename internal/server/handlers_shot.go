@@ -192,7 +192,7 @@ func (s *Server) planPostProcess(id string, plan *project.Plan) (details, overfl
 		plan.Shots[i].H3Prompt = pipeline.EnsureChineseDialogue(plan.Shots[i].H3Prompt)
 		// 画外音镜次补"画面里的人嘴唇闭合"(v2 语音层)。技能端写对时这里是空转;
 		// 漏写时兜住 —— 否则模型会让画面里的角色张嘴把旁白念出来。
-		if pipeline.EnsureVoiceoverClause(&plan.Shots[i]) {
+		if pipeline.EnsureVoiceoverClause(plan, &plan.Shots[i]) {
 			voiceovers++
 		}
 	}

@@ -138,6 +138,84 @@ func PlanIssuesText(issues []Issue) []string {
 	return out
 }
 
+// OffScreenSpeakers 本镜里**说话的人不在画面内**的说话人（去重，保序）。
+//
+// 【2026-09-29 用户：「镜头外的说话声音不应该镜头内人动嘴唇」】
+// `HasVoiceover` 覆盖的是"这一镜本来就是画外演出"（旁白/内心/系统音/os 标记）——
+// 它**漏掉**了另一种同样常见的情形：台词是**画面外的人**说的（说话人有角色卡，
+// 但这一镜没让他出场）。此时 HasVoiceover 为 false ⇒ 不写闭嘴句 ⇒ H3 只看见一句
+// `<d>[Chinese]…</d>`，就让画面里的角色张嘴把别人的台词念了出来。
+//
+// 判据：逐条台词看说话人是否在**本镜的出场名单**里（名单在方案里是 id，说话人是名字，
+// 所以两边都要能对上：id / 名字 / 去括注的基名）。
+// os 标记与旁白说话人交给 HasVoiceover（那一条已经管了），这里不重复计数。
+func OffScreenSpeakers(plan *Plan, sh Shot) []string {
+	if plan == nil {
+		return nil
+	}
+	onScreen := map[string]bool{}
+	add := func(s string) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
+		onScreen[strings.ToLower(s)] = true
+	}
+	for _, ref := range sh.Characters {
+		add(ref)
+		add(strings.TrimPrefix(ref, "char:"))
+		for _, c := range plan.Characters {
+			if c.ID == ref || c.Name == ref {
+				add(c.ID)
+				add(strings.TrimPrefix(c.ID, "char:"))
+				add(c.Name)
+			}
+		}
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range sh.Dialogue {
+		name := strings.TrimSpace(l.Speaker)
+		if name == "" || strings.TrimSpace(l.Text) == "" {
+			continue
+		}
+		if l.OS || IsVoiceoverSpeaker(name) {
+			continue // 画外标记 / 旁白说话人：HasVoiceover 那条路管
+		}
+		if onScreen[strings.ToLower(name)] {
+			continue // 他就在画面里，正常对口型
+		}
+		// 名字带括注（「祁七（主角）」）时按基名再对一次
+		base := strings.ToLower(strings.TrimSpace(stripBracketedName(name)))
+		if base != "" && onScreen[base] {
+			continue
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// stripBracketedName 去掉名字里的括注（与 entity_refs 的基名口径一致）。
+func stripBracketedName(s string) string {
+	for _, pair := range [][2]string{{"（", "）"}, {"(", ")"}, {"【", "】"}, {"[", "]"}} {
+		for {
+			i := strings.Index(s, pair[0])
+			if i < 0 {
+				break
+			}
+			j := strings.Index(s[i:], pair[1])
+			if j < 0 {
+				break
+			}
+			s = s[:i] + s[i+j+len(pair[1]):]
+		}
+	}
+	return strings.TrimSpace(s)
+}
+
 // HasVoiceover 本镜是否有画外音(旁白标签 / os=true / narration 非空)。
 func HasVoiceover(sh Shot) bool {
 	// **vo_kind 优先**（技能侧生成规范 §6.6）：`speech` 是"画面里有人在说" ——

@@ -19,14 +19,14 @@ func TestEnsureVoiceoverClause(t *testing.T) {
 		},
 		H3Prompt: "detailed_description:\n[Shot 1] the rain falls.\n<d>[Chinese]雨一直在下。</d>",
 	}
-	if !EnsureVoiceoverClause(sh) {
+	if !EnsureVoiceoverClause(nil, sh) {
 		t.Fatal("画外音镜次应当补上嘴唇闭合子句")
 	}
 	if !strings.Contains(sh.H3Prompt, project.VoiceoverClauseMarker) {
 		t.Fatalf("补完的提示词里没有标记串:%q", sh.H3Prompt)
 	}
 	first := sh.H3Prompt
-	if EnsureVoiceoverClause(sh) {
+	if EnsureVoiceoverClause(nil, sh) {
 		t.Fatal("重复调用不该再改（幂等）")
 	}
 	if sh.H3Prompt != first {
@@ -36,13 +36,13 @@ func TestEnsureVoiceoverClause(t *testing.T) {
 	// 画内对白不许被加画外音子句（加了等于让人闭嘴）
 	on := &project.Shot{ID: 2, Dialogue: []project.Line{{Speaker: "阿甲", Text: "我准了。"}},
 		H3Prompt: "detailed_description:\n[Shot 1] ..."}
-	if EnsureVoiceoverClause(on) || strings.Contains(on.H3Prompt, project.VoiceoverClauseMarker) {
+	if EnsureVoiceoverClause(nil, on) || strings.Contains(on.H3Prompt, project.VoiceoverClauseMarker) {
 		t.Fatal("纯画内对白不该被加画外音子句")
 	}
 
 	// narration 字段非空也算画外音
 	nar := &project.Shot{ID: 3, Narration: "香炉是空的。", H3Prompt: "x"}
-	if !EnsureVoiceoverClause(nar) {
+	if !EnsureVoiceoverClause(nil, nar) {
 		t.Fatal("narration 非空的镜次也要补子句")
 	}
 }
