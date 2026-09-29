@@ -317,7 +317,7 @@ func checkCoverage(p *Plan, add func(level, where, format string, a ...any)) {
 		// 一条"平视中景"或"俯拍特写"在表里找不到对应项 —— 硬填就是写错词（把特写写成
 		// "超广角斜 45° 鸟瞰"），而**写错词比留空更糟**（留空只是少一句镜头语言，写错是把画面带偏）。
 		// 技能侧的实测口径：2462 镜里 1693 镜有官方视角串、769 镜留空（都带 `view_note` 说明原因）。
-		var noView []string
+		var noView, noNote []string
 		viewSet := map[string]bool{}
 		viewShots, optional := 0, 0
 		for i, sh := range p.Shots {
@@ -333,7 +333,22 @@ func checkCoverage(p *Plan, add func(level, where, format string, a ...any)) {
 				noView = append(noView, fmt.Sprintf("#%d", sh.ID))
 			} else {
 				optional++
+				// 留空**必须写明原因**（2026-09-29 用户：「前后镜漂移，压不住场」）。
+				//
+				// 这里**不**改成"每镜必填 view"：官方那 9 条是大机位表，平视中近景/俯拍特写
+				// 没有对应项，硬填就是写错词，而写错词比留空更糟（上面那段注释已论证；
+				// 技能侧 2462 镜里 769 镜留空，都带 `view_note`）。缺的是**留空时的纪律**：
+				// 留空又不说明，成片就只表现为"机位随机跳"——实测那一集 11 镜里 8 镜既没 view 也没 note。
+				if strings.TrimSpace(sh.ViewNote) == "" {
+					noNote = append(noNote, fmt.Sprintf("#%d", sh.ID))
+				}
 			}
+		}
+		if len(noNote) > 0 {
+			add("warn", "plan.shots",
+				"%d 镜的机位视角**留空又没写原因**（view_note）—— 留空本身合法（官方表里没有「平视中近景」这类），"+
+					"但要说清为什么留空，否则整集看起来就是「机位随机跳」：%s",
+				len(noNote), strings.Join(firstN(noNote, 6), " "))
 		}
 		if len(noView) > 0 {
 			add("warn", "plan.shots",

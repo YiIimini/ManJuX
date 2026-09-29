@@ -85,6 +85,7 @@ var sessionOutputSchema = map[SessionKind]string{
 	SessionViews: `{"characters":[{"id":"char_xxx","name":"中文名","board_prompt":"英文三视图板提示词"}]}`,
 	SessionStoryboard: `{"style":"画风一句话","shots":[{"id":1,"scene":"场景名","characters":["角色名"],` +
 		`"prop_ids":["prop_xxx"],"shot_size":"中景","camera":"运镜(自然英文动作)","angle_zh":"平视",` +
+		`"view":"官方九视角之一(逐字;不适合就留空)","view_note":"view 留空时写原因(平视中近景/主观镜头/越轴反打)",` +
 		`"action":"中文动作","duration":5,"mode":"ref2va","h3_prompt":"官方六段式英文提示词"}]}`,
 }
 

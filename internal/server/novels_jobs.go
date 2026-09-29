@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -349,6 +350,27 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 		"每个事件都要能被拍成**一个动作或一句台词** —— 写「他把婚书摔在桌上」,"+
 		"而不是「气氛变得紧张」。重要对白逐字保留(分镜会原样进配音)。\n"+
 		"\n"+
+		// 【2026-09-29 用户:「说明内容转剧本不给力，然后导致分镜脚本不给力」】
+		// 上一版只要求"写一段散文剧本"，于是交出来的是一整段画面与对白、没有任何
+		// **结构标注** —— 分镜拿着它只能自己猜"哪场戏是重点、哪一下是爽点、机位从哪边来"，
+		// 猜出来的就是"机位乱跳、重点平摊"。这一节把输出**钉成结构**，
+		// 每条都来自作者的《一、网文小说转剧本提示词指令》（爆点/爽点密度/段段留钩/人物与道具细节）
+		// 加上分镜真正需要的"场次与功能"标注。
+		"五、**输出格式(必须逐节写出,节标题逐字照抄 —— 分镜会按这些节取信息)**\n"+
+		"【开场爆点】一句话:3 秒内抛出极致冲突/绝境/反转/悬念(无铺垫、无旁白起手)。\n"+
+		"【场 1|地点|时间|内外】\n"+
+		"  目的:这场戏要让观众得到什么(一句话)\n"+
+		"  冲突:谁和谁、争什么\n"+
+		"  转折:在哪里翻(哪一句台词/哪一个动作)\n"+
+		"  爽点:小爽点或大爽点 —— 具体是哪一下\n"+
+		"  钩子:这场结尾留下的悬念/伏笔\n"+
+		"  正文:该场的动作与台词(短句、画面感、台词逐字)\n"+
+		"【场 2|地点|时间|内外】 …(每场一节,场号连续)\n"+
+		"【关键道具与信息】\n"+
+		"  - 道具名|谁拿着或**在什么位置**(如「蹲在碑生左肩上」「挂在腰侧」)|在本集的作用\n"+
+		"  - 信息点|在第几场第一次揭示\n"+
+		"【本集钩子】最后一段留的终极钩子(一句)\n"+
+		"\n"+
 		"只写这一集的内容:不扩写、不引用其它集、不解释你在做什么、不要任何前言后语。\n"+
 		"直接输出改编后的剧本全文(中文,%d-%d 字)。",
 		epScriptMinRunes, epScriptMaxRunes)
@@ -365,6 +387,39 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 		Message: fmt.Sprintf("✔ 本集剧本已改编并回填(%d 字)", len([]rune(strings.TrimSpace(out))))})
+	// **结构自检**（2026-09-29 用户：「内容转剧本不给力，导致分镜脚本不给力」）：
+	// 剧本少一节，分镜就少一份依据 —— 而这件事此前是**静默**的（剧本照样回填、产线照跑，
+	// 只是分镜凭空猜）。缺节就如实报出来，让人重跑这一步。
+	if missing := missingBriefSections(out); len(missing) > 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 本集剧本缺 %d 个必需节：%s —— 分镜会因此少一份依据（重点平摊、机位只能自己猜）；"+
+				"建议重跑本阶段。缺哪节补哪节即可", len(missing), strings.Join(missing, "、"))})
+	}
+}
+
+// briefSectionMarkers 剧本必须有的节（逐字照抄的输出契约的一部分）。
+//
+// 为什么要有这一道：剧本是**分镜唯一的输入**。少了「目的/冲突/爽点」这一节，
+// 分镜就不知道哪一下是重点（成片重点平摊＝压不住场）；少了「关键道具与信息」，
+// 道具的位置关系就丢（实测「Q版总蹲在碑生左肩上」在成片里变成了单独蹲在石台上）。
+var briefSectionMarkers = []string{
+	"【开场爆点】", "【关键道具与信息】", "【本集钩子】",
+	"目的:", "冲突:", "转折:", "爽点:", "钩子:",
+}
+
+// missingBriefSections 剧本里缺哪些必需节（返回人能读懂的名字）。
+func missingBriefSections(brief string) []string {
+	var missing []string
+	for _, m := range briefSectionMarkers {
+		if !strings.Contains(brief, m) {
+			missing = append(missing, strings.Trim(m, "【】:"))
+		}
+	}
+	// 至少要有一场戏的场次头（【场 1|…】这种写法，允许全角/半角竖线与空格差异）
+	if !regexp.MustCompile(`【场\s*\d+\s*[|｜]`).MatchString(brief) {
+		missing = append(missing, "场次头(【场 N|地点|时间|内外】)")
+	}
+	return missing
 }
 
 // episodeBriefOf 取 source.txt 里【本集剧情】那一段。
