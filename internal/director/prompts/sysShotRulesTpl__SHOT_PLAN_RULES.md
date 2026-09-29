@@ -1,4 +1,5 @@
 ## SHOT PLAN RULES
+- **DIALOGUE IS MANDATORY AND VERBATIM (2026-09-29 user: 「分镜配音严重大问题啊，完全听不清说的啥」)**: every line that is spoken in the shot goes into `dialogue` as `{"speaker": "…", "text": "…"}` with the **words written out in full Chinese** — `text` may never be empty. A line with a speaker and no text is worse than no line at all: the renderer then has nothing to say, the model improvises its own audio, and the audience hears gibberish that sounds like Chinese but is not a sentence (measured: ASR of one such clip came back as 「明筹者任劝行表档化﹔我们补偿﹔好,行物则顺左。」). The same words must also appear inside `<d>[Chinese]…</d>` in the `h3_prompt`, in the same order. If a shot has no speech, leave `dialogue` empty — do not invent a speaker.
 - **CLIP LENGTH RULE (user's own storyboard spec, 2026-09-28)**: a non-final clip is **7, 8, 9 or 10 seconds** —
   pick whichever ends on a natural stop (a person settles, a turn completes, a gaze lands, a line finishes).
   The FINAL clip takes whatever remains of the episode. So the **clip count follows from the episode length**:

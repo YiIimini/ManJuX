@@ -86,6 +86,12 @@ var sessionOutputSchema = map[SessionKind]string{
 	SessionStoryboard: `{"style":"画风一句话","shots":[{"id":1,"scene":"场景名","characters":["角色名"],` +
 		`"prop_ids":["prop_xxx"],"shot_size":"中景","camera":"运镜(自然英文动作)","angle_zh":"平视",` +
 		`"view":"官方九视角之一(逐字;不适合就留空)","view_note":"view 留空时写原因(平视中近景/主观镜头/越轴反打)",` +
+		// **dialogue 是必填**（2026-09-29 用户：「分镜配音严重大问题啊，完全听不清说的啥」）：
+		// 真机那一集 16 镜的 dialogue 全是**只有说话人、没有文本**，`<d>` 标签 0 个 ⇒
+		// 渲染时模型手上没有台词可念，它就开始自己瞎念（ASR 转出来是
+		// 「明筹者任劝行表档化﹔我们补偿﹔好,行物则顺左。」这种像中文但不是话的东西）。
+		// 根因之一就是这份 schema 从来没要过 dialogue 的正文。
+		`"dialogue":[{"speaker":"角色名(画外音写 旁白)","text":"逐字中文台词,一个字不许省","os":false}],` +
 		`"action":"中文动作","duration":5,"mode":"ref2va","h3_prompt":"官方六段式英文提示词"}]}`,
 }
 

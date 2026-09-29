@@ -201,7 +201,8 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 		for j, l := range sh.Dialogue {
 			where := fmt.Sprintf("%s.dialogue[%d]", where, j)
 			if strings.TrimSpace(l.Text) == "" {
-				add("warn", where, "台词文本为空")
+				add("fail", where, "台词文本为空 —— 渲染时模型没有台词可念，会自己瞎念"+
+					"（实测 ASR 转出来不是话）；要么把这句话写全（逐字中文），要么把这条删掉")
 				continue
 			}
 			name := strings.TrimSpace(l.Speaker)
