@@ -99,24 +99,45 @@ func TranslateCardPrompts(ctx context.Context, client *llm.Client, plan *project
 	if len(m) == 0 {
 		return 0, fmt.Errorf("翻译结果里没有可用的 JSON")
 	}
-	n := 0
+	n, missing := applyTranslatedPrompts(plan, m)
+	if len(missing) > 0 {
+		// 部分失败也要说出来：这些卡出图时只有"年龄＋头身比"，画出来就是通用脸
+		// （2026-09-29 真机：钟离与石头两张卡都是兜底串，出图后用户问「咋那么相似」）。
+		return n, fmt.Errorf("%d 张卡的翻译结果缺失：%s", len(missing), strings.Join(missing, "、"))
+	}
+	return n, nil
+}
+
+// applyTranslatedPrompts 把 {名: 英文提示词} 写回卡里，返回（写回几张, 没拿到结果的卡名）。
+//
+// **判据必须与收集待翻译卡时同一套**（`NeedsPromptTranslation`：空串**或**兜底串）。
+// 2026-09-29 真机事故：收集那一侧已经改成"兜底串也算待翻译"，而这里还写着
+// `if ImagePrompt != "" { continue }` —— 于是模型翻了、结果也回来了，**却因为字段非空被跳过**：
+// 锚表补出来的卡（钟离、石头…）永远停在 `[ANCHOR-STUB] a Chinese period-film character, aged X`
+// ⇒ 出图只有年龄差异 ⇒ 用户问「石头 和 钟离 咋那么相似？」。
+func applyTranslatedPrompts(plan *project.Plan, m map[string]string) (n int, missing []string) {
+	if plan == nil {
+		return 0, nil
+	}
 	for i := range plan.Characters {
 		ch := &plan.Characters[i]
-		if strings.TrimSpace(ch.ImagePrompt) != "" {
-			continue
+		if !NeedsPromptTranslation(*ch) {
+			continue // 已有**真**提示词的卡不许被覆盖（那是作者口径）
 		}
-		en, ok := m[ch.Name]
+		en, ok := m[strings.TrimSpace(ch.Name)]
 		if !ok {
+			missing = append(missing, ch.Name)
 			continue
 		}
 		en = strings.TrimSpace(en)
 		if en == "" || project.CountCJK(en) > 0 {
+			missing = append(missing, ch.Name)
 			continue // 带汉字的不要（会被画成乱码），宁缺勿滥
 		}
 		ch.ImagePrompt = en
 		n++
 	}
-	return n, nil
+	return n, missing
 }
 
 // parsePromptMap 从模型输出里取 {名: 提示词}，容忍 markdown 围栏与前后废话。

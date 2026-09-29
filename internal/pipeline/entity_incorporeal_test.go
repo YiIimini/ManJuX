@@ -4,6 +4,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // 「不是实体的」不许用人的渲染方式（2026-09-29 用户原话）。
@@ -48,6 +50,52 @@ func TestIncorporealDoesNotUseHumanRendering(t *testing.T) {
 	// ⑤ 它仍然是无实体：半透明、边缘消散
 	if !strings.Contains(p.SheetIdentity, "NOT solid") {
 		t.Error("无实体的身份锁要写明它不是实体（边缘消散）")
+	}
+}
+
+// 翻译结果必须真的**写回**兜底串的卡（2026-09-29 真机：钟离与石头两张卡出图像同一个人）。
+//
+// 事故形状是"同一判据两处实现"：收集待翻译卡时已改成"空串**或**兜底串"，
+// 而写回那一侧还写着 `if ImagePrompt != "" { continue }` —— 模型翻了、结果也回来了，
+// 却因为字段非空被跳过 ⇒ 锚表补出来的卡永远停在 `[ANCHOR-STUB] … aged X`
+// ⇒ 出图只有年龄差异 ⇒ 用户问「石头 和 钟离 咋那么相似？」。
+func TestTranslatedPromptIsWrittenBackToStubCards(t *testing.T) {
+	plan := &project.Plan{Characters: []project.Character{
+		{ID: "char_ff31f70f", Name: "钟离", Description: "外表 17–18，清瘦挺直，八头身，指节细",
+			ImagePrompt: AnchorStubTag + "a Chinese period-film character, aged 17 to 18, eight heads tall"},
+		{ID: "char_452d1576", Name: "石头", Description: "11–12 岁，矮小结实，六头身，圆润苹果脸",
+			ImagePrompt: AnchorStubTag + "a Chinese period-film character, aged 11 to 12, six heads tall"},
+		{ID: "char_written", Name: "已有提示词的卡", Description: "作者写过的",
+			ImagePrompt: "A lean 17-year-old timekeeper with a long braid"}, // 不许被覆盖
+	}}
+	m := map[string]string{
+		"钟离":      "A slender seventeen-year-old timekeeper girl, eight heads tall, long braid to the waist",
+		"石头":      "A stocky eleven-year-old village boy, six heads tall, round apple face",
+		"已有提示词的卡": "SHOULD NOT WIN",
+	}
+	n, missing := applyTranslatedPrompts(plan, m)
+	if n != 2 {
+		t.Fatalf("兜底串的卡必须被写回（2 张），实得 %d；missing=%v", n, missing)
+	}
+	for _, c := range plan.Characters {
+		if strings.Contains(c.ImagePrompt, AnchorStubTag) {
+			t.Errorf("%s 还停在兜底串：%q —— 出图只会是「通用脸」", c.Name, c.ImagePrompt)
+		}
+	}
+	if got := plan.Characters[0].ImagePrompt; !strings.Contains(got, "timekeeper girl") {
+		t.Errorf("钟离没拿到翻译结果：%q", got)
+	}
+	if got := plan.Characters[2].ImagePrompt; got != "A lean 17-year-old timekeeper with a long braid" {
+		t.Errorf("已有真提示词的卡被覆盖了：%q", got)
+	}
+	// 模型漏给某张卡时必须**报出来**（不能静默留着兜底串）
+	plan2 := &project.Plan{Characters: []project.Character{
+		{Name: "钟离", Description: "d", ImagePrompt: AnchorStubTag + "stub"},
+		{Name: "石头", Description: "d", ImagePrompt: AnchorStubTag + "stub"},
+	}}
+	n2, missing2 := applyTranslatedPrompts(plan2, map[string]string{"钟离": "A slender girl"})
+	if n2 != 1 || len(missing2) != 1 || missing2[0] != "石头" {
+		t.Fatalf("漏翻的卡要如实报出来：n=%d missing=%v", n2, missing2)
 	}
 }
 

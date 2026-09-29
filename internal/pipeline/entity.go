@@ -249,15 +249,65 @@ func androidSignal(hay string) bool {
 	return false
 }
 
+// IsChibiCharacter 这张卡是不是 **Q 版形象**（画法档位：2.5–3 头身的大头身）。
+//
+// 【2026-09-29 用户报障：「碑生·Q版（肩上巴掌大的自己）咋不是使用Q版函数方法进行渲染？
+// 还是用的默认渲染」】真机现场：那张卡的 `kind` 字段被模型写成了 **human**，而它的
+// id 是 `char_bisheng_q`（既不是 `chibi_` 前缀也不是 `_chibi` 后缀）—— 于是
+// `ResolveEntityKind` 直接采信 kind=human，整张卡按**人**那套渲染（八头身、成人比例、人脸条款），
+// Q 版就成了"另一个成年人"。
+//
+// 判据三条（任一命中即 Q 版），都用平台自己发过的形态：
+//
+//	① kind 字段写了 chibi；
+//	② id 是 `chibi_<原id>` 前缀或 `<原id>_chibi` 后缀（技能侧的两种写法）；
+//	③ **名字里写着 Q 版**（「碑生·Q版（肩上巴掌大的自己）」）—— 这是平台自己给 Q 版卡起的名字口径
+//	   （见 stages_assets 的派生 Q 版与锚表补齐两处）。
+//
+// 为什么名字也算：Q 版是"同一个人的画法档位"，模型经常把它的 kind 写成 human（它看到的就是个人），
+// 而错档的代价是**整套渲染方法**用错 —— 与 android 那条升级同一个道理，宁可在这里判死。
+func IsChibiCharacter(ch project.Character) bool {
+	if NormalizeEntityKind(ch.Kind) == KindChibi {
+		return true
+	}
+	if IsChibiCardID(ch.ID) {
+		return true
+	}
+	return chibiNameWord(ch.Name)
+}
+
+// IsChibiCardID id 是不是 Q 版派生卡（前缀/后缀两种写法）。
+func IsChibiCardID(id string) bool {
+	s := strings.TrimSpace(id)
+	return strings.HasPrefix(s, "chibi_") || strings.HasPrefix(s, "chibi:") || strings.HasSuffix(s, "_chibi")
+}
+
+// chibiNameWord 名字里有没有 Q 版的写法（Q版 / Q 版 / Q-版 / SD / 呆萌）。
+func chibiNameWord(name string) bool {
+	return hitWord(strings.ToLower(strings.TrimSpace(name)), chibiWords)
+}
+
+// hitWord 文本里有没有词表里的任一个词（小写比对）。
+func hitWord(hay string, words []string) bool {
+	for _, w := range words {
+		if w != "" && strings.Contains(hay, strings.ToLower(w)) {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveEntityKind 解析角色卡最终使用的类型:显式字段优先,缺失/非法则推断。
 //
-// **一处例外(2026-09-29)**:字段写 `human` 但文本里有**强**人形机械证据时,升级成
-// android。理由是这条链的真机后果:LLM 给"非人类机体、机型钢印 U-80001"的女主角填了
-// kind=human,于是她按人的身份锁渲染(锁肤色/年龄感/毛孔红晕) —— 出图就是一个普通古装女子,
-// 用户报「机器人也按照人来生成？」。升级**只认强信号**(非人类机体/机型钢印/义体维护/
-// 机械骨架/机器人/仿生人…),弱信号("机械关节/装甲板"这类)不足以推翻模型写的 human,
-// 免得把真人的机械义肢也改成人形机械。用户仍可在 UI 里手动改回 human(最终纠错口子)。
+// **两处例外**（都是"字段写错了，但文本里有硬证据"）：
+//   - Q 版：字段写 human 但名字/ id 表明它是 Q 版 ⇒ 按 chibi 渲染（见 IsChibiCharacter）；
+//   - 人形机械：字段写 human 但文本写着"非人类机体/机型钢印/…" ⇒ 按 android 渲染。
+//
+// 只认硬证据，弱信号不足以推翻模型写的值（"机械师""义肢"仍是人）。
 func ResolveEntityKind(ch project.Character) EntityKind {
+	if IsChibiCharacter(ch) {
+		return KindChibi
+	}
 	k := NormalizeEntityKind(ch.Kind)
 	if k == KindHuman || k == "" {
 		hay := strings.ToLower(strings.Join([]string{ch.Name, ch.Description, ch.ImagePrompt}, "\n"))
