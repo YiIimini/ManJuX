@@ -63,7 +63,13 @@ func ParallelKinds() []SessionKind {
 
 // sessionOutputSchema 各会话**期望的输出形状**（写进 user 段，是"先告诉 LLM 干什么"的落点）。
 var sessionOutputSchema = map[SessionKind]string{
-	SessionCast: `{"characters":[{"id":"char_xxx","name":"中文名","kind":"human","description":"中文外貌/服装/气质",` +
+	SessionCast: `{"characters":[{"id":"char_xxx","name":"中文名",` +
+		// kind 的**取值清单写进 schema**（2026-09-29）：此前 schema 里只写死 "human"，
+		// 模型于是把所有角色都填 human —— 白瓷装甲的女主角（"非人类机体/机型钢印/义体维护单元"）
+		// 也被填成 human，按人的身份锁出图 ⇒ 画成一个普通古装女子
+		// （用户报「机器人也按照人来生成？」）。取值与 pipeline.EntityKinds 同一套。
+		`"kind":"human|android|object|spirit_pet|beast|incorporeal",` +
+		`"description":"中文外貌/服装/气质",` +
 		`"image_prompt":"英文定妆提示词","board_prompt":"英文三视图板提示词","voice":"英文声线一句话"}],` +
 		`"props":[{"id":"prop_xxx","name":"中文名","en":"英文外观短语","description":"中文描述(含功能作用与独有特征)",` +
 		`"image_prompt":"英文道具图提示词"}]}`,
