@@ -845,7 +845,31 @@ func (s *Store) LoadPlan(id string) (*Plan, error) {
 	// 「不改创作内容、只把已知量写到位」。放这里而不是只放在 director 里，是因为预检/人审/渲染
 	// 三个消费方都必须看到**同一份**方案，否则预检会报渲染器早已修好的假警（实测踩过）。
 	HealPlan(&p)
+	// 方案标题兜底（2026-09-29 用户报「作品库里的每一集名称没有正确展示」）：
+	// 五步专职会话那条路（`split.five_sessions`）**没人负责写 title**，于是
+	// `plan.title` 是空串 —— 而作品库卡片、工作台标题、阶段抽屉都拿它当标题显示，
+	// 用户看到的是《》。"这一集叫什么"平台**本来就知道**：项目 id 就是
+	// `书·第NN集·章名`。取其中的集标签补齐，幂等（只补空值，不覆盖模型/技能侧写的标题）。
+	if strings.TrimSpace(p.Title) == "" {
+		p.Title = EpisodeLabel(id)
+	}
 	return &p, nil
+}
+
+// EpisodeLabel 从项目 id 里取**集标签**：`书·第01集·章名` → `第01集·章名`；
+// 不是分集项目（没有 `·第N集`）时原样返回 id。
+//
+// 为什么要它：分集项目的 id 里同时装着书名与集名，而作品库是按书分组的 ——
+// 组头已经写了书名，卡片里再显示整串 `书·第NN集·章名` 只会被截断成
+// `名册之外，八万零一号·第01…`（用户报的"名称没有正确展示"）。
+func EpisodeLabel(id string) string {
+	id = strings.TrimSpace(id)
+	if i := strings.Index(id, "·第"); i >= 0 {
+		if label := strings.TrimSpace(id[i+len("·"):]); label != "" {
+			return label
+		}
+	}
+	return id
 }
 
 // ManifestPath 镜头清单路径。

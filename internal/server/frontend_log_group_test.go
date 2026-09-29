@@ -36,6 +36,11 @@ func TestLogConsoleGroupsByPhase(t *testing.T) {
 		// ④ 成功的自动收起
 		{"i === 0 || hasProblem", "默认规则：最新那一组与有问题的组展开，其余（已完成的阶段）收起"},
 		{"l.phase", "分组键必须用后端事件的 phase（按管线节点分类的唯一真源）"},
+		// ⑤ 2026-09-29 第二轮要求：完成的标绿 / 最后一条换行 / 悬浮出详情气泡
+		{"const done = i > 0 && !hasProblem", "「已经完成的节点大类显示绿色」：完成判据是**已被后续阶段顶下去**"},
+		{"groupTip(g)", "「鼠标移上去显示详细的 Tip 气泡信息」：组头要有详情气泡"},
+		{"class=\"gprev\"", "收起时那条最后消息要整条显示"},
+		{"white-space: normal", "最后那条小字要**换行**显示（以前是单行省略号，等于没看到）"},
 	} {
 		if !strings.Contains(src, want.needle) {
 			t.Errorf("LogConsole.vue 缺少 %q —— %s", want.needle, want.why)
