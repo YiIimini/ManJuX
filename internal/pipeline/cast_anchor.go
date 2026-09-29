@@ -147,6 +147,27 @@ func anchorCardKind(a project.SettingChar) string {
 // 余下的自由文本字段（脸型/眉眼/服装…）保留在中文 `description` 里，由后续的
 // 「②人物道具提取」专职会话译写 —— 那一步才是给它们做跨语言改写的地方，
 // 这里只保证"出图起码知道这个人多大、多高"。
+// AnchorStubTag 锚表兜底英文提示词的**标记**。
+//
+// 【为什么要标记】`anchorImagePrompt` 只能确定性翻译"年龄 + 头身比"这两项，其余（脸型/眉眼/
+// 发型/服装/记号）是自由文本、翻不了 —— 于是它产出的是 `a Chinese period-film character,
+// aged 18 to 20` 这种**只有年龄的兜底串**。而专职翻译会话（`TranslateCardPrompts`）的判据是
+// "ImagePrompt 为空才翻" ⇒ 兜底串一填进去，翻译就永远不会发生，图像模型只拿到"一个古装人、
+// 18-20 岁"。
+//
+// 真机现场（2026-09-29 第 01 集）：②人物道具会话的产出被解析器丢掉（另一处已修），6 个角色
+// 全部来自锚表兜底卡 ⇒ **六张定妆照长得几乎一样**，白瓷装甲的女主角被画成普通古装女子
+// （用户报「角色咋都生成一样的了，机器人也按照人来生成？」）。
+//
+// 有了标记：翻译会话把它当"没有提示词"补写；装配点把标记**剥掉**（绝不能把标记本身
+// 发给图像模型 —— 那又会变成画面上的字）。
+const AnchorStubTag = "[ANCHOR-STUB] "
+
+// StripAnchorStubTag 剥掉兜底标记（幂等；没有就原样返回）。
+func StripAnchorStubTag(s string) string {
+	return strings.ReplaceAll(s, AnchorStubTag, "")
+}
+
 func anchorImagePrompt(ch project.SettingChar) string {
 	var parts []string
 	if name := strings.TrimSpace(ch.Name); name != "" {
@@ -161,7 +182,7 @@ func anchorImagePrompt(ch project.SettingChar) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	return strings.Join(parts, ", ")
+	return AnchorStubTag + strings.Join(parts, ", ")
 }
 
 // reAgeRange 锚表里的年龄区间（"58–66 岁"、"17–19 岁"；连字符可能是 – — ~ -）。

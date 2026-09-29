@@ -33,6 +33,20 @@ import (
 // （技能侧《平台侧生成规范》§2：正向提示词全英文零汉字，中文只进字幕轨）。
 // 这一处差异在 docs/口径对账-平台vs用户参考库.md 里已登记为**有意反着做**。
 
+// NeedsPromptTranslation 这张卡是否需要专职会话补英文定妆提示词。
+//
+// 【2026-09-29 真机实测】判据不能只认空串：锚表补出来的卡带的是
+// `[ANCHOR-STUB] a Chinese period-film character, aged 18 to 20` 这种**只有年龄**的兜底串，
+// 而它一填进去，"ImagePrompt 非空"这条判据就让翻译永远不会发生 —— 图像模型拿到的是
+// "一个古装人、18–20 岁"，于是**六张定妆照长得几乎一样**，白瓷装甲的机器人被画成普通古装人。
+func NeedsPromptTranslation(ch project.Character) bool {
+	if strings.TrimSpace(ch.Description) == "" {
+		return false // 没描述可翻
+	}
+	p := strings.TrimSpace(ch.ImagePrompt)
+	return p == "" || strings.Contains(p, AnchorStubTag)
+}
+
 // TranslateCardPrompts 给"没有英文画图提示词"的角色卡生成英文定妆提示词（一次调用）。
 //
 // 返回改了几张卡。client 为 nil 或没有待补的卡时直接返回（不打断流水线）。
@@ -42,7 +56,7 @@ func TranslateCardPrompts(ctx context.Context, client *llm.Client, plan *project
 	}
 	var todo []project.Character
 	for _, ch := range plan.Characters {
-		if strings.TrimSpace(ch.ImagePrompt) == "" && strings.TrimSpace(ch.Description) != "" {
+		if NeedsPromptTranslation(ch) {
 			todo = append(todo, ch)
 		}
 	}

@@ -570,8 +570,25 @@ func parsePlan(raw string) (*project.Plan, error) {
 		if err := json.Unmarshal([]byte(x), &plan); err != nil {
 			return nil, err
 		}
-		if strings.TrimSpace(plan.Title) == "" && len(plan.Shots) == 0 {
-			return nil, fmt.Errorf("JSON 合法但既无 title 也无 shots")
+		// 【2026-09-29 真机实测修】这里原来只认 title/shots —— 那是**单轮直出**那份方案的形状。
+		// 而「五步专职会话」里 ②人物道具 与 ④场景 的产出**天然没有 title 也没有 shots**
+		// （schema 就是 `{"characters":[…],"props":[…]}` / `{"scenes":[…]}`），于是它们
+		// 被判成"非法 JSON"→ 回喂重试 → 还是那个形状 → **整段产出被丢掉**。
+		// 真机现场（第 01 集那一跑）：
+		//
+		//	⚠ ④场景提取 会话失败：…原文摘录:{"scenes":[{"id":"scene_maintenance_bay",…
+		//	⚠ ②人物道具提取 会话失败：…原文摘录:{"characters":[{"id":"char_qiqi","name":"祁七",…
+		//	⚠ 源文本的【人物外形锚表】列了 6 个角色，方案里只出了 0 个 —— 已按锚表原文补进…
+		//
+		// 后果是**用户直接看到的**：场景卡 0 张（渲染没有环境参考图）、6 个角色全部来自锚表的
+		// 兜底卡（英文提示词只有"a Chinese period-film character, aged X to Y"）⇒ 六张定妆照
+		// 长得几乎一样，机器人被画成普通古装人。
+		//
+		// 判据改成"**整份对象一个字段都没有**才算空"：会话形状（只有 characters / 只有 scenes）
+		// 合法通过；真正的空 JSON `{}` 仍然报错。少了 shots 由契约门 G002 兜（那是它的活）。
+		if strings.TrimSpace(plan.Title) == "" && len(plan.Shots) == 0 &&
+			len(plan.Characters) == 0 && len(plan.Scenes) == 0 && len(plan.Props) == 0 {
+			return nil, fmt.Errorf("JSON 合法但整份方案为空（title / shots / characters / scenes / props 一个都没有）")
 		}
 		return &plan, nil
 	}

@@ -238,7 +238,7 @@ func anchorDescOf(c anchorChar) string {
 //
 // 找不到标记时返回整串（卡是纯外观串的场合，例如技能侧只写了外貌）。
 func appearanceExcerpt(prompt string) string {
-	s := strings.TrimSpace(prompt)
+	s := strings.TrimSpace(StripAnchorStubTag(prompt))
 	if s == "" {
 		return ""
 	}
@@ -579,7 +579,7 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	//   ① 剥掉微雕文字/极小铭文 —— 在半身幅里它们只会糊成灰渍(实测定妆照胸口与腕部的污渍);
 	//   ② 姿态纪律 —— 半身幅里复杂手势会变成连指手套(实测模型自作主张画了抱胸)。
 	// （清汉字见下方幂等判据**之后** —— 顺序不能反，理由写在那里。）
-	prompt := StripMicroTextForImage(normalizeUniformWording(s.ImagePrompt))
+	prompt := StripAnchorStubTag(StripMicroTextForImage(normalizeUniformWording(s.ImagePrompt)))
 	// 定妆照取景与本片镜头的景别对齐(见 sheet_framing.go):**半身**。
 	// 卡里若同时写着取景 `upper-body framing` 与全身比例 `seven and a half heads`,模型会选
 	// "按比例画全身"(2026-09-26 实测出图就是全身立绘),而这张图要喂给近景/中景/特写
