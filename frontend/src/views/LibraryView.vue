@@ -215,6 +215,31 @@ function imgURL(e, file) {
   return `${base}?file=${encodeURIComponent(String(file).split('/').pop())}`
 }
 
+// entityKindLabel 条目**生效实体类型**的中文短标签（人/器物/灵兽/无实体/Q 版）。
+//
+// 为什么要有它（2026-09-29 用户问「归墟环·维护舱主控语音」是角色？）：`characters` 这个
+// 分类按**存储口径**收"一切有个体的东西"，里面混着非人 —— 不标出来，用户会以为那是一张
+// 人脸卡（而它可能是舱顶一块扬声器圆盘）。判据取**平台判定的生效类型**（落在条目
+// `entity_kind` 里的那一个），不是从名字里猜的。
+//
+// **人（human）不标** —— 那是绝大多数，标出来只是噪音；空值也不标（老条目没判过）。
+const ENTITY_KIND_LABEL = {
+  object: '器物', spirit_pet: '灵兽', beast: '妖兽', incorporeal: '无实体', chibi: 'Q 版',
+}
+const ENTITY_KIND_HINT = {
+  object: '这不是人物卡，是一件器物（定妆照按"整件产品图"取景，不做人脸身份锁）',
+  spirit_pet: '这不是人物卡，是一只灵宠（按宠物取景，不做人脸身份锁）',
+  beast: '这不是人物卡，是一只妖兽（按兽形取景，不做人脸身份锁）',
+  incorporeal: '这不是人物卡：无实体（只有灯/光/声这类形态，画面里没有脸）',
+  chibi: 'Q 版形象（内心活动镜头的演出素材，不是本人主卡）',
+}
+function entityKindLabel(e) {
+  return ENTITY_KIND_LABEL[String(e?.entity_kind || '').trim()] || ''
+}
+function entityKindHint(e) {
+  return ENTITY_KIND_HINT[String(e?.entity_kind || '').trim()] || ''
+}
+
 // cardHasViews 卡片上的多视角标记(与详情弹窗同一判据),让用户不用点开就知道
 // 哪些角色还只有一张正面照。
 function cardHasViews(e) {
@@ -589,6 +614,14 @@ async function remove(e) {
           </div>
           <div class="flex items-center gap-2">
             <b class="text-sm truncate flex-1">{{ row.name }}</b>
+            <!-- 实体类型的**诚实标签**（2026-09-29 用户问「归墟环·维护舱主控语音」是角色？）：
+                 库里 characters 这个分类按存储口径收"一切有个体的东西"，其中有些**不是人**
+                 （无实体/器物/灵兽）。不标出来，用户会以为那是一张人脸卡 ——
+                 标签取的是**平台判定的生效类型**（落库在条目里），不是名字里猜的。 -->
+            <el-tooltip v-if="row.kind === 'characters' && entityKindLabel(row)"
+                        :content="entityKindHint(row)" placement="top">
+              <el-tag size="small" type="info" effect="plain">{{ entityKindLabel(row) }}</el-tag>
+            </el-tooltip>
             <el-tooltip v-if="row.kind === 'characters' && !cardHasViews(row)"
                         content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
               <el-tag size="small" type="warning" effect="plain">单视角</el-tag>

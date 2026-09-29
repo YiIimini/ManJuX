@@ -250,6 +250,14 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 				}
 				if c.lib != nil {
 					if _, err := c.lib.PutCard(kind, cardID, name, description, imagePrompt, path, proj.ID, c.imageSourceKey()); err == nil {
+						// **把生效实体类型记进条目**（2026-09-29）：平台的判定（人 / 器物 / 灵体 /
+						// 妖兽 / 无实体 / Q 版）此刻是**已知量**，而库侧此前只在"看图判定上传图"
+						// 那条路写过它 —— 于是"补多视角 / 重抽"只能按方案文本再猜一次，
+						// 猜错的后果本仓有前科（给一只铜雀做"原地转身"）。整条链只有一个判定，
+						// 就把它落库（幂等：SetEntityKind 空值忽略、非空覆盖）。
+						if kind == "characters" && strings.TrimSpace(string(ek)) != "" {
+							_, _ = c.lib.SetEntityKind(kind, name, string(ek))
+						}
 						// **跨项目同名覆盖要如实说**（2026-09-28 全面审计）：库按 kind+name 精确匹配
 						// 且**同名覆盖** —— B 项目生成同名角色会把 A 的库条目换成 B 的脸，A 此后重渲
 						// 就拿到 B 的脸，而两边界面都看不出异常。Put 把这次覆盖记进条目，这里播报出来。

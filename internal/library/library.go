@@ -585,9 +585,11 @@ func (l *Library) ImagePathByName(kind, name, file string) (string, error) {
 func (l *Library) ClearRelated(kind, name string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	// **按名字定位到条目自己的目录**（不是重推）：同名不同卡时目录可能叫 `名字__ID`，
-	// 重推会把别人的角度图清掉（2026-09-28 审计实测）。
-	dir, err := l.locateByNameLocked(kind, name)
+	// **按条目自己的目录**（不是重推）：同名不同卡时目录可能叫 `名字__ID`，重推会把别人的
+	// 角度图清掉（2026-09-28 审计实测）；而界面传进来的可能是**卡片 id**，只按名字定位
+	// 会一个都找不到（2026-09-29 实测：抽卡时旧角度图没被清掉，详情弹窗继续展示上一张脸
+	// 的角度图）—— 定位一律走 locateEntryLocked（id 优先，与 Match 同一判据）。
+	dir, err := l.locateEntryLocked(kind, name)
 	if err != nil {
 		return
 	}
@@ -644,9 +646,44 @@ func (l *Library) Match(kind, name string) (*Entry, string, bool) {
 	return &e, img, true
 }
 
+// PutInto 按**已存在条目自己的目录**写入（主图替换 / 抽卡 / 重抽走这条路）。
+//
+// 【为什么必须有它，2026-09-29 真机实测】`/api/library/{kind}/{name}/regen`（界面上的
+// 「抽卡」）先按 id 或名字 `Match` 到条目，却拿**URL 里那一段**去做 `Put` —— 而界面传的是
+// **卡片 id**（`libKey(e)` = `e.id`）。于是抽一次卡就在库里**新建**一条以 id 命名的重复条目：
+// 实测 7 个角色抽一轮变 **14 条**（原条目带描述/提示词/三视图板，新条目只有一张主图、连
+// `id` 都没有），此后 `Find` / 复用取到哪一条取决于目录名排序 —— 本仓审计里记过同一形态
+// （「同一角色在库里变成两条，表现为随机的一致性差异」）。
+//
+// 与 `PutCard` 的分工：那条是**按卡片 id 认条目**（自动化链路，可能要新建）；
+// 这条是**已经知道要改哪一条**（界面按 id 点进来的运营操作），一律写进那条自己的目录
+// —— 目录以 `e.Dir` 为准，谁都不许按名字重推。
+func (l *Library) PutInto(kind, name, description, imagePrompt, imgPath, sourceProject, source string) (*Entry, error) {
+	l.mu.RLock()
+	dir, err := l.locateEntryLocked(kind, name)
+	cardID, display := "", ""
+	if err == nil {
+		if raw, rerr := os.ReadFile(filepath.Join(dir, "asset.json")); rerr == nil {
+			var e Entry
+			if json.Unmarshal(raw, &e) == nil {
+				cardID, display = e.ID, e.Name
+			}
+		}
+	}
+	l.mu.RUnlock()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(display) == "" {
+		display = strings.TrimSpace(name)
+	}
+	return l.put(kind, filepath.Base(dir), cardID, display, description, imagePrompt, imgPath, sourceProject, source)
+}
+
 // Put 入库/更新（**无 ID 路径**：手动上传、界面操作、没有卡片的存量条目）。
 //
 // 自动化链路请用 PutCard —— 那一条按卡片 ID 认条目，名字怎么写都不影响命中与复用。
+// **替换已有条目的图请用 PutInto** —— 它按条目自己的目录写，不会因为传了 id 而新建重复条目。
 func (l *Library) Put(kind, name, description, imagePrompt, imgPath, sourceProject, source string) (*Entry, error) {
 	return l.put(kind, safeName(name), "", name, description, imagePrompt, imgPath, sourceProject, source)
 }
@@ -836,10 +873,11 @@ func clearRelatedFiles(dir string) {
 }
 
 // EntryDir 条目目录绝对路径(供调用方在库内落地新生成的角度图/转台图)。
+// 定位 id 优先（界面按卡片 id 调过来的场合，只按名字会找不到）。
 func (l *Library) EntryDir(kind, name string) (string, error) {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.locateByNameLocked(kind, name)
+	return l.locateEntryLocked(kind, name)
 }
 
 // RelatedFiles 条目目录内已存在的多视角图与转台图绝对路径(按主图在前之外的
@@ -890,17 +928,32 @@ func (l *Library) SetMeta(kind, name, description, imagePrompt string) (*Entry, 
 // 为什么要落库而不是每次现判:类型决定整套渲染方法(定妆照取景/多视角方式/
 // 镜头身份锁),而判定要走一次视觉模型。判一次记下来,后续"补全多视角""重抽"
 // 直接用,既省钱也稳定(同一张图每次判出不同类型才是灾难)。
+//
+// 【2026-09-29 两处修】① 定位走 `locateEntryLocked`（**id 优先**）—— 调用方之一是
+// 界面（传卡片 id），只按名字定位会"库资产不存在"；② 空值分支原来调 `Match`，
+// 而本函数**已持有写锁**、`Match` 又要拿读锁 —— 同一 goroutine 重入 RWMutex 是**死锁**
+// （一旦有调用方传空串，请求永不返回，且整库的写锁被占着 ⇒ 资产阶段整条卡住）。
+// 现在空值分支只做一次不带锁的快查。
 func (l *Library) SetEntityKind(kind, name, ek string) (*Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if strings.TrimSpace(ek) == "" {
 		// 空值忽略:不覆盖已有判断(调用方判不出来时不该把已知类型抹掉)
-		if e, _, ok := l.Match(kind, name); ok {
-			return e, nil
+		dir, derr := l.locateEntryLocked(kind, name)
+		if derr != nil {
+			return nil, fmt.Errorf("库资产不存在")
 		}
-		return nil, fmt.Errorf("库资产不存在")
+		raw, rerr := os.ReadFile(filepath.Join(dir, "asset.json"))
+		if rerr != nil {
+			return nil, fmt.Errorf("库资产不存在")
+		}
+		var e Entry
+		if json.Unmarshal(raw, &e) != nil {
+			return nil, fmt.Errorf("库资产不存在")
+		}
+		return &e, nil
 	}
-	dir, err := l.locateByNameLocked(kind, name)
+	dir, err := l.locateEntryLocked(kind, name)
 	if err != nil {
 		return nil, err
 	}

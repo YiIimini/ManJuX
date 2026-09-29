@@ -371,7 +371,10 @@ func (s *Server) libraryRegen(w http.ResponseWriter, r *http.Request) {
 	defer os.Remove(tmp)
 
 	s.lib.ClearRelated(kind, name) // 旧角度图对应上一张定妆照,已失效
-	if _, err := s.lib.Put(kind, name, e.Description, prompt, tmp, e.SourceProject, e.Source); err != nil {
+	// **写回条目自己的目录**（`PutInto`）：界面传进来的 `{name}` 段其实是**卡片 id**
+	// （`libKey(e)` = `e.id`），而 `Put(kind, name, …)` 会按那段字符串**新建**一条目录 ——
+	// 实测抽一轮卡 7 个角色变 14 条（重复条目各带一张脸）。
+	if _, err := s.lib.PutInto(kind, name, e.Description, prompt, tmp, e.SourceProject, e.Source); err != nil {
 		writeErr(w, 500, err)
 		return
 	}
