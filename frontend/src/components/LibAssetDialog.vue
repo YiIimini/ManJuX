@@ -29,6 +29,13 @@ const emit = defineEmits(['update:open', 'changed'])
 
 const detail = ref(null)
 const inLib = ref(true)
+// resolvedKey 真正**查到了**这条库目的那个键（2026-09-29 用户报「工作台里场景与道具的详情弹窗
+// 图片显示不正常」）。库内键有两种口径：角色的 id 是裸的（`char_qiqi`），
+// 而场景/道具是带前缀的（`scene:scene_maintenance_bay` / `prop:prop_mingpai`）。
+// 详情取数做了"换下一个键"的兜底，但图片地址此前**一直用最初那个键**拼 —— 于是场景/道具
+// 明明查到了条目，图片 URL 还是 404（角色恰好是裸 id，所以只有场景与道具坏）。
+// 现在统一用"查到的那把钥匙"，拼图与后续操作都跟它走。
+const resolvedKey = ref('')
 const editDesc = ref('')
 const editPrompt = ref('')
 const metaBusy = ref(false)
@@ -65,9 +72,21 @@ function imgURL(file) {
   return `${base}?file=${encodeURIComponent(String(file).split('/').pop())}`
 }
 function keyOf() {
-  return String(props.libKey || props.name || '').trim()
+  // 优先用"查到的那把钥匙"；还没查到（或不在库里）时退回调用方给的键/名字。
+  return String(resolvedKey.value || props.libKey || props.name || '').trim()
 }
-// labelOf 按文件名推断用途（定妆照/三视图板/转台图/各角度），一眼看出哪张是哪张
+// keyCandidates 依次尝试的库内键：调用方给的键 → 带 kind 前缀的那一种 → 名字。
+// 三种口径都试，是因为库条目的 id 口径按 kind 不同（见上面 resolvedKey 的注释）。
+function keyCandidates() {
+  const base = String(props.libKey || '').trim()
+  const pref = { characters: 'char', scenes: 'scene', props: 'prop' }[props.kind] || ''
+  const out = []
+  for (const k of [base, pref && base && !base.includes(':') ? pref + ':' + base : '', String(props.name || '').trim()]) {
+    if (k && !out.includes(k)) out.push(k)
+  }
+  return out
+}
+// labelOf 按文件名与 kind 推断用途（定妆照/三视图板/转台图/场景图/道具图），一眼看出哪张是哪张
 function labelOf(file) {
   const b = String(file).split('/').pop() || ''
   if (b.includes('_turnaround')) return '转台图'
@@ -76,32 +95,37 @@ function labelOf(file) {
   if (b.includes('_view_side')) return '侧面'
   if (b.includes('_view_back')) return '背面'
   if (b.includes('_view_')) return '多视角'
+  if (props.kind === 'scenes') return '场景图'
+  if (props.kind === 'props') return '道具图'
   return '定妆照'
 }
 const IMG_BOX_H = '190px'
 function tileRatio(file) {
   const b = String(file).split('/').pop() || ''
   if (b.includes('_board') || b.includes('_turnaround')) return '16/9'
+  if (props.kind === 'scenes') return '16/9' // 场景板是横幅，塞进 3/4 会被压成一条
+  if (props.kind === 'props') return '1/1'   // 道具是白底方图
   return '3/4'
 }
 
 async function load() {
   detail.value = null
   inLib.value = true
+  resolvedKey.value = ''
   if (!props.open) return
-  const k = keyOf()
   editDesc.value = props.description || ''
   editPrompt.value = props.imagePrompt || ''
-  if (!k) {
+  const candidates = keyCandidates()
+  if (!candidates.length) {
     // 项目里手动传的资产、连名字都没有匹配键：直接按兜底展示
     inLib.value = false
     return
   }
-  // 先按卡片 id 找，404 再退回名字（老条目是按名字建目录的）
-  for (const key of [k, String(props.name || '').trim()].filter((v, i, a) => v && a.indexOf(v) === i)) {
+  for (const key of candidates) {
     try {
       const d = await api.libraryDetail(props.kind, key)
       detail.value = { ...d, kind: props.kind }
+      resolvedKey.value = key // ← 拼图与后续操作都跟这把钥匙走（场景/道具的 id 带前缀）
       inLib.value = true
       editDesc.value = d.description || editDesc.value
       editPrompt.value = d.image_prompt || editPrompt.value
