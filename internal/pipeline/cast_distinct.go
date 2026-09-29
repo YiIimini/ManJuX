@@ -103,7 +103,24 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 		// 「定妆照「碑生」与「碑生」长得像同一个人」。
 		// 改用平台自己那套判据 project.IsChibiCard（kind=="chibi" 或 chibi_ 前缀，两处口径合一），
 		// 顺带覆盖"kind 标了 chibi 但 id 没按约定写"的卡。
-		if normalizeCardID(ch.ID) == selfCardID || project.IsChibiCard(ch.Kind, ch.ID) {
+		// 判据统一走 `project.ChibiBaseName`（id 与名字的三种写法一次认全：`chibi_x` / `x_chibi` /
+		// 「Q版x」 / 「x·Q版」）。
+		//
+		// 【2026-09-29 用户：「你看一下下面的判断逻辑咋还没有改好？」】真机报的是
+		//	⚠ 定妆照「Q版碑生（卡片 char_q_bisheng）」与「碑生（丙十七）（卡片 char_bisheng）」
+		//	  **长得像同一个人** …
+		// 技能侧这次用的是 `char_q_bisheng` + 名字「Q版碑生」（**前缀**写法），而只认
+		// `chibi_`/`_chibi`/「·Q版」后缀的判据全部落空 ⇒ Q 版又被拿去和本人比。
+		// 教训与上一次同形：**判据认的写法比实际写法少** —— 所以口径收成 project.ChibiBaseName 一处。
+		if normalizeCardID(ch.ID) == selfCardID ||
+			project.IsChibiCard(ch.Kind, ch.ID) ||
+			project.ChibiBaseName(ch.ID, ch.Name) != "" {
+			continue
+		}
+		// **自己就是 Q 版 ⇒ 谁都不比**（2026-09-29）：Q 版的五官是按本人"简化"出来的，
+		// 跟本人比必然得到"像同一个人"，跟别的角色比也没有意义（画法档位不同）。
+		// 与上面"比对对象是 Q 版"那条对称 —— 两边一起排干净，才不会再冒出这类结论。
+		if selfIsChibi {
 			continue
 		}
 		// **自己是 Q 版**：本人的 Q 版与本人**必然**同脸 —— 它就是同一个人（Q 版形象是本人

@@ -107,6 +107,78 @@ func CharacterProportionIssue(name, desc string, chibi bool) string {
 	return ""
 }
 
+// chibiNameWords Q 版的名字写法（比 pipeline 的 chibiWords 少几个"描述性"词 ——
+// 这里是在**名字**里找 Q 版标记，不是在一段描述里找）。
+var chibiNameWords = []string{"Q版", "Q 版", "Q-版", "chibi"}
+
+// ChibiBaseName 从 Q 版卡的 **id 或名字**里取出"本体基名"（不是 Q 版返回空）。
+//
+// 【2026-09-29 用户：「你看一下下面的判断逻辑咋还没有改好？」
+//
+//	⚠ 定妆照「Q版碑生（卡片 char_q_bisheng）」与「碑生（丙十七）（卡片 char_bisheng）」
+//	  **长得像同一个人** …
+//
+// 】根因是**命名写法比认的多**：技能侧这次用的是 **`Q版<名字>` 前缀 + `char_q_<名字>` 这种 id**，
+// 而既有判据只认 `chibi_<本体>` / `<本体>_chibi` 与名字里的「<本体>·Q版」后缀 ——
+// 于是这张 Q 版既没被当成 Q 版卡，找主卡也找不到（⇒ 退回文生图、另画一张脸）。
+//
+// 所以把"Q 版卡的名字口径"收成**一处**，三种写法一次认全：
+//
+//	id：`chibi_<本体>` / `char_chibi_<本体>`（前缀）、`<本体>_chibi`（后缀）
+//	名字：`Q版<本体>`（前缀）、`<本体>·Q版` / `<本体>Q版`（后缀）
+//
+// 括注先剥掉（「碑生·Q版（肩上巴掌大的自己）」→「碑生·Q版」），再把 Q 版词与分隔符去掉。
+func ChibiBaseName(id, name string) string {
+	// 名字里带 Q 版标记 → 从名字取（名字是卡面的显示名，家族键/资产匹配都按它）
+	if base := chibiNameStrip(name); base != "" {
+		return base
+	}
+	// 名字没标记但 id 是 Q 版写法 → 退回 id 里剩下的那段（`chibi_char_bisheng` → `bisheng`）。
+	// 只有 slug、取不到中文名 —— 但足够做"这张卡是不是 Q 版"与按 id 匹配了。
+	return chibiIDBaseName(id)
+}
+
+// chibiNameStrip 名字里带 Q 版标记时，去掉标记与分隔符后剩下的本体名（没有标记返回空）。
+func chibiNameStrip(name string) string {
+	s := StripBracketedName(strings.TrimSpace(name))
+	if s == "" {
+		return ""
+	}
+	up := strings.ToUpper(s)
+	for _, w := range chibiNameWords {
+		i := strings.Index(up, strings.ToUpper(w))
+		if i < 0 {
+			continue
+		}
+		rest := strings.TrimSpace(s[:i] + s[i+len(w):])
+		rest = strings.Trim(rest, " ·・-_—（）()【】[]")
+		if rest == "" {
+			return ""
+		}
+		if base := CharFamilyBaseName(rest); base != "" {
+			return base
+		}
+		return rest
+	}
+	return ""
+}
+
+// chibiIDBaseName 从 id 里取本体（三种前缀/后缀写法）。
+func chibiIDBaseName(id string) string {
+	s := strings.TrimSpace(id)
+	s = strings.TrimPrefix(s, "char:")
+	for _, p := range []string{"chibi_", "char_chibi_", "char_q_", "q_"} {
+		if strings.HasPrefix(s, p) {
+			return strings.TrimPrefix(s, p)
+		}
+	}
+	if strings.HasSuffix(s, "_chibi") {
+		s = strings.TrimSuffix(s, "_chibi")
+		return strings.TrimPrefix(s, "char_")
+	}
+	return ""
+}
+
 // ChibiFields 锚表里的 **Q 版档位**字段（技能侧 2026-09-29 主动提出要补进模板的那套）。
 //
 // 为什么需要这几个字段（而不是靠名字猜）：

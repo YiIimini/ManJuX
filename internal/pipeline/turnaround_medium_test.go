@@ -46,11 +46,16 @@ func TestTurnaroundMediumLock(t *testing.T) {
 	// 不可爱」）——它走 Q 版自己的可爱风格化 3D 块，见下面那一段断言。
 	for _, k := range []EntityKind{KindHuman, KindAndroid} {
 		got := TurnaroundMediumBlock(k, false)
-		for _, want := range []string{"Every human face is idealised and semi-stylised", "Skin specifically"} {
+		for _, want := range []string{"Every human face is idealised and semi-stylised", "Skin specifically", "ETHNICITY (mandatory)"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s 介质锁缺少人类专属条款 %q", k, want)
 			}
 		}
+	}
+	// **国风的脸是中国人的脸**（2026-09-29 用户：「这TM国风，阿枝、霍延、钟离给我渲染外国人的脸」）：
+	// 介质块里必须点名东亚/中国面孔 —— 不点名时模型会往欧美面孔的默认先验走。
+	if got := TurnaroundMediumBlock(KindHuman, false); !strings.Contains(got, "every character in this production is Chinese") {
+		t.Error("人脸条款没写「这是中国人的戏」—— 出图会往欧美面孔走")
 	}
 	// Q 版：必须是**手办/玩具**那套，且**不许**混进写实人脸条款（混进去就画成写实小人）
 	{

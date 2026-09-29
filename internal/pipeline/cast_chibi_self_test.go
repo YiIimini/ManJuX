@@ -47,9 +47,20 @@ func TestChibiNeverComparesAgainstItsOwnBaseCard(t *testing.T) {
 			t.Fatalf("主卡被拿去和它的 Q 版比了：%+v", peers2)
 		}
 	}
-	// ③ 别的角色仍然要比（这条闸门不能把该比的也排掉）
-	if len(peers) != 1 || peers[0].id != "char_shenyan" {
-		t.Fatalf("同剧别的角色应当仍在比对名单里，实得 %+v", peers)
+	// ③ **Q 版不参与撞脸自检**：自己是 Q 版时比对名单为空（跟本人比必然"像"，
+	// 跟别人比也没意义 —— 画法档位不同）。2026-09-29 用户第二次报同一件事之后定的口径。
+	if len(peers) != 0 {
+		t.Fatalf("Q 版不该参与撞脸自检，实得比对名单 %+v", peers)
+	}
+	// ④ 别的角色仍要比（这道闸门不能把该比的也排掉）：主卡的名单里要有沈砚、没有它的 Q 版
+	foundOther := false
+	for _, p := range peers2 {
+		if p.id == "char_shenyan" {
+			foundOther = true
+		}
+	}
+	if !foundOther {
+		t.Fatalf("同剧别的角色应当仍在主卡的比对名单里，实得 %+v", peers2)
 	}
 	// ④ 还原判据本身
 	if got := chibiBaseID("chibi_char_bingsheng"); got != "char_bingsheng" {

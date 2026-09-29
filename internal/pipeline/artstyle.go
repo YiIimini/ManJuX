@@ -169,6 +169,17 @@ func animatedMediumRenderBlock() string {
 func humanFaceRenderClause() string {
 	return "\n- Every human face is idealised and semi-stylised — a clean graphic facial structure with simplified, " +
 		"readable features — rendered with real skin texture and the same fine film grain as the rest of the frame.\n" +
+		// 【2026-09-29 用户：「这TM国风，阿枝、霍延、钟离给我渲染外国人的脸，卧槽」】
+		//
+		// 全套提示词里**没有一句说过"这是中国人"** —— 介质块写的是"国风"（指美术风格），
+		// 身份块写的是"理想化半风格化面孔"，而亚洲/中国面孔这件事**从来没被点名**。
+		// 出图模型在没被要求时会往"欧美面孔"的默认先验走（实测阿枝/霍延/钟离全成了外国人）。
+		// 这条必须写死：**这是中国人的戏**，面孔按东亚结构画。
+		"- ETHNICITY (mandatory): every character in this production is Chinese — East Asian facial structure " +
+		"(wide-flat facial planes, a softer jawline, almond-shaped or epicanthic-folded eyes, straight jet-black " +
+		"hair, warm light-tan East Asian skin tone), exactly as the brief describes that person; each face must " +
+		"read as a Chinese period-drama performer, with no Caucasian / European facial structure and no Western " +
+		"features anywhere in the cast.\n" +
 		"- Skin specifically: matte and even, with no oily or greasy skin, no wet or sweaty highlights, and no hard specular on the forehead, nose bridge or cheekbones.\n" +
 		"(中文对照:人物:理想化半风格化面孔(结构清晰、五官简化可读),皮肤有真实质感与与全片一致的细颗粒;" +
 		"肤色哑光均匀,额头/鼻梁/颧骨的高光宽而暗哑;全片不许出现油光、汗湿反光、塑料蜡质感、真人照片脸或任何影射真实人物/演员/公众人物的长相。)"
