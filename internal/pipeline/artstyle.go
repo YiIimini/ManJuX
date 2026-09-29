@@ -203,7 +203,7 @@ func TurnaroundMediumBlock(kind EntityKind, realistic bool) string {
 		return ""
 	}
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 		return animatedFaceRenderBlock() // 通用介质 + 人脸条款
 	default:
 		// 器物/灵宠/妖兽/无实体:只给通用介质(给器物写"肤色哑光"等于逼它长一张脸)
@@ -325,7 +325,7 @@ var (
 // 自作主张画了**双臂抱胸** —— 半身幅里手只占很少像素,于是画成一只连指手套(实测)。
 func PortraitPoseClause(kind EntityKind) string {
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 		return " Pose: calm and simple, arms relaxed; keep the hands out of frame or uncomplicated" +
 			" (this is a reference sheet, not a pose study — complex hand poses render as blobs at this framing)."
 	default:

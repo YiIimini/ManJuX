@@ -32,7 +32,17 @@ import (
 type EntityKind string
 
 const (
-	KindHuman       EntityKind = "human"       // 人
+	KindHuman EntityKind = "human" // 人
+	// KindAndroid 人形机械(2026-09-29 用户:「单独弄，避免又渲染错误」)。
+	//
+	// 为什么必须单列:它是**有脸、有人形轮廓**的角色，但**不是人** —— 取景要按人像走
+	// (上半身正脸，用户口径)，身份锁却必须锁在**机械结构**上:装甲分缝、关节环、发光标记、
+	// 材质与机型钢印，而不是"肤色/年龄感/毛孔/红晕"这类人类特征。此前只有 human 一档，
+	// 于是白瓷装甲的女主角被画成普通古装女子（用户报「机器人也按照人来生成？」）。
+	//
+	// 它与 KindObject 的区别要写死:器物取景是"整件居中 + 转台自转 + 禁止拟人化"，
+	// 套在人形机械上会把一个站着的人形角色拍成一件转台产品图。
+	KindAndroid     EntityKind = "android"     // 人形机械:义体/仿生人/机械人偶(有脸有人形)
 	KindObject      EntityKind = "object"      // 物:器物/机关/傀儡/雕像/道具类"角色"
 	KindSpiritPet   EntityKind = "spirit_pet"  // 灵宠
 	KindBeast       EntityKind = "beast"       // 妖兽
@@ -49,12 +59,14 @@ const (
 	KindScene EntityKind = "scene"
 )
 
-// EntityKinds 全部类型(顺序即 UI 展示顺序)。
-var EntityKinds = []EntityKind{KindHuman, KindObject, KindSpiritPet, KindBeast, KindIncorporeal, KindChibi}
+// EntityKinds 全部类型(顺序即 UI 展示顺序)。人形机械紧跟"人":它就是人形角色那一档。
+var EntityKinds = []EntityKind{KindHuman, KindAndroid, KindObject, KindSpiritPet, KindBeast, KindIncorporeal, KindChibi}
 
 // EntityKindLabel 中文标签(UI 与日志用)。
 func EntityKindLabel(k EntityKind) string {
 	switch k {
+	case KindAndroid:
+		return "人形机械"
 	case KindObject:
 		return "物"
 	case KindSpiritPet:
@@ -75,6 +87,8 @@ func EntityKindLabel(k EntityKind) string {
 // KindHint 给用户看的一句话说明(UI 提示用)。
 func KindHint(k EntityKind) string {
 	switch k {
+	case KindAndroid:
+		return "人形机械/义体/仿生人:人形取景(半身正脸)+ 原地转身,身份锁**锁机械结构**(装甲分缝/关节/发光标记/材质/机型钢印),不许退化成普通人"
 	case KindObject:
 		return "器物/机关/傀儡/雕像等非生命体(如一只铜雀):整件居中取景 + 转台自转,并禁止拟人化"
 	case KindSpiritPet:
@@ -96,6 +110,10 @@ func NormalizeEntityKind(s string) EntityKind {
 	switch v {
 	case "human", "person", "人", "人物", "人类":
 		return KindHuman
+	case "android", "humanoid_machine", "humanoid", "cyborg", "robot", "synthetic",
+		"人形机械", "人形機甲", "机械人", "機械人", "机器人", "仿生人", "义体人", "機體人", "机体人",
+		"机械人偶", "機偶", "机偶", "义体", "機甲人":
+		return KindAndroid
 	case "object", "artefact", "artifact", "prop", "物", "器物", "物件", "道具", "机关", "傀儡", "木偶":
 		return KindObject
 	case "spirit_pet", "spiritpet", "pet", "familiar", "灵宠", "宠", "灵物":
@@ -113,12 +131,29 @@ func NormalizeEntityKind(s string) EntityKind {
 // 推断用的关键词。**只用于存量项目兜底**(新方案由 LLM 填 kind),所以宁可保守:
 // 命中强信号才偏离 human,避免把"肤色暗铜哑光 + 旧铜环"的真人误判成器物。
 var (
+	// **强"人形机械"信号**(2026-09-29):出现即判 android —— 必须排在 objectStrongWords 之前。
+	// 为什么:人形机械的描述里几乎必然带着"机械/机体/机械骨架"这类词,而 机械 是物件表的强信号
+	// ⇒ 先判物件会把一个站着的人形角色拍成"整件居中 + 转台自转"的产品图(那正是本次要避免的
+	// 另一种渲染错误)。种子里"非人类机体/义体维护单元/机型钢印"就是第 01 集祁七的原话。
+	androidStrongWords = []string{
+		"非人类机体", "人形机械", "人形機甲", "机械人", "機械人", "机器人", "仿生人", "义体人",
+		"机械人偶", "機偶", "机偶", "机械骨架", "机体骨架", "机型钢印", "义体维护", "仿生机体",
+		"humanoid machine", "android", "cyborg", "synthetic human", "synthetic body", "robot",
+		"mechanical body", "artificial body", "bioroid", "replicant",
+	}
+	// 弱信号:只在**没有**更强的类型信号时才用于把人升级成人形机械(单独出现不足以否定"人":
+	// "机械师"是职业、"义肢"是假肢 —— 这两种仍然是人)。
+	androidWeakWords = []string{
+		"机械关节", "金属关节", "装甲接缝", "装甲分缝", "发光标记", "充电口", "能量核心",
+		"处理器", "序列号", "出厂", "义体", "机体", "机械臂", "关节环", "面甲", "伺服",
+		"装甲板", "机械体", "机械结构",
+	}
 	// 强"非人"信号:出现即判物件(即使描述里有人形/年龄词 —— 机关人、傀儡戏子都算物件)
 	objectStrongWords = []string{
 		"铜雀", "器物", "机关", "傀儡", "木偶", "偶人", "人偶", "提线", "纸人", "面塑",
 		"雕像", "石像", "铜像", "泥塑", "灯笼", "走马灯", "伞妖", "机械", "铆钉", "齿轮",
 		"木雕", "铜雕", "陶俑", "俑", "法器", "令牌", "符纸", "玉玺", "印章", "面具", "机枢",
-		"puppet", "marionette", "doll", "statue", "figurine", "automaton", "android",
+		"puppet", "marionette", "doll", "statue", "figurine", "automaton",
 		"mechanical", "clockwork", "rivet", "gear", "artefact", "artifact", "golem",
 		"bronze sparrow", "mechanical bird", "wooden man", "clockwork",
 	}
@@ -147,8 +182,13 @@ var (
 
 // InferEntityKind 由角色卡文本推断实体类型(存量项目兜底 + kind 缺失时使用)。
 //
-// 判定顺序即优先级:无实体 > 物件 > 妖兽/灵宠 > Q 版 > 人。
-// 为什么物件排最前:一只"机关铜雀"的描述里同时有"雀"(动物)、"铜"(材质)、"铆钉"(结构),
+// 判定顺序即优先级:人形机械 > 无实体 > 物件 > 妖兽/灵宠 > Q 版 > 人。
+//
+// 为什么"人形机械"排最前:它的描述里必然带"机械/机体"这类词,而那些是物件表的强信号 ——
+// 先判物件会把站着的人形角色拍成转台产品图。反过来,物件的描述**不会**带"非人类机体/
+// 义体维护/机型钢印"这类"这是一具人形机体"的话。
+//
+// 为什么物件排第二:一只"机关铜雀"的描述里同时有"雀"(动物)、"铜"(材质)、"铆钉"(结构),
 // 而它的本体是**做出来的东西**;把它判成动物或人都会画出完全错误的东西。
 func InferEntityKind(name, description, imagePrompt string) EntityKind {
 	hay := strings.ToLower(strings.Join([]string{name, description, imagePrompt}, "\n"))
@@ -162,6 +202,9 @@ func InferEntityKind(name, description, imagePrompt string) EntityKind {
 			}
 		}
 		return ""
+	}
+	if hit(androidStrongWords) != "" {
+		return KindAndroid
 	}
 	if hit(incorporealWords) != "" {
 		return KindIncorporeal
@@ -181,12 +224,64 @@ func InferEntityKind(name, description, imagePrompt string) EntityKind {
 	return KindHuman
 }
 
+// androidSignal 文本里有没有"这是一具人形机体"的证据(强信号即可,弱信号要两条)。
+//
+// 弱信号单独出现不算:本仓前科是"机械师"(职业)、"义肢"(假肢)这类词把真人卷进来 ——
+// 那两种仍然是**人**。所以弱信号要求**两条同时出现**(如"机械关节 + 发光标记")。
+func androidSignal(hay string) bool {
+	if hay == "" {
+		return false
+	}
+	for _, w := range androidStrongWords {
+		if strings.Contains(hay, strings.ToLower(w)) {
+			return true
+		}
+	}
+	n := 0
+	for _, w := range androidWeakWords {
+		if strings.Contains(hay, strings.ToLower(w)) {
+			n++
+			if n >= 2 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ResolveEntityKind 解析角色卡最终使用的类型:显式字段优先,缺失/非法则推断。
+//
+// **一处例外(2026-09-29)**:字段写 `human` 但文本里有**强**人形机械证据时,升级成
+// android。理由是这条链的真机后果:LLM 给"非人类机体、机型钢印 U-80001"的女主角填了
+// kind=human,于是她按人的身份锁渲染(锁肤色/年龄感/毛孔红晕) —— 出图就是一个普通古装女子,
+// 用户报「机器人也按照人来生成？」。升级**只认强信号**(非人类机体/机型钢印/义体维护/
+// 机械骨架/机器人/仿生人…),弱信号("机械关节/装甲板"这类)不足以推翻模型写的 human,
+// 免得把真人的机械义肢也改成人形机械。用户仍可在 UI 里手动改回 human(最终纠错口子)。
 func ResolveEntityKind(ch project.Character) EntityKind {
-	if k := NormalizeEntityKind(ch.Kind); k != "" {
+	k := NormalizeEntityKind(ch.Kind)
+	if k == KindHuman || k == "" {
+		hay := strings.ToLower(strings.Join([]string{ch.Name, ch.Description, ch.ImagePrompt}, "\n"))
+		if hasStrongAndroidSignal(hay) {
+			return KindAndroid
+		}
+	}
+	if k != "" {
 		return k
 	}
 	return InferEntityKind(ch.Name, ch.Description, ch.ImagePrompt)
+}
+
+// hasStrongAndroidSignal 只看**强**信号(升级判据专用,不含弱信号计数)。
+func hasStrongAndroidSignal(hay string) bool {
+	if hay == "" {
+		return false
+	}
+	for _, w := range androidStrongWords {
+		if strings.Contains(hay, strings.ToLower(w)) {
+			return true
+		}
+	}
+	return false
 }
 
 // EntityProfileOf 取该类型的渲染方法集合。

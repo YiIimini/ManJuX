@@ -264,6 +264,10 @@ func appearanceExcerpt(prompt string) string {
 //
 // 用于把"发型与发长、服装层数"这类**人形外貌**条款只发给该发的镜头:器物/妖兽/
 // 灵宠/无实体镜头里出现这些词,等于把主体往人形上拽。
+//
+// **人形机械不在这一档**(2026-09-29):它虽然是人形,但"服装层数(夹克+背心+内搭)"这句
+// 对它是有害的 —— 一台机体不该被套上古装层次;它的结构由 Android 那套 AnchorLock/AntiForm
+// 负责(锁装甲分缝/关节/发光标记/材质)。发型那条走 PortraitHairClause(定妆照侧)。
 func hasHumanLikeChar(chars []anchorChar) bool {
 	for _, c := range chars {
 		switch NormalizeEntityKind(string(c.kind)) {
@@ -727,7 +731,7 @@ func castFaceIDs(plan *project.Plan, selfID, selfName string) []string {
 // 只对有人物头发的类型注入(器物/灵体没有发型可谈)。
 func PortraitHairClause(kind EntityKind) string {
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 	default:
 		return ""
 	}
@@ -1426,6 +1430,13 @@ func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityK
 		"and never reuse one face template across the cast"
 	one := "exactly ONE person appears in the frame"
 	switch NormalizeEntityKind(string(kind)) {
+	case KindAndroid:
+		// 人形机械:别与同剧的人撞脸/撞装甲 —— 判据落在**装甲板件与标记**上,
+		// 而不是"五官要像另一个人"(那是人那一档的判据)。
+		traits = "a different armour layout, different panel seams and joint structure, different marker placement and colour, " +
+			"different material finish — it must never read as the same unit with a recolour, and never as a plain human in costume; " +
+			"these traits MUST dominate the image"
+		one = "exactly ONE machine unit appears in the frame"
 	case KindObject:
 		traits = "a different silhouette, form, part count, material, colour and finish — it must never be mistaken for a person " +
 			"or for a living creature; these traits MUST dominate the image"

@@ -67,8 +67,88 @@ type entityProfile struct {
 //
 // 其余五类是 2026-09-24 按用户「不同类型的角色要用不同的渲染函数」新增的:同一套人形
 // 转身提示词套在铜雀/妖兽/灵体上都是错的(器物没有人脸可锁,灵体没有脚可以转身)。
-var entityProfiles = map[EntityKind]entityProfile{
+// init 把"人形机械"这一档挂上去 —— **在"人"那套渲染方法上换掉措辞**,而不是另抄一份。
+//
+// 为什么用 init 派生而不是在 map 字面量里再写一大块:
+//
+//	① 人形机械与"人"的**动作/取景是同一套**(站着、原地转身、半身正脸)—— 那部分逐字相同,
+//	   抄一份必然漂移(本仓的老毛病:同一件事两处实现,改一处忘一处);
+//	② 真正不同的只有**身份锁与反错误形态**:锁的是装甲分缝/关节环/发光标记/材质/机型钢印,
+//	   禁的是"退化成普通人"(人类皮肤毛孔、红晕、汗渍、布料古装)。
+//
+// map 字面量在构建时读不到自己,所以这里必须在 init 里做(那时 entityProfiles 已经建好)。
+func init() {
+	p := entityProfiles[KindHuman]
+	p.Label = "人形机械"
+	p.Hint = KindHint(KindAndroid)
+	// 标记换了 ⇒ 以前按"人"渲染出来的定妆照会被判成"与当前类型不符"(界面提示重出),这正是我们要的。
+	p.SheetMarker = "ANDROID / HUMANOID-MACHINE FIDELITY"
+	p.SheetIdentity = androidIdentityBlock()
+	// 取景尾巴**必须重写**(与器物/灵宠同一档):人那条走 LLM 原句,而机体的定妆照我们要自己
+	// 收口成"上半身正脸 + 纯白背景 + 合成面甲",否则 LLM 可能写 full-body 或带场景的取景。
+	p.RewriteSheetFraming = true
+	p.SheetFraming = androidSheetFraming()
+	p.AnchorKind = "人形机械"
+	p.AnchorRefNote = "参考图里的这台机体就是它本体(同一角色可能有两张参考图:" +
+		"**锐利的正面定妆照(机型与面甲的唯一权威)** + 横向拼合的转身图;转身图左起第一格就是同一张正面照、" +
+		"其余格是同一台机体的其它角度,**它不是第二个角色、也不是一个穿着仿古服装的人**):"
+	p.AnchorLock = "身份锁:画面中这台机体的人形轮廓/装甲分缝与板件排布/关节结构/发光标记的位置与颜色/" +
+		"材质(陶瓷装甲、金属骨架、线缆)/机身编号刻印必须**照抄参考图里对应的那台机体**,逐项一致 —— " +
+		"参考图拍的就是它本体,不是风格参考;面甲(脸)的形状与五官位置以正面定妆照为准,那是**合成面甲**;" +
+		"不得按文字另画一个人类:面甲保持光洁的陶瓷质感,头发按定妆照照抄,服装按装甲板件照抄。"
+	p.AnchorUseFor = "下面的文字描述只用于「动作/姿态/镜头/台词/所在场景」," +
+		"不得用来改写机体结构,也不得用来把它改成人类:"
+	p.RenderLook = androidRenderLookBlock()
+	p.AntiForm = "KEEP IT A MACHINE (mandatory, every frame): the visible machine structure stays — armour panel seams, " +
+		"joint rings, cable runs, glowing markers, and the material contrast between ceramic shell plates and the darker metal frame. " +
+		"The faceplate surface is synthetic and matte: seamless, non-porous, with crisp specular highlights and no fabric weave; " +
+		"the costume stays the armour plates shown in the reference, never period cloth robes."
+	p.JudgePoints = "人形机械判据:① 人形轮廓与装甲板件排布是否与参考图一致 ② 关节环/线缆/发光标记是否还在 " +
+		"③ 面甲形状是否与参考图同形 ④ **有没有退化成普通人**(面甲变成有毛孔与红晕的人类面孔、装甲被换成布料古装、换了一张人脸模板)"
+	// 多视角:动作与人相同(原地转身),补一条"结构不得被演成人"的保留项与负面项。
+	p.TurnRetention = append(p.TurnRetention,
+		"<Picture 1> : the MACHINE STRUCTURE is the identity — keep the same armour panel seams, joint rings, cable runs, "+
+			"glowing marker positions and colours, and the same ceramic-vs-metal material contrast in every frame. "+
+			"This is a humanoid-machine body, not a costume: do NOT swap it for flesh, do NOT smooth the seams away.")
+	p.TurnNegative += " no human skin texture (no pores, blush, sweat, freckles), no cloth period costume over the frame, " +
+		"no replacement of the faceplate with a different human face template."
+	entityProfiles[KindAndroid] = p
+}
 
+// androidIdentityBlock 人形机械定妆照的**身份忠实度**块(对应"人"的 identityFidelityBlock)。
+//
+// 与人的差别只有落点:人锁"脸与肤色",它锁"结构、材质与面甲" —— 但**同样**要求面甲形状照抄
+// (否则同一个角色每张图换一张脸,跨镜就接不上)。
+//
+// 写法是**正向描述**(图像侧是 CFG 1.0 的蒸馏模型:否定词不生效、还会把名词当指令画出来,
+// 见 artstyle.go 顶部) —— 所以这里一个 not/never 都不写,禁项写成"它长什么样"。
+func androidIdentityBlock() string {
+	return "ANDROID / HUMANOID-MACHINE FIDELITY (mandatory): the unit in the reference picture IS this character — " +
+		"copy it exactly, item by item: the human-shaped silhouette and overall proportions; the armour panel layout and " +
+		"the seams between panels; the joint rings, servos and cable runs; the position, shape and colour of every glowing " +
+		"marker; the material contrast between the pale ceramic shell plates and the darker bare-metal frame; and the " +
+		"machine number etched on the unit. The face is a SYNTHETIC FACEPLATE: copy its shape, eye shape and brow line " +
+		"from the reference; its surface is smooth matte ceramic — seamless, even, non-porous, with a soft specular sheen " +
+		"and crisp panel edges. Hair and costume follow the reference exactly (same hair, same armour plates)."
+}
+
+// androidSheetFraming 人形机械的取景尾巴:取景口径与"人"相同(上半身正脸、纯白背景),
+// 但把"面甲/陶瓷质感"写进去 —— 机体不该被画成一张有皮肤质感的人脸。
+func androidSheetFraming() string {
+	return " FRAMING (mandatory): a front-facing bust of the unit, shot STRAIGHT-ON from the front — the faceplate looks " +
+		"directly into the camera, the head is upright and squared to the lens, the WHOLE head is inside the frame with " +
+		"headroom above the hair; the picture is cropped at mid-chest; pure white seamless backdrop, soft even studio " +
+		"lighting, no background props, no on-screen lettering."
+}
+
+// androidRenderLookBlock 渲染侧质感条款(接在通用介质块后)。
+func androidRenderLookBlock() string {
+	return "ANDROID SURFACE (mandatory): hard-surface ceramic and metal shading with visible panel seams and joint rings; " +
+		"crisp specular highlights on the armour, scuffed bare metal on the frame; emissive glowing markers kept at the " +
+		"positions shown in the reference. The surface reads synthetic: smooth matte ceramic with a soft sheen."
+}
+
+var entityProfiles = map[EntityKind]entityProfile{
 	// ---------- 人 ----------
 	KindHuman: {
 		Label:         "人",

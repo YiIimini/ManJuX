@@ -139,7 +139,7 @@ func BoardOutPath(masterPath string) string {
 // 再套一张"3 个全身 + 6 个头"的板子只会画出三只鸟排排站。
 func HumanoidBoardKind(ek EntityKind) bool {
 	switch NormalizeEntityKind(string(ek)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 		return true
 	}
 	return false

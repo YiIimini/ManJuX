@@ -297,7 +297,7 @@ func StripPortraitLeadFraming(prompt string) string {
 // （图像侧是 CFG 1.0 的蒸馏模型，否定词不生效还会把名词当指令画出来，见 artstyle.go）。
 func PortraitLeadFraming(kind EntityKind, width, height int) string {
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 	default:
 		return "" // 器物/灵宠/妖兽/场景各有自己的取景纪律，不套人像
 	}
@@ -323,7 +323,7 @@ func PortraitLeadFraming(kind EntityKind, width, height int) string {
 // 画出来(见 artstyle.go 顶部),所以这里一个 not/never 都不写。
 func PortraitFramingClause(kind EntityKind, width, height int) string {
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 	default:
 		// 器物/灵宠/妖兽/场景各有自己的取景纪律(prof.SheetFraming),不套人像构图。
 		return ""

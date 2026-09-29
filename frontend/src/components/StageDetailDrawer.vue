@@ -51,6 +51,7 @@ const charPeople = computed(() => charGroups.value.length)
 // 兜底用本地简表,保证后端未就绪时选择器仍可用。
 const FALLBACK_KINDS = [
   { key: 'human', name: '人', hint: '人物:半身正面定妆照 + 原地转身' },
+  { key: 'android', name: '人形机械', hint: '人形机械/义体/仿生人:人形取景(半身正脸)+ 原地转身,身份锁锁机械结构(装甲分缝/关节/发光标记/材质/机身刻印)' },
   { key: 'object', name: '物', hint: '器物/机关/傀儡/雕像等非生命体:整件居中取景 + 转台自转,并禁止拟人化' },
   { key: 'spirit_pet', name: '灵宠', hint: '小型灵物/宠物:全身兽形取景,保留自身解剖结构' },
   { key: 'beast', name: '妖兽', hint: '大型或凶猛的非人生物:全身取景,体型体量照原文' },

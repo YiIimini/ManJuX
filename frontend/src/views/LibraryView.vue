@@ -224,9 +224,10 @@ function imgURL(e, file) {
 //
 // **人（human）不标** —— 那是绝大多数，标出来只是噪音；空值也不标（老条目没判过）。
 const ENTITY_KIND_LABEL = {
-  object: '器物', spirit_pet: '灵兽', beast: '妖兽', incorporeal: '无实体', chibi: 'Q 版',
+  android: '人形机械', object: '器物', spirit_pet: '灵兽', beast: '妖兽', incorporeal: '无实体', chibi: 'Q 版',
 }
 const ENTITY_KIND_HINT = {
+  android: '人形机械：有人形轮廓但不是人。定妆照取人形（半身正脸），身份锁锁在机械结构上（装甲分缝/关节/发光标记/材质/机身刻印），不锁人类肤色与年龄感',
   object: '这不是人物卡，是一件器物（定妆照按"整件产品图"取景，不做人脸身份锁）',
   spirit_pet: '这不是人物卡，是一只灵宠（按宠物取景，不做人脸身份锁）',
   beast: '这不是人物卡，是一只妖兽（按兽形取景，不做人脸身份锁）',

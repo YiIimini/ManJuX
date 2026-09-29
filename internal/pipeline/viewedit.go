@@ -56,7 +56,7 @@ func ViewEditMediumBlock(kind EntityKind, realistic bool) string {
 		return ""
 	}
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindChibi:
+	case KindHuman, KindAndroid, KindChibi:
 		return animatedFaceImageBlock()
 	default:
 		return animatedMediumImageBlock()

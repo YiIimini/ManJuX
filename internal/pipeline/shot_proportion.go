@@ -180,7 +180,7 @@ func wantsHumanProportion(shotKinds []EntityKind) bool {
 	human := false
 	for _, k := range shotKinds {
 		switch NormalizeEntityKind(string(k)) {
-		case KindHuman:
+		case KindHuman, KindAndroid:
 			human = true
 		case KindChibi:
 			// Q 版的比例归它自己的类型(二到三头身):同镜两套比例＝模型取中值。
