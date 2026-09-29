@@ -107,6 +107,78 @@ func CharacterProportionIssue(name, desc string, chibi bool) string {
 	return ""
 }
 
+// ChibiFields 锚表里的 **Q 版档位**字段（技能侧 2026-09-29 主动提出要补进模板的那套）。
+//
+// 为什么需要这几个字段（而不是靠名字猜）：
+//   - 平台侧要把 Q 版**由主卡定妆照图生图**产出（A6）—— 那就必须**确定性地**知道
+//     "这个 Q 版是谁的"，靠名字前缀猜（`碑生·Q版`）在命名一变就断；
+//   - 头身比要喂两道判据：出图提示词（Q 版是 2–3 头身）与 `ProportionAnchorIssues` 的区间门；
+//   - 常驻位置（「总蹲在碑生左肩上」）要进分镜的空间锚 —— 实测这一条丢了，
+//     Q 版在成片里变成"单独蹲在石台上"。
+//
+// 字段名与写法（技能侧模板照这个补）：
+//
+//	Q版形象：有|无
+//	Q版本体：碑生（丙十七）        ← ref2img 拿谁的定妆照（写名字，平台按名字/去括注基名对卡）
+//	Q版比例锚_机器：2.5 头身       ← 与 A7 门同源判据（2–3 头身）
+//	Q版位置：总蹲在碑生左肩上      ← 进分镜的空间锚
+type ChibiFields struct {
+	Has      bool    // Q版形象：有
+	Parent   string  // Q版本体：<原角色名>
+	Ratio    float64 // Q版比例锚_机器：<数字> 头身
+	Position string  // Q版位置：<常驻位置>
+}
+
+// ParseChibiFields 从一段锚表原文（或一张 Q 版卡自己的描述）里取 Q 版档位字段。
+//
+// 容错：中英文冒号都认；"有/无"缺省按"写了本体或比例"也算有。
+func ParseChibiFields(text string) (ChibiFields, bool) {
+	var f ChibiFields
+	found := false
+	for _, ln := range strings.Split(text, "\n") {
+		k, v, ok := splitAnchorKV(ln)
+		if !ok {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(k, "Q版形象"):
+			found = true
+			f.Has = !strings.Contains(v, "无")
+		case strings.HasPrefix(k, "Q版本体"):
+			found = true
+			f.Has = true
+			f.Parent = strings.TrimSpace(v)
+		case strings.HasPrefix(k, "Q版比例锚"):
+			found = true
+			f.Has = true
+			if r, ok := HeadToBodyRatio(v); ok {
+				f.Ratio = r
+			}
+		case strings.HasPrefix(k, "Q版位置"):
+			found = true
+			f.Has = true
+			f.Position = strings.TrimSpace(v)
+		}
+	}
+	return f, found
+}
+
+// splitAnchorKV 拆一行 `键：值`（中英文冒号、前后缀的 - / * / 空白都容忍）。
+func splitAnchorKV(line string) (string, string, bool) {
+	s := strings.TrimSpace(line)
+	s = strings.TrimLeft(s, "-*# \t")
+	for _, sep := range []string{"：", ":"} {
+		if i := strings.Index(s, sep); i > 0 {
+			k := strings.TrimSpace(s[:i])
+			v := strings.TrimSpace(s[i+len(sep):])
+			if k != "" && v != "" {
+				return k, v, true
+			}
+		}
+	}
+	return "", "", false
+}
+
 // ProportionAnchorIssues 全方案的头身比锚问题（每条一句人话）。
 func ProportionAnchorIssues(p *Plan) []string {
 	if p == nil {
