@@ -49,13 +49,17 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			}
 			chars = append(chars, anchorChar{
 				name: ch.Name, desc: strings.TrimSpace(ch.Description),
+				en:    appearanceExcerpt(ch.ImagePrompt),
 				voice: strings.TrimSpace(ch.Voice), kind: ResolveEntityKind(ch),
 			})
 		}
 	}
 	for _, sc := range plan.Scenes {
 		if sc.ID == shot.Scene && strings.TrimSpace(sc.Description) != "" {
-			scenes = append(scenes, anchorChar{name: sc.Name, desc: strings.TrimSpace(sc.Description)})
+			scenes = append(scenes, anchorChar{
+				name: sc.Name, desc: strings.TrimSpace(sc.Description),
+				en: appearanceExcerpt(sc.ImagePrompt),
+			})
 		}
 	}
 	// 【镜头比例锚点】(2026-09-26)按景别注入技能侧的人体比例口径 —— 定妆照那条链上一直
@@ -101,7 +105,7 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 			sb.WriteString(p.AnchorUseFor + ":\n")
 		}
 		for i, c := range chars {
-			fmt.Fprintf(&sb, "%d. %s[%s]:%s\n", i+1, c.name, EntityKindLabel(c.kind), normalizeUniformWording(c.desc))
+			fmt.Fprintf(&sb, "%d. %s[%s]:%s\n", i+1, c.name, EntityKindLabel(c.kind), anchorDescOf(c))
 			if extra := uniformCivilianClarify(c.desc); extra != "" {
 				sb.WriteString("   " + strings.TrimSpace(extra) + "\n")
 			}
@@ -157,7 +161,7 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 	if len(scenes) > 0 {
 		sb.WriteString("场景同样以参考图为准(同一地点不得改造型/改结构):\n")
 		for i, sc := range scenes {
-			fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, sc.name, sc.desc)
+			fmt.Fprintf(&sb, "%d. %s:%s\n", i+1, sc.name, anchorDescOf(sc))
 		}
 	}
 	if len(chars) > 0 {
@@ -199,8 +203,61 @@ func anchorPrompt(plan *project.Plan, shot *project.Shot, facesOn bool) string {
 // anchorChar 身份锚定里的一条出场对象(角色带类型与声线,场景只用名字+描述)。
 type anchorChar struct {
 	name, desc string
-	voice      string
-	kind       EntityKind
+	// en 该对象的**英文外观串**（卡里出定妆照用的那一份，见 appearanceExcerpt）。
+	// 锚定块**内容**优先用它：进 H3 的是正向提示词，而本仓口径写明
+	// 「正向提示词必须全英文，中文只进元数据」（docs/平台侧生成规范-角色场景道具分镜 §2）。
+	// 空串 = 这张卡没有英文提示词（老包/手工卡）⇒ 回落中文 desc 并如实留在提示词里。
+	en    string
+	voice string
+	kind  EntityKind
+}
+
+// anchorDescOf 锚定块里"这一条长什么样"的正文：**英文优先，中文兜底**。
+//
+// 【2026-09-29 真机实测】原来一律用中文 `description`，而模型会把汉字**画到画面上**：
+// 第 01 集第 1 镜的金属铭牌上清清楚楚写着「钢印铭牌」四个字，而它们正是这段中文里的两个词
+// （「机型**钢印** U-80001」＋「腰侧挂一串金属**铭牌**记名链」）被当成"要画的字"照搬。
+// 平台自己的口径就是"正向提示词全英文"（同上 §2 的那条 ⛔ 反向执行），这里属于漏网的一处。
+//
+// 兜底保留中文是有意的：宁可留汉字，也不要让这一镜**没有身份信息** ——
+// 英文缺失只会出现在老包/手工卡上，那种卡本来也没有可用的英文外观串。
+func anchorDescOf(c anchorChar) string {
+	if s := strings.TrimSpace(c.en); s != "" {
+		return s
+	}
+	return normalizeUniformWording(c.desc)
+}
+
+// appearanceExcerpt 从卡片的英文提示词里取**外观描述那一段**（装配块之前的部分）。
+//
+// 为什么不能整串照搬：卡里那份提示词是**给定妆照**用的，末尾带着
+// `RENDER STYLE / IDENTITY FIDELITY / FRAMING (mandatory): a front-facing chest-up portrait…`
+// 这类**取景与画风**条款 —— 把它原样塞进镜头提示词，等于让这一镜也去拍"正脸半身像"
+// （画面与景别直接打架）。所以只取平台标记之前的外观正文；标记之后的条款由本函数所在的
+// 锚定块自己按类型下发。
+//
+// 找不到标记时返回整串（卡是纯外观串的场合，例如技能侧只写了外貌）。
+func appearanceExcerpt(prompt string) string {
+	s := strings.TrimSpace(prompt)
+	if s == "" {
+		return ""
+	}
+	cut := len(s)
+	for _, m := range []string{
+		"RENDER STYLE (mandatory)", "IDENTITY FIDELITY", "CAST DISTINCTNESS",
+		"FRAMING (mandatory)", "HAIR EXACTLY AS BRIEFED", "FACE ID (final check",
+		"OBJECT FIDELITY", "FORMLESS-FORM FIDELITY", "SCENE FIDELITY",
+		"ARTEFACT CLAUSE", "Pose: calm and simple",
+	} {
+		if i := strings.Index(s, m); i >= 0 && i < cut {
+			cut = i
+		}
+	}
+	out := strings.TrimSpace(strings.TrimRight(s[:cut], " ,;.\n"))
+	if out == "" {
+		return "" // 标记在开头（只有装配块、没有外观正文）：当作没有英文
+	}
+	return out
 }
 
 // hasHumanLikeChar 本镜是否有"有头发/有服装"类型的主体(人类 / Q 版)。
