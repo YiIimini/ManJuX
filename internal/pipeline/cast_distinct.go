@@ -82,13 +82,16 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 		return nil
 	}
 	selfCardID := normalizeCardID(selfID)
-	var selfName string
+	var selfName, selfKind string
 	for _, ch := range plan.Characters {
 		if normalizeCardID(ch.ID) == selfCardID {
 			selfName = ch.Name
+			selfKind = ch.Kind
 			break
 		}
 	}
+	// 自己是不是 Q 版派生卡（是的话，与本人的主卡**不能比** —— 那是同一个人）
+	selfIsChibi := project.IsChibiCard(selfKind, selfCardID)
 	var out []castPeer
 	for _, ch := range plan.Characters {
 		id := "char:" + ch.ID
@@ -101,6 +104,28 @@ func castPeers(projDir string, plan *project.Plan, assets map[string]project.Ass
 		// 改用平台自己那套判据 project.IsChibiCard（kind=="chibi" 或 chibi_ 前缀，两处口径合一），
 		// 顺带覆盖"kind 标了 chibi 但 id 没按约定写"的卡。
 		if normalizeCardID(ch.ID) == selfCardID || project.IsChibiCard(ch.Kind, ch.ID) {
+			continue
+		}
+		// **自己是 Q 版**：本人的 Q 版与本人**必然**同脸 —— 它就是同一个人（Q 版形象是本人
+		// 内心演出用的派生素材）。2026-09-29 真机报障：给「碑生·Q版（肩上巴掌大的自己）」
+		// 重出之后，平台一本正经地报
+		//
+		//	⚠ 重出后「碑生·Q版（肩上巴掌大的自己）」仍与「碑生（丙十七）」像同一个人
+		//	  （脸型、眼型、眉形一致，额前碎发和额头印记相同，仅年龄不同。）
+		//
+		// —— 用户回了一句「这判断结论给我搞笑了」。上面那道 `IsChibiCard(ch…)` 只排**比对对象**
+		// 是 Q 版的情况，没排**自己**是 Q 版的情况，于是 Q 版被拿去跟本人的主卡比。
+		// 判据按 id 与名字两条（技能侧 id 是 `chibi_<原id>` 前缀、名字是「<原名>·Q版」）。
+		if selfIsChibi {
+			if base := chibiBaseID(selfCardID); base != "" && base == normalizeCardID(ch.ID) {
+				continue
+			}
+			if b := chibiBaseName(selfName); b != "" && b == project.CharFamilyBaseName(ch.Name) {
+				continue
+			}
+		}
+		// 反方向：比对对象是 Q 版而自己是它的主卡 —— 同理，不算"别的角色"
+		if peerBase := chibiBaseID(normalizeCardID(ch.ID)); peerBase != "" && peerBase == selfCardID {
 			continue
 		}
 		// 同一个人的另一档（或同名）：不是"别的角色"，比了只会得到"长得像同一个人"
@@ -141,6 +166,40 @@ func selfChibi(plan *project.Plan, cardID string) bool {
 		}
 	}
 	return project.IsChibiCard("", cardID)
+}
+
+// chibiBaseID 把 Q 版派生卡的 id 还原成主卡 id（不是 Q 版就返回空串）。
+//
+// 技能侧两种写法都认：前缀 `chibi_char_bingsheng`、后缀 `char_bingsheng_chibi`。
+func chibiBaseID(id string) string {
+	s := normalizeCardID(id)
+	if s == "" {
+		return ""
+	}
+	if strings.HasPrefix(s, "chibi_") {
+		return strings.TrimPrefix(s, "chibi_")
+	}
+	if strings.HasSuffix(s, "_chibi") {
+		return strings.TrimSuffix(s, "_chibi")
+	}
+	return ""
+}
+
+// chibiBaseName 把「碑生·Q版（肩上巴掌大的自己）」还原成基名「碑生」（不是 Q 版就返回空串）。
+func chibiBaseName(name string) string {
+	s := strings.TrimSpace(name)
+	if s == "" {
+		return ""
+	}
+	// 先在**原名**上认 Q 版（剥完括注与档名之后就看不出来了）
+	if !strings.Contains(strings.ToUpper(s), "Q版") && !strings.Contains(strings.ToUpper(s), "Q 版") {
+		return ""
+	}
+	// 「碑生·Q版（肩上巴掌大的自己）」→（去括注）→「碑生·Q版」→（去档名）→「碑生」
+	if i := strings.IndexAny(s, "（(【["); i > 0 {
+		s = s[:i]
+	}
+	return project.CharFamilyBaseName(s)
 }
 
 // peerLabelByID 从比对对象里取某张卡的 id（告警里用来消除同名歧义）。
