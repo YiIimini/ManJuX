@@ -131,8 +131,11 @@ type sheetJob struct {
 	kind   string                   // characters / scenes / props
 	id     string                   // 资产 id 的实体部分(char_01v4;不是 "char:char_01v4")
 	name   string                   // 卡名
-	prompt string                   // 已装配好的定妆提示词
-	ek     EntityKind               // 生效实体类型(决定身份校验的判据点)
+	// desc 卡面描述：Q 版找主卡时**优先读它的 `Q版本体` 字段**（技能侧 2026-09-29 补的锚表字段），
+	// 名字档名只是兜底 —— 名字里没有档名的 Q 版（「肩上巴掌大的自己」）靠名字找不到主卡。
+	desc   string
+	prompt string     // 已装配好的定妆提示词
+	ek     EntityKind // 生效实体类型(决定身份校验的判据点)
 	w, h   int
 	seed   int64
 }
@@ -291,8 +294,18 @@ func ChibiDerivationWanted(desc string) bool {
 	return true
 }
 
-func sheetRefKeys(id, name string) (idKey, nameKey string) {
+func sheetRefKeys(id, name, desc string) (idKey, nameKey string) {
 	if project.IsChibiCard("", id) {
+		// 【2026-09-29 技能侧补上的 `Q版本体` 字段优先】Q 版找主卡原来只按名字档名猜
+		// （「青禾 · Q版」→「青禾」）：名字里没有档名的（如「肩上巴掌大的自己」）就找不到主卡 ⇒
+		// 退回文生图 ⇒ 另画一张脸。锚表给了本体名之后，这里以它为准（确定性关联，改名也不怕）。
+		if f, ok := project.ParseChibiFields(desc); ok && strings.TrimSpace(f.Parent) != "" {
+			base := project.CharFamilyBaseName(project.StripBracketedName(strings.TrimSpace(f.Parent)))
+			if base == "" {
+				base = strings.TrimSpace(f.Parent)
+			}
+			return "", base
+		}
 		base := project.CharFamilyBaseName(name)
 		if base == "" || base == name {
 			return "", ""
@@ -308,7 +321,7 @@ func sheetRefKeys(id, name string) (idKey, nameKey string) {
 // 图就在资产表里、且是"本集这张脸"的权威;跨集时(第一集定的妆、本集只用到第 4 档)
 // 本集根本没有主卡,只能去资产库取。
 func (c *Coordinator) resolveSheetRef(j sheetJob) sheetRef {
-	idKey, nameKey := sheetRefKeys(j.id, j.name)
+	idKey, nameKey := sheetRefKeys(j.id, j.name, j.desc)
 	if idKey == "" && nameKey == "" {
 		return sheetRef{}
 	}

@@ -186,7 +186,7 @@ func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 			continue // 他就在画面里，正常对口型
 		}
 		// 名字带括注（「祁七（主角）」）时按基名再对一次
-		base := strings.ToLower(strings.TrimSpace(stripBracketedName(name)))
+		base := strings.ToLower(strings.TrimSpace(StripBracketedName(name)))
 		if base != "" && onScreen[base] {
 			continue
 		}
@@ -198,8 +198,11 @@ func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 	return out
 }
 
-// stripBracketedName 去掉名字里的括注（与 entity_refs 的基名口径一致）。
-func stripBracketedName(s string) string {
+// StripBracketedName 去掉名字里的括注（与 entity_refs 的基名口径一致）。
+//
+// 导出给 pipeline 用：锚表的 Q版本体 常写成「碑生（丙十七）」这种带括注的形式，
+// 而找主卡要的是基名「碑生」（CharFamilyBaseName 只切 · 档名，不切括注）。
+func StripBracketedName(s string) string {
 	for _, pair := range [][2]string{{"（", "）"}, {"(", ")"}, {"【", "】"}, {"[", "]"}} {
 		for {
 			i := strings.Index(s, pair[0])
