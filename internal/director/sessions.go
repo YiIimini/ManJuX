@@ -57,8 +57,15 @@ const (
 )
 
 // ParallelKinds 用户点名的"可以同时跑起来"的那三步（②④⑤）。
+// ParallelKinds 可以**同时跑**的会话：②人物道具 与 ⑤分镜。
+//
+// ④场景**不在这一批**（2026-09-29 改）：⑤ 按名字引用场景，必须等 ④ 把场景名定下来再跑 ——
+// 并行的代价实测是"分镜里出现不存在的场景名 ⇒ 那一镜没有环境参考图"。
+// 顺序由调用方（GenerateSessions）安排：④ 先跑，然后 ② 与 ⑤ 并行。
+//
+// 角色不需要这样：② 与 ⑤ 都拿到同一份【人物外形锚表】，名字现成且一致。
 func ParallelKinds() []SessionKind {
-	return []SessionKind{SessionCast, SessionScene, SessionStoryboard}
+	return []SessionKind{SessionCast, SessionStoryboard}
 }
 
 // sessionOutputSchema 各会话**期望的输出形状**（写进 user 段，是"先告诉 LLM 干什么"的落点）。
@@ -341,12 +348,31 @@ func GenerateSessions(ctx context.Context, client *llm.Client, sourceText, setti
 	// ②④⑤ 的 user 段：已确立清单（首轮为空，只有设定集）+ 本集原文
 	base := SessionBrief(SessionCast, nil, settingBrief)
 	user := base + "\n【本集原文】\n" + sourceText
-	jobs := make([]SessionJob, 0, 3)
+
+	// ④ 场景**先跑**（2026-09-29 真机实测）：⑤分镜按 `"scene":"场景名"` 引用场景，名字由装配侧
+	// 对号成 id。并行时 ④ 还没定名，⑤ 就自己起了一个 —— 实测第 01 集分镜写「归墟环断口维护舱」，
+	// 而场景卡是「归墟环维护舱大厅 / 东头值班终端台 / 舱门裂隙外的灰雾」⇒ 名字对不上
+	// ⇒ **那一镜装配不到场景参考图**（日志「⚠ 镜头 1 缺 1 张参考图(归墟环断口维护舱)」），
+	// 环境每镜重编、背景漂移。
+	//
+	// 角色没有这个问题：② 与 ⑤ 都拿到同一份【人物外形锚表】，名字是现成的、一致的。
+	// 所以只把 ④ 提到前面（几十秒），②人物道具 与 ⑤分镜 **仍然并行** —— 用户点名的
+	// "可以同时跑起来"没有被牺牲，牺牲的是"分镜引用一个还不存在的场景名"。
+	sceneRes := RunSessionsParallel(ctx, client,
+		[]SessionJob{{Kind: SessionScene, User: user}}, opt, onNote)
+	onNote("五步专职会话：②人物道具 / ⑤分镜 **同时跑**（④场景已先跑完，场景名拿到手）")
+
+	early := MergeSessions(sceneRes)
+	jobs := make([]SessionJob, 0, len(ParallelKinds()))
 	for _, k := range ParallelKinds() {
-		jobs = append(jobs, SessionJob{Kind: k, User: user})
+		u := user
+		if k == SessionStoryboard {
+			// ⑤ 的 user 段带上已确立的清单（含 ④ 的场景名）——"按名字引用"才有名字可引用。
+			u = SessionBrief(k, early, settingBrief) + "\n【本集原文】\n" + sourceText
+		}
+		jobs = append(jobs, SessionJob{Kind: k, User: u})
 	}
-	onNote("五步专职会话：②人物道具 / ④场景 / ⑤分镜 **同时跑**")
-	res := RunSessionsParallel(ctx, client, jobs, opt, onNote)
+	res := append(sceneRes, RunSessionsParallel(ctx, client, jobs, opt, onNote)...)
 	if err := ErrAllSessionsFailed(res); err != nil {
 		return nil, err
 	}

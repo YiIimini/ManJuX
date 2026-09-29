@@ -38,12 +38,15 @@ func TestSessionLayer(t *testing.T) {
 		}
 	}
 
-	// ── ② 用户点名的"可以同时跑起来"就是这三步 ─────────────────────────────
+	// ── 用户点名的"可以同时跑起来"仍在，但顺序有讲究（2026-09-29 真机实测）─────
+	// ④场景要先跑：⑤分镜按 `"scene":"场景名"` 引用，并行时名字还没定，模型自己起一个
+	// ⇒ 实测那一镜装配不到场景参考图（「⚠ 镜头 1 缺 1 张参考图(归墟环断口维护舱)」）。
+	// ②人物道具 与 ⑤分镜 仍然并行：角色名来自同一份【人物外形锚表】，两边看到的一样。
 	kinds := ParallelKinds()
-	if len(kinds) != 3 {
-		t.Fatalf("并行的是 ②④⑤ 三步，实际 %d 步", len(kinds))
+	if len(kinds) != 2 {
+		t.Fatalf("并行的是 ②⑤ 两步（④ 先跑），实际 %d 步", len(kinds))
 	}
-	for _, want := range []SessionKind{SessionCast, SessionScene, SessionStoryboard} {
+	for _, want := range []SessionKind{SessionCast, SessionStoryboard} {
 		found := false
 		for _, k := range kinds {
 			if k == want {

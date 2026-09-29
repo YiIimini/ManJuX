@@ -1,6 +1,9 @@
 package project
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // entity_refs.go 分镜里 `scene` / `characters` 的**名字 → id 归一**（2026-09-29 真机实测驱动）。
 //
@@ -150,7 +153,7 @@ func (ix *entityIndex) add(id, name string) {
 	}
 }
 
-// lookup 按"归一全名 → 基名"的顺序找一个 id。
+// lookup 按"归一全名 → 基名 → **字面重合兜底**"的顺序找一个 id。
 func (ix *entityIndex) lookup(raw string) (string, bool) {
 	for _, k := range []string{normEntityKey(raw), entityBaseKey(raw)} {
 		if k == "" {
@@ -165,7 +168,79 @@ func (ix *entityIndex) lookup(raw string) (string, bool) {
 			}
 		}
 	}
-	return "", false
+	return ix.loose(raw)
+}
+
+// loose 字面重合兜底（2026-09-29 真机实测驱动）。
+//
+// 【为什么要它】⑤分镜脚本是按**场景名**引用场景的，而它此前与 ④场景 会话**并行**跑 ——
+// 场景名还没定，模型就自己起了一个。实测第 01 集：
+//
+//	分镜写的是「归墟环断口维护舱」，而场景卡是「归墟环维护舱大厅 / 东头值班终端台 / 舱门裂隙外的灰雾」
+//	⇒ 名字对不上 ⇒ 那一镜装配不到场景参考图，日志「⚠ 镜头 1 缺 1 张参考图(归墟环断口维护舱)」，
+//	  环境每镜重编、背景漂移。
+//
+// 并行那件事已在生成侧改成"④ 回来再跑 ⑤"（治根），这里治**存量方案**与"模型就是写歪了"：
+// 按**汉字双字组重合度**取最像的那张卡。
+//
+// 纪律（与基名撞车同一条）：**必须有一个明确赢家**才认 —— 分数 ≥2 且严格高于第二名，
+// 否则宁可报"对不上"。把 A 的场景板锚到 B 身上，比没有参考图更糟。
+func (ix *entityIndex) loose(raw string) (string, bool) {
+	q := cjkBigrams(raw)
+	if len(q) < 2 {
+		return "", false
+	}
+	keys := make([]string, 0, len(ix.exact))
+	for k := range ix.exact {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys) // map 遍历无序 —— 同分判定的行为必须稳定
+	bestKey, bestScore, tie := "", 0, false
+	for _, k := range keys {
+		if strings.ContainsRune(k, '_') || !hasCJK(k) {
+			continue // id 形态的键（scene_ring_bay）不参与字面比对
+		}
+		score := 0
+		for bg := range cjkBigrams(k) {
+			if q[bg] {
+				score++
+			}
+		}
+		switch {
+		case score > bestScore:
+			bestKey, bestScore, tie = k, score, false
+		case score == bestScore && score > 0:
+			tie = true
+		}
+	}
+	if bestKey == "" || bestScore < 2 || tie {
+		return "", false
+	}
+	return ix.exact[bestKey], true
+}
+
+// cjkBigrams 汉字双字组（标点与 ASCII 一律不算）。
+func cjkBigrams(s string) map[string]bool {
+	rs := make([]rune, 0, len(s))
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			rs = append(rs, r)
+		}
+	}
+	out := make(map[string]bool, len(rs))
+	for i := 0; i+1 < len(rs); i++ {
+		out[string(rs[i:i+2])] = true
+	}
+	return out
+}
+
+func hasCJK(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
 }
 
 // entityBaseKey 名字的"基名键"：去掉括注、再去掉造型档名，最后归一。
