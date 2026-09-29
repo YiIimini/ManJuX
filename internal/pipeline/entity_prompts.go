@@ -213,7 +213,14 @@ var entityProfiles = map[EntityKind]entityProfile{
 		SheetIdentity: "\n\nOBJECT FIDELITY (mandatory): the object's silhouette, overall proportions, every structural part, the material of " + "each part (metal / wood / clay / paper / cloth / stone as the brief says), its colour and patina, seams, joints, rivets, " +
 			"openings and surface ornament must match the written brief EXACTLY. Nothing may be added and nothing may be dropped: " +
 			"a part the brief lists must be visible, and a part the brief does not list must not appear. " +
-			"Do not redesign, simplify or prettify the object's shape.",
+			"Do not redesign, simplify or prettify the object's shape. " +
+			// 【2026-09-29 用户：「旧拓布 上有英文？」】器物卡上凭空长出了拉丁字母 ——
+			// 提示词是英文，而器物此前**没有任何"不许写字"的约束**（只有转台那段有）。
+			// 判据：除简报明确写到的铭文/刻痕外，器物表面不许出现任何文字、字母、数字、标签或商标；
+			// 简报点了铭文的，只画那几笔刻痕，别的字一个都不加。
+			"NO LETTERING (mandatory): the object carries no writing, no letters, no numbers, no labels and no logos " +
+			"of any kind — unless the brief explicitly names an inscription, in which case render exactly those marks " +
+			"as carved or written strokes and add nothing else.",
 		SheetMarker: "OBJECT FIDELITY",
 		SheetLook: animatedMediumImageBlock() + "\n- The object's own material dominates the render: the metal reads as metal, the wood as wood, " +
 			"the paper as paper, with visible craft detail (plate seams, rivets, joints, patina, grain) under a dull even finish.",

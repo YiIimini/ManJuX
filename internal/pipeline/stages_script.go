@@ -107,7 +107,22 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 		// 降级/兜底提示直接进前端事件流:静默降级等于骗人
 		// (典型:规划轮输出被截断,补全后继续 —— 必须让用户知道并有机会重跑)
 		OnNote: func(format string, args ...any) {
-			c.emit(proj.ID, PhaseScript, 0, "warn", 15, format, args...)
+			// **级别按内容判**（2026-09-29 用户：「运行日志中的函数方法调用、已确认、已入库这种是
+			// 完成的类型，为什么标红？请好好优化一下所有日志的类型，目前异常」）。
+			//
+			// 这里原来**一律发 warn** —— 于是分镜的自愈播报（「✔ 已把 12 处分镜里的角色/场景对上
+			// 方案里的卡」「✔ 给 8 镜补上了机位」「✔ 把 2 张同名卡并成一张」）全被标成红的，
+			// 用户看到的就是"完成的事被当成错误报"。级别本来就写在文案的首字符里（✔/⚠/💡），
+			// 按它判即可 —— 别让"发布通道"决定语义。
+			msg := fmt.Sprintf(format, args...)
+			level := "info"
+			switch {
+			case strings.HasPrefix(strings.TrimSpace(msg), "✔"):
+				level = "success"
+			case strings.HasPrefix(strings.TrimSpace(msg), "⚠"):
+				level = "warn"
+			}
+			c.emit(proj.ID, PhaseScript, 0, level, 15, "%s", msg)
 		},
 	}
 	// **选路**：五步专职会话（用户 2026-09-28 架构）或单轮直出（老路）。
