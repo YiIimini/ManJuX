@@ -5,6 +5,29 @@ import { computed, ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
 import ShotCard from '../components/ShotCard.vue'
+import AssetDetailDialog from '../components/AssetDetailDialog.vue'
+
+// ---- 资产详情弹窗（2026-09-29 用户：「点击图片直接弹窗详情页里显示，可以直接使用
+//      资产库里的详细弹窗页面」）----
+// 卡片上的文字只留摘要（见模板里的 .asset-desc 两行截断），完整描述与提示词进弹窗 ——
+// 此前整段中文描述直接铺在卡片上（几百字），把卡片撑得又高又乱。
+const assetDlg = reactive({
+  open: false, kind: 'characters', name: '', libKey: '',
+  projectId: '', assetFile: '', description: '', imagePrompt: '', source: '',
+})
+// openAssetDetail 打开某个资产的详情。libKey 用**卡片 id**（库侧按 id 关联），
+// 库里查不到时组件会自动退回名字、再退回项目内那张图。
+function openAssetDetail(kind, id, name, asset, description, imagePrompt) {
+  assetDlg.kind = kind
+  assetDlg.name = name
+  assetDlg.libKey = String(id || '').replace(/^(char|scene|prop):/, '')
+  assetDlg.projectId = pj.value?.project?.id || ''
+  assetDlg.assetFile = asset?.file || ''
+  assetDlg.description = description || ''
+  assetDlg.imagePrompt = asset?.image_prompt || imagePrompt || ''
+  assetDlg.source = asset?.source || ''
+  assetDlg.open = true
+}
 
 const tab = ref('script')
 const sourceText = ref('')
@@ -393,7 +416,8 @@ const doneShots = computed(() =>
                       <i class="dot" :class="row.c.asset ? 'ok' : 'warn'"></i>
                     </div>
                     <div style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
-                         :title="'点击上传「' + row.c.name + '」定妆照(png/jpg/webp);同名资产自动复用库'" @click="upload('characters', 'char:'+row.c.id, row.c.name)">
+                         :title="row.c.asset ? '点击看「' + row.c.name + '」详情(大图/多视角/描述/提示词)' : '点击上传「' + row.c.name + '」定妆照(png/jpg/webp);同名资产自动复用库'"
+                         @click="row.c.asset ? openAssetDetail('characters', 'char:'+row.c.id, row.c.name, row.c.asset, row.c.description, row.c.image_prompt) : upload('characters', 'char:'+row.c.id, row.c.name)">
                       <img v-if="row.c.asset" :src="api.fileURL(pj.project.id, row.c.asset.file)"
                            style="width:100%;height:100%;object-fit:cover" />
                       <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
@@ -414,7 +438,8 @@ const doneShots = computed(() =>
                         </button>
                       </div>
                     </div>
-                    <div class="text-xs" style="color:var(--mx-text2)">{{ row.c.description }}</div>
+                    <div class="text-xs asset-desc" style="color:var(--mx-text2)"
+                         :title="row.c.description">{{ row.c.description }}</div>
                   </div>
                 </template>
               </div>
@@ -433,7 +458,8 @@ const doneShots = computed(() =>
                     <i class="dot" :class="s.asset ? 'ok' : 'warn'"></i>
                   </div>
                   <div style="aspect-ratio:16/9;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
-                       :title="'点击上传「' + s.name + '」场景参考图(png/jpg/webp)'" @click="upload('scenes', 'scene:'+s.id, s.name)">
+                       :title="s.asset ? '点击看「' + s.name + '」详情(大图/描述/提示词)' : '点击上传「' + s.name + '」场景参考图(png/jpg/webp)'"
+                       @click="s.asset ? openAssetDetail('scenes', 'scene:'+s.id, s.name, s.asset, s.description, s.image_prompt) : upload('scenes', 'scene:'+s.id, s.name)">
                     <img v-if="s.asset" :src="api.fileURL(pj.project.id, s.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
@@ -448,7 +474,8 @@ const doneShots = computed(() =>
                       </button>
                     </div>
                   </div>
-                  <div class="text-xs" style="color:var(--mx-text2)">{{ s.description }}</div>
+                  <div class="text-xs asset-desc" style="color:var(--mx-text2)"
+                       :title="s.description">{{ s.description }}</div>
                 </div>
               </div>
             </section>
@@ -478,8 +505,8 @@ const doneShots = computed(() =>
                   </div>
                   <div style="aspect-ratio:1/1;background:var(--mx-bg2);border-radius:8px;overflow:hidden"
                        class="relative flex items-center justify-center cursor-pointer"
-                       :title="'点击上传「' + p.name + '」道具图(png/jpg/webp);同名资产自动复用库'"
-                       @click="upload('props', 'prop:'+p.id, p.name)">
+                       :title="p.asset ? '点击看「' + p.name + '」详情(大图/描述/提示词)' : '点击上传「' + p.name + '」道具图(png/jpg/webp);同名资产自动复用库'"
+                       @click="p.asset ? openAssetDetail('props', 'prop:'+p.id, p.name, p.asset, p.description, p.image_prompt) : upload('props', 'prop:'+p.id, p.name)">
                     <img v-if="p.asset" :src="api.fileURL(pj.project.id, p.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
@@ -497,7 +524,8 @@ const doneShots = computed(() =>
                       </button>
                     </div>
                   </div>
-                  <div class="text-xs" style="color:var(--mx-text2)">{{ p.description }}</div>
+                  <div class="text-xs asset-desc" style="color:var(--mx-text2)"
+                       :title="p.description">{{ p.description }}</div>
                   <div v-if="p.en" class="text-xs timecode truncate" :title="p.en">{{ p.en }}</div>
                 </div>
               </div>
@@ -661,4 +689,26 @@ const doneShots = computed(() =>
         <el-button @click="exports2k.open = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <!-- 资产详情弹窗（点卡片图即开）：完整描述与英文提示词、库里的全部图片（多视角/三视图板）。
+         卡片上只留两行摘要，完整内容进这里。 -->
+    <AssetDetailDialog v-model:open="assetDlg.open" :kind="assetDlg.kind" :name="assetDlg.name"
+                       :lib-key="assetDlg.libKey" :project-id="assetDlg.projectId"
+                       :asset-file="assetDlg.assetFile" :description="assetDlg.description"
+                       :image-prompt="assetDlg.imagePrompt" :source="assetDlg.source" />
 </template>
+
+<style scoped>
+/* 卡片上的描述只留**两行摘要**（2026-09-29 用户：「卡片文字描述精简，目前内容超出异常排版」）：
+   角色卡的描述动辄几百字（脸型/眉眼/发长/服装层数…），整段铺在卡上会把卡片撑得又高又乱，
+   网格排版全乱。完整内容在详情弹窗里（点图即开），这里给两行 + 悬浮看全文。 */
+.asset-desc {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+  word-break: break-word;
+}
+</style>

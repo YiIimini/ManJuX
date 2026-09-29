@@ -676,7 +676,12 @@ body::after {
   left: 50%;
   bottom: 46px;
   transform: translateX(-50%);
-  z-index: 2600;
+  /* **层级：必须在 Element 弹窗之下**（2026-09-29 用户：「新的弹窗的窗口层级是最高的」）。
+     原来这里是 2600，而 Element Plus 的弹层计数器**从 2000 起**（见下面 Tip 那条注释）——
+     于是任何 el-dialog（含资产详情弹窗）都被这个悬浮窗压住，用户点开详情只看到日志窗盖在上面。
+     日志窗是**常驻的旁观层**，不是主角：它该盖住页面内容（几十），但不该盖住用户主动打开的弹窗。
+     全屏预览（MediaViewer 2700）与对比视图（CoverCompare 4000）仍在弹窗之上，那是它们该在的位置。 */
+  z-index: 1500;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--mx-line-hi);
