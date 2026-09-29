@@ -277,6 +277,20 @@ func familyMasterInAssets(assets map[string]project.Asset, selfAssetID, idKey, n
 //
 // 所以这里对 Q 版**只给 nameKey**（名字的基名，「青禾 · Q版」→「青禾」），
 // 不参与 id 家族匹配；名字里没有档名的（如系统小人的「系统机器人」）返回空 ⇒ 不派生。
+// ChibiDerivationWanted 这张角色卡要不要平台**自动派生**一份 Q 版。
+//
+// 判据（技能侧 2026-09-29 补进模板的锚表字段，平台侧 `project.ParseChibiFields` 解析）：
+//   - 写了「Q版形象：无」→ **不要**（用户明确表态，平台不该多造一份 —— 多出来的那份会自动
+//     入库，用户看到的是"我没要它却多了一个"）；
+//   - 写了「Q版形象：有」或给了 Q版本体 / Q版比例锚_机器 → 要；
+//   - 什么都没写（老包、平台自己会话产出的卡）→ 要（维持既有默认：每个角色一份 Q 版）。
+func ChibiDerivationWanted(desc string) bool {
+	if f, ok := project.ParseChibiFields(desc); ok {
+		return f.Has
+	}
+	return true
+}
+
 func sheetRefKeys(id, name string) (idKey, nameKey string) {
 	if project.IsChibiCard("", id) {
 		base := project.CharFamilyBaseName(name)

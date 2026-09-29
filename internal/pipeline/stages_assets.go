@@ -329,6 +329,12 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	}
 	if proj.Config.Params.Script.Chibi && comfyGen != nil && !planHasChibi {
 		for _, ch := range plan.Characters {
+			// **锚表显式表态的按锚表来**（技能侧 2026-09-29 补的 `Q版形象` 字段）：
+			// 写了「Q版形象：无」的人就是不要 Q 版，平台不许再自动派生一份
+			// （那份会自动入库、出现在资产库里，用户看到的是"我没要它却多了一个"）。
+			if !ChibiDerivationWanted(ch.Description) {
+				continue
+			}
 			chibiID := "char:" + ch.ID + "_chibi"
 			if a, ok := assets[chibiID]; ok && a.File != "" {
 				if _, err := os.Stat(filepath.Join(c.store.Dir(proj.ID), a.File)); err == nil {

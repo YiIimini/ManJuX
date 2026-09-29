@@ -7,6 +7,28 @@ import (
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
+// 锚表显式表态的 Q 版档位（技能侧 2026-09-29 补的字段）必须被平台尊重：
+// 「Q版形象：无」= 这个人不要 Q 版，平台不许再自动派生一份（那份会自动入库，
+// 用户看到的是"我没要它却多了一个"）。
+func TestChibiDerivationRespectsAnchorField(t *testing.T) {
+	cases := []struct {
+		desc string
+		want bool
+		why  string
+	}{
+		{"- 年龄：三十\n- 身形：高壮", true, "老包/会话卡没写这套字段 → 维持默认派生"},
+		{"- Q版形象：无", false, "显式表态不要"},
+		{"- Q版形象：有\n- Q版比例锚_机器：2.5 头身", true, "显式表态要"},
+		{"- Q版本体：碑生（丙十七）", true, "只给了本体也算要"},
+		{"- Q版位置：总蹲在碑生左肩上", true, "只给了位置也算要"},
+	}
+	for _, c := range cases {
+		if got := ChibiDerivationWanted(c.desc); got != c.want {
+			t.Errorf("ChibiDerivationWanted(%q) = %v；期望 %v（%s）", c.desc, got, c.want, c.why)
+		}
+	}
+}
+
 // 「碑生·Q版（肩上巴掌大的自己）」必须按 **Q 版**那套渲染（2026-09-29 用户报障：
 // 「咋不是使用Q版函数方法进行渲染？还是用的默认渲染」）。
 //
