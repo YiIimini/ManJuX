@@ -264,9 +264,18 @@ const (
 // 否则板子的输入里会留着"裁到胸口、只要头颈胸"这种与人像专属的要求，与"3 个全身 + 6 个头"
 // 直接打架 —— 模型只会二选一地糊。
 const (
+	// 【2026-09-29 用户：「碑生（丙十七）、钟离、碑生·Q版、崔无咎 这几个定妆照的比例就不对」】
+	// 实测：只写"裁到胸口"时，模型把**头放大到占满竖幅**（霍延那张头占了画面一半以上，
+	// 碑生那张头约占 1/3），七头半身/八头身的高瘦角色全画成了"大头脑像"。
+	// 取景句必须**同时给出尺度线索**：头在画面里占多大、肩线多宽、头身比照卡片。
 	portraitLeadBust = "BUST PORTRAIT (head, neck and upper chest only - the picture is cropped at mid-chest, " +
-		"pure white seamless backdrop). "
-	portraitLeadHeadShoulders = "HEAD-AND-SHOULDERS PORTRAIT (head and shoulders only, pure white seamless backdrop). "
+		"pure white seamless backdrop). " +
+		"SCALE (mandatory): the head is about ONE QUARTER of the picture height — the head stays proportionate instead of filling " +
+		"the frame; the shoulders span the full width of the picture and stay WIDER than the head, and the chest and " +
+		"upper arms fill the lower half. Keep the head-to-body ratio stated in the brief (a seven-and-a-half or " +
+		"eight-heads-tall adult reads as tall and long-limbed, with a proportionate head). "
+	portraitLeadHeadShoulders = "HEAD-AND-SHOULDERS PORTRAIT (head and shoulders only, pure white seamless backdrop). " +
+		"SCALE (mandatory): the head is about ONE THIRD of the picture height at most, shoulders wider than the head. "
 )
 
 // StripPortraitLeadFraming 剥掉定妆照提示词**开头**的取景声明（幂等；没有就原样返回）。
@@ -337,8 +346,9 @@ func PortraitFramingClause(kind EntityKind, width, height int) string {
 		return " FRAMING (mandatory): a front-facing chest-up portrait, shot STRAIGHT-ON from the front — the face " +
 			"looks directly into the camera, both eyes are visible at the same size and symmetric, the head is upright " +
 			"and squared to the lens with the nose and chin pointing at the camera, the WHOLE head is inside the " +
-			"picture with clear empty space above the hair, the shoulders fully inside the frame, and the area below " +
-			"the chest stays a pure white seamless backdrop."
+			"picture with clear empty space above the hair, the shoulders fully inside the frame and WIDER than the " +
+			"head, and the area below the chest stays a pure white seamless backdrop. The head takes about ONE QUARTER " +
+			"of the picture height, and the figure keeps its stated head-to-body ratio (a tall adult stays long-limbed)."
 	}
 	return " FRAMING (mandatory): a front-facing head-and-shoulders portrait, shot STRAIGHT-ON from the front — the " +
 		"face looks directly into the camera, both eyes are visible at the same size and symmetric, the head is " +
