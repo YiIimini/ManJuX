@@ -96,6 +96,15 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 	// 「约七头半身」配「矮小驼背」这类自相矛盾的组合，取景怎么改都画不出对的东西。
 	// 锚来自技能侧交出的【人物外形锚表】，所以门报出来之后要改的是**锚表原文**。
 	// 级别是 warn（老包大量没写头身比，只报写了的且写矛盾的，避免刷屏）。
+	// **性别没写就要报**（2026-09-29 用户：「钟离渲染成男的？」）：卡面/锚表里没有性别时，
+	// 出图模型自己猜 —— 实测守钟女「钟离」被画成男性。技能侧已补 `性别：女|男` 字段，
+	// 这条门保证"没补的卡"在出图前就看得见（锚表原文要改，所以是 warn）。
+	for _, msg := range GenderIssues(p) {
+		// 级别 info：存量包**每张卡**都没写性别，报 warn 会直接刷屏（本仓纪律：刷屏的规则
+		// 比没有规则更糟）。技能侧补上字段后这条会自然消失；平台侧能做的（有性别就写进
+		// 提示词）已经做了。
+		add("info", "plan.characters", "%s", msg)
+	}
 	for _, msg := range ProportionAnchorIssues(p) {
 		add("warn", "plan.characters", "%s", msg)
 	}

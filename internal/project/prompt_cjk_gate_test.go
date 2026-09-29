@@ -92,7 +92,9 @@ func TestValidatePlanCJKSubtractsSubjectNames(t *testing.T) {
 			// 夹具照真实形态写：规范要求人形卡带比例锚点（8.5 头身）——没有会被"卡完备性"门抓住；
 			// 年龄锚（#21）与板子的白底（#24）同理。
 			ID: "char_" + n, Name: n, Kind: "human", Voice: "voice",
-			Age:         "19",
+			Age: "19",
+			// 性别也照真实形态写（技能侧 2026-09-29 起锚表带这一行）：缺了会被"性别"那道门报出来。
+			Description: "性别：女\n身形：清瘦挺直，约八头半身",
 			BoardPrompt: "reference sheet on a pure white seamless backdrop, three full-body views, six head angles, six detail tiles",
 			ImagePrompt: "eight and a half heads tall, lean, straight-backed; " + n,
 		})

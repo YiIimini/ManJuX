@@ -599,6 +599,7 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	if kind == "" {
 		kind = InferEntityKind(s.Name, s.Description, s.ImagePrompt)
 	}
+	// 性别声明在下面**进 prompt 正文**（描述本身只走 uniformCivilianClarify，塞进去到不了正文）
 	prof := EntityProfileOf(kind)
 	// 图像侧的两道预处理(见 artstyle.go 的说明):
 	//   ① 剥掉微雕文字/极小铭文 —— 在半身幅里它们只会糊成灰渍(实测定妆照胸口与腕部的污渍);
@@ -669,6 +670,13 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	// 不得丢失」三条断言就是挡这件事的；第一版我把 StripCJK 加在整个 prompt 末尾，被它们挡回来了）。
 	var added strings.Builder
 	added.WriteString(styleExpandFor(prompt, style, s.FacesOn, kind))
+	// **性别声明**（2026-09-29 用户：「钟离渲染成男的？」）：卡面/锚表里能判出性别时必须写进
+	// **提示词正文** —— 不写时模型自己猜（名字偏男性先验，守钟女就被画成了男的）。
+	// 判据与预检门同源：`project.GenderOf`（显式字段 `性别：X` 优先，其次强性别词）。
+	// 注意：不能塞进 s.Description —— 描述只经 uniformCivilianClarify 走，到不了正文。
+	if g, ok := project.GenderOf(s.Description, s.ImagePrompt); ok {
+		added.WriteString(project.GenderClause(g))
+	}
 	added.WriteString(castContrastBlock(plan, s.ID, s.Name, kind))
 	added.WriteString(uniformCivilianClarify(s.Description))
 	added.WriteString(PortraitHairClause(kind))
