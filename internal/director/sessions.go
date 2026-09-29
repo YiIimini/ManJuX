@@ -92,6 +92,15 @@ var sessionOutputSchema = map[SessionKind]string{
 		// 「明筹者任劝行表档化﹔我们补偿﹔好,行物则顺左。」这种像中文但不是话的东西）。
 		// 根因之一就是这份 schema 从来没要过 dialogue 的正文。
 		`"dialogue":[{"speaker":"角色名(画外音写 旁白)","text":"逐字中文台词,一个字不许省","os":false}],` +
+		// **下面这几项平台一直在消费，schema 却从来没要过**（2026-09-29 复核"其他 LLM 解析"时发现的
+		// 同一类问题 —— 与 dialogue 那次同形：不要它，模型就不给，平台拿到空值还以为正常）：
+		//   positions → 预检门要求"出场角色必须有画面位置"（官方分镜表 Character Positions 子字段）；
+		//   vo_kind   → 决定参考图（内心镜取该角色的 Q 版、系统镜取机器人+面板）与"嘴唇闭合"那条门；
+		//   narration → 旁白（无则空）；chibi_ids → 内心镜要用的 Q 版卡；end_state → 尾帧状态（接下一镜）。
+		`"positions":{"角色名":"画面里的位置(如 画面左侧、中景、面朝镜头)"},` +
+		`"vo_kind":"speech|inner|system|narration(画面里有人在说/内心Q版演出/系统音/旁白)",` +
+		`"narration":"旁白文字(没有就空串)","chibi_ids":["内心镜要用的Q版卡id(没有就空数组)"],` +
+		`"end_state":"这一镜结尾看得见的画面状态(下一镜从这儿接)",` +
 		`"action":"中文动作","duration":5,"mode":"ref2va","h3_prompt":"官方六段式英文提示词"}]}`,
 }
 

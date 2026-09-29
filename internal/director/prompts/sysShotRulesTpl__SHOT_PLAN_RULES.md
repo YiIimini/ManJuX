@@ -1,5 +1,11 @@
 ## SHOT PLAN RULES
 - **DIALOGUE IS MANDATORY AND VERBATIM (2026-09-29 user: 「分镜配音严重大问题啊，完全听不清说的啥」)**: every line that is spoken in the shot goes into `dialogue` as `{"speaker": "…", "text": "…"}` with the **words written out in full Chinese** — `text` may never be empty. A line with a speaker and no text is worse than no line at all: the renderer then has nothing to say, the model improvises its own audio, and the audience hears gibberish that sounds like Chinese but is not a sentence (measured: ASR of one such clip came back as 「明筹者任劝行表档化﹔我们补偿﹔好,行物则顺左。」). The same words must also appear inside `<d>[Chinese]…</d>` in the `h3_prompt`, in the same order. If a shot has no speech, leave `dialogue` empty — do not invent a speaker.
+- **FIELDS THE PLATFORM ACTUALLY READS (2026-09-29 audit: the schema never asked for them, so the model silently left them empty — same shape as the empty-`dialogue` bug)**: fill these on **every** shot —
+  - `positions`: where each character is in the frame (official Character Positions sub-field; the pre-flight gate requires it for every character in the shot). Example: `{"碑生（丙十七）": "画面左侧、中景、面朝右"}`.
+  - `vo_kind`: `speech` (someone on screen is speaking) / `inner` (inner monologue performed by the Q-version figure) / `system` (system voice + panel) / `narration` (voice-over). This decides which reference images the shot gets, and whether the "lips stay closed" clause is added — a wrong value makes the wrong person mouth the words.
+  - `narration`: the voice-over text, verbatim; empty string when there is none.
+  - `chibi_ids`: the Q-version card ids used by an `inner` shot; empty array otherwise.
+  - `end_state`: what is visible at the END of the clip (the state the next clip continues from) — only things you can see (positions, posture, props in hand), never mood or sound.
 - **CLIP LENGTH RULE (user's own storyboard spec, 2026-09-28)**: a non-final clip is **7, 8, 9 or 10 seconds** —
   pick whichever ends on a natural stop (a person settles, a turn completes, a gaze lands, a line finishes).
   The FINAL clip takes whatever remains of the episode. So the **clip count follows from the episode length**:
