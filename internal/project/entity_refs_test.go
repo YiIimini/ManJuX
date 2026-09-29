@@ -32,7 +32,7 @@ func TestRemapEntityRefsRealPlan(t *testing.T) {
 			{ID: 4, Scene: "scene_maintenance_bay", Characters: []string{"祁七", "路人甲"}},
 		},
 	}
-	fixed, unknown := RemapEntityRefs(plan)
+	fixed, unknown, _ := RemapEntityRefs(plan)
 	if fixed != 6 {
 		t.Errorf("应归一到 6 处（镜1 场景+人物、镜2 场景+2 人物、镜3 无），实得 %d", fixed)
 	}
@@ -55,7 +55,7 @@ func TestRemapEntityRefsRealPlan(t *testing.T) {
 		t.Errorf("群演引用必须原样保留（静默丢弃会让提示词与引用对不上），实得 %q", got)
 	}
 	// 幂等：再跑一次不该有改动（LoadPlan 每次读都会调 HealPlan）
-	again, unknown2 := RemapEntityRefs(plan)
+	again, unknown2, _ := RemapEntityRefs(plan)
 	if again != 0 || unknown2 != 1 {
 		t.Errorf("第二次调用应零改动（幂等），实得 fixed=%d unknown=%d", again, unknown2)
 	}

@@ -31,7 +31,7 @@ func TestSceneNameMismatchFallsBackToClosestCard(t *testing.T) {
 			{ID: 2, Scene: "scene_ring_bay", Characters: []string{"char_qiqi"}}, // 已经是 id：幂等
 		},
 	}
-	fixed, unknown := RemapEntityRefs(plan)
+	fixed, unknown, loose := RemapEntityRefs(plan)
 	if plan.Shots[0].Scene != "scene_ring_bay" {
 		t.Fatalf("对不上号的场景名没有兜底对上：%q（这一镜就没有环境参考图了）", plan.Shots[0].Scene)
 	}
@@ -40,6 +40,11 @@ func TestSceneNameMismatchFallsBackToClosestCard(t *testing.T) {
 	}
 	if fixed != 2 || unknown != 0 {
 		t.Fatalf("计数不对：fixed=%d unknown=%d（第 1 镜的场景名与角色名各归一 1 处；unknown>0 就是还有镜头拿不到参考图）", fixed, unknown)
+	}
+	// 第 3 个返回值是给**播报**用的：字面重合是猜的，界面/日志必须说出来。
+	// 角色那条是"名字→id"的正常归一（不算猜），只有场景那条是猜的。
+	if loose != 1 {
+		t.Fatalf("按字面重合猜的处数应为 1（场景那条），实得 %d —— 不报出来的话用户不知道参考图是猜的", loose)
 	}
 	// 门（G108/G109）读的是这一对数字 —— 兜底生效后不该再报"引用不存在"
 	if c, s := DanglingEntityRefs(plan); c != 0 || s != 0 {
@@ -54,7 +59,7 @@ func TestSceneNameMismatchFallsBackToClosestCard(t *testing.T) {
 		},
 		Shots: []Shot{{ID: 1, Scene: "甲号舱室"}},
 	}
-	_, unk := RemapEntityRefs(ambiguous)
+	_, unk, _ := RemapEntityRefs(ambiguous)
 	if ambiguous.Shots[0].Scene != "甲号舱室" {
 		t.Fatal("两张卡同分时不许挑一个 —— 认错场景比没有参考图更糟")
 	}
@@ -67,7 +72,7 @@ func TestSceneNameMismatchFallsBackToClosestCard(t *testing.T) {
 		Scenes: []Scene{{ID: "s1", Name: "归墟环维护舱大厅"}},
 		Shots:  []Shot{{ID: 1, Scene: "城南破庙"}},
 	}
-	_, unk2 := RemapEntityRefs(far)
+	_, unk2, _ := RemapEntityRefs(far)
 	if far.Shots[0].Scene != "城南破庙" || unk2 != 1 {
 		t.Fatalf("毫不相干的名字被硬对号了：%q unknown=%d", far.Shots[0].Scene, unk2)
 	}

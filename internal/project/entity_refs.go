@@ -27,19 +27,27 @@ import (
 // 【为什么必须在读取边界做】与器物对号同源（2026-09-28 的教训）：预检 / 人审 / 渲染
 // 三个消费方必须看到**同一份**方案 —— 只在渲染里修，预检仍会报"引用了不存在的角色"。
 
-// RemapEntityRefs 归一分镜里的人物/场景引用，返回（归一了几处, 仍对不上卡片的引用数）。
-func RemapEntityRefs(plan *Plan) (fixed, unknown int) {
+// RemapEntityRefs 归一分镜里的人物/场景引用，返回（归一了几处, 仍对不上卡片的引用数,
+// 其中按**字面重合**猜对号的处数）。
+//
+// 第三个返回值是给**播报**用的：字面重合是**猜**（名字与卡片名不完全一致），
+// 自愈必须如实说出来（本仓纪律：自愈"改了什么"要播报），否则用户不知道
+// "这一镜的场景参考图是按名字猜出来的"。
+func RemapEntityRefs(plan *Plan) (fixed, unknown, loose int) {
 	if plan == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
 	chars, scenes := entityRefIndex(plan)
 	for i := range plan.Shots {
 		sh := &plan.Shots[i]
 		if raw := strings.TrimSpace(sh.Scene); raw != "" {
-			if id, ok := scenes.lookup(raw); ok {
+			if id, ok, guessed := scenes.lookupRef(raw); ok {
 				if id != raw {
 					sh.Scene = id
 					fixed++
+					if guessed {
+						loose++
+					}
 				}
 			} else {
 				unknown++
@@ -50,17 +58,31 @@ func RemapEntityRefs(plan *Plan) (fixed, unknown int) {
 			if cid == "" {
 				continue
 			}
-			if id, ok := chars.lookup(cid); ok {
+			if id, ok, guessed := chars.lookupRef(cid); ok {
 				if id != cid {
 					sh.Characters[j] = id
 					fixed++
+					if guessed {
+						loose++
+					}
 				}
 				continue
 			}
 			unknown++
 		}
 	}
-	return fixed, unknown
+	return fixed, unknown, loose
+}
+
+// lookupRef 与 lookup 同，另外告诉调用方"这一条是不是**猜**出来的"。
+func (ix *entityIndex) lookupRef(raw string) (id string, ok bool, guessed bool) {
+	if id, ok := ix.lookup(raw); ok {
+		return id, true, false
+	}
+	if id, ok := ix.loose(raw); ok {
+		return id, true, true
+	}
+	return "", false, false
 }
 
 // DanglingEntityRefs 分镜里**对不上卡片**的人物 / 场景引用数（归一化之后判；
@@ -153,7 +175,7 @@ func (ix *entityIndex) add(id, name string) {
 	}
 }
 
-// lookup 按"归一全名 → 基名 → **字面重合兜底**"的顺序找一个 id。
+// lookup 按"归一全名 → 基名"的顺序找一个 id（**不含**字面重合兜底）。
 func (ix *entityIndex) lookup(raw string) (string, bool) {
 	for _, k := range []string{normEntityKey(raw), entityBaseKey(raw)} {
 		if k == "" {
@@ -168,7 +190,7 @@ func (ix *entityIndex) lookup(raw string) (string, bool) {
 			}
 		}
 	}
-	return ix.loose(raw)
+	return "", false
 }
 
 // loose 字面重合兜底（2026-09-29 真机实测驱动）。

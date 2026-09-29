@@ -241,7 +241,10 @@ type HealResult struct {
 	MusicNA   int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
 	// EntityRefs 分镜里的**名字引用**归一成卡片 id 的处数（五步会话输出的是名字，
 	// 见 entity_refs.go）；EntityRefsUnknown 是归一之后仍对不上卡片的引用数。
-	EntityRefs        int
+	EntityRefs int
+	// EntityRefsLoose 其中按**字面重合**猜对号的处数（名字与卡片名不完全一致 —— 要播报，
+	// 因为那是猜的，用户得知道这一镜的参考图是猜出来的）。
+	EntityRefsLoose   int
 	EntityRefsUnknown int
 }
 
@@ -257,10 +260,11 @@ func HealPlan(plan *Plan) HealResult {
 	}
 	// 实体引用归一**要排在器物对号之前**：器物对号会退回分镜的动作文本里找线索，
 	// 而"这一镜有谁"在归一之前可能还是名字 —— 顺序反了会让它拿着对不上的名单去猜。
-	entFixed, entUnknown := RemapEntityRefs(plan)
+	entFixed, entUnknown, entLoose := RemapEntityRefs(plan)
 	return HealResult{
 		EntityRefs:        entFixed,
 		EntityRefsUnknown: entUnknown,
+		EntityRefsLoose:   entLoose,
 		PropRefs:          RemapPropRefs(plan),
 		Dialogue:          FillMissingDialogueTags(plan),
 		Voiceover:         FillVoiceoverAssets(plan),
