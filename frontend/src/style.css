@@ -671,6 +671,19 @@ body::after {
 .tick-text.info { color: var(--mx-text2); }
 
 /* 日志弹窗:悬浮窗(默认右下角锚定,避开状态栏;拖动后由内联 left/top 接管) */
+/* 资产封面角标（2026-09-29 用户：「模型名称和分类名称可以显示到封面上，不用和人物名称挤一块」）。
+   资产库与工作台共用这一份 —— 分类在左上、模型/来源在左下，名字那一行只留名字与状态标签。 */
+.cov-badge {
+  position: absolute; z-index: 2; font-size: 10px; line-height: 1.6;
+  padding: 1px 7px; border-radius: 7px; pointer-events: none;
+  background: color-mix(in srgb, var(--mx-bg0) 68%, transparent);
+  color: var(--mx-text2);
+  border: 1px solid color-mix(in srgb, var(--mx-line-hi) 70%, transparent);
+  backdrop-filter: blur(3px);
+}
+.cov-badge.tl { left: 6px; top: 6px; }
+.cov-badge.bl { left: 6px; bottom: 6px; }
+
 .log-pop {
   position: fixed;
   left: 50%;

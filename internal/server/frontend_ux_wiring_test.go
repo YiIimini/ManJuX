@@ -277,7 +277,8 @@ func TestFrontendGpuContentionGuard(t *testing.T) {
 		{"src/components/ShotCard.vue", "api.maskFix(", "局部重绘"},
 		{"src/components/ShotCard.vue", "api.audioDrive(", "音频驱动"},
 		{"src/components/StageDetailDrawer.vue", "api.regenAsset(", "单资产重生成"},
-		{"src/views/LibraryView.vue", "api.libraryRegen(", "资产库重抽"},
+		// 资产库重抽：处置函数随详情弹窗搬进了**共用组件**（2026-09-29：资产库与工作台同一份）
+		{"src/components/LibAssetDialog.vue", "api.libraryRegen(", "资产库重抽"},
 	}
 	for _, c := range cases {
 		src := readFrontend(t, c.file)

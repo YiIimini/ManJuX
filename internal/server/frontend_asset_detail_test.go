@@ -3,81 +3,78 @@ package server
 import (
 	"os"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
 )
 
-// 工作台「资产」页的两条（2026-09-29 用户：
-// 「工作台中的资产里的卡片文字描述精简，目前内容超出异常排版，点击图片直接弹窗详情页里显示，
-// 可以直接使用资产库里的详细弹窗页面」＋「新的弹窗的窗口层级是最高的」）。
+// 资产详情弹窗**只能有一份**，且资产库与工作台共用（2026-09-29 用户：
+// 「工作台里的资产封面同理，详细弹窗不用单独做啊（没有适配），直接资产库里的详情弹窗拿来用啊」）。
 //
-// 判据分三件事，缺一条用户就会说"还是乱的"：
-//
-//	① 卡片上的描述**必须截断**（角色卡描述几百字，整段铺在卡上会把网格撑乱）；
-//	② **点图开详情弹窗**（三种资产都要接上），弹窗取库条目的**全部图片**（多视角/三视图板）；
-//	③ 弹窗必须**压得住日志悬浮窗** —— Element 弹层计数器从 2000 起，而日志窗原来是 2600，
-//	   于是用户点开详情只看到日志窗盖在上面（这是"层级最高"那条的真身）。
-func TestWorkbenchAssetCardsAreTrimmedAndOpenDetail(t *testing.T) {
+// 起因：我先在工作台另写了一份"只读呈现"，样式与行为跟资产库那份不一样 —— 用户一眼看出没适配。
+// 判据因此写成结构性的：**只有 LibAssetDialog.vue 这一个详情弹窗组件**，
+// 两个视图都引用它，且旧的独立组件必须已经删掉（留着就还会有人接错）。
+func TestAssetDetailDialogIsSharedBetweenLibraryAndWorkbench(t *testing.T) {
+	front := filepath.Join("..", "..", "frontend", "src")
 	read := func(rel string) string {
 		t.Helper()
-		raw, err := os.ReadFile(filepath.Join("..", "..", rel))
+		raw, err := os.ReadFile(filepath.Join(front, rel))
 		if err != nil {
 			t.Fatalf("读 %s 失败：%v", rel, err)
 		}
 		return string(raw)
 	}
-	pv := read(filepath.Join("frontend", "src", "views", "ProjectView.vue"))
-	dlg := read(filepath.Join("frontend", "src", "components", "AssetDetailDialog.vue"))
-	css := read(filepath.Join("frontend", "src", "style.css"))
+	if _, err := os.Stat(filepath.Join(front, "components", "AssetDetailDialog.vue")); err == nil {
+		t.Error("工作台那份单独的详情弹窗还在（AssetDetailDialog.vue）—— 两份必然漂移，用户已经报过「没有适配」")
+	}
+	dlg := read(filepath.Join("components", "LibAssetDialog.vue"))
+	lib := read(filepath.Join("views", "LibraryView.vue"))
+	wb := read(filepath.Join("views", "ProjectView.vue"))
 
-	// ① 描述截断：类名 + 两行 clamp 都要在
-	for _, want := range []struct{ needle, why string }{
-		{"asset-desc", "卡片描述要有统一的截断类（不能整段铺在卡上）"},
-		{"-webkit-line-clamp: 2", "截断到两行（描述动辄几百字，会把网格撑乱）"},
-	} {
-		if !strings.Contains(pv, want.needle) {
-			t.Errorf("ProjectView.vue 缺少 %q —— %s", want.needle, want.why)
+	// ① 共用：两个视图都渲染同一个组件
+	for _, v := range []struct{ name, src string }{{"资产库", lib}, {"工作台", wb}} {
+		if !strings.Contains(v.src, "<LibAssetDialog") {
+			t.Errorf("%s没有渲染 LibAssetDialog —— 详情弹窗必须是同一份", v.name)
 		}
 	}
-	if n := strings.Count(pv, `class="text-xs asset-desc"`); n != 3 {
-		t.Errorf("三类资产（角色/场景/道具）的卡片描述都要截断，实得 %d 处", n)
-	}
-
-	// ② 点图开详情：三类资产都要接上，且弹窗组件要真被渲染
-	for _, kind := range []string{"'characters'", "'scenes'", "'props'"} {
-		if !strings.Contains(pv, "openAssetDetail("+kind) {
-			t.Errorf("资产 %s 的卡片图没有接上详情弹窗（点图还是只会触发上传）", kind)
-		}
-	}
-	if !strings.Contains(pv, "<AssetDetailDialog") {
-		t.Error("AssetDetailDialog 组件没有渲染进模板 —— 接了函数也弹不出来")
-	}
-	// 弹窗要取**库条目的全部图片**（多视角/三视图板都是库条目里的 images），
-	// 并且库查不到时能退回项目内那张图（否则手动上传的资产点开是空的）
+	// ② 那一份要带齐两边的能力：库侧运营操作 + 工作台的"这条不在库里"兜底
 	for _, want := range []struct{ needle, why string }{
-		{"api.libraryDetail", "详情要读库条目（图片墙来自条目的 images）"},
-		{"lib.value?.images", "图片墙要用条目的 images（只显示主图=多视角图看不到）"},
-		{"api.fileURL", "库里没有这条时要退回项目内的图"},
+		{"api.libraryDetail", "要读库条目（图片墙来自条目的 images）"},
+		{"api.libraryRegen", "抽卡"},
+		{"api.libraryViews", "补全多视角"},
+		{"api.libraryDescribe", "AI 生成描述/提示词"},
+		{"api.librarySetMeta", "保存描述/提示词"},
+		{"api.libraryDelete", "删除"},
+		{"api.fileURL", "库里没有这条时退回项目内的图（工作台手动上传的资产）"},
+		{"这条资产不在资产库里", "库里没有时要如实说明，而不是给一排点了报错的按钮"},
 	} {
 		if !strings.Contains(dlg, want.needle) {
-			t.Errorf("AssetDetailDialog.vue 缺少 %q —— %s", want.needle, want.why)
+			t.Errorf("共用的详情弹窗缺少 %q —— %s", want.needle, want.why)
 		}
 	}
 
-	// ③ 层级：日志悬浮窗必须在 Element 弹层（从 2000 起）之下
-	block := regexp.MustCompile(`(?s)\.log-pop\s*\{(.*?)\}`).FindStringSubmatch(css)
-	if block == nil {
-		t.Fatal("style.css 里找不到 .log-pop 规则（层级判据失效）")
+	// ③ 封面角标：分类名 + 模型名放在封面上，不再和资产名挤一行
+	css := read(filepath.Join("..", "..", "frontend", "src", "style.css"))
+	_ = css
+	if !strings.Contains(read(filepath.Join("style.css")), ".cov-badge") {
+		t.Error("style.css 缺少 .cov-badge —— 角标样式必须是共用的一份（两个视图各写一套就又是两份）")
 	}
-	zi := regexp.MustCompile(`z-index:\s*(\d+)`).FindStringSubmatch(block[1])
-	if zi == nil {
-		t.Fatal(".log-pop 没有 z-index —— 它会跟着 DOM 顺序乱飘")
+	if !strings.Contains(lib, "cov-badge") || !strings.Contains(wb, "cov-badge") {
+		t.Error("资产库与工作台的封面都要有角标（分类 + 模型名）")
 	}
-	n, _ := strconv.Atoi(zi[1])
-	if n >= 2000 {
-		t.Errorf("日志悬浮窗 z-index=%d，而 Element 弹层从 2000 起 ⇒ 它会盖住所有弹窗"+
-			"（用户报的「新的弹窗的窗口层级是最高的」就是这条）；应降到 2000 以下", n)
+	if n := strings.Count(wb, `class="cov-badge tl"`); n != 3 {
+		t.Errorf("工作台三类资产（角色/场景/道具）的封面都要有分类角标，实得 %d 处", n)
+	}
+	for _, w := range []struct{ needle, why string }{
+		{"sourceLabel(row.c.asset?.source)", "角色封面要标出模型/来源"},
+		{"sourceLabel(s.asset?.source)", "场景封面要标出模型/来源"},
+		{"sourceLabel(p.asset?.source)", "道具封面要标出模型/来源"},
+	} {
+		if !strings.Contains(wb, w.needle) {
+			t.Errorf("工作台缺少 %q —— %s", w.needle, w.why)
+		}
+	}
+	// 名字那一行不该再堆来源标签（那正是"挤一块"）
+	if strings.Contains(wb, `库复用</el-tag>`) {
+		t.Error("资产名那一行还留着来源标签 —— 用户要的是把它挪到封面上")
 	}
 }

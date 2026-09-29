@@ -22,9 +22,9 @@ import (
 // 看板子的人要能一次看全 3 个全身 + 6 个头部细节。
 func TestLibraryDetailImagesCentered(t *testing.T) {
 	root := filepath.Join("..", "..", "frontend", "src")
-	raw, err := os.ReadFile(filepath.Join(root, "views", "LibraryView.vue"))
+	raw, err := os.ReadFile(filepath.Join(root, "components", "LibAssetDialog.vue"))
 	if err != nil {
-		t.Fatalf("读 LibraryView.vue 失败：%v", err)
+		t.Fatalf("读 LibAssetDialog.vue 失败：%v", err)
 	}
 	src := string(raw)
 
@@ -47,12 +47,22 @@ func TestLibraryDetailImagesCentered(t *testing.T) {
 	if !strings.Contains(src, "tileRatio(f)") {
 		t.Error("格子形状要按产物形状给（tileRatio）：定妆照 3/4、转台图与三视图板 16:9")
 	}
-	// 「有没有角度参考」的判据必须认三视图板（用户：「三视图不就是多视角的吗，相关"单视角"状态也要同步调整显示」）
+	// 「有没有角度参考」的判据必须认三视图板（用户：「三视图不就是多视角的吗，相关"单视角"状态也要同步调整显示」）。
+	// 判据在**共用组件**里（详情状态用它），卡片标记那份在 LibraryView（见那个文件），
+	// 两处必须同一套 —— 这里是共用组件这一侧。
 	if !strings.Contains(src, "function hasAngleRef(") || !strings.Contains(src, "_board|_view_|_turnaround") {
 		t.Error("角度参考的判据要把 _board 算进去，否则已经有板子的角色会被标成「缺角度参考」")
 	}
-	if n := strings.Count(src, "hasAngleRef("); n < 3 {
-		t.Errorf("hasAngleRef 应被详情状态与卡片标记共用（定义 + 两处调用），实际 %d 处", n)
+	if n := strings.Count(src, "hasAngleRef("); n < 2 {
+		t.Errorf("hasAngleRef 在本组件里应当是「定义 + 详情状态调用」，实际 %d 处", n)
+	}
+	cardRaw, err2 := os.ReadFile(filepath.Join(root, "views", "LibraryView.vue"))
+	if err2 != nil {
+		t.Fatalf("读 LibraryView.vue 失败：%v", err2)
+	}
+	card := string(cardRaw)
+	if n := strings.Count(card, "hasAngleRef("); n < 2 {
+		t.Errorf("卡片标记那一侧也要用同一个判据（定义 + 调用），实际 %d 处", n)
 	}
 
 	// tileRatio 的判据与 labelOf 同一套（文件名后缀），别去猜像素

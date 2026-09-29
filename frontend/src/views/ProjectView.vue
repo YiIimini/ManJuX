@@ -5,7 +5,7 @@ import { computed, ref, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
 import ShotCard from '../components/ShotCard.vue'
-import AssetDetailDialog from '../components/AssetDetailDialog.vue'
+import LibAssetDialog from '../components/LibAssetDialog.vue'
 
 // ---- 资产详情弹窗（2026-09-29 用户：「点击图片直接弹窗详情页里显示，可以直接使用
 //      资产库里的详细弹窗页面」）----
@@ -411,8 +411,7 @@ const doneShots = computed(() =>
                            所以单独标一枚，免得被当成"这个人的第 N 套衣服" -->
                       <el-tag v-if="isChibiCard(row.c)" size="small" effect="plain" type="warning"
                               title="Q 版形象：内心活动镜里由它演出（本人闭嘴、不演那段）。2.5–3 头身，保留签名眉眼与记号">Q版</el-tag>
-                      <el-tag v-if="row.c.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
-                      <el-tag v-else size="small" :type="sourceTone(row.c.asset?.source)" effect="plain">{{ sourceLabel(row.c.asset?.source) }}</el-tag>
+                      <!-- 来源/模型名已挪到封面角标（.cov-badge），名字这一行只留名字与状态 -->
                       <i class="dot" :class="row.c.asset ? 'ok' : 'warn'"></i>
                     </div>
                     <div style="aspect-ratio:3/4;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
@@ -420,6 +419,11 @@ const doneShots = computed(() =>
                          @click="row.c.asset ? openAssetDetail('characters', 'char:'+row.c.id, row.c.name, row.c.asset, row.c.description, row.c.image_prompt) : upload('characters', 'char:'+row.c.id, row.c.name)">
                       <img v-if="row.c.asset" :src="api.fileURL(pj.project.id, row.c.asset.file)"
                            style="width:100%;height:100%;object-fit:cover" />
+                      <!-- 封面角标：分类 + 模型/来源（2026-09-29 用户：别和资产名挤一块） -->
+                      <template v-if="row.c.asset">
+                        <span class="cov-badge tl">角色</span>
+                        <span class="cov-badge bl">{{ sourceLabel(row.c.asset?.source) }}</span>
+                      </template>
                       <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
                         <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传定妆照</div>
                       </div>
@@ -453,8 +457,7 @@ const doneShots = computed(() =>
                 <div v-for="s in scenesWithAsset" :key="s.id" class="shot-card p-3 flex flex-col gap-2">
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ s.name }}</b>
-                    <el-tag v-if="s.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
-                    <el-tag v-else size="small" :type="sourceTone(s.asset?.source)" effect="plain">{{ sourceLabel(s.asset?.source) }}</el-tag>
+                    <!-- 来源/模型名已挪到封面角标（.cov-badge），名字这一行只留名字与状态 -->
                     <i class="dot" :class="s.asset ? 'ok' : 'warn'"></i>
                   </div>
                   <div style="aspect-ratio:16/9;background:var(--mx-bg2);border-radius:8px;overflow:hidden" class="relative flex items-center justify-center cursor-pointer"
@@ -462,6 +465,11 @@ const doneShots = computed(() =>
                        @click="s.asset ? openAssetDetail('scenes', 'scene:'+s.id, s.name, s.asset, s.description, s.image_prompt) : upload('scenes', 'scene:'+s.id, s.name)">
                     <img v-if="s.asset" :src="api.fileURL(pj.project.id, s.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
+                    <!-- 封面角标：分类 + 模型/来源（2026-09-29 用户：别和资产名挤一块） -->
+                    <template v-if="s.asset">
+                      <span class="cov-badge tl">场景</span>
+                      <span class="cov-badge bl">{{ sourceLabel(s.asset?.source) }}</span>
+                    </template>
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传场景图</div>
                     </div>
@@ -499,8 +507,7 @@ const doneShots = computed(() =>
                 <div v-for="p in propsWithAsset" :key="p.id" class="shot-card p-3 flex flex-col gap-2">
                   <div class="flex items-center gap-2">
                     <b class="text-sm truncate">{{ p.name }}</b>
-                    <el-tag v-if="p.asset?.source === 'library'" size="small" type="success" effect="plain">库复用</el-tag>
-                    <el-tag v-else-if="p.asset" size="small" :type="sourceTone(p.asset?.source)" effect="plain">{{ sourceLabel(p.asset?.source) }}</el-tag>
+                    <!-- 来源/模型名已挪到封面角标（.cov-badge），名字这一行只留名字与状态 -->
                     <i class="dot" :class="p.asset ? 'ok' : 'warn'"></i>
                   </div>
                   <div style="aspect-ratio:1/1;background:var(--mx-bg2);border-radius:8px;overflow:hidden"
@@ -509,6 +516,11 @@ const doneShots = computed(() =>
                        @click="p.asset ? openAssetDetail('props', 'prop:'+p.id, p.name, p.asset, p.description, p.image_prompt) : upload('props', 'prop:'+p.id, p.name)">
                     <img v-if="p.asset" :src="api.fileURL(pj.project.id, p.asset.file)"
                          style="width:100%;height:100%;object-fit:cover" />
+                    <!-- 封面角标：分类 + 模型/来源（2026-09-29 用户：别和资产名挤一块） -->
+                    <template v-if="p.asset">
+                      <span class="cov-badge tl">道具</span>
+                      <span class="cov-badge bl">{{ sourceLabel(p.asset?.source) }}</span>
+                    </template>
                     <div v-else class="text-center text-xs p-2" style="color:var(--mx-text2)">
                       <el-icon :size="22"><Plus /></el-icon><div class="mt-1">上传道具图</div>
                     </div>
@@ -692,7 +704,7 @@ const doneShots = computed(() =>
 
     <!-- 资产详情弹窗（点卡片图即开）：完整描述与英文提示词、库里的全部图片（多视角/三视图板）。
          卡片上只留两行摘要，完整内容进这里。 -->
-    <AssetDetailDialog v-model:open="assetDlg.open" :kind="assetDlg.kind" :name="assetDlg.name"
+    <LibAssetDialog v-model:open="assetDlg.open" :kind="assetDlg.kind" :name="assetDlg.name"
                        :lib-key="assetDlg.libKey" :project-id="assetDlg.projectId"
                        :asset-file="assetDlg.assetFile" :description="assetDlg.description"
                        :image-prompt="assetDlg.imagePrompt" :source="assetDlg.source" />
@@ -711,4 +723,5 @@ const doneShots = computed(() =>
   line-height: 1.5;
   word-break: break-word;
 }
+/* 封面角标 .cov-badge 在全局 style.css（资产库与工作台共用同一份，不各写一套） */
 </style>

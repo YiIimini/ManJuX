@@ -1,5 +1,6 @@
 <script setup>
 import { G, api, fileToB64, sourceLabel, sourceTone} from '../store'
+import LibAssetDialog from '../components/LibAssetDialog.vue'
 import { onMounted, ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmGpuContention } from '../pipelineBusy'
@@ -87,44 +88,22 @@ const libCards = computed(() => {
 // ---------- 资产详情弹窗 ----------
 // 展示该角色的**全部图片**(定妆照 + 多视角原图 + 转台图)、中文描述与英文提示词,
 // 并提供管理操作。图片清单由后端 /api/library/{kind}/{name} 给出。
-const detail = ref(null)
-const detailBusy = ref(false)
+// 详情弹窗现在由**共用组件** LibAssetDialog.vue 承载（资产库与工作台同一份）——
+// 这里只留"打开哪一条"这三个字段，以及它改完之后刷新列表。
+const detailState = ref(null) // {kind, key, name} | null
 const detailOpen = computed({
-  get: () => !!detail.value,
-  set: (v) => { if (!v) detail.value = null },
+  get: () => !!detailState.value,
+  set: (v) => { if (!v) detailState.value = null },
 })
-
-// 描述/提示词在弹窗里可编辑:AI 生成或手改后点「保存」落库(data/asset.json)。
-const editDesc = ref('')
-const editPrompt = ref('')
-const metaBusy = ref(false)
-const descBusy = ref(false)
-
-async function reloadDetail(k, n) {
-  try {
-    const d = await api.libraryDetail(k, n)
-    detail.value = { ...d, kind: k }
-    editDesc.value = detail.value.description || ''
-    editPrompt.value = detail.value.image_prompt || ''
-  } catch (e) { ElMessage.error('读取资产详情失败:' + e.message) }
-}
+const detailKind = computed(() => detailState.value?.kind || 'characters')
+const detailKey = computed(() => detailState.value?.key || '')
+const detailName = computed(() => detailState.value?.name || '')
 
 async function openDetail(e) {
   if (batch.value) return // 批量选择模式下,点击卡片是勾选而不是看详情
-  detailBusy.value = true
-  detail.value = { ...e } // 先开弹窗(卡片上的字段),再补详情,点击无空窗
-  editDesc.value = e.description || ''
-  editPrompt.value = e.image_prompt || ''
-  try {
-    await reloadDetail(e.kind, e.name)
-  } catch (err) {
-    ElMessage.error('读取资产详情失败:' + err.message)
-  }
-  detailBusy.value = false
+  detailState.value = { kind: e.kind, key: libKey(e), name: e.name }
 }
 
-// hasViews 该角色是否已有多视角参考图(多视角原图或转台图)。
-// 没有 = 用这个角色渲染时只有一张正面照 —— 详情弹窗要给补全入口。
 // hasAngleRef 该条目有没有**角度参考**（渲染时作第二张参考的那张图）。
 //
 // 2026-09-27 起判据有三种产物（用户：「三视图不就是多视角的吗，相关"单视角"状态也要同步调整显示」）：
@@ -133,69 +112,9 @@ async function openDetail(e) {
 //   `_view_*`     逐张角度图（背面/侧面/四分之三）—— 更老的那条路
 // 只认后两种会让"已经有板子"的角色被标成「只有单张正面照」—— 状态与事实相反，
 // 用户会去点「补全多视角」，白烧一次 H3 转身。
+// （详情弹窗里同一判据在 LibAssetDialog.vue —— 那两处必须是同一套。）
 function hasAngleRef(images) {
   return (images || []).some((f) => /_board|_view_|_turnaround/.test(String(f)))
-}
-const hasViews = computed(() => {
-  const d = detail.value
-  if (!d) return false
-  return hasAngleRef(d.images)
-})
-
-// 补全多视角:一次 H3 转身渲染(数分钟),后端做完才返回,期间按钮保持 loading,
-// 不能让用户以为"点了没反应"。
-const viewsBusy = ref(false)
-async function doViews() {
-  const d = detail.value
-  if (!d) return
-  viewsBusy.value = true
-  try {
-    const j = await api.libraryViews(d.kind, d.name)
-    if (j && j.skipped) ElMessage.info(j.message || '已有多视角图')
-    else ElMessage.success('多视角已就绪:渲染将自动把它作为该角色的第二张参考')
-    await reloadDetail(d.kind, d.name)
-    refresh()
-  } catch (e) {
-    ElMessage.error('补全多视角失败:' + e.message)
-  }
-  viewsBusy.value = false
-}
-
-// AI 生成中文描述与英文提示词:配了视觉模型就让它读这张定妆照(描述的是图里的
-// 角色本身),否则退回文本模型；结果直接落库并回填到输入框,可再手动改。
-async function doDescribe() {
-  const d = detail.value
-  if (!d) return
-  descBusy.value = true
-  try {
-    const j = await api.libraryDescribe(d.kind, d.name)
-    const e = j.entry || j
-    editDesc.value = e.description || ''
-    editPrompt.value = e.image_prompt || ''
-    detail.value = { ...detail.value, ...e }
-    ElMessage.success(j.via === 'vlm' ? '已按图片生成描述与提示词(视觉模型)' : '已生成描述与提示词(文本模型)')
-    refresh()
-  } catch (e) {
-    ElMessage.error('生成失败:' + e.message)
-  }
-  descBusy.value = false
-}
-
-async function saveMeta() {
-  const d = detail.value
-  if (!d) return
-  metaBusy.value = true
-  try {
-    const e = await api.librarySetMeta(d.kind, d.name, {
-      description: editDesc.value, image_prompt: editPrompt.value,
-    })
-    detail.value = { ...d, ...e }
-    ElMessage.success('描述与提示词已保存')
-    refresh()
-  } catch (err) {
-    ElMessage.error('保存失败:' + err.message)
-  }
-  metaBusy.value = false
 }
 
 // libKey 拼库内地址时用**卡片 id**（审计 B13）。
@@ -208,11 +127,11 @@ function libKey(e) {
   return e && e.id ? e.id : e.name
 }
 
-// imgURL 拼库内图片地址;file 为空取主图,否则取指定图(只传基名,后端会校验)
-function imgURL(e, file) {
-  const base = `/api/library/${e.kind}/${encodeURIComponent(libKey(e))}/image`
-  if (!file) return base
-  return `${base}?file=${encodeURIComponent(String(file).split('/').pop())}`
+// kindWordOf 分类的中文短名（封面角标用：角色/场景/道具/配乐）。
+// 注意与页面上那个 `kindWord`（当前标签页的名字）区分 —— 同名会撞声明。
+const KIND_WORD = { characters: '角色', scenes: '场景', props: '道具', music: '配乐' }
+function kindWordOf(k) {
+  return KIND_WORD[String(k || '')] || String(k || '')
 }
 
 // entityKindLabel 条目**生效实体类型**的中文短标签（人/器物/灵兽/无实体/Q 版）。
@@ -246,206 +165,6 @@ function entityKindHint(e) {
 function cardHasViews(e) {
   if (e.kind !== 'characters') return true
   return hasAngleRef(e.images) // 判据与详情弹窗同一处（见 hasAngleRef）
-}
-
-// tileRatio 详情弹窗里每个格子的形状：跟着**产物形状**走，不一律 3/4。
-//
-// 2026-09-27 用户：「资产库里的弹窗详情里的图片请居中对齐显示」+「图片显示高度应该是那个区域的高度」。
-// 两条一起落到这里：格子**定高**（IMG_BOX_H 那一档，撑满这一块给的高度），宽按产物比例算 ——
-// 定妆照是竖幅(3/4)、转台图是 4 格横向拼图(8:3)、三视图板是 16:9。判据与 labelOf 同一套
-// （文件名后缀），不猜像素；图用 contain 完整显示、居中摆放。
-const IMG_BOX_H = '190px'
-function tileRatio(file) {
-  const b = String(file).split('/').pop() || ''
-  if (b.includes('_board') || b.includes('_turnaround')) return '16/9'
-  return '3/4'
-}
-
-// labelOf 按文件名推断图片用途,便于一眼看出哪张是定妆照、哪张是转台图
-function labelOf(file) {
-  const b = String(file).split('/').pop() || ''
-  if (b.includes('_turnaround')) return '转台图'
-  if (b.includes('_board')) return '三视图板'
-  if (b.includes('_view_threequarter')) return '四分之三'
-  if (b.includes('_view_side')) return '侧面'
-  if (b.includes('_view_back')) return '背面'
-  if (b.includes('_view_')) return '多视角'
-  return '定妆照'
-}
-
-// 重抽(抽卡):同一角色换一张(提示词与描述不变,只换随机种子)。与页面顶部
-// 「抽一张」的区别是:抽卡抽的是全新角色,重抽是对当前这个不满意再摇一次。
-// 没有提示词的条目后端会先用 LLM 依描述推导一条,不再直接拒绝。
-const regenBusy = ref(false)
-async function regenDetail() {
-  const d = detail.value
-  if (!d) return
-  // 重抽与管线共用同一张显卡,且不被管线的运行锁覆盖 —— 管线跑着时点它,
-  // 两条链互相拖慢(乙5 的温和版:告知代价,不禁止)。
-  if (!(await confirmGpuContention(`资产库 · 重新抽卡「${d.name}」`))) return
-  regenBusy.value = true
-  try {
-    const j = await api.libraryRegen(d.kind, d.name)
-    detail.value = { ...d, ...j, kind: d.kind }
-    editPrompt.value = detail.value.image_prompt || ''
-    editDesc.value = detail.value.description || ''
-    ElMessage.success('已抽到新的一张(旧的多视角图已清除,可点「补全多视角」重建)')
-    refresh()
-  } catch (e) {
-    ElMessage.error('抽卡失败:' + e.message)
-  }
-  regenBusy.value = false
-}
-
-// detailImages 详情弹窗要展示的图片清单(老条目没有 images 时退回主图)
-const detailImages = computed(() => {
-  const d = detail.value
-  if (!d) return []
-  return (d.images && d.images.length) ? d.images : (d.image ? [d.image] : [])
-})
-
-function previewDetail(i) {
-  const d = detail.value
-  if (!d) return
-  G.viewer = {
-    index: i,
-    items: detailImages.value.map((f) => ({
-      type: 'image', src: imgURL(d, f),
-      title: `${d.name} · ${labelOf(f)}`,
-      meta: labelOf(f), kindLabel: 'LIBRARY',
-    })),
-  }
-}
-
-async function removeDetail() {
-  const d = detail.value
-  if (!d) return
-  try {
-    await ElMessageBox.confirm(`删除库资产「${d.name}」?引用它的项目不受影响,只是后续不再复用。`,
-      '确认删除', { type: 'warning' })
-  } catch { return }
-  await remove(d)
-  detail.value = null
-}
-
-// 批量删除
-const batch = ref(false)
-const sel = ref(new Set())
-function toggleSel(name) {
-  if (sel.value.has(name)) sel.value.delete(name)
-  else sel.value.add(name)
-  sel.value = new Set(sel.value)
-}
-const allSelected = computed(() => list.value.length > 0 && list.value.every(e => sel.value.has(e.name)))
-function toggleAllSel() {
-  sel.value = allSelected.value ? new Set() : new Set(list.value.map(e => e.name))
-}
-async function batchDelete() {
-  if (!sel.value.size) return
-  try {
-    await ElMessageBox.confirm(`从资产库删除选中的 ${sel.value.size} 项?不影响已使用它们的项目,只影响后续复用。`, '批量删除库资产',
-      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
-  } catch { return }
-  let ok = 0, fail = 0
-  for (const n of sel.value) {
-    try {
-      await api.libraryDelete(kind.value, n)
-      ok++
-    } catch { fail++ }
-  }
-  sel.value = new Set()
-  batch.value = false
-  ElMessage.success(`已删除 ${ok} 项` + (fail ? `,${fail} 个失败` : ''))
-  refresh()
-}
-
-// 分类中文名统一在文件顶部定义(kindLabel),这里不再重复一份
-
-// ---- 抽卡 & 自定义新建(仅角色)----
-const gachaBusy = ref(false)
-const gachaResult = ref(null) // {entry, theme, trait}
-async function gacha() {
-  gachaBusy.value = true
-  gachaResult.value = null
-  try {
-    const d = await api.libraryGacha()
-    gachaResult.value = d
-    ElMessage.success(`抽到「${d.entry.name}」!题材:${d.theme}`)
-    refresh()
-  } catch (e) { ElMessage.error(e.message) } finally { gachaBusy.value = false }
-}
-
-const createOpen = ref(false)
-const createBusy = ref(false)
-const createForm = reactive({ name: '', description: '', image_prompt: '', mode: 'generate', whiten: true })
-const createImage = ref(null)
-const createImageURL = ref('')
-watch(createImage, (f, oldF) => {
-  // 模板里不能直接调 URL.createObjectURL:URL 不在 Vue 模板全局白名单,
-  // 编译成 _ctx.URL → 渲染即抛错,缩略图从未显示过(2026-09-09 实证)
-  if (oldF && createImageURL.value) { try { URL.revokeObjectURL(createImageURL.value) } catch {} }
-  createImageURL.value = f ? URL.createObjectURL(f) : ''
-})
-const createNativePath = ref(null) // 桌面拖放(wails 原生)拿到的本机绝对路径
-const createInput = ref(null)
-function onPickImg(ev) {
-  const f = ev.target.files?.[0]
-  ev.target.value = ''
-  if (!f) return
-  if (!/^image\/(png|jpe?g|webp)/.test(f.type)) { ElMessage.error('仅支持 png/jpg/webp'); return }
-  createImage.value = f
-  createNativePath.value = null
-}
-// 桌面模式拖放:App.vue 把 wails file-drop 事件转发到带 --wails-drop-target 的元素
-function onNativeDrop(ev) {
-  const p = ev.detail?.[0]
-  if (!p) return
-  if (!/\.(png|jpe?g|webp)$/i.test(p)) { ElMessage.error('仅支持 png/jpg/webp'); return }
-  createNativePath.value = p
-  createImage.value = null
-  createForm.mode = 'upload'
-}
-// openCreate 打开创建弹窗,并按当前分类选好默认来源:
-// 角色可以"提示词生成",道具/场景只有上传一条路(代生成用的是角色定妆照那套取景,
-// 拿来画道具会跑偏),所以默认落在上传模式,免得用户填完提示词才发现生成不了。
-function openCreate() {
-  createForm.mode = kind.value === 'characters' ? 'generate' : 'upload'
-  createOpen.value = true
-}
-async function doCreate() {
-  if (!createForm.name.trim()) { ElMessage.warning(`请填写${kindWord.value}名`); return }
-  createBusy.value = true
-  try {
-    // JSON + base64/路径双通道:桌面 webview 的 wails 代理会截断 multipart
-    // 大文件(2026-09-09「源图不存在」根因),浏览器模式同样可用
-    const k = kind.value
-    const body = { name: createForm.name.trim(), description: createForm.description }
-    if (createForm.mode === 'upload') {
-      // 白底化默认开(用户 2026-09-24 定调:上传图也走 Qwen-Image-Edit 生成白底角色);
-      // 非角色分类后端不看这个字段(道具/场景的主图不当锁脸锚点,没必要付编辑开销)
-      body.whiten = createForm.whiten
-      if (createNativePath.value) {
-        body.image_path = createNativePath.value
-      } else if (createImage.value) {
-        body.image_b64 = await fileToB64(createImage.value)
-        body.filename = createImage.value.name
-      } else {
-        ElMessage.warning('请选择或拖入上传图片'); createBusy.value = false; return
-      }
-    } else {
-      if (!createForm.image_prompt.trim()) { ElMessage.warning('请填写生成提示词'); createBusy.value = false; return }
-      body.image_prompt = createForm.image_prompt.trim()
-    }
-    const d = await api.libraryCreateAsset(k, body)
-    // 白底化没做成时后端会如实回 note(降级为原图入库)—— 必须说出来,不能假装成功
-    const done = `${kindLabel[k] || '资产'}「${d.entry.name}」已入库`
-    if (d.note) ElMessage.warning(`${done}:${d.note}`)
-    else ElMessage.success(done)
-    createOpen.value = false
-    createForm.name = ''; createForm.description = ''; createForm.image_prompt = ''; createImage.value = null; createNativePath.value = null
-    kind.value = k
-    refresh()
-  } catch (e) { ElMessage.error(e.message) } finally { createBusy.value = false }
 }
 
 async function remove(e) {
@@ -606,6 +325,10 @@ async function remove(e) {
                  style="width:100%;height:100%;object-fit:cover" loading="lazy"
                  @error="$event.target.style.display='none'"
                  @load="$event.target.style.display=''" />
+            <!-- 封面角标（2026-09-29 用户：「模型名称和分类名称可以显示到封面上，不用和人物名称挤一块」）：
+                 分类在左上，模型/来源在左下 —— 名字那一行只留名字与状态标签。 -->
+            <span class="cov-badge tl">{{ kindWordOf(row.kind) }}</span>
+            <span class="cov-badge bl">{{ sourceLabel(row.source) }}</span>
             <div class="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity" style="background:color-mix(in srgb, var(--mx-bg0) 40%, transparent)">
               <el-icon :size="22" color="var(--mx-amber-hi)"><ZoomIn /></el-icon>
             </div>
@@ -627,9 +350,6 @@ async function remove(e) {
                         content="只有单张正面照,点开可「补全多视角」(渲染时该角色会多一张角度参考)" placement="top">
               <el-tag size="small" type="warning" effect="plain">单视角</el-tag>
             </el-tooltip>
-            <el-tag size="small" effect="plain" :type="sourceTone(row.source)">
-              {{ sourceLabel(row.source) }}
-            </el-tag>
           </div>
           <div class="text-xs" style="color:var(--mx-text2)">
             ♻ 复用 {{ row.used_count }} 次 · 来自「{{ row.source_project || '-' }}」
@@ -702,95 +422,9 @@ async function remove(e) {
       </template>
     </el-dialog>
 
-    <!-- 资产详情:全部图片(定妆照/多视角/转台图) + 中文描述 + 英文提示词 + 抽卡/补全 -->
-    <el-dialog v-model="detailOpen" width="820px" append-to-body :title="detail ? `资产详情 · ${detail.name}` : '资产详情'">
-      <div v-if="detail" class="flex flex-col gap-4">
-        <div>
-          <div class="flex items-center gap-2 mb-2 flex-wrap">
-            <span class="text-xs" style="color:var(--mx-text3)">
-              全部图片({{ detailImages.length }} 张:定妆照 + 多视角/转台图)· 点击可放大
-            </span>
-            <div class="flex-1"></div>
-            <template v-if="detail.kind === 'characters'">
-              <el-tag v-if="hasViews" size="small" type="success" effect="plain">
-                含角度参考(三视图板/转台图,渲染时作第二张参考)
-              </el-tag>
-              <template v-else>
-                <span class="text-xs" style="color:var(--mx-amber)">
-                  缺角度参考 —— 只有正面照(渲染时侧面/背面只能靠模型自己编)
-                </span>
-                <el-tooltip content="可选:H3 原地转身视频 → 抽帧转台图(约数分钟)。**默认不需要** —— 角度参考已由三视图板接手(正/侧/背三个全身 + 6 个头部细节,16:9·2K);补了会作第二张参考一起喂给渲染" placement="top">
-                  <el-button size="small" type="primary" plain :loading="viewsBusy" @click="doViews">
-                    <el-icon class="mr-1"><MagicStick /></el-icon>
-                    {{ viewsBusy ? '多视角生成中(约数分钟)…' : '补全多视角' }}
-                  </el-button>
-                </el-tooltip>
-              </template>
-            </template>
-          </div>
-          <!-- 图片区：**按这一块的高度显示、整体居中**（2026-09-27 用户两轮反馈的结论）。
-               上一版我把网格改成 `repeat(auto-fill,112px)` + justify-content:center —— 那是错的：
-               auto-fill 会先把整行轨道铺满（空轨道照样占位），居中因此等于没居中，图仍贴左。
-               现在改成 flex 换行 + 定高格子：格子高 = 这一块给的高度，宽由各自比例算出来
-               （定妆照 3/4 → 窄，三视图板 16/9 → 宽），整排水平居中，图用 contain 完整显示。 -->
-          <div class="flex flex-wrap gap-3" style="justify-content:center">
-            <div v-for="(f, i) in detailImages" :key="f"
-                 class="cursor-zoom-in relative rounded-lg overflow-hidden"
-                 :style="'height:' + IMG_BOX_H + ';aspect-ratio:' + tileRatio(f) + ';background:var(--mx-bg2);border:1px solid var(--mx-line)'"
-                 @click="previewDetail(i)">
-              <img :src="imgURL(detail, f)" style="width:100%;height:100%;object-fit:contain;object-position:center"
-                   loading="lazy" />
-              <span class="absolute text-xs px-1 py-0.5"
-                    style="left:0;right:0;bottom:0;background:color-mix(in srgb, var(--mx-bg0) 58%, transparent);color:var(--mx-text)">{{ labelOf(f) }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div class="flex items-center gap-2 mb-1">
-            <span class="text-xs" style="color:var(--mx-text3)">中文描述(跨项目一致性用)</span>
-            <div class="flex-1"></div>
-            <el-tooltip content="让 AI 依据这张定妆照生成中文描述与英文提示词(配了视觉模型就读图,否则用文本模型)" placement="top">
-              <el-button size="small" text :loading="descBusy" @click="doDescribe">
-                <el-icon class="mr-1"><MagicStick /></el-icon>{{ descBusy ? '生成中…' : 'AI 生成描述/提示词' }}
-              </el-button>
-            </el-tooltip>
-          </div>
-          <el-input v-model="editDesc" type="textarea" :rows="3" resize="none"
-                    placeholder="如:20岁黑发少年,青色布衣,眼神明亮…(为空时点右上「AI 生成」)" />
-        </div>
-
-        <div>
-          <div class="flex items-center gap-2 mb-1">
-            <span class="text-xs" style="color:var(--mx-text3)">英文提示词(定妆照;抽卡与重生成都按它出图)</span>
-          </div>
-          <el-input v-model="editPrompt" type="textarea" :rows="4" resize="none"
-                    placeholder="A 20-year-old Chinese young man, short black hair, cyan hanfu robe…(为空时抽卡会先用描述推导)" />
-        </div>
-
-        <div class="text-xs" style="color:var(--mx-text3)">
-          来源:{{ sourceLabel(detail?.source) }} ·
-          首次入库:{{ detail.source_project || '-' }} ·
-          已被 {{ detail.used_count }} 个项目复用
-          <span v-if="detail.aliases?.length">
-            <br />同一角色的其它叫法(分集分镜换称呼也不会重出定妆照):{{ detail.aliases.join('、') }}
-          </span>
-        </div>
-      </div>
-      <template #footer>
-        <el-button plain @click="detailOpen = false">关闭</el-button>
-        <el-tooltip content="把上面编辑过的中文描述与英文提示词写入资产库" placement="top">
-          <el-button :loading="metaBusy" @click="saveMeta">保存描述/提示词</el-button>
-        </el-tooltip>
-        <el-tooltip content="同一角色再摇一张定妆照(描述与提示词不变,只换随机种子)" placement="top">
-          <el-button type="primary" :loading="regenBusy" @click="regenDetail">
-            <el-icon class="mr-1"><Trophy /></el-icon>{{ regenBusy ? '抽卡中(约 1 分钟)…' : '抽卡(换一张定妆照)' }}
-          </el-button>
-        </el-tooltip>
-        <el-button type="danger" plain @click="removeDetail">
-          <el-icon class="mr-1"><Delete /></el-icon>删除该资产
-        </el-button>
-      </template>
-    </el-dialog>
+    <!-- 资产详情：**与工作台共用同一个组件**（LibAssetDialog.vue）——
+         此前资产库与工作台各写一份，样式与行为两套，用户一眼看出"没适配"。 -->
+    <LibAssetDialog v-model:open="detailOpen" :kind="detailKind" :lib-key="detailKey"
+                    :name="detailName" @changed="refresh" />
   </div>
 </template>
