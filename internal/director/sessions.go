@@ -465,6 +465,15 @@ func GenerateSessions(ctx context.Context, client *llm.Client, sourceText, setti
 			plan = MergeSessions(append(res, vres[0]))
 		}
 	}
+	// **机位校对**（2026-09-29 用户：「前后镜漂移，压不住场」）：分镜这一步经常整集不写 view，
+	// 机位于是由模型每镜自由发挥 —— 实测 11 镜里 8 镜既没 view 也没 view_note。
+	// 纪律与 schema 都写了，但**散文规则管不住模型**（本仓老教训，见 repair.go 的存在理由），
+	// 所以照卡片翻译那一套补一趟确定性会话：只回填缺的字段、幂等、失败不打断流水线。
+	if n, err := FillShotViews(ctx, client, plan); err == nil && n > 0 {
+		onNote("✔ 给 %d 镜补上了机位（官方视角词，或写明为什么留空）—— 成片不会再有「机位随机跳」", n)
+	} else if err != nil {
+		onNote("⚠ 机位校对没跑成(%v) —— 这几镜的机位仍留空，成片可能显得「机位随机跳」", err)
+	}
 	if planHasNothing(plan) {
 		return nil, fmt.Errorf("专职会话跑完但没有任何产出")
 	}
