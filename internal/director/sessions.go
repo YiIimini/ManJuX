@@ -219,9 +219,9 @@ func RunSessionsParallel(ctx context.Context, client *llm.Client, jobs []Session
 			plan, err := chatPlan(ctx, client, SessionSystem(job.Kind, opt), job.User)
 			res.Plan, res.Err, res.Elapsed = plan, err, time.Since(start)
 			if err != nil {
-				onNote("⚠ %s 会话失败（其余会话不受影响）：%v", sessionLabel(job.Kind), err)
+				onNote("⚠ %s这一步没成（其余步骤不受影响）：%v", sessionLabel(job.Kind), err)
 			} else {
-				onNote("✔ %s 会话完成（%.1fs）", sessionLabel(job.Kind), res.Elapsed.Seconds())
+				onNote("✔ %s（%.1fs）", sessionDone(job.Kind), res.Elapsed.Seconds())
 			}
 			out[i] = res
 		}(i, job)
@@ -351,18 +351,39 @@ func characterKey(c project.Character) string {
 }
 
 // sessionLabel 给用户看的会话名（"②人物道具提取"这种）。
+// sessionLabel 给用户看的一步（"场景"/"分镜"这种，日志里作主语）。
+//
+// 【2026-09-29 用户：「这种调用函数方法的是有问题的日志？」】日志是给**用户**看的进度，
+// 不是给开发者看的调用栈：原来写「②场景提取 会话完成」「五步专职会话：②⑤同时跑
+// （④场景已先跑完，场景名拿到手）」—— 那是实现细节（谁先谁后、为什么），该写在代码注释里。
+// 现在日志只说**这一步有结果了**，以及"同时开工"这种用户能理解的事。
 func sessionLabel(k SessionKind) string {
 	switch k {
 	case SessionCast:
-		return "②人物道具提取"
+		return "人物道具"
 	case SessionViews:
-		return "③角色多视图"
+		return "角色多视图"
 	case SessionScene:
-		return "④场景提取"
+		return "场景"
 	case SessionStoryboard:
-		return "⑤分镜脚本"
+		return "分镜"
 	}
 	return string(k)
+}
+
+// sessionDone 完成时那句话（用户视角：这件事有结果了，不是"会话返回了"）。
+func sessionDone(k SessionKind) string {
+	switch k {
+	case SessionCast:
+		return "人物与道具已确定"
+	case SessionViews:
+		return "角色多视图已排好"
+	case SessionScene:
+		return "场景已确定"
+	case SessionStoryboard:
+		return "分镜已排出"
+	}
+	return string(k) + "已完成"
 }
 
 // SessionLabel 供包外播报用。
@@ -414,7 +435,8 @@ func GenerateSessions(ctx context.Context, client *llm.Client, sourceText, setti
 	// "可以同时跑起来"没有被牺牲，牺牲的是"分镜引用一个还不存在的场景名"。
 	sceneRes := RunSessionsParallel(ctx, client,
 		[]SessionJob{{Kind: SessionScene, User: user}}, opt, onNote)
-	onNote("五步专职会话：②人物道具 / ⑤分镜 **同时跑**（④场景已先跑完，场景名拿到手）")
+	// 顺序的理由（④先跑、②⑤再并行）写在上面那段注释里 —— 日志只说用户看得懂的事。
+	onNote("🎬 本集拆解：人物道具与分镜**同时开工**（场景已就位）")
 
 	early := MergeSessions(sceneRes)
 	jobs := make([]SessionJob, 0, len(ParallelKinds()))

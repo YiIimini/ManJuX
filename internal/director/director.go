@@ -362,27 +362,27 @@ func normalizePlan(plan *project.Plan, opt Options) {
 	// 与 project.LoadPlan、cmd/preflight 共用一份实现 —— 三个消费方必须看到同一份方案。
 	if hr := project.HealPlan(plan); opt.OnNote != nil {
 		if hr.EntityRefs > 0 {
-			opt.OnNote("把 %d 处分镜的人物/场景引用**对上了卡片 id**（分镜这一步写的是名字，"+
-				"而装配按 id 取参考图 —— 不对号的话这些镜子在渲染时一张定妆照/场景图都拿不到，"+
-				"整集会降级成纯文生，角色逐镜换脸）", hr.EntityRefs)
+			// 日志是给用户看的：只说"结果 + 不这么做会怎样"，实现细节（谁写名字、谁按 id 取图）
+			// 写在 entity_refs.go 的注释里。
+			opt.OnNote("✔ 已把 %d 处分镜里的角色/场景对上方案里的卡（否则这些镜头拿不到参考图，会变成纯文生）",
+				hr.EntityRefs)
 		}
 		// 同名两卡：②与③会话各起过一个 id（实测 `char_shade` / `char_shoulder_projection`
 		// 都叫「肩头虚影」）—— 并卡必须说出来，否则用户只会看到"怎么渲染两个"。
 		if hr.CharDupes > 0 {
-			opt.OnNote("把 %d 张**同名重复的角色卡**并成了一张（②人物道具 与 ③角色多视图 各自起了 id："+
-				"同一个角色两套 id ⇒ 会出两张定妆照、拿两张参考图）；分镜里对旧 id 的引用已改写到保留的那张",
+			opt.OnNote("✔ 把 %d 张同名重复的角色卡并成了一张（同一个角色有两套 id 会出两张定妆照、拿两张参考图）",
 				hr.CharDupes)
 		}
 		// 字面重合兜底是**猜**（名字与卡片名不完全一致）：必须说出来。
 		// 2026-09-29 真机现场：分镜写「归墟环断口维护舱」，场景卡是「归墟环维护舱大厅」——
 		// 猜对了这一镜才有环境参考图，猜错了就要用户改分镜里的场景名。
 		if hr.EntityRefsLoose > 0 {
-			opt.OnNote("⚠ 其中 %d 处是**按字面重合猜的**对号（分镜里的名字与卡片名不完全一致）—— "+
-				"渲染会用对上的那张卡；若猜错了，请把分镜里的场景名改成卡片上的名字", hr.EntityRefsLoose)
+			opt.OnNote("⚠ %d 处名字与卡片不完全一致，是按最接近的那张对上的 —— 对错了就把分镜里的名字改成卡片名",
+				hr.EntityRefsLoose)
 		}
 		if hr.EntityRefsUnknown > 0 {
-			opt.OnNote("分镜里有 %d 处人物/场景引用**对不上任何卡片**（渲染时这些镜子拿不到参考图）"+
-				"—— 群演/临时场景可以不管；要锚定的话把它们补进卡片表", hr.EntityRefsUnknown)
+			opt.OnNote("⚠ 有 %d 处引用找不到对应的卡（这些镜头拿不到参考图）—— 群演/临时场景可以不管；要锚定就补进卡片表",
+				hr.EntityRefsUnknown)
 		}
 		if hr.PropRefs > 0 {
 			opt.OnNote("把 %d 处分镜里的器物引用**对上了卡片**（模型写的 id 与卡片 id 拼法不一致，"+

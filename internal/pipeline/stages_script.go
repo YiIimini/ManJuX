@@ -116,7 +116,7 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	var plan *project.Plan
 	if c.cfg.Get().Split.FiveSessions {
 		c.emit(proj.ID, PhaseScript, 0, "info", 12,
-			"🧩 五步专职会话：小说转剧本 → ②人物道具 / ④场景 / ⑤分镜 **同时跑** → ③角色多视图")
+			"🎬 本集拆解：先定场景，再同时排人物道具与分镜")
 		plan, err = director.GenerateSessions(ctx, client, text, settingBrief, dopt)
 	} else {
 		plan, err = director.Generate(ctx, client, text, dopt)

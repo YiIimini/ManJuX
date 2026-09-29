@@ -75,11 +75,16 @@ const manual = ref({}) // groupId → bool(用户点过的那一组以他为准)
 const groups = computed(() => {
   const out = []
   for (const l of reversed.value) {
-    const key = (l.project_id || '') + '|' + (l.phase || '')
+    // **分组键只看阶段（管线节点），不看项目**（2026-09-29 用户：
+    // 「相同类的运行日志整合在一起，现在每集都一个太难看了」）。
+    // 此前键是 `项目|阶段`，于是「小说产线」按 88 集裂成 88 组、每组 1 条 —— 又长又没法看。
+    // 现在同一阶段的所有事件并成一组，组内每行仍带它自己的项目标签，不会认错是哪个项目。
+    const key = l.phase || ''
     const cur = out[out.length - 1]
     if (cur && cur.key === key) {
       cur.events.push(l)
       cur.level = worstLevel(cur.level, l.level)
+      if (l.project_id) cur.projects.add(l.project_id)
       continue
     }
     out.push({
@@ -89,6 +94,7 @@ const groups = computed(() => {
       id: key + '#' + l.seq,
       phase: l.phase || '',
       project: l.project_id || '',
+      projects: new Set(l.project_id ? [l.project_id] : []),
       events: [l],
       level: l.level,
     })
@@ -103,7 +109,7 @@ const groups = computed(() => {
     const tone = hasProblem
       ? (g.level === 'error' ? 'var(--mx-red)' : 'var(--mx-yellow)')
       : (done ? 'var(--mx-green)' : (PHASE_TONE[g.phase] || 'var(--mx-text2)'))
-    return { ...g, count: g.events.length, open, tone, hasProblem, done }
+    return { ...g, count: g.events.length, projects: g.projects, open, tone, hasProblem, done }
   })
 })
 function toggleGroup(g) {
@@ -115,9 +121,15 @@ function toggleGroup(g) {
 function groupTip(g) {
   const c = { info: 0, success: 0, warn: 0, error: 0 }
   for (const e of g.events) c[e.level] = (c[e.level] || 0) + 1
+  const names = [...(g.projects || [])].map((p) => projName(p))
+  const projLine = names.length === 0
+    ? '全局事件（不属于某个项目）'
+    : names.length === 1
+      ? `项目：${names[0]}`
+      : `涉及 ${names.length} 个项目（${names.slice(0, 3).join('、')}${names.length > 3 ? ' …' : ''}）`
   return [
     `${phaseLabel(g.phase) || '系统'} · ${g.count} 条`,
-    g.project ? `项目：${projName(g.project)}` : '全局事件（不属于某个项目）',
+    projLine,
     `成功 ${c.success} · 提示 ${c.info} · 警告 ${c.warn} · 失败 ${c.error}`,
     g.done ? '状态：已完成（被后续阶段顶下去，已自动收起）' : g.hasProblem ? '状态：有问题，点开看详情' : '状态：进行中',
     `最新：${g.events[0].message}`,
@@ -220,7 +232,9 @@ onBeforeUnmount(() => {
               <el-icon :size="12" class="chev" :class="{ open: g.open }"><ArrowRight /></el-icon>
               <span class="gdot" :class="[g.level, { done: g.done }]"></span>
               <span class="gname">{{ phaseLabel(g.phase) || '系统' }}</span>
-              <span class="pj" :class="{ cur: g.project === curProj() }" v-if="g.project">[{{ projName(g.project) }}]</span>
+              <!-- 一组 = 一个阶段（跨项目合并）。涉及多个项目时只报个数，具体哪个项目在每一行上 -->
+              <span class="pj" v-if="g.projects.size === 1">[{{ projName([...g.projects][0]) }}]</span>
+              <span class="pj" v-else-if="g.projects.size > 1">{{ g.projects.size }} 个项目</span>
               <span class="gcount">{{ g.count }} 条</span>
               <div class="flex-1"></div>
               <span class="gflag" v-if="g.hasProblem">有问题</span>
@@ -237,7 +251,7 @@ onBeforeUnmount(() => {
               <span class="t">{{ fmtTime(l.at) }}</span>
               <span class="tl-dot"></span>
               <span class="body">
-                <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id && !g.project">[{{ projName(l.project_id) }}]</span>
+                <span class="pj" :class="{ cur: l.project_id === curProj() }" v-if="l.project_id">[{{ projName(l.project_id) }}]</span>
                 <span class="m">{{ l.message }}</span>
               </span>
             </div>
