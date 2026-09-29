@@ -227,10 +227,10 @@ onBeforeUnmount(() => {
               <span class="gflag done-flag" v-else-if="g.done">完成</span>
             </div>
           </el-tooltip>
-          <!-- 收起时把"最后一条"**整条换行显示**（2026-09-29 用户要求：最后的小字直接换行显示）：
-               以前是单行省略号，长消息只看得到开头几个字，等于没看到。 -->
+          <!-- 收起时把"最后一条"**整条换行显示**；**级别决定颜色**（2026-09-29 用户：
+               「运行日志有问题的那条日志数据显示红色的」）—— 有问题的那条必须一眼看见。 -->
           <div v-if="!g.open" class="gprev-wrap" @click="toggleGroup(g)">
-            <span class="gprev">{{ g.events[0].message }}</span>
+            <span class="gprev" :class="g.events[0].level">{{ g.events[0].message }}</span>
           </div>
           <template v-if="g.open">
             <div v-for="l in g.events" :key="l.seq" class="log-line" :class="l.level">
@@ -277,7 +277,7 @@ onBeforeUnmount(() => {
 .log-ghead .gname { color: var(--tone); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
 .log-ghead.done .gname { color: color-mix(in srgb, var(--mx-green) 82%, var(--mx-text)); }
 .log-ghead .gcount { color: var(--mx-text3); font-size: 11px; }
-.log-ghead .gflag { color: var(--mx-yellow); font-size: 11px; }
+.log-ghead .gflag { color: var(--mx-red); font-size: 11px; }
 .log-ghead.error .gflag { color: var(--mx-red); }
 .log-ghead .done-flag { color: color-mix(in srgb, var(--mx-green) 75%, var(--mx-text3)); }
 
@@ -288,6 +288,9 @@ onBeforeUnmount(() => {
   color: var(--mx-text3); font-size: 11px; line-height: 1.5;
   display: block; white-space: normal; word-break: break-word; overflow-wrap: anywhere;
 }
+/* 有问题的那条（warn/error）在小字里也必须是红的（用户 2026-09-29：有问题的那条数据显示红色） */
+.gprev.warn, .gprev.error { color: var(--mx-red); }
+.gprev.success { color: var(--mx-green); }
 /* 组头详情气泡：多行纯文本（\n 由 white-space:pre-line 生效） */
 .gtip { white-space: pre-line; max-width: 420px; line-height: 1.6; font-size: 12px; }
 </style>

@@ -408,11 +408,11 @@ body::after {
 .log-line .ph { color: var(--mx-text3); margin-right: 10px; }
 .log-line.info .m { color: var(--mx-text2); }
 .log-line.success .m { color: var(--mx-green); }
-.log-line.warn .m { color: var(--mx-yellow); }
+.log-line.warn .m { color: var(--mx-red); }
 .log-line.error .m { color: var(--mx-red); }
 .log-line.info .tl-dot::before { background: var(--mx-text3); box-shadow: 0 0 0 2px color-mix(in srgb, var(--mx-text3) 22%, transparent); }
 .log-line.success .tl-dot::before { background: var(--mx-green); box-shadow: 0 0 6px color-mix(in srgb, var(--mx-green) 55%, transparent), 0 0 0 2px color-mix(in srgb, var(--mx-green) 18%, transparent); }
-.log-line.warn .tl-dot::before { background: var(--mx-yellow); box-shadow: 0 0 6px color-mix(in srgb, var(--mx-yellow) 55%, transparent), 0 0 0 2px color-mix(in srgb, var(--mx-yellow) 18%, transparent); }
+.log-line.warn .tl-dot::before { background: var(--mx-red); box-shadow: 0 0 6px color-mix(in srgb, var(--mx-red) 50%, transparent), 0 0 0 2px color-mix(in srgb, var(--mx-red) 18%, transparent); }
 .log-line.error .tl-dot::before { background: var(--mx-red); box-shadow: 0 0 6px color-mix(in srgb, var(--mx-red) 60%, transparent), 0 0 0 2px color-mix(in srgb, var(--mx-red) 20%, transparent); }
 .log-line.error { background: color-mix(in srgb, var(--mx-red) 6%, transparent); }
 .log-line.success { background: color-mix(in srgb, var(--mx-green) 5%, transparent); }

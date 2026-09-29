@@ -115,6 +115,13 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 		if sh.Duration < PlanMinShotSeconds || sh.Duration > PlanMaxShotSeconds {
 			add("fail", where, "镜头时长 %d 秒超出 H3 合法区间 %d–%d 秒",
 				sh.Duration, PlanMinShotSeconds, PlanMaxShotSeconds)
+		} else if sh.Duration > PlanRecommendedShotSeconds {
+			// 合法但超过**建议值**：2026-09-29 用户「分镜渲染时间不超过12S，最高建议10S左右最合适」——
+			// 11/12 秒是留给"台词确实排不开"的少数镜的，不是常态。本地 H3 单镜成本随帧数超线性增长
+			// （10 秒 ≈ 6 秒的 2.8 倍），且长片段尾部是崩坏高发区。
+			add("warn", where, "镜头时长 %d 秒超过建议值 %d 秒（上限 %d 秒合法，但建议 10 秒左右；"+
+				"台词排不开才用 11/12 秒，否则拆成两镜更稳）",
+				sh.Duration, PlanRecommendedShotSeconds, PlanMaxShotSeconds)
 		}
 		if strings.TrimSpace(sh.H3Prompt) == "" {
 			add("fail", where, "h3_prompt 为空 —— 该镜没有可提交的提示词")

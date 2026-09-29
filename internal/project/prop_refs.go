@@ -246,6 +246,8 @@ type HealResult struct {
 	// 因为那是猜的，用户得知道这一镜的参考图是猜出来的）。
 	EntityRefsLoose   int
 	EntityRefsUnknown int
+	// CharDupes 同名两卡被并掉的张数（②人物道具与③角色多视图 各起了一个 id 的同一个角色）。
+	CharDupes int
 }
 
 // HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
@@ -260,11 +262,15 @@ func HealPlan(plan *Plan) HealResult {
 	}
 	// 实体引用归一**要排在器物对号之前**：器物对号会退回分镜的动作文本里找线索，
 	// 而"这一镜有谁"在归一之前可能还是名字 —— 顺序反了会让它拿着对不上的名单去猜。
+	// 同名两卡先并掉（②与③会话各起过 id），再归一引用 —— 顺序不能反：
+	// 并卡会把被丢掉的 id 的引用改写成保留的 id，跑在归一之前才对得上。
+	charDupes := DedupeCharacters(plan)
 	entFixed, entUnknown, entLoose := RemapEntityRefs(plan)
 	return HealResult{
 		EntityRefs:        entFixed,
 		EntityRefsUnknown: entUnknown,
 		EntityRefsLoose:   entLoose,
+		CharDupes:         charDupes,
 		PropRefs:          RemapPropRefs(plan),
 		Dialogue:          FillMissingDialogueTags(plan),
 		Voiceover:         FillVoiceoverAssets(plan),

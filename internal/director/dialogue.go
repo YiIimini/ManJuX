@@ -27,16 +27,20 @@ const CharsPerSecond = 4.1
 
 // MinShotSeconds / MaxShotSeconds 单镜时长的**渲染窗口**(与计划契约同源的合法区间)。
 //
-// 下限 4 秒是 H3 帧网格与叙事节拍的实际需要;上限 10 秒不是"不许更长",而是
-// **自动抬时长的天花板**:再长就该拆镜了(本地单镜渲染成本随帧数超线性增长,
+// 下限 4 秒是 H3 帧网格与叙事节拍的实际需要;上限 12 秒是**合法硬上限**
+// (2026-09-29 用户:「分镜渲染时间不超过12S,最高建议10S左右最合适」),
+// 而**自动抬时长的天花板**仍是建议值 10 秒(project.PlanRecommendedShotSeconds):
+// 台词排不开时才允许到 11/12,再长就该拆镜了(本地单镜渲染成本随帧数超线性增长,
 // 见 sysShotRules),所以到顶后只报告不继续加。
 //
 // ⚠ 它不是生成侧的下限 —— 那一个是 GenMinShotSeconds(5)。两个数各管一件事:
 // 4 是"能渲",5 是"该生成",关系由 plan_contract_ext_test.go 钉住(那里写清了为什么
 // 窗口不能跟着抬)。
 const (
-	MinShotSeconds = 4
-	MaxShotSeconds = 10
+	// 与计划契约**同源**（此前是两处字面量 + 一条测试钉相等；现在直接引用契约，
+	// 少一处会漂的常量）。单镜合法区间：4–12 秒。
+	MinShotSeconds = project.PlanMinShotSeconds
+	MaxShotSeconds = project.PlanMaxShotSeconds
 )
 
 // GenMinShotSeconds LLM 直出路径的单镜**生成下限**(唯一一处;提示词由它渲染)。

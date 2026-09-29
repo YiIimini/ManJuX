@@ -306,7 +306,7 @@ func TestImportFromShotDetailRefusesAllOnFail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bad := strings.Replace(string(raw), `"duration":5,"shot_size":"中景"`, `"duration":12,"shot_size":"中景"`, 1)
+	bad := strings.Replace(string(raw), `"duration":5,"shot_size":"中景"`, `"duration":13,"shot_size":"中景"`, 1)
 	if err := os.WriteFile(filepath.Join(book, "分镜", novelShotDetailJSON), []byte(bad), 0o644); err != nil {
 		t.Fatal(err)
 	}

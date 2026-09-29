@@ -41,10 +41,29 @@ func TestLogConsoleGroupsByPhase(t *testing.T) {
 		{"groupTip(g)", "「鼠标移上去显示详细的 Tip 气泡信息」：组头要有详情气泡"},
 		{"class=\"gprev\"", "收起时那条最后消息要整条显示"},
 		{"white-space: normal", "最后那条小字要**换行**显示（以前是单行省略号，等于没看到）"},
-	} {
+		// 2026-09-29 用户：「运行日志有问题的那条日志数据显示红色的」——
+		// 警告同样是要处理的事，收起时那条小字按级别着色（warn/error 红）。
+		{"class=\"gprev\" :class=\"g.events[0].level\"", "收起时那条最后消息要按级别着色（有问题的走红）"}} {
 		if !strings.Contains(src, want.needle) {
 			t.Errorf("LogConsole.vue 缺少 %q —— %s", want.needle, want.why)
 		}
+	}
+	// 颜色规则在全局 style.css（日志与别处共用同一套 token）——单独查那一份
+	cssRaw, err2 := os.ReadFile(filepath.Join("..", "..", "frontend", "src", "style.css"))
+	if err2 != nil {
+		t.Fatalf("读 style.css 失败：%v", err2)
+	}
+	css := string(cssRaw)
+	for _, want := range []struct{ needle, why string }{
+		{".log-line.warn .m { color: var(--mx-red); }", "警告行的文字必须是红的（用户口径：有问题就红 —— 不该只是黄的）"},
+	} {
+		if !strings.Contains(css, want.needle) {
+			t.Errorf("style.css 缺少 %q —— %s", want.needle, want.why)
+		}
+	}
+	// 收起时那条小字在本组件的 scoped 样式里
+	if !strings.Contains(src, ".gprev.warn, .gprev.error { color: var(--mx-red); }") {
+		t.Error("收起时那条小字（warn/error）要红 —— 有问题的日志一眼就能看见")
 	}
 	// 反面：不许再按数组下标当 key（倒序列表 + 下标 key = 每来一条事件全列重新 patch）
 	if strings.Contains(src, "v-for=\"l in reversed\"") {

@@ -232,7 +232,10 @@ func TestValidatePlanCatches(t *testing.T) {
 		{"场景悬空引用", func(p *Plan) { p.Shots[0].Scene = "scene_nope" }, "fail", "不存在的场景"},
 		{"角色悬空引用", func(p *Plan) { p.Shots[0].Characters = []string{"char_nope"} }, "fail", "不存在的角色"},
 		{"时长过短", func(p *Plan) { p.Shots[0].Duration = 3 }, "fail", "超出 H3 合法区间"},
-		{"时长过长", func(p *Plan) { p.Shots[0].Duration = 12 }, "fail", "超出 H3 合法区间"},
+		{"时长过长", func(p *Plan) { p.Shots[0].Duration = 13 }, "fail", "超出 H3 合法区间"},
+		// 11/12 秒**合法但超建议值**（2026-09-29 用户：「不超过12S，最高建议10S左右最合适」）：
+		// 只给 warn，不拦 —— 台词确实排不开时它是正确处置。
+		{"时长超建议值", func(p *Plan) { p.Shots[0].Duration = 12 }, "warn", "超过建议值"},
 		{"提示词为空", func(p *Plan) { p.Shots[0].H3Prompt = "  " }, "fail", "h3_prompt 为空"},
 		{"mode 非法", func(p *Plan) { p.Shots[0].Mode = "i2v" }, "warn", "不是 ref2va/t2va"},
 		// 注意:判定与平台一致用 Contains —— "大特写""中近景"这类同族词**合法**

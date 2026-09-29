@@ -367,14 +367,25 @@ var entityProfiles = map[EntityKind]entityProfile{
 	KindIncorporeal: {
 		Label: "无实体",
 		Hint:  KindHint(KindIncorporeal),
-		SheetFraming: "plain dark background, the WHOLE apparition centred and fully visible, its whole form inside the frame with generous margin, " +
-			"soft even light that reveals the shape without hardening it",
+		// 【2026-09-29 用户：「这种不是实体的不应该用人的渲染方式」】
+		// 真机现场：肩头虚影（卡里写的是「巴掌大、约一百二十毫米、纤细的木偶关节人形剪影、
+		// 冷蓝白的光」）被画成**一个真人大小的半透明女人站在黑底上** —— 三处都错了：
+		// ① 背景是黑的（用户口径：角色卡一律**纯白无缝底**，与其它卡一致才能当参考图用）；
+		// ② 尺度丢了（"巴掌大"变成了等人高）；
+		// ③ 形态退化成通用"女鬼"，卡里写的木偶关节/冷蓝白光/全息质感全没了。
+		// 所以取景与身份锁都改成"**照卡里的形态与尺度**，不是照人的身体"。
+		SheetFraming: "pure white seamless backdrop, the WHOLE form centred and fully visible with generous margin, " +
+			"drawn at the SIZE and PROPORTION the brief states (a palm-sized or centimetre-scale form is a SMALL figure, " +
+			"shown small and complete — never scaled up to a life-size person), soft even light that reveals the shape without hardening it",
 		SheetIdentity: "\n\nFORMLESS-FORM FIDELITY (mandatory): its silhouette, outline behaviour, colour and temperature of its glow, degree of " +
 			"transparency, and whatever residual features the brief names (a remembered face, a remembered garment, a floating mask) must match " +
-			"the written brief EXACTLY. The entity is NOT solid: keep its edges dissolving rather than cut clean.",
+			"the written brief EXACTLY. **SCALE AND FORM COME FROM THE BRIEF, NOT FROM HUMAN PROPORTIONS**: if the brief says palm-sized, " +
+			"centimetre-scale, doll-jointed, floating, head-only or mask-only, the picture must show exactly that — a generic life-size human " +
+			"silhouette is WRONG unless the brief itself describes one. The entity is NOT solid: keep its edges dissolving rather than cut clean.",
 		SheetMarker: "FORMLESS-FORM FIDELITY",
-		SheetLook: animatedMediumImageBlock() + "\n- The body is translucent and lit from within: a soft, diffuse glow with misty, dissolving edges; " +
-			"the light spreads gently instead of forming a hard bloom.",
+		SheetLook: animatedMediumImageBlock() + "\n- The form is translucent and lit from within: a soft, diffuse glow with misty, dissolving edges; " +
+			"the light spreads gently instead of forming a hard bloom. Hard-surface, metal or ceramic detail appears ONLY where the brief names it " +
+			"(a holographic panel, a jointed armature, a floating mask).",
 		RewriteSheetFraming: true,
 		TurnSubject:         "the EXACT SAME apparition as <Picture 1> in <Picture 1>, a bodiless presence rather than a living person",
 		TurnSummary: "An apparition reference: the presence hovers in the centre of frame and slowly turns in place, its translucent form drifting " +

@@ -287,6 +287,17 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 主卡还没出图时本集就只剩"退回文生图"这一条路(而各自文生图正是同一角色几张脸会漂的原因)。
 	// 分组只调整**生成顺序**,不改任何判据(计划里的其它语义都不依赖角色顺序)。
 	for _, ch := range orderCharsMasterFirst(plan.Characters) {
+		// **空卡不出图**（2026-09-29 用户：「这种不是实体的不应该用人的渲染方式」）。
+		// 真机现场：方案里同一个「肩头虚影」有两张卡，第二张（③角色多视图 会话起的新 id）
+		// 没有描述也没有定妆提示词 —— 平台照样给它出了一张图，而"从零"只能画出**通用人形**
+		// （实测：一个真人大小的半透明女人站在黑底上）。没有依据就不该出图：
+		// 跳过并说清楚，让人去补卡（这才是能确定性做对的事）。
+		if strings.TrimSpace(ch.Description) == "" && strings.TrimSpace(ch.ImagePrompt) == "" {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+				"⚠ 角色「%s」没有描述也没有定妆提示词 —— **跳过出图**（从零生成只会得到一个通用人形，"+""+
+					"与设定无关）；请补上卡片内容再出这一张", ch.Name)
+			continue
+		}
 		check("characters", "char:"+ch.ID, ch.Name, ch.Description, characterImagePrompt(proj, plan, ch), ch.BoardPrompt, ResolveEntityKind(ch))
 	}
 	for _, sc := range plan.Scenes {

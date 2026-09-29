@@ -27,6 +27,93 @@ import (
 // 【为什么必须在读取边界做】与器物对号同源（2026-09-28 的教训）：预检 / 人审 / 渲染
 // 三个消费方必须看到**同一份**方案 —— 只在渲染里修，预检仍会报"引用了不存在的角色"。
 
+// DedupeCharacters 把**同名两卡**（同一个角色被两个会话各起了一个 id）并成一张
+// （2026-09-29 真机实测：用户报「肩头虚影是重名了还是怎样？怎么渲染两个」）。
+//
+// 现场：②人物道具 给出 `char_shade 肩头虚影`（描述 222 字、定妆提示词 727 字），
+// ③角色多视图 又给出 `char_shoulder_projection 肩头虚影`（只有 board_prompt）——
+// 两个会话各自起 id，于是方案里同一角色两张卡 ⇒ 资产阶段出两张定妆照、渲染拿两张参考图。
+//
+// 判据与平台别处一致：**同名即同角色**（名字去括注、去空白后比）。
+// 并卡时：保留**信息更全的那张**（有描述+定妆提示词的），把另一张的空字段补进来；
+// 分镜里对被丢掉那个 id 的引用**改写成保留的 id**（不改写会让那一镜拿不到参考图）。
+//
+// 返回并掉了几张。幂等：并过之后同名只剩一张。
+func DedupeCharacters(plan *Plan) int {
+	if plan == nil || len(plan.Characters) < 2 {
+		return 0
+	}
+	keep := make([]Character, 0, len(plan.Characters))
+	byName := map[string]int{}   // 名 → keep 里的下标
+	alias := map[string]string{} // 被丢掉的 id → 保留的 id
+	for _, c := range plan.Characters {
+		key := charDedupeKey(c.Name)
+		if key == "" {
+			keep = append(keep, c)
+			continue
+		}
+		if i, ok := byName[key]; ok {
+			// 谁更全谁当主卡：描述与定妆提示词都在的那张
+			if richer(c) > richer(keep[i]) {
+				merged := c
+				merged.BoardPrompt = firstNonEmptyStr(c.BoardPrompt, keep[i].BoardPrompt)
+				merged.Voice = firstNonEmptyStr(c.Voice, keep[i].Voice)
+				merged.Kind = firstNonEmptyStr(c.Kind, keep[i].Kind)
+				alias[keep[i].ID] = merged.ID
+				keep[i] = merged
+			} else {
+				keep[i].BoardPrompt = firstNonEmptyStr(keep[i].BoardPrompt, c.BoardPrompt)
+				keep[i].Voice = firstNonEmptyStr(keep[i].Voice, c.Voice)
+				keep[i].Kind = firstNonEmptyStr(keep[i].Kind, c.Kind)
+				alias[c.ID] = keep[i].ID
+			}
+			continue
+		}
+		byName[key] = len(keep)
+		keep = append(keep, c)
+	}
+	dropped := len(plan.Characters) - len(keep)
+	if dropped == 0 {
+		return 0
+	}
+	plan.Characters = keep
+	for i := range plan.Shots {
+		for j, cid := range plan.Shots[i].Characters {
+			if to, ok := alias[cid]; ok && to != "" {
+				plan.Shots[i].Characters[j] = to
+			}
+		}
+	}
+	return dropped
+}
+
+// richer 卡片的信息量（有描述 2 分、有定妆提示词 2 分、有三视图板 1 分）。
+func richer(c Character) int {
+	n := 0
+	if strings.TrimSpace(c.Description) != "" {
+		n += 2
+	}
+	if strings.TrimSpace(c.ImagePrompt) != "" {
+		n += 2
+	}
+	if strings.TrimSpace(c.BoardPrompt) != "" {
+		n++
+	}
+	return n
+}
+
+func firstNonEmptyStr(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
+}
+
+// charDedupeKey 名字的归一键（去括注、去空白、小写）。
+func charDedupeKey(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(stripBracketed(name)), ""))
+}
+
 // RemapEntityRefs 归一分镜里的人物/场景引用，返回（归一了几处, 仍对不上卡片的引用数,
 // 其中按**字面重合**猜对号的处数）。
 //

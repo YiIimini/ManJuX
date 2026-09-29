@@ -70,9 +70,9 @@ func TestPutShotInvalidatesDerivedAndRejectsBadDuration(t *testing.T) {
 		t.Fatalf("前置条件:应有 2 项派生品,实际 %d", got)
 	}
 
-	// ① 非法时长(12 秒,契约区间 4–10)必须**明确报错**,不能静默忽略还回 ok
+	// ① 非法时长(13 秒；契约区间 2026-09-29 起是 4–12)必须**明确报错**,不能静默忽略还回 ok
 	code, out := doReq(t, s, "PUT", "/api/projects/"+id+"/shot", map[string]any{
-		"shot_id": 1, "duration": 12,
+		"shot_id": 1, "duration": 13,
 	})
 	if code != 400 {
 		t.Errorf("区间外时长应 400(旧实现静默忽略并回 200 ok),实际 %d(%v)", code, out)

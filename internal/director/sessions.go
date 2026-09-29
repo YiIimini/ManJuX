@@ -264,13 +264,36 @@ func MergeSessions(results []SessionResult) *project.Plan {
 
 // mergeCharacters 按**卡片 id 优先、其次名字**合并角色（与平台的关联口径一致）。
 func mergeCharacters(dst, src []project.Character) []project.Character {
-	idx := map[string]int{}
+	// **索引同时收 id 与名字**（2026-09-29 真机实测）：③角色多视图 会话的 schema 里带 id，
+	// 而它是**模型自己起的**——实测同一个「肩头虚影」在 ② 里是 `char_shade`、
+	// 在 ③ 里是 `char_shoulder_projection`，只按 id 找就会 append 出**第二张卡**
+	// （第二张只有 board_prompt、描述与定妆提示词都是空的）⇒ 资产阶段给同一个角色出两张定妆照，
+	// 用户看到的就是「怎么渲染两个？」。
+	//
+	// 口径与平台别处一致：**同名即同角色**（资产库复用、对号都是这么判的）。
+	byID := map[string]int{}
+	byName := map[string]int{}
 	for i, c := range dst {
-		idx[characterKey(c)] = i
+		if id := strings.TrimSpace(c.ID); id != "" {
+			byID["id:"+id] = i
+		}
+		if n := charNameKey(c.Name); n != "" {
+			if _, dup := byName[n]; !dup {
+				byName[n] = i
+			}
+		}
 	}
 	for _, c := range src {
-		k := characterKey(c)
-		if i, ok := idx[k]; ok {
+		i, ok := -1, false
+		if id := strings.TrimSpace(c.ID); id != "" {
+			i, ok = byID["id:"+id]
+		}
+		if !ok {
+			if n := charNameKey(c.Name); n != "" {
+				i, ok = byName[n]
+			}
+		}
+		if ok {
 			// 后到的**补空字段**，不覆盖已有内容（两个会话可能都提了同一个角色）
 			if dst[i].ImagePrompt == "" {
 				dst[i].ImagePrompt = c.ImagePrompt
@@ -283,10 +306,41 @@ func mergeCharacters(dst, src []project.Character) []project.Character {
 			}
 			continue
 		}
-		idx[k] = len(dst)
+		// 新角色：两条索引都登记，后续同批/下一批再遇到同名也能并上
+		if id := strings.TrimSpace(c.ID); id != "" {
+			byID["id:"+id] = len(dst)
+		}
+		if n := charNameKey(c.Name); n != "" {
+			if _, dup := byName[n]; !dup {
+				byName[n] = len(dst)
+			}
+		}
 		dst = append(dst, c)
 	}
 	return dst
+}
+
+// charNameKey 名字的归一键（同名即同角色：去括注、去空白）。
+func charNameKey(name string) string {
+	return strings.ToLower(strings.Join(strings.Fields(stripBracketedForMerge(name)), ""))
+}
+
+// stripBracketedForMerge 去掉名字里的括注段（「归墟环名册（黑色硬壳夹页）」→「归墟环名册」）。
+func stripBracketedForMerge(s string) string {
+	for _, pair := range [][2]string{{"（", "）"}, {"(", ")"}, {"【", "】"}, {"[", "]"}} {
+		for {
+			i := strings.Index(s, pair[0])
+			if i < 0 {
+				break
+			}
+			j := strings.Index(s[i:], pair[1])
+			if j < 0 {
+				break
+			}
+			s = s[:i] + s[i+j+len(pair[1]):]
+		}
+	}
+	return strings.TrimSpace(s)
 }
 
 func characterKey(c project.Character) string {
