@@ -203,8 +203,13 @@ func TurnaroundMediumBlock(kind EntityKind, realistic bool) string {
 		return ""
 	}
 	switch NormalizeEntityKind(string(kind)) {
-	case KindHuman, KindAndroid, KindChibi:
+	case KindHuman, KindAndroid:
 		return animatedFaceRenderBlock() // 通用介质 + 人脸条款
+	case KindChibi:
+		// **Q 版不吃人脸条款**（2026-09-29 用户：「Q版形象是那种Q版手办动漫形象的…
+		// 不是写实的那种，不可爱」）：写实人脸条款要求肤色、毛孔、红晕，等于把 Q 版
+		// 拉回写实小人。改用 Q 版自己那套（可爱风格化 3D、玩具质感）。
+		return animatedChibiImageBlock()
 	default:
 		// 器物/灵宠/妖兽/无实体:只给通用介质(给器物写"肤色哑光"等于逼它长一张脸)
 		return animatedMediumRenderBlock()

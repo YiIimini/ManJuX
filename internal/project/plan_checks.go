@@ -91,6 +91,15 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 		subjectNames = append(subjectNames, pr.Name)
 	}
 
+	// **头身比锚自检**（2026-09-29 用户：「碑生（丙十七）、钟离、碑生·Q版、崔无咎 这几个
+	// 定妆照的比例就不对」）。取景尺度已经在装配点补齐，但**锚本身**没人检查：
+	// 「约七头半身」配「矮小驼背」这类自相矛盾的组合，取景怎么改都画不出对的东西。
+	// 锚来自技能侧交出的【人物外形锚表】，所以门报出来之后要改的是**锚表原文**。
+	// 级别是 warn（老包大量没写头身比，只报写了的且写矛盾的，避免刷屏）。
+	for _, msg := range ProportionAnchorIssues(p) {
+		add("warn", "plan.characters", "%s", msg)
+	}
+
 	seen := map[int]bool{}
 	for i, sh := range p.Shots {
 		where := fmt.Sprintf("shots[%d](id=%d)", i, sh.ID)

@@ -41,12 +41,26 @@ func TestTurnaroundMediumLock(t *testing.T) {
 			}
 		}
 	}
-	// 人类反过来必须带这两条;Q 版同样有脸,走同一支
-	for _, k := range []EntityKind{KindHuman, KindChibi} {
+	// 人类反过来必须带这两条
+	// **Q 版不在这一支**（2026-09-29 用户：「Q版形象是那种Q版手办动漫形象的…不是写实的那种，
+	// 不可爱」）——它走 Q 版自己的可爱风格化 3D 块，见下面那一段断言。
+	for _, k := range []EntityKind{KindHuman, KindAndroid} {
 		got := TurnaroundMediumBlock(k, false)
 		for _, want := range []string{"Every human face is idealised and semi-stylised", "Skin specifically"} {
 			if !strings.Contains(got, want) {
 				t.Errorf("%s 介质锁缺少人类专属条款 %q", k, want)
+			}
+		}
+	}
+	// Q 版：必须是**手办/玩具**那套，且**不许**混进写实人脸条款（混进去就画成写实小人）
+	{
+		got := TurnaroundMediumBlock(KindChibi, false)
+		if !strings.Contains(got, ChibiMediumMarker) {
+			t.Errorf("Q 版介质锁不是可爱风格化 3D 那套（缺 %s）：\n%s", ChibiMediumMarker, got)
+		}
+		for _, banned := range []string{"Every human face is idealised and semi-stylised", "Skin specifically"} {
+			if strings.Contains(got, banned) {
+				t.Errorf("Q 版介质锁混进了写实人脸条款 %q —— 会把 Q 版画成写实小人", banned)
 			}
 		}
 	}

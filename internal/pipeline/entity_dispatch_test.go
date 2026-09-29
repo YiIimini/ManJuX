@@ -18,8 +18,12 @@ import (
 // 这条测试把"类型 → 渲染方法"的选择**逐项钉死**：加了新类型却没接上分派点，它会红。
 // 表里的每一列都是一个真实存在、且会出像素（或决定出什么像素）的入口。
 func TestEveryEntityKindPicksItsOwnRenderingMethod(t *testing.T) {
-	// humanLike：走人形取景（半身正脸）+ 发型条款 + 人形三视图板 + 人脸介质块
+	// humanLike：走人形取景（半身正脸）+ 发型条款 + 人形三视图板
+	// **不含 Q 版的人脸介质块**：Q 版是手办动漫质感（2026-09-29 用户「不是写实的那种，不可爱」），
+	// 挂写实人脸条款会把它画成写实小人 —— 见 §人脸介质块那一组断言。
 	humanLike := map[EntityKind]bool{KindHuman: true, KindAndroid: true, KindChibi: true}
+	// faceClauseKinds：**允许**挂写实人脸介质条款的类型（Q 版不在内）
+	faceClauseKinds := map[EntityKind]bool{KindHuman: true, KindAndroid: true}
 	turnVerb := map[EntityKind]string{
 		KindHuman: "原地转身", KindAndroid: "原地转身", KindChibi: "原地转身",
 		KindObject: "转台自转", KindIncorporeal: "原地旋动",
@@ -62,10 +66,10 @@ func TestEveryEntityKindPicksItsOwnRenderingMethod(t *testing.T) {
 		// humanFaceRenderClause() 是"人脸条款"的唯一实现（人形给脸，其余不给）
 		face := humanFaceRenderClause()
 		has := strings.Contains(medium, face)
-		if humanLike[k] && !has {
+		if faceClauseKinds[k] && !has {
 			t.Errorf("%s 的介质块缺人脸条款", EntityKindLabel(k))
 		}
-		if !humanLike[k] && has {
+		if !faceClauseKinds[k] && has {
 			t.Errorf("%s 拿到了人脸介质块（给器物写肤色哑光＝逼它长脸）", EntityKindLabel(k))
 		}
 		// ⑤ 多视角动作：每种类型一个动作词

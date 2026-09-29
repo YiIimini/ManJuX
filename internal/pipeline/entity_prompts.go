@@ -483,7 +483,13 @@ var entityProfiles = map[EntityKind]entityProfile{
 		AnchorLock: "Q 版锁:头身比、脸型设计、发型发色、服装配色与标志性记号必须照抄参考图里的这个 Q 版形象;" +
 			"不得把它拉回真人头身比,也不得换成一个通用的萌系吉祥物。",
 		AnchorUseFor: "下面的文字描述只用于「姿态/表情/动作/服装细节」,不得用来改写头身比与身份记号",
-		RenderLook:   humanFaceRenderClause(),
+		// 【2026-09-29 用户：「Q版形象是那种Q版手办动漫形象的，使用对应角色图生图产出，
+		// 不是写实的那种，不可爱」】这里原来挂的是 `humanFaceRenderClause()`（写实人脸介质条款：
+		// 肤色、毛孔、红晕）—— 于是 Q 版被按"写实小人"渲染（实测碑生·Q版那张就是写实皮肤与真发，
+		// 不像手办）。改用 Q 版自己那套（可爱风格化 3D、玩具质感），并把写实皮肤明确挡在外面。
+		RenderLook: animatedChibiImageBlock() + "\n- The surface reads as a hand-made FIGURE: soft matte vinyl / clay " +
+			"finish, no skin pores, no photoreal skin texture and no real-human strands of hair — the cute stylised " +
+			"anime-figurine look is kept in every frame.",
 		JudgePoints: "the same chibi CHARACTER DESIGN: head-to-body ratio, face design, hairstyle and hair colour, costume and colour scheme, " +
 			"signature marks",
 	},
