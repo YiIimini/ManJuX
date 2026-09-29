@@ -173,7 +173,7 @@ function castOf(sh) {
           <div class="timecode mt-2" style="word-break:break-all">{{ plan.style }}</div>
         </div>
         <div class="flex items-center justify-between">
-          <span class="text-sm">{{ charPeople }} 角色<template v-if="plan.characters.length !== charPeople">({{ plan.characters.length }} 张造型卡)</template> · {{ plan.scenes.length }} 场景<template v-if="(plan.props || []).length"> · {{ plan.props.length }} 道具</template> · {{ plan.shots.length }} 镜头</span>
+          <span class="text-sm">{{ charPeople }} 角色<template v-if="(plan.characters || []).length !== charPeople">({{ (plan.characters || []).length }} 张造型卡)</template> · {{ (plan.scenes || []).length }} 场景<template v-if="(plan.props || []).length"> · {{ (plan.props || []).length }} 道具</template> · {{ (plan.shots || []).length }} 镜头</span>
           <el-button size="small" type="primary" :disabled="pj.project.running" @click="runPhase('script')">
             <el-icon class="mr-1"><RefreshRight /></el-icon>重新生成方案
           </el-button>

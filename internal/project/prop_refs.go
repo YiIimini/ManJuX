@@ -260,6 +260,23 @@ func HealPlan(plan *Plan) HealResult {
 	if plan == nil {
 		return HealResult{}
 	}
+	// **空切片也要是 []，不能是 null**（2026-09-29 用户：工作台报
+	// `Cannot read properties of null (reading 'length')`）。
+	// Go 的 nil 切片 marshal 成 `null`，而界面到处在数 `plan.characters.length` ——
+	// 方案里某一段为空（例如刚拆集、还没生成角色）时整页就崩。
+	// 收在**唯一读取边界**这一处，比在前端每个 `?.` 上打补丁可靠（新界面不会再踩）。
+	if plan.Characters == nil {
+		plan.Characters = []Character{}
+	}
+	if plan.Scenes == nil {
+		plan.Scenes = []Scene{}
+	}
+	if plan.Props == nil {
+		plan.Props = []Prop{}
+	}
+	if plan.Shots == nil {
+		plan.Shots = []Shot{}
+	}
 	// 实体引用归一**要排在器物对号之前**：器物对号会退回分镜的动作文本里找线索，
 	// 而"这一镜有谁"在归一之前可能还是名字 —— 顺序反了会让它拿着对不上的名单去猜。
 	// 同名两卡先并掉（②与③会话各起过 id），再归一引用 —— 顺序不能反：
