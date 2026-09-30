@@ -840,6 +840,17 @@ func (s *Server) runProject(w http.ResponseWriter, r *http.Request) {
 	if in.Phase == "" {
 		in.Phase = pipeline.PhaseAll
 	}
+	// **手动跑剧本相关阶段前，先确保本集剧本存在**（2026-09-30 用户：
+	// 「这些不都是平台这边的LLM的事吗？咋还需要别人提供？」）。
+	//
+	// 剧本是**平台自己的 LLM 会话**产出的（`ensureEpisodeBrief`），此前只在批量产线那条路上被调用
+	// —— 于是"手动只跑剧本分镜"时，若这一集还没轮到过（`【本集剧情】` 是空的），
+	// 分镜就会在**没有剧本**的情况下硬跑，预检再报一句「剧本缺 N 个必需节」，把人绕进"去补哪几节"。
+	// 这里在启动前补一句：缺就现生成，本来就有就原样返回（该函数自带"像样就跳过"的判据，幂等）。
+	// 放在 handler 而不是 pipeline：生成剧本要配置与 LLM 客户端，那两样归 server 管。
+	if in.Phase == pipeline.PhaseAll || in.Phase == pipeline.PhaseScript {
+		s.ensureEpisodeBrief(id)
+	}
 	if err := s.pipe.Start(id, in.Phase, in.Only, in.Engine, in.Seed); err != nil {
 		writeErr(w, 409, err)
 		return
