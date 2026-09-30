@@ -290,6 +290,23 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
 		// 渲染提示词:身份锚定 + 画风硬约束(动漫化/哑光)+ 台词语言标记,四路渲染共用
 		prompt := ShotRenderPrompt(proj, plan, &shot)
+		// **空提示词不许提交渲染**（2026-09-30 用户：「黑屏的请排查是否是分镜脚本没写好」）。
+		//
+		// 排查结论：第 02 集**镜 15 的 h3_prompt 是空的**（动作空、无 `<d>`、无内切、0 词），
+		// 场景是「碑奴号棚通铺」、vo_kind=inner —— 引擎收到空提示词，出来的就是**94% 黑的帧** ✔
+		// 与"疑似黑屏"的质检结论完全对上。
+		//
+		// 契约门里**本来就有**一条 fail（`h3_prompt 为空 —— 该镜没有可提交的提示词`），
+		// 但那条门只在**预检**（界面/接口）跑，渲染这条路**根本不查** ⇒ fail 拦不住渲染。
+		// 这里补上渲染侧的硬闸：空提示词 = 不提交、报错、记账，**绝不浪费一次 GPU 作业**。
+		if strings.TrimSpace(shot.H3Prompt) == "" {
+			c.emit(proj.ID, PhaseRender, shot.ID, "error", base,
+				"✕ 镜头 %d 的提示词是**空的**（分镜这一步没写出正文）—— 不提交渲染（否则出来就是黑帧）；"+
+					"请重跑「剧本分镜」补上这一镜，或在故事板里手改", shot.ID)
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", "", "h3_prompt 为空")
+			failed++
+			continue
+		}
 		// 参考图**权威清单**:张数与编号由渲染器按实际装配结果写出(LLM 看不见张数,
 		// 猜错就会把多视角拼合图当成场景图 —— 2026-09-25 镜头6 角色漂移的根因,见
 		// refmanifest.go)。无参考图时 RefManifest 返回空串,提示词原样放行。
