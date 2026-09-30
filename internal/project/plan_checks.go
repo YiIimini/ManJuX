@@ -142,7 +142,8 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 				sh.Duration, PlanRecommendedShotSeconds, PlanMaxShotSeconds)
 		}
 		if strings.TrimSpace(sh.H3Prompt) == "" {
-			add("fail", where, "h3_prompt 为空 —— 该镜没有可提交的提示词")
+			add("fatal", where, "h3_prompt 为空 —— 该镜没有可提交的提示词（引擎收到空提示词会出一帧近全黑，"+
+				"实测第 02 集镜 15 达 94%）；重跑剧本分镜补上这一镜，或在故事板里手改")
 		}
 		switch sh.Mode {
 		case "ref2va", "t2va", "":
@@ -210,7 +211,7 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 		for j, l := range sh.Dialogue {
 			where := fmt.Sprintf("%s.dialogue[%d]", where, j)
 			if strings.TrimSpace(l.Text) == "" {
-				add("fail", where, "台词文本为空 —— 渲染时模型没有台词可念，会自己瞎念"+
+				add("fatal", where, "台词文本为空 —— 渲染时模型没有台词可念，会自己瞎念"+
 					"（实测 ASR 转出来不是话）；要么把这句话写全（逐字中文），要么把这条删掉")
 				continue
 			}

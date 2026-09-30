@@ -236,7 +236,8 @@ func TestValidatePlanCatches(t *testing.T) {
 		// 11/12 秒**合法但超建议值**（2026-09-29 用户：「不超过12S，最高建议10S左右最合适」）：
 		// 只给 warn，不拦 —— 台词确实排不开时它是正确处置。
 		{"时长超建议值", func(p *Plan) { p.Shots[0].Duration = 12 }, "warn", "超过建议值"},
-		{"提示词为空", func(p *Plan) { p.Shots[0].H3Prompt = "  " }, "fail", "h3_prompt 为空"},
+		// 提示词为空是**致命**级（会出一帧近全黑，必须拦在启动前）：值从 fail 提到 fatal。
+		{"提示词为空", func(p *Plan) { p.Shots[0].H3Prompt = "  " }, "fatal", "h3_prompt 为空"},
 		{"mode 非法", func(p *Plan) { p.Shots[0].Mode = "i2v" }, "warn", "不是 ref2va/t2va"},
 		// 注意:判定与平台一致用 Contains —— "大特写""中近景"这类同族词**合法**
 		// (pipeline.wantsAnglesStrip 也是 Contains 判的);只有真的不在族里的才 warn,

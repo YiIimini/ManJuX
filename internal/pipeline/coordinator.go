@@ -560,6 +560,19 @@ func (c *Coordinator) execute(ctx context.Context, proj *project.Project, phase 
 		case PhaseAssets:
 			err = c.runAssets(ctx, proj, onlyAssets)
 		case PhaseRender:
+			// **致命项拦在启动前**（2026-09-30 用户：「执行」）。定级口径：
+			// **只有致命项拦、其余照跑并记账** —— 致命＝一次渲染必然白烧或产出废片
+			// （现在两条：`h3_prompt 为空`、`台词文本为空`）。它们此前只在**预检**报，
+			// 而"跑全流程"根本不看预检：门报它的、路照走，空提示词的镜照样渲出一帧 94% 黑
+			// （第 02 集镜 15）。其余 fail/warn 一律**不拦**（存量项目不能因一条 warn 就停）。
+			if fatal := c.fatalPlanIssues(proj.ID); len(fatal) > 0 {
+				for _, m := range fatal {
+					c.emit(proj.ID, PhaseRender, 0, "error", 0, "⛔ %s", m)
+				}
+				err = fmt.Errorf("方案里有 %d 处**致命**问题（上面逐条列出）—— 不启动渲染（否则必然白烧显卡）；"+
+					"请按提示重跑「剧本分镜」或在故事板里手改", len(fatal))
+				break
+			}
 			err = c.runRender(ctx, proj, only, engineOverride, seedOverride)
 		case PhaseQC:
 			err = c.runQC(ctx, proj)
@@ -718,4 +731,19 @@ func phaseNeedsGPU(phase string) bool {
 		return true // 全流程必然包含显卡阶段
 	}
 	return false
+}
+
+// fatalPlanIssues 读一次方案并取**致命**级问题（没有方案或读不出来时返回空 —— 读取失败
+// 由各自的阶段去报，这里不越权）。
+func (c *Coordinator) fatalPlanIssues(projectID string) []string {
+	plan, err := c.store.LoadPlan(projectID)
+	if err != nil || plan == nil {
+		return nil
+	}
+	issues := project.FatalPlanIssues(project.ValidatePlan(plan))
+	out := make([]string, 0, len(issues))
+	for _, it := range issues {
+		out = append(out, it.String())
+	}
+	return out
 }

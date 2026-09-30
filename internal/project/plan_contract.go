@@ -118,11 +118,30 @@ type Issue struct {
 
 func (i Issue) String() string { return fmt.Sprintf("[%s] %s: %s", i.Level, i.Where, i.Msg) }
 
-// PlanFails 只取 fail 级(入口拒收的判据)。
+// FatalPlanIssues 取**致命**级（`fatal`）：这些会让一次渲染必然白烧或产出废片，
+// 所以**必须拦在启动之前**（2026-09-30 用户：「执行」—— 定级口径：
+// 只有致命项拦、其余照跑并记账）。
+//
+// 什么算致命（判据在各自的门里，值就是 `fatal`）：
+//   - `h3_prompt 为空`：引擎收到空提示词 ⇒ 出一帧近全黑（第 02 集镜 15 实测 94%）；
+//   - `台词文本为空`：模型没有台词可念 ⇒ 自己瞎念（实测 ASR 转出来不是话）。
+//
+// 为什么不按告警文案过滤：文案会改、判据不会（本包老规矩）—— 所以值写进 Level 里。
+func FatalPlanIssues(issues []Issue) []Issue {
+	out := make([]Issue, 0, len(issues))
+	for _, it := range issues {
+		if it.Level == "fatal" {
+			out = append(out, it)
+		}
+	}
+	return out
+}
+
+// PlanFails 只取 fail 级(入口拒收的判据)。致命级也算 fail（它同样是"不能就这么跑"）。
 func PlanFails(issues []Issue) []Issue {
 	out := make([]Issue, 0, len(issues))
 	for _, it := range issues {
-		if it.Level == "fail" {
+		if it.Level == "fail" || it.Level == "fatal" {
 			out = append(out, it)
 		}
 	}
