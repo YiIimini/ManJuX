@@ -50,7 +50,24 @@ func collectRepairable(plan *project.Plan) []repairableIssue {
 	}
 	var out []repairableIssue
 	for _, sh := range plan.Shots {
+		// **空提示词要修，不能跳过**（2026-09-30 用户：「分镜脚本输出不审查？」）。
+		//
+		// 这里原来 `continue` 跳过空提示词的镜 —— 后果正是第 02 集镜 15 那次：分镜没写出正文
+		// （0 词、无 `<d>`、无内切），自纠环**不看它**、预检的 fail 又拦不住渲染，
+		// 于是引擎收到空提示词、出一帧 94% 黑，白烧一次 GPU 作业。
+		// 空镜恰恰是**最该喂回去重写**的那一类：给它整镜的内容（动作 + 内切 + 台词 + 六段式）。
 		if strings.TrimSpace(sh.H3Prompt) == "" {
+			out = append(out, repairableIssue{
+				shotID: sh.ID,
+				note:   fmt.Sprintf("#%d(提示词是空的)", sh.ID),
+				fix: fmt.Sprintf("This %d-second shot has NO prompt text at all — write the whole thing now. "+
+					"Follow the official six-section form used by the other shots: the shot list (one "+
+					"`[Shot 1]` opening, plus `[Shot 2] At 00:0X.XXX, …` cuts so that every cut lasts 1.5-4 s "+
+					"and the cuts add up to %d seconds), the subject definitions with the characters named "+
+					"exactly as in the brief, the retention/consistency markers, the lighting sentence, and "+
+					"The dialogue must go inside <d>[Chinese]…</d> tags with the words written out verbatim. "+
+					"Action of this shot per the plan: %s", sh.Duration, sh.Duration, orDash(sh.Action)),
+			})
 			continue
 		}
 		// ① 一镜到底：时长够长却只有一个内部镜头 —— 拖沓的机制（按优先级排最前）
@@ -218,3 +235,11 @@ func firstN(list []string, n int) []string {
 }
 
 var _ = json.Marshal // 保持 encoding/json 在文件里有使用（后续如需结构化修复输出可直接用）
+
+// orDash 空串给一个占位符（拼给模型的指令里不能出现空值）。
+func orDash(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "(the plan gives no action text for this shot — infer it from the episode brief)"
+	}
+	return s
+}
