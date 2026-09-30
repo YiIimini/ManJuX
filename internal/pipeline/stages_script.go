@@ -145,6 +145,15 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	// (2026-09-24 用户报「配音也不完整」)。存盘前逐镜核算并抬时长,抬不动的
 	// 如实报出来让用户拆镜 —— 这层必须在存盘前做,方案、2K 重生成、局部重绘、
 	// 音频驱动、续跑重渲读的都是这份文本。
+	// **场次覆盖对账**（2026-09-30 用户：「分析是否场景过于单一」+「好好完善」）。
+	//
+	// 剧本（平台自己的 ① 会话产出）带结构化场次表 `【场 N|地点|时间|内外】`，
+	// 而 ⑤ 分镜按**叙事节拍**铺镜头、**没有场次配额约束** ⇒ 实测第 02 集：一场戏占 49%、
+	// 剧本第 3 场只剩 1 镜、**唯一的夜戏整场丢掉**，观众的评价就是「场景过于单一」。
+	// 以前无处对照（剧本没有场次表），现在有 —— 就在**存盘前**把这笔账报出来。
+	for _, msg := range project.SceneCoverageIssues(plan, project.ParseScriptScenes(text)) {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16, "🎬 %s", msg)
+	}
 	if n, details := director.FitDialogueDurations(plan); n > 0 {
 		c.emit(proj.ID, PhaseScript, 0, "info", 15, "⏱ 台词时长预算:%d 镜时长已调整(%s)", n, strings.Join(details, ";"))
 	}
