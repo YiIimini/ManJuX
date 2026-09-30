@@ -224,6 +224,16 @@ func CutCoverageIssues(p *Plan) []string {
 		if sh.Duration > int(CutPlanMaxSeconds) && n < CutPlanMinCuts {
 			out = append(out, fmt.Sprintf("#%d(%d 秒,%d 刀)", sh.ID, sh.Duration, n))
 		}
+		// **刀数上限**（2026-09-29 用户：「有问题就需要进行优化调整处理，不要给我遗留问题」）。
+		//
+		// 【这里原来错在哪】上限那条只在 `CutIssues` 里、且只数**结构字段** `sh.Cuts`；
+		// 而分镜实际是**把内切写在正文里**（`[Shot N] At MM:SS.mmm`）⇒ 结构字段是空的 ⇒
+		// 上限从来没被检查过。实测两版分镜每片段切了 **5–9 刀**（用户文件要求 2–4 刀）：
+		// 11 镜那版 6/8/6/6/6/6/7/6/7/6/5；16 镜那版 4/5/8/5/9/3/5/3/5/6/5/4/6/4/3/7。
+		// 节拍过密有两个后果：剪辑碎，而且模型要往比台词多的节拍里填东西 ⇒ **一句台词被念两遍**。
+		if n > CutPlanMaxCuts {
+			out = append(out, fmt.Sprintf("#%d(%d 秒切了 %d 刀,上限 %d)", sh.ID, sh.Duration, n, CutPlanMaxCuts))
+		}
 	}
 	return out
 }
