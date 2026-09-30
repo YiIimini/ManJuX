@@ -505,6 +505,16 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	// (可能被放大到交付档、可能按画幅自动取标准档)—— 报实测值,用户不必去追配置推断。
 	if res.Width > 0 && res.Height > 0 {
 		c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒 · %d×%d)", filepath.Base(res.FinalPath), res.Duration, res.Width, res.Height)
+		// **集封面**（2026-09-30 用户：「集的封面图不需要技能侧吧」→「做啊，继续做完」）：
+		// 从成片里抓三帧候选 + 压集名，默认选用第 1 张 —— 零 GPU 生成、与剧里天然一致。
+		// 放在这里是因为这是"成片已就绪"的唯一确认点；失败只报 warn（封面缺了不影响成片）。
+		if cover, err := compose.EpisodeCover(ctx, c.ff, res.FinalPath, outDir,
+			project.EpisodeLabel(proj.ID), res.Width, res.Height, 0); err != nil {
+			c.emit(proj.ID, PhaseAssemble, 0, "warn", 100, "⚠ 集封面没做出来(%v) —— 成片不受影响", err)
+		} else {
+			c.emit(proj.ID, PhaseAssemble, 0, "success", 100,
+				"✔ 集封面就绪:%s(从成片抓三帧候选 + 压集名,可在 .cover-candidates 里挑)", filepath.Base(cover))
+		}
 	} else {
 		c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒)", filepath.Base(res.FinalPath), res.Duration)
 	}
