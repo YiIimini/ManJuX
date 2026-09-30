@@ -85,9 +85,26 @@ var PlanShotSizes = []string{"远景", "全景", "中景", "中近景", "近景"
 //
 // 与 internal/compose 的字幕逻辑同源:它把 speaker=="旁白" 的行按旁白排版(不写"旁白:")。
 // 这里扩到一组:系统提示音/画外音同样不是画面里的某个人在说话。
+//
+// 【2026-09-30 用户：「视频配音什么鬼？系统一次，主角一次？」】实测《名册之外》第 01 集：
+// 系统播报的说话人写的是 **`舱体主控`**（不是"系统"）—— 于是判据漏掉它 ⇒ 平台按**画内台词**
+// 处理：找一张叫「舱体主控」的角色卡（不存在）、把系统播报排进角色的音色表，
+// 模型就用**角色的嗓子**把系统的话又念了一遍 ⇒ 听到的就是"系统一次、主角一次"。
+//
+// 所以判据从"精确等于几个标签"改成**标签 + 系统音词表**（主控/广播/AI/终端/机械音…），
+// 与 §系统音镜（vo_kind=system）那条路对齐。
 var VoiceoverSpeakers = []string{"旁白", "系统", "画外音", "内心"}
 
-// IsVoiceoverSpeaker 说话人写的是"画外音标签"而不是某个角色名。
+// systemVoiceWords 系统音/播报类说话人的词表（出现在说话人名里就按系统音处理）。
+//
+// 只收**明确的非人声源**：主控/系统/广播/播报/提示音/电子音/机械音/AI/终端/扬声器/舱内语音…
+// 不收"管理员""值班员"这类**可能是真人**的称呼（那种要按角色处理，不能一律当机器音）。
+var systemVoiceWords = []string{
+	"主控", "系统", "广播", "播报", "提示音", "电子音", "机械音", "合成音", "语音助手",
+	"扬声器", "喇叭", "对讲", "电台", "终端", "面板", "ai", "AI", "机器音", "自动回复",
+}
+
+// IsVoiceoverSpeaker 说话人写的是"画外音标签/系统音"而不是某个角色名。
 func IsVoiceoverSpeaker(speaker string) bool {
 	s := strings.TrimSpace(speaker)
 	if s == "" {
@@ -98,7 +115,30 @@ func IsVoiceoverSpeaker(speaker string) bool {
 			return true
 		}
 	}
+	// 系统音：说话人名里带系统音词（如「舱体主控」「维修终端」「广播」）
+	for _, w := range systemVoiceWords {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
 	return false
+}
+
+// IsSystemVoiceSpeaker 说话人是不是**系统音**（不是旁白/内心那种"人的声音"）。
+//
+// 用途：系统音要用系统那套参考图（机器/面板，见 refs.go 的 vo_kind=system 路径）与
+// 机器音色；旁白/内心则不是。两者都属于"不是画面里的人在说"。
+func IsSystemVoiceSpeaker(speaker string) bool {
+	s := strings.TrimSpace(speaker)
+	if s == "" {
+		return false
+	}
+	for _, w := range systemVoiceWords {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return strings.TrimSpace(s) == "系统"
 }
 
 // VoiceoverClauseMarker 画外音子句的幂等判据(改文案必须保留这个串,否则会重复叠加)。
