@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/compose"
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
@@ -493,6 +494,21 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			continue
 		}
 		rel, _ := filepath.Rel(c.store.Dir(proj.ID), res.VideoPath)
+		// **片段级音频净化 + 响度归一**（2026-09-30 用户：「分镜视频的配音电流音太强了…
+		// 另外配音的声音有点大声，吓人」）。挂在这里的理由：这是**片段唯一确认可用的落盘点**
+		// （上一条判据刚确认过 Bytes>0），且在任何指纹/清单记账**之前** —— 处理完的才是最终文件，
+		// 指纹与断点续跑才对得上（否则续跑会把原始音轨的指纹当成有效产物）。
+		//
+		// 原来只有合成整片时净化，工作台试听的片段是 H3 原始音轨：电流音在、响度接近满刻度。
+		// 失败不致命（合成整片时还有一次净化兜底），只报一条 warn。
+		if c.ff != nil {
+			if err := compose.NormalizeClipAudio(ctx, c.ff, res.VideoPath, compose.Params{
+				Loudness: proj.Config.Params.Assemble.Loudness, Peak: proj.Config.Params.Assemble.Peak,
+			}); err != nil {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+					"⚠ 镜头 %d 的音频净化没做成(%v) —— 片段仍是原始音轨（合成整片时还会净化一次）", shot.ID, err)
+			}
+		}
 		// 乙6:引擎回传的**实际帧数**必须记账,不能只留计划值。
 		// 清单长度(length)与"计划 / 实际"记录分别取(口径见 shotFrameRecord 的说明)。
 		length, frameNote := shotFrameRecord(wantFrames, res)
