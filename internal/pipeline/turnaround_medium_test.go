@@ -52,6 +52,16 @@ func TestTurnaroundMediumLock(t *testing.T) {
 			}
 		}
 	}
+	// **介质块不许把年代/世界观写死成国风**（2026-09-30 用户：「不要不同的文章内容输出的道具
+	// 都是一个样的风格，请根据文章风格进行对应渲染」）：年代由 STYLE 那一行决定，
+	// 介质块只锁渲染工艺。
+	if got := TurnaroundMediumBlock(KindObject, false); strings.Contains(got, "guofeng") ||
+		strings.Contains(got, "Chinese period cinema") {
+		t.Error("介质块又把年代写死成国风了 —— 现代/科幻/民国题材的器物会被拉回国风")
+	}
+	if got := TurnaroundMediumBlock(KindObject, false); !strings.Contains(got, "come from the STYLE line") {
+		t.Error("介质块缺少「年代与世界观照 STYLE 那一行」这条约束")
+	}
 	// **国风的脸是中国人的脸**（2026-09-29 用户：「这TM国风，阿枝、霍延、钟离给我渲染外国人的脸」）：
 	// 介质块里必须点名东亚/中国面孔 —— 不点名时模型会往欧美面孔的默认先验走。
 	if got := TurnaroundMediumBlock(KindHuman, false); !strings.Contains(got, "every character in this production is Chinese") {

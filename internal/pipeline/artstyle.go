@@ -153,14 +153,26 @@ func animatedFaceImageBlock() string {
 // (一件器物也不该长着一张明星脸)。另外**显式排除 2D 卡通与手绘动画线稿**:
 // 这是 2026-09-27 那次"为什么是 2D 漫画风格"的直接对策 —— 不说清,模型会往
 // 训练集里最省事的平涂卡通回落。
+//
+// 【2026-09-30 用户：「道具生成需要合理啊，不要不同的文章内容输出的道具都是一个样的风格，
+// 请根据文章风格进行对应渲染」】这一块原来把**年代与世界观写死成国风**
+// （"guofeng period Chinese" / "the visual language is Chinese period cinema"）——
+// 于是不管作品是古装、民国、现代都市还是赛博，道具/器物都往国风上靠 ✗。
+// 介质块只该锁**渲染工艺**（写实材质、哑光、软光、非真人脸、非平涂卡通），
+// **年代与世界观由 STYLE 那一行决定**（`styleExpandFor` 把项目风格词写进提示词）。
 func animatedMediumRenderBlock() string {
 	return "\n\n" + RenderMediumMarker + " (mandatory, applies to every frame of this video):\n" +
-		"- The whole video is a cinematic photoreal 3D render (guofeng period Chinese): real material response on every surface, " +
+		"- The whole video is a cinematic photoreal 3D render: real material response on every surface, " +
 		"a motivated key light with a gentle falloff, natural film grain, shallow depth of field and true-to-life surface detail.\n" +
 		"- Every surface reads MATTE: flat even shading, with each highlight staying wide, dull and low in contrast.\n" +
 		"- Everything stays dry and even throughout.\n" +
 		"- Lighting is soft and low-contrast with a gentle falloff, so nothing ever carries a hard hot spot.\n" +
-		"- Every design in this video is ORIGINAL, and the visual language is Chinese period cinema.\n" +
+		// 年代/世界观**照 STYLE 那一行**（不写死国风）：同一个介质块要能服务古装、民国、
+		// 现代都市、科幻等不同作品，器物才不会都长成一个样子。
+		"- The ERA, the WORLD and the material culture come from the STYLE line of this task and from the written brief — " +
+		"every prop, garment and surface must belong to THAT world (a modern setting has modern materials, a period setting has period ones). " +
+		"Never default to a generic Chinese-period look when the STYLE line says otherwise.\n" +
+		"- Every design in this video is ORIGINAL.\n" +
 		"NEGATIVE (must not happen): a photographic or 3D-scanned human face, a live-action actor's face, any resemblance to a real person, " +
 		"celebrity or public figure, a glossy plastic or wax finish, flat cel-shaded cartoon rendering, and hand-drawn anime or manga line art."
 }
