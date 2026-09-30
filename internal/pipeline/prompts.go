@@ -448,6 +448,17 @@ func LibraryPortraitPrompt(name, description, prompt string) string {
 // 所以收成一个函数,四路共用(与 EnsureChineseDialogue 的"五处统一"同一思路)。
 func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot) string {
 	EnsureVoiceoverClause(plan, shot) // 画外音 / 画面外说话人补"嘴唇闭合"(幂等,在装配点做一次)
+	// **场级光照锚**（2026-09-30 用户：「尼玛，场景卡给谁，让谁去做？」）：
+	// 场景卡与镜头提示词都是平台自己产出的，这一条从头到尾归平台侧。
+	// 实测那一集采样帧最暗占比 47%/52%/77%（有一镜判黑屏）—— 各镜各写曝光，接在一起就跳。
+	// 这里把场景卡的 `light_state`（日/夜 + 主光方向）写进**每一镜**，同一场戏共用一套光态；
+	// 夜戏另加一句"画面内必须有可见光源"。
+	if shot != nil {
+		if clause := sceneLightingClause(plan, shot); clause != "" &&
+			!strings.Contains(shot.H3Prompt, "SCENE LIGHTING (scene-level") {
+			shot.H3Prompt = strings.TrimRight(shot.H3Prompt, "\n") + clause
+		}
+	}
 	// casting 清单只列**本镜真的会开口的人**(见 ShotSpeakers 的说明):以前这里传的是
 	// `plan.Characters`(全剧角色),于是每个镜头都背着一份 6 人的音色表 —— 含一个 10 岁
 	// 顽童的童声。没有台词的镜头(本集 54 镜里 17 镜)照样收到"这些人要用这些嗓子说话",
