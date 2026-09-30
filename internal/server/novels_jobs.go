@@ -390,11 +390,30 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	// **结构自检**（2026-09-29 用户：「内容转剧本不给力，导致分镜脚本不给力」）：
 	// 剧本少一节，分镜就少一份依据 —— 而这件事此前是**静默**的（剧本照样回填、产线照跑，
 	// 只是分镜凭空猜）。缺节就如实报出来，让人重跑这一步。
+	if briefLooksEmpty(out) {
+		// **空剧本**：这一步本身没跑成（批量产线还没轮到这一集，或中途被打断）。
+		// 报"缺 5 个必需节"会把人绕进"去补哪几节"，而实际情况是"这一集还没有剧本"。
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: "⚠ 本集剧本是**空的**（编剧会话没有产出）—— 多半是这一步还没轮到它、或中途被打断；" +
+				"重跑批量产线（它会先补剧本再进管线）即可，不需要手工补节"})
+		return
+	}
 	if missing := missingBriefSections(out); len(missing) > 0 {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
 			Message: fmt.Sprintf("⚠ 本集剧本缺 %d 个必需节：%s —— 分镜会因此少一份依据（重点平摊、机位只能自己猜）；"+
 				"建议重跑本阶段。缺哪节补哪节即可", len(missing), strings.Join(missing, "、"))})
 	}
+}
+
+// briefLooksEmpty 剧本是不是**根本没内容**（不是"写歪了"）。
+//
+// 【为什么要区分（2026-09-30 用户被这条告警绕住了：「这种啥问题？」）】原来不管是
+// "剧本是空的"还是"有内容但少几节"，都报同一句「缺 5 个必需节」—— 而真实情形常常是
+// **批量产线还没轮到这一集**（或中途被打断），`source.txt` 里 `【本集剧情】` 下面是空的。
+// 那时该说的是"这一步没跑成、重跑一次就好"，而不是让人去补五节。判据取 80 字：
+// 一部短剧的一集剧本不可能只有几十字。
+func briefLooksEmpty(brief string) bool {
+	return len([]rune(strings.TrimSpace(brief))) < 80
 }
 
 // briefSectionMarkers 剧本必须有的节（逐字照抄的输出契约的一部分）。
