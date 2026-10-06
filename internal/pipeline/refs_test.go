@@ -99,6 +99,113 @@ func TestAssembleShotRefsEmptyFileTreatedMissing(t *testing.T) {
 	}
 }
 
+// TestAssembleShotRefsNeverCarriesDanglingPaths （2026-10-06 审计）。
+//
+// 判据是**结构性的**：参考图列表里每一张都必须**在盘上真的存在**。
+//
+// 此前只有角色定妆照那一支是这个判据（`project.FileOnDisk`），而**场景卡 / 内心镜的
+// Q 版顶替 / 系统镜的机器人＋面板**三处仍只判 `File != ""` —— 资产表里一条指向不存在
+// 文件的悬挂条目（"鬼条目"，见 stages_assets.go 的清理注释：用户删掉的条目会复活）
+// 照样被塞进列表，引擎侧 `UploadImage` 打开失败 ⇒ **这一镜直接失败**（不是降级出图），
+// 而成片阶段又会因为"有失败镜"把整片卡住。
+func TestAssembleShotRefsNeverCarriesDanglingPaths(t *testing.T) {
+	const (
+		bingPNG  = "assets/characters/bing.png"
+		botPNG   = "assets/characters/bot.png"
+		chibiPNG = "assets/characters/chibi_bing.png"
+		panelPNG = "assets/props/panel.png"
+		bilinPNG = "assets/scenes/bilin.png"
+	)
+	cases := []struct {
+		name string
+		shot project.Shot
+		// assets 是**资产表**（可能就是悬挂的），onDisk 才是真的写到盘上的那几张
+		assets map[string]project.Asset
+		onDisk []string
+
+		wantRefs    int
+		wantMissing []string
+		wantWarn    bool
+	}{
+		{
+			name: "场景卡的图不在盘上（悬挂条目）",
+			shot: project.Shot{Scene: "scene_bilin", Characters: []string{"char_bing"}},
+			assets: map[string]project.Asset{
+				"char:char_bing":    {File: bingPNG},
+				"scene:scene_bilin": {File: bilinPNG},
+			},
+			onDisk:      []string{bingPNG},
+			wantRefs:    1,
+			wantMissing: []string{"scene_bilin"},
+		},
+		{
+			name: "系统镜的机器人/面板图不在盘上",
+			shot: project.Shot{VoKind: "system", Characters: []string{"char_bing"},
+				SystemAssets: map[string]string{"bot": "char_bot", "panel": "prop_panel"}},
+			assets: map[string]project.Asset{
+				"char:char_bing":  {File: bingPNG},
+				"char:char_bot":   {File: botPNG},
+				"prop:prop_panel": {File: panelPNG},
+			},
+			onDisk:      []string{bingPNG},
+			wantRefs:    1,
+			wantMissing: []string{"char_bot", "prop_panel"},
+		},
+		{
+			// 有卡、字段也写着路径，但图不在盘上：按"Q 版还没出图"回落到本人定妆照，
+			// 同时**必须播报** —— 否则观众看到的是"内心戏由本人演"，而日志一片安静。
+			name: "内心镜的 Q 版图不在盘上（回落本人 + 播报）",
+			shot: project.Shot{VoKind: "inner", Characters: []string{"char_bing"},
+				ChibiIDs: []string{"chibi_char_bing"}},
+			assets: map[string]project.Asset{
+				"char:char_bing":       {File: bingPNG},
+				"char:chibi_char_bing": {File: chibiPNG},
+			},
+			onDisk:   []string{bingPNG},
+			wantRefs: 1,
+			wantWarn: true,
+		},
+	}
+	for _, c := range cases {
+		dir := t.TempDir()
+		for _, rel := range c.onDisk {
+			p := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("png"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		refs, missing, warnings := AssembleShotRefs(dir, c.shot, c.assets, true)
+		if len(refs) != c.wantRefs {
+			t.Errorf("%s：参考图该有 %d 张，实际 %d 张（%v）", c.name, c.wantRefs, len(refs), refs)
+		}
+		// **核心判据**：列表里每一张都必须在盘上真的存在
+		for _, r := range refs {
+			if st, err := os.Stat(r.Path); err != nil || st.Size() == 0 {
+				t.Errorf("%s：参考图列表里带着盘上不存在的文件 %s（%v）—— 引擎上传时会失败，"+
+					"这一镜白烧一次作业", c.name, r.Path, err)
+			}
+		}
+		for _, want := range c.wantMissing {
+			found := false
+			for _, m := range missing {
+				if m == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Errorf("%s：该报出缺失 %q（用户才知道要补哪张图），实际 missing=%v", c.name, want, missing)
+			}
+		}
+		if c.wantWarn && len(warnings) == 0 {
+			t.Errorf("%s：Q 版顶替不了这件事必须播报（否则日志一片安静，成片里却是本人演的内心戏）", c.name)
+		}
+	}
+}
+
 // TestTurnaroundPath 多视角转台图的引用判据:
 // 只有在同目录存在 <base>_turnaround.png 时才追加 —— 没有转台图的存量项目
 // 参考图组成必须完全不变(否则渲染指纹会变,导致全量重渲)。

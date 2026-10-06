@@ -48,6 +48,9 @@ type fakeCall struct {
 	Seed      int64
 	Mode      string
 	OutputDir string
+	// Length 引擎拿到的**帧数**（2026-10-06 加）：降级阶梯第二级"缩短到 6 秒再出"
+	// 只改时长，帧数是它唯一的可观测证据（提示词本身在单小镜头时不会变）。
+	Length int
 }
 
 type fakeResult struct {
@@ -76,7 +79,7 @@ func (f *fakeEngine) Render(ctx context.Context, job engine.Job) (*engine.Result
 	f.calls = append(f.calls, fakeCall{
 		ShotID: job.ShotID, Prompt: job.Prompt, RefCount: len(job.RefImages),
 		Steps: job.Steps, Accel: job.Accel, Seed: job.Seed, Mode: job.Mode,
-		OutputDir: job.OutputDir,
+		OutputDir: job.OutputDir, Length: job.Length,
 	})
 	var r fakeResult
 	if n < len(f.plan) {

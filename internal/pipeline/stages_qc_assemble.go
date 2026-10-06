@@ -396,8 +396,8 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 	for _, shot := range plan.Shots {
 		key := strconv.Itoa(shot.ID)
 		m, ok := manifest[key]
-		if !ok || m.File == "" || (m.Status != project.ShotDone && !isPlaceholderClip(m)) {
-			return fmt.Errorf("镜头 %d 尚未渲染完成:请先运行「渲染出片」", shot.ID)
+		if err := assembleClipReject(m, ok); err != nil {
+			return fmt.Errorf("镜头 %d %w", shot.ID, err)
 		}
 		full := filepath.Join(c.store.Dir(proj.ID), m.File)
 		if _, err := os.Stat(full); err != nil {
@@ -797,6 +797,29 @@ func pickEvenly(n, k int) []int {
 		out = append(out, i*(n-1)/(k-1))
 	}
 	return out
+}
+
+// assembleClipReject 一镜的清单条目**能不能进合成**（收集循环的唯一判据；抽成函数是为了可测）。
+//
+// 【为什么要单独抽出来】（2026-10-06 审计）这条判据此前是内联的
+// `!ok || m.File == "" || (m.Status != ShotDone && !isPlaceholderClip(m))` ——
+// `m.File == ""` 排在前面，于是"失败镜的占位片段"那条豁免**根本没机会生效**：
+// 渲染侧明明按官方 fallback 第 4 级写了黑场占位、日志也播报"占位保住了时长与顺序"，
+// 合成这边却一句「镜头 N 尚未渲染完成」把整片拒收；而那一镜本来就是渲不出来的
+// （重渲反复失败），于是用户**永远拿不到成片**，占位代码等于白写。
+//
+// 现在两侧成对：这边"占位也算产物"，渲染侧就必须把占位**记进 File 列**（见 renderStage）。
+// 二者缺一，这条判据就回到"一镜失败、整片合不出来"。
+func assembleClipReject(m project.ClipManifest, ok bool) error {
+	if !ok || (m.Status != project.ShotDone && !isPlaceholderClip(m)) {
+		return fmt.Errorf("尚未渲染完成:请先运行「渲染出片」")
+	}
+	// 占位标记在、路径却是空的（老清单，或渲染侧记账漏了一步）：**必须拒收** ——
+	// 这时收进去没有任何文件可指向，问题只会在更远的地方炸出来（成片缺一段）。
+	if m.File == "" {
+		return fmt.Errorf("清单里没有产物路径（该镜需重渲）")
+	}
+	return nil
 }
 
 // isPlaceholderClip 这一镜的产物是不是**失败镜的占位片段**。

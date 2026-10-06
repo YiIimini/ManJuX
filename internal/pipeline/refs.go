@@ -123,9 +123,19 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		// Q 版卡还没出图时不顶替（宁可按老样子给本人照，也不让这一镜没有身份参考）。
 		if voKind == "inner" {
 			if chibiID, has := chibiOf[cid]; has {
-				if ca, ok2 := assets["char:"+chibiID]; ok2 && ca.File != "" {
+				// **字段非空不等于盘上有图**（2026-10-06 审计，与上面角色分支同一条判据）：
+				// 悬挂条目照样进参考图集合 ⇒ 引擎上传一个不存在的文件 ⇒ **整镜失败**
+				// （不是"降级"，是渲染作业直接报错）。判据统一走 project.FileOnDisk。
+				if ca, ok2 := assets["char:"+chibiID]; ok2 && project.FileOnDisk(dir, ca.File) {
 					add("character", "character_chibi", chibiID, ca.Name, filepath.Join(dir, ca.File))
 					continue
+				}
+				// 有卡但图不在盘上：按"Q 版还没出图"处理（下面回落到本人定妆照），
+				// 但要**说出来** —— 这一镜本该由 Q 版演出，观众看到的是本人。
+				if ca, ok2 := assets["char:"+chibiID]; ok2 && strings.TrimSpace(ca.File) != "" {
+					warnings = append(warnings, fmt.Sprintf(
+						"Q 版卡 %s 的图片不在盘上(%s)：本镜改用 %s 的本人定妆照（内心戏本该由 Q 版演出），补齐这张图后请重渲本镜",
+						chibiID, ca.File, cid))
 				}
 			}
 		}
@@ -157,7 +167,11 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		}
 	}
 	if shot.Scene != "" {
-		if a, ok := assets["scene:"+shot.Scene]; ok && a.File != "" {
+		// **字段非空不等于盘上有图**（2026-10-06 审计）：这一条（以及下面系统镜的机器人/
+		// 面板）原来只判字段 —— 悬挂条目照样进参考图集合，引擎上传一个不存在的文件，
+		// 结果是**整镜失败**（不是降级出图）。判据与角色分支、资产阶段剔除、成片交付
+		// 共用同一个入口（project.FileOnDisk）。
+		if a, ok := assets["scene:"+shot.Scene]; ok && project.FileOnDisk(dir, a.File) {
 			add("scene", "scene", shot.Scene, a.Name, filepath.Join(dir, a.File))
 		} else {
 			missing = append(missing, shot.Scene)
@@ -172,7 +186,7 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 	if voKind == "system" {
 		bot := strings.TrimSpace(shot.SystemAssets["bot"])
 		if bot != "" {
-			if a, ok := assets["char:"+bot]; ok && a.File != "" {
+			if a, ok := assets["char:"+bot]; ok && project.FileOnDisk(dir, a.File) {
 				add("character", "system_bot", bot, a.Name, filepath.Join(dir, a.File))
 			} else {
 				missing = append(missing, bot)
@@ -180,7 +194,7 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		}
 		panel := strings.TrimSpace(shot.SystemAssets["panel"])
 		if panel != "" {
-			if a, ok := assets["prop:"+panel]; ok && a.File != "" {
+			if a, ok := assets["prop:"+panel]; ok && project.FileOnDisk(dir, a.File) {
 				add("prop", "system_panel", panel, a.Name, filepath.Join(dir, a.File))
 			} else {
 				missing = append(missing, panel)

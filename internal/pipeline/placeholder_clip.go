@@ -52,6 +52,21 @@ func writePlaceholderClip(ctx context.Context, f *ff.FF, out string, durationSec
 	return nil
 }
 
+// PlaceholderName 失败镜占位片段的**文件名**（相对片段目录，含扩展名）。
+//
+// 【为什么单独一个名字、而不是直接顶掉真产物】（2026-10-06 审计）：
+//
+//	· 真产物的名字是 `<outName>.mp4`（引擎侧 `OutputName+".mp4"`，见 comfyengine.engine.go）。
+//	  占位若用同一个名字，重渲失败就会**覆盖掉上一次还躺在盘上的那条片子** —— 而那条
+//	  用户可能还要回看/对比（同一镜的"上一版"）。
+//	· 独立名字之后，渲染成功时把占位删掉即可（见 renderStage），失败时两条并存，
+//	  清单的 File 列指向哪一个 = 这一镜当前的有效版本，一眼可查。
+//
+// 扩展名必须是 .mp4：占位是 x264 封装的真视频，合成阶段按路径取用，播放器/工具按扩展名认。
+func PlaceholderName(outName string) string {
+	return outName + "_placeholder.mp4"
+}
+
 // PlaceholderNote 给用户看的说明（说清这一镜发生了什么、以及它现在**看得见**）。
 func PlaceholderNote(shotID, durationSec int, cause string) string {
 	cause = strings.TrimSpace(cause)

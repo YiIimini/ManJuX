@@ -295,8 +295,33 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 		return
 	}
 	src := string(raw)
-	if brief, ok := episodeBriefOf(src); ok && len([]rune(brief)) >= epScriptMinRunes {
-		return // 已经有像样的本集剧本
+	// 【2026-10-06 审计：**长度够 ≠ 已经是剧本**】原来只判"≥800 字就跳过"，于是两种
+	// 情形会静默地把分镜坑掉：
+	//   ① 拆集那一步的 LLM 写超了（它被要求 400-700 字的**剧情节拍 brief**，模型常态超发），
+	//      于是一份"节拍清单"被当成剧本长驻，分镜缺「目的/冲突/爽点」全部依据；
+	//   ② 生成的剧本缺节 —— 而缺节的剧本**不是剧本**（分镜照旧少依据）。
+	// 两种情况在用户侧的可见后果一样：按告警说的"重跑本阶段"，却被长度判据直接跳过，
+	// **什么都不会发生**（给的动作做不到，比不告警更糟）。
+	// 现在的判据：长度够 **且结构完整** 才算"已经是剧本"（见 briefIsUsable）；缺结构就重做这一集。
+	if brief, ok := episodeBriefOf(src); ok {
+		if briefIsUsable(brief) {
+			return // 已经是像样的本集剧本
+		}
+		if miss := missingBriefSections(brief); len(miss) > 0 && len([]rune(strings.TrimSpace(brief))) >= epScriptMinRunes {
+			// 缺结构的旧稿**先备份再重写**：它可能是作者手写或技能侧给的稿子，直接盖掉既丢内容、
+			// 也让人无法对照"原来缺哪几节"。备份写不进去就**不覆盖**（宁可不做这一步，
+			// 也不销毁工作产物）。
+			backup := filepath.Join(dir, "source-brief-prev.txt")
+			if err := os.WriteFile(backup, []byte(brief), 0o644); err != nil {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+					Message: fmt.Sprintf("⚠ 本集旧稿缺 %d 个必需节（%s），但**备份不出去**(%v) —— 为免销毁内容，本次不重写；"+
+						"请检查项目目录的写入权限后重跑", len(miss), strings.Join(miss, "、"), err)})
+				return
+			}
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+				Message: fmt.Sprintf("🔁 本集旧稿缺 %d 个必需节（%s）—— 旧稿已备份到 source-brief-prev.txt，本次按契约**重写这一集剧本**",
+					len(miss), strings.Join(miss, "、"))})
+		}
 	}
 	orig := episodeOrigOf(src)
 	if len([]rune(orig)) < 200 {
@@ -381,15 +406,50 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 			Message: fmt.Sprintf("⚠ 本集剧本改编失败(%v),先用原文继续(不阻断)", err)})
 		return
 	}
+	// **生成 → 机器判定 → 喂回去重写**（本仓对模型的一贯口径，见 internal/director/repair.go）。
+	//
+	// 结构是**机器能判定**的东西（missingBriefSections 逐节点名），所以缺节不该只留一句告警：
+	// 把缺的节名连同上一稿一起喂回去，让它补**一轮**。只做一轮 —— 预算失控比留着缺陷更糟
+	// （用户会为了一集反复重跑，每次多一轮调用既慢又容易触发限流）。
+	if miss := missingBriefSections(out); len(miss) > 0 && !briefLooksEmpty(out) {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 本集剧本缺 %d 个必需节（%s）—— 把缺的节喂回去**补写一轮**（剧本少一节，分镜就少一份依据）",
+				len(miss), strings.Join(miss, "、"))})
+		ask := fmt.Sprintf("你上一稿**缺少**以下必需节：%s\n"+
+			"请**只补全这几节**，并重新输出**完整剧本全文**：节标题逐字照抄（【开场爆点】、【关键道具与信息】、【本集钩子】，"+
+			"以及每场下面的「目的:/冲突:/转折:/爽点:/钩子:」），场号连续，场次头写成「【场 N|地点|时间|内外】」。\n"+
+			"不要解释、不要前言后语、不要列出你改了哪里 —— 只输出改编后的剧本全文（中文）。",
+			strings.Join(miss, "、"))
+		if fixed, ferr := client.Chat(ctx, []llm.Message{
+			{Role: "system", Content: sys},
+			{Role: "user", Content: user},
+			{Role: "assistant", Content: out},
+			{Role: "user", Content: ask},
+		}, false); ferr == nil && strings.TrimSpace(fixed) != "" {
+			after := missingBriefSections(fixed)
+			// **只在真的变好且没改坏时才采纳**（缺节变少、且不是空稿）：与 repair.go 的
+			// adoptRepaired 同一条纪律 —— 自纠不许把产物弄坏。
+			if adoptRepairedBrief(miss, fixed) {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+					Message: fmt.Sprintf("✔ 补写一轮：缺节从 %d 降到 %d（%s）",
+						len(miss), len(after), orDefault(strings.Join(after, "、"), "无"))})
+				out = fixed
+			} else {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+					Message: fmt.Sprintf("⚠ 补写一轮后缺节没有变少（仍缺 %d 节）—— 保留原稿（改坏的不采纳）", len(after))})
+			}
+		}
+	}
 	if err := os.WriteFile(srcPath, []byte(replaceEpisodeBrief(src, strings.TrimSpace(out))), 0o644); err != nil {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: "⚠ 剧本回写失败:" + err.Error()})
 		return
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
 		Message: fmt.Sprintf("✔ 本集剧本已改编并回填(%d 字)", len([]rune(strings.TrimSpace(out))))})
-	// **结构自检**（2026-09-29 用户：「内容转剧本不给力，导致分镜脚本不给力」）：
-	// 剧本少一节，分镜就少一份依据 —— 而这件事此前是**静默**的（剧本照样回填、产线照跑，
-	// 只是分镜凭空猜）。缺节就如实报出来，让人重跑这一步。
+	// **结构自检的收尾播报**（2026-09-29 用户：「内容转剧本不给力，导致分镜脚本不给力」）：
+	// 剧本少一节，分镜就少一份依据。上面已经补写过一轮，走到这里就是"补完仍缺"或"空稿"。
+	// 这里的话必须与**代码真会做的事**一致（2026-10-06 审计：原来说"建议重跑本阶段"，
+	// 而重跑会被长度判据直接跳过 —— 建议做不到，比不报还糟；现在重跑确实会重写这一集）。
 	if briefLooksEmpty(out) {
 		// **空剧本**：这一步本身没跑成（批量产线还没轮到这一集，或中途被打断）。
 		// 报"缺 5 个必需节"会把人绕进"去补哪几节"，而实际情况是"这一集还没有剧本"。
@@ -400,8 +460,9 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	}
 	if missing := missingBriefSections(out); len(missing) > 0 {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-			Message: fmt.Sprintf("⚠ 本集剧本缺 %d 个必需节：%s —— 分镜会因此少一份依据（重点平摊、机位只能自己猜）；"+
-				"建议重跑本阶段。缺哪节补哪节即可", len(missing), strings.Join(missing, "、"))})
+			Message: fmt.Sprintf("⚠ 本集剧本补写一轮后仍缺 %d 个必需节：%s —— 分镜会因此少一份依据（重点平摊、机位只能自己猜）。"+
+				"**重跑本阶段会重写这一集**（旧稿会备份成 source-brief-prev.txt）；也可以直接手改 source.txt 的那几节后重跑",
+				len(missing), strings.Join(missing, "、"))})
 	}
 }
 
@@ -412,6 +473,36 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 // **批量产线还没轮到这一集**（或中途被打断），`source.txt` 里 `【本集剧情】` 下面是空的。
 // 那时该说的是"这一步没跑成、重跑一次就好"，而不是让人去补五节。判据取 80 字：
 // 一部短剧的一集剧本不可能只有几十字。
+// briefIsUsable 这一份剧情段**能不能当剧本用**（2026-10-06 审计）。
+//
+// 判据两条，缺一不可：**字数达标** + **结构完整**。
+// 只看字数是老判据，它把两份"不是剧本的东西"放了过去：
+//
+//	· 拆集那一步的**剧情节拍 brief**（被要求 400-700 字，模型常态超发到 800+）——
+//	  它是事件清单，没有「目的/冲突/爽点/钩子」，分镜拿它只能自己猜哪一下是重点；
+//	· 生成了但缺节的剧本 —— 缺哪节就是缺哪份依据。
+//
+// 两者都会让 `【本集剧情】` 长驻一份"看着有内容"的稿子，而分镜一直少依据；
+// 更要紧的是：告警让人"重跑本阶段"，而重跑正是被这个判据挡住的 ⇒ 建议做不到。
+func briefIsUsable(brief string) bool {
+	if len([]rune(strings.TrimSpace(brief))) < epScriptMinRunes {
+		return false
+	}
+	return len(missingBriefSections(brief)) == 0
+}
+
+// adoptRepairedBrief 补写一轮的结果能不能采纳：**缺节必须真的变少，且不能变成空稿**。
+//
+// 与 `director.adoptRepaired` 同一条纪律（自纠不许把产物弄坏）：模型"改一遍"完全可能
+// 改得更差（少了两节、把台词删了、只回一句"好的"）。判据写死在这里，别人问"补写到底
+// 有没有用"时看这一个函数即可。
+func adoptRepairedBrief(before []string, fixed string) bool {
+	if briefLooksEmpty(fixed) {
+		return false // 空稿 = 这一轮没产出，绝不能顶掉原稿
+	}
+	return len(missingBriefSections(fixed)) < len(before)
+}
+
 func briefLooksEmpty(brief string) bool {
 	return len([]rune(strings.TrimSpace(brief))) < 80
 }

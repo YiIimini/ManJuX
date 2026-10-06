@@ -291,7 +291,23 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 角色一致性锚定:出场角色的固定外貌描述强制前置,消除 LLM 逐镜漂移
 		// 语言标记兜底(幂等):老方案存盘时还没有这层处理
 		// 渲染提示词:身份锚定 + 画风硬约束(动漫化/哑光)+ 台词语言标记,四路渲染共用
-		prompt := ShotRenderPrompt(proj, plan, &shot)
+		// **装配前的原始提示词要单独留一份**（2026-10-06 审计）：`ShotRenderPrompt` 会往
+		// `shot.H3Prompt` 里**追加**场级光照锚等子句 —— 于是下面那条「空提示词不许提交渲染」
+		// 会被追加出来的子句击穿：空镜照样提交，引擎只照着一句光照短语出帧（黑屏那一类，
+		// 正是这条闸门当初要挡的东西）。
+		rawPrompt := shot.H3Prompt
+		// 上一镜（转场字幕要判"场次有没有变"；接缝准入也用得到）。
+		var prevShot *project.Shot
+		for i := range plan.Shots {
+			if plan.Shots[i].ID == shot.ID && i > 0 {
+				prevShot = &plan.Shots[i-1]
+				break
+			}
+		}
+		// 提示词**四步装配的唯一入口**（见 assembleShotPrompt）：降级阶梯的"缩短到 6 秒再出"
+		// 也走它 —— 那一路此前是从裸 `shot.H3Prompt` 重拼的，会把参考图权威清单、道具锚定、
+		// 转场字幕整层丢掉（而参考图照旧提交，编号就对不上了）。
+		prompt := assembleShotPrompt(proj, plan, &shot, roles, prevShot)
 		// **空提示词不许提交渲染**（2026-09-30 用户：「黑屏的请排查是否是分镜脚本没写好」）。
 		//
 		// 排查结论：第 02 集**镜 15 的 h3_prompt 是空的**（动作空、无 `<d>`、无内切、0 词），
@@ -301,7 +317,7 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		// 契约门里**本来就有**一条 fail（`h3_prompt 为空 —— 该镜没有可提交的提示词`），
 		// 但那条门只在**预检**（界面/接口）跑，渲染这条路**根本不查** ⇒ fail 拦不住渲染。
 		// 这里补上渲染侧的硬闸：空提示词 = 不提交、报错、记账，**绝不浪费一次 GPU 作业**。
-		if strings.TrimSpace(shot.H3Prompt) == "" {
+		if strings.TrimSpace(rawPrompt) == "" {
 			c.emit(proj.ID, PhaseRender, shot.ID, "error", base,
 				"✕ 镜头 %d 的提示词是**空的**（分镜这一步没写出正文）—— 不提交渲染（否则出来就是黑帧）；"+
 					"请重跑「剧本分镜」补上这一镜，或在故事板里手改", shot.ID)
@@ -324,21 +340,6 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 						"同一角色可能逐镜不同人 —— 建议核对方案里的 `<Subject N> is <角色名>` 写法")
 			}
 		}
-		prompt = EnsureRefManifest(prompt, shot, roles)
-		// 关键道具的**跨镜文字锚定**（2026-09-28）：道具不进参考图集合（官方规则），
-		// 一致性只能靠文字 —— 把该镜引用到的器物卡原文逐字锚进来，模型才不会每镜自己发明一把刀。
-		prompt = EnsurePropAnchors(prompt, plan, shot)
-		// 场次切换的转场字幕（用户《仿真人10S分镜头指令》/《3D漫剧15秒分镜》：渐隐渐显 + "[地点・时间]" 字幕）。
-		// 放在装配点的理由同道具锚定：这是**已知量**（场次一变，地点时间就在场景卡名字里），
-		// 让 LLM 每镜自觉复述只会时灵时不灵；而且官方屏幕文字规则要求文字逐字进英文双引号。
-		var prevShot *project.Shot
-		for i := range plan.Shots {
-			if plan.Shots[i].ID == shot.ID && i > 0 {
-				prevShot = &plan.Shots[i-1]
-				break
-			}
-		}
-		prompt = EnsureTransitionCaption(prompt, plan, shot, prevShot)
 		// 指纹记录「配置 seed」而非运行时随机值 —— 随机模式(=0)下每次时间戳不同,
 		// 指纹必然失配,断点续跑的已渲镜头全部误判失效(从头重跑的第二根因)。
 		// 渲染仍用上面的随机 seed 保多样;产物有效性以 提示词/参考图/分辨率/步数/档位 为准。
@@ -455,12 +456,27 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			}
 			// 第二级：缩短到 ≤6 秒再出（官方 fallback-policy 第 2 级）。
 			if attempt == 2 && !shortened {
-				if shortPrompt, newDur, ok := project.ShortenShotPrompt(shot.H3Prompt, shot.Duration, planShortenSeconds); ok {
+				// 缩短的**来源是装配前的正文**（`shot.H3Prompt`）：四步装配是"在正文上叠加层级"，
+				// 从装配好的整串上再砍会连清单/锚定一起砍掉，砍完再叠一次就重复了。
+				if shortRaw, newDur, ok := project.ShortenShotPrompt(shot.H3Prompt, shot.Duration, planShortenSeconds); ok {
 					c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
 						"⚠ 镜头 %d 第二次失败,按官方降级阶梯**缩短到 %d 秒**再出一次(原 %d 秒):%v",
 						shot.ID, newDur, shot.Duration, err)
-					prompt = shortPrompt
+					// **装配必须跟着重做一遍**（2026-10-06 审计）：此前这里把裸正文直接当成整份
+					// 提示词发出去 —— 参考图权威清单、道具锚定、转场字幕、身份锚定全没了，
+					// 而参考图照旧提交。清单写的编号是**按这一镜实际附了几张图**算的，
+					// 少了它就回到"模型按文字重画角色/把拼合图当场景图"（2026-09-25 事故）。
+					shortShot := shot
+					shortShot.H3Prompt = shortRaw
+					shortShot.Duration = newDur
+					prompt = assembleShotPrompt(proj, plan, &shortShot, roles, prevShot)
+					// 指纹要记**真正渲出去的那份**：否则清单上那串描述的是没渲过的提示词，
+					// 事后核对（"这镜是不是按新资产出的"）会得出错误结论。
+					inputFP = renderFingerprint(prompt, refs, rp, mode, fingerprintSeed(rp, seedOverride, shortShot, plan))
 					wantFrames = newDur * 24 // 与 shotFrames 同口径（H3 侧 24fps），此处只有时长、没有 Shot 结构
+					// 砍掉的秒数怎么补是**创作决定**（官方原版要求拆成相邻新镜）：如实播报，
+					// 不自作主张。文案与判据同源（project.ShortenNote）。
+					c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "%s", project.ShortenNote(shot.ID, shot.Duration, newDur))
 					seed += 101
 					shortened = true
 					continue
@@ -484,14 +500,24 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			// 官方 fallback 第 4 级：失败镜写 **placeholder: missing clip**（下游复核用）。
 			// 平台化落地：写一个**黑场静音占位片段**顶在这个位置 —— 直接跳过会让成片悄悄变短、
 			// 后面每一镜的画面与字幕整体前移；占位保住时长与顺序，缺口在成片里看得见、清单里查得到。
-			placeholderPath := filepath.Join(clipsDir, outName)
+			// 占位片段**用独立文件名、放在真产物旁边**（不覆盖上一次可能还躺在盘上的产物：
+			// 那一条用户可能还要回看/对比）。
+			placeholderPath := filepath.Join(clipsDir, PlaceholderName(outName))
+			// **占位片段必须记进清单的 File 列**（2026-10-06 审计修）：原来这里传的是空串，
+			// 而合成阶段的第一句判据就是 `m.File == ""` → 一镜失败整片就**永远合不出来**
+			// （反复提示"镜头 N 尚未渲染完成"，渲不出来的镜又被反复重渲），占位代码等于白写；
+			// 重渲失败还会把 File 里上一次的路径一起清空。判据收口在 assembleClipReject。
+			placeholderRel := ""
 			if perr := writePlaceholderClip(ctx, c.ff, placeholderPath, shot.Duration); perr != nil {
 				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
-					"⚠ 镜头 %d 占位片段写入失败(该镜在成片里会被跳过，注意对位):%v", shot.ID, perr)
+					"⚠ 镜头 %d 占位片段写入失败(这一镜进不了成片，后面的画面/字幕会整体前移，注意对位):%v", shot.ID, perr)
 			} else {
+				if rel, rerr := filepath.Rel(c.store.Dir(proj.ID), placeholderPath); rerr == nil {
+					placeholderRel = filepath.ToSlash(rel)
+				}
 				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "%s", PlaceholderNote(shot.ID, shot.Duration, msg))
 			}
-			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, project.PlaceholderMarker+" —— "+msg)
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, placeholderRel, inputFP, project.PlaceholderMarker+" —— "+msg)
 			c.emit(proj.ID, PhaseRender, shot.ID, "error", base, "✕ 镜头 %d 渲染失败(已写占位，继续下一镜):%s", shot.ID, msg)
 			continue
 		}
@@ -556,6 +582,11 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 			manifest[strconv.Itoa(shot.ID)] = mergeTask(manifest[strconv.Itoa(shot.ID)], res.TaskID)
 		}
 		c.setShotStatusLen(proj.ID, manifest, shot.ID, project.ShotDone, engName, rel, inputFP, "", length, wantModel)
+
+		// 这一镜**上一次可能是失败镜**（盘上留着 `<outName>_placeholder.mp4`）：这次真产物出来了，
+		// 把占位清掉 —— 否则目录里同时躺着"黑场"与"真片"，看起来像同一镜的两个版本。
+		// 删不掉不致命（多留一个文件而已），故不打断、不报错。
+		_ = os.Remove(filepath.Join(clipsDir, PlaceholderName(outName)))
 		done++
 		doneMsg := fmt.Sprintf("✔ 镜头 %d 完成(%s)", shot.ID, rel)
 		if frameNote != "" {
@@ -982,6 +1013,34 @@ func (c *Coordinator) takeManifestSaveFailure() (int, error) {
 	n, err := c.manifestErrCount, c.manifestErrFirst
 	c.manifestErrCount, c.manifestErrFirst = 0, nil
 	return n, err
+}
+
+// assembleShotPrompt 渲染提示词的**唯一装配入口**（四步，顺序固定）。
+//
+// 【为什么必须收成一个函数】（2026-10-06 审计）降级阶梯第二级"缩短到 6 秒再出"此前是
+// 从裸 `shot.H3Prompt` 另拼一份提示词的 —— 那份**没有**参考图权威清单、没有道具锚定、
+// 没有转场字幕，而参考图照旧提交。清单的全部意义是止住 `<Picture>` 编号混乱（2026-09-25
+// 镜头 6 角色漂移的根因）；少了它，模型就回到"按文字重画角色/把多视角拼合图当场景图"。
+// 收成一个入口之后，"正常渲染"与"缩短重出"走的是同一条链，不可能再漏一层。
+//
+// 四步的顺序也是契约的一部分（改顺序 = 改提示词结构）：
+//
+//	① ShotRenderPrompt      身份锚定 + 画风硬约束 + 场级光照锚 + 台词语言标记
+//	② EnsureRefManifest     参考图**权威清单**（张数与编号按实际附了几张图算）
+//	③ EnsurePropAnchors     关键道具的跨镜**文字**锚定（道具不进参考图集合）
+//	④ EnsureTransitionCaption 换场时的 "[地点・时间]" 转场字幕
+func assembleShotPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot, roles []RefRole, prevShot *project.Shot) string {
+	prompt := ShotRenderPrompt(proj, plan, shot)
+	// 参考图权威清单：张数与编号由渲染器按**实际装配结果**写出（LLM 看不见张数，猜错就
+	// 会把多视角拼合图当成场景图）。无参考图时返回原串，原样放行。
+	prompt = EnsureRefManifest(prompt, *shot, roles)
+	// 关键道具的跨镜文字锚定（2026-09-28）：道具不进参考图集合（官方规则），
+	// 一致性只能靠文字 —— 把该镜引用到的器物卡原文逐字锚进来，模型才不会每镜自己发明一把刀。
+	prompt = EnsurePropAnchors(prompt, plan, *shot)
+	// 场次切换的转场字幕（用户《仿真人10S分镜头指令》/《3D漫剧15秒分镜》：渐隐渐显 + "[地点・时间]" 字幕）。
+	// 放在装配点的理由同道具锚定：这是**已知量**（场次一变，地点时间就在场景卡名字里），
+	// 让 LLM 每镜自觉复述只会时灵时不灵；而且官方屏幕文字规则要求文字逐字进英文双引号。
+	return EnsureTransitionCaption(prompt, plan, *shot, prevShot)
 }
 
 // anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格

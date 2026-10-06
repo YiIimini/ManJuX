@@ -45,12 +45,23 @@ func TestEnsurePropAnchors(t *testing.T) {
 }
 
 // TestRenderAssemblesPropAnchors 接线：渲染装配点真的调用它（门写了不接线＝没写）。
+//
+// 【2026-10-06 调整】装配链现在收在**唯一入口** `assembleShotPrompt` 里（降级阶梯的
+// "缩短到 6 秒再出"那一级此前是从裸正文另拼提示词、把这一层整块丢掉的）。判据跟着落到
+// 那一处，并额外钉住"渲染主循环真的调用这个入口" —— 光有入口不算接上。
 func TestRenderAssemblesPropAnchors(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("stages_render.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "EnsurePropAnchors(prompt, plan, shot)") {
-		t.Error("渲染阶段要把器物卡原文锚进每镜提示词 —— 这是道具跨镜一致的唯一机制")
+	src := string(raw)
+	for _, want := range []struct{ needle, why string }{
+		{"EnsurePropAnchors(prompt, plan, *shot)", "渲染阶段要把器物卡原文锚进每镜提示词 —— 这是道具跨镜一致的唯一机制"},
+		{"func assembleShotPrompt(", "四步装配必须收在一个入口里（缩短重出那一级要复用它）"},
+		{"prompt := assembleShotPrompt(proj, plan, &shot, roles, prevShot)", "渲染主循环必须真的调用装配入口（有入口没接上＝没写）"},
+	} {
+		if !strings.Contains(src, want.needle) {
+			t.Errorf("装配链缺 %q —— %s", want.needle, want.why)
+		}
 	}
 }
