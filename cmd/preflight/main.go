@@ -52,11 +52,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	// 走平台**同一套自愈**（器物对号/补台词标签/补画外素材），否则预检会报渲染器早已修好的假警。
+	// 走平台**同一套自愈**（器物对号/补 prop_ids/补台词标签/补画外素材），否则预检会报渲染器
+	// 早已修好的假警。四个计数都要列出来 —— "自愈改了什么"必须看得见。
 	healed := project.HealPlan(&plan)
-	if healed.PropRefs+healed.Dialogue+healed.Voiceover > 0 {
-		fmt.Printf("（已按平台自愈口径修过：器物对号 %d 处 / 补台词标签 %d 镜 / 补画外素材 %d 镜）\n",
-			healed.PropRefs, healed.Dialogue, healed.Voiceover)
+	if healed.PropRefs+healed.PropRefsFilled+healed.Dialogue+healed.Voiceover > 0 {
+		fmt.Printf("（已按平台自愈口径修过：器物对号 %d 处 / 补 prop_ids %d 处 / 补台词标签 %d 镜 / 补画外素材 %d 镜）\n",
+			healed.PropRefs, healed.PropRefsFilled, healed.Dialogue, healed.Voiceover)
 	}
 	fmt.Printf("=== 渲染前预检：%s ===\n", filepath.Base(projDir))
 	fmt.Printf("角色 %d 张（%d 个人） / 场景 %d / 道具 %d / 分镜 %d 镜\n\n",

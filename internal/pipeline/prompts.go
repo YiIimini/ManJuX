@@ -911,10 +911,14 @@ func SceneImagePrompt(proj *project.Project, plan *project.Plan, sc project.Scen
 // `check()` 只遍历了角色与场景，**道具一次都没生成过**。于是"道具卡"这一整类产出只躺在
 // 计划里给人看，渲染侧完全没用上。
 //
-// 口径与技能侧的卡片规范一致：**1:1 白底单件**（不画场景、不画人、不写字），
-// 供人审"这块东西长什么样"与跨镜一致性 —— **不进 H3 的参考图集合**（官方那条
-// "Props never get a picture; describe props in text only" 说的是参考图顺序，保持不变；
-// 见 refs.go 只带角色与场景）。
+// 【2026-10-06 审计：这里原先把"道具不给图"说成**官方规则**，是不准确的】
+// 官方 `ref-en.txt` 明写 `<Subject N>` 含 props/objects —— 官方**允许**道具作参考主体。
+// 平台选择不给道具图，理由是平台自己的：① 参考图槽位上限 9 张，超了 `capRefsToLimit`
+// **从尾部裁**，而尾部正是场景图，再塞道具会让"裁掉谁"不可预测；② 道具出图是 1:1 白底单件的
+// 商品图纪律，当参考图有"把白底物件糊进画面"的风险（系统镜的全息面板是**明确例外**，
+// 见 refs.go 的 SystemAssets）。
+// 所以这是**平台自设约束**，不是官方口径 —— 道具的跨镜一致靠正文里的 PROP ANCHORS 文字锚定
+// （`EnsurePropAnchors`），而它整条挂在 `prop_ids` 上（空引用由 `FillMissingPropRefs` 补齐）。
 //
 // 幂等：与场景/角色同口径 —— 已含本类型的 SheetMarker 就原样返回（本函数会被调用两次：
 // 资产阶段一次、渲染前补齐一次，装配成品会写回卡片）。

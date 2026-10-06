@@ -81,7 +81,8 @@ func RefManifest(shot project.Shot, roles []RefRole) string {
 		"attached; it OVERRIDES any picture count or picture number stated anywhere above, because the " +
 		"text above was written before the pictures were attached)\n")
 	sb.WriteString(fmt.Sprintf("Exactly %d picture(s) are attached, in this order:\n", len(roles)))
-	for _, r := range roles {
+	for i, r := range roles {
+		isLast := i == len(roles)-1
 		switch r.Kind {
 		case "character_front":
 			sb.WriteString(fmt.Sprintf(
@@ -101,10 +102,20 @@ func RefManifest(shot project.Shot, roles []RefRole) string {
 					"marks); the remaining cells only give the other angles. It is NOT a scene and NOT several "+
 					"characters.\n", r.Picture, r.Name))
 		case "scene":
+			// **"它是最后一张"这句话必须按实际位次说**（2026-10-06 审计）：系统镜
+			// （vo_kind=system）会在场景图**之后**再追加机器人 + 全息面板两张图
+			// （refs.go 的 SystemAssets 例外），此时场景图并不是最后一张 —— 而清单存在的
+			// 全部意义就是止住 <Picture> 编号混乱，它自己先说错一句，权威性就被自己抵消掉了。
+			// 非末尾时逐字数清后面还有几张（模型对"还剩几张"最敏感）。
+			// 末尾那条分支的文案**保持逐字不变**：提示词进渲染指纹，改了会让存量项目全量重渲。
+			pos := "it is the LAST picture"
+			if !isLast {
+				pos = fmt.Sprintf("it is NOT the last picture (%d picture(s) follow it)", len(roles)-i-1)
+			}
 			sb.WriteString(fmt.Sprintf(
-				"- <Picture %d> = %s (the SCENE reference). This is the scene picture and it is the LAST "+
-					"picture: background layout, props and lighting come from it, the camera stays free.\n",
-				r.Picture, r.Name))
+				"- <Picture %d> = %s (the SCENE reference). This is the scene picture and %s: "+
+					"background layout, props and lighting come from it, the camera stays free.\n",
+				r.Picture, r.Name, pos))
 		case "character_chibi":
 			// 内心活动镜（技能侧 2026-09-27 口径）：画面里演出这段心思的是**这个人的 Q 版形象**，
 			// 本人不在画面里。这里必须写死这两点 —— 否则模型会把 Q 版当"第二个角色"再画一个本人。

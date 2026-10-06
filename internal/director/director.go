@@ -407,9 +407,15 @@ func normalizePlan(plan *project.Plan, opt Options) {
 			opt.OnNote("把 %d 处分镜里的器物引用**对上了卡片**（模型写的 id 与卡片 id 拼法不一致，"+
 				"对不上号的话那几镜的器物又会被重新发明）", hr.PropRefs)
 		}
+		// 【2026-10-06 审计】器物锚定的**唯一机制**挂在 prop_ids 上，而模型常常一个字都不写
+		// （实测那一集 25 镜提到刀/烙铁/名册、prop_ids 全空）—— 平台有卡片名，这一步能确定做对。
+		if hr.PropRefsFilled > 0 {
+			opt.OnNote("✔ 按卡片名给 %d 处器物引用**补上了 prop_ids**（正文/动作里点了名、却一个字都没写 id）—— "+
+				"锚定整条挂在 prop_ids 上，空着的话那几镜的器物每镜都会重新发明一件", hr.PropRefsFilled)
+		}
 		if hr.Dialogue > 0 {
-			opt.OnNote("给 %d 镜补上了缺失的台词标签（计划里有台词、正文里却没有 <d>）——"+
-				"不补的话成片会把那几句说成听不懂的话", hr.Dialogue)
+			opt.OnNote("给 %d 镜补上了缺失的台词标签（计划里有台词、正文里却没有对应的 <d>）——"+
+				"不补的话成片会把那几句说成听不懂的话（配音读正文的 <d>、字幕读 dialogue 字段）", hr.Dialogue)
 		}
 		if hr.Voiceover > 0 {
 			opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+

@@ -1,7 +1,9 @@
 package project
 
 import (
+	"sort"
 	"strings"
+	"unicode"
 )
 
 // prop_refs.go 分镜里 `prop_ids` 的**归一化与对号**（2026-09-28 实测驱动）。
@@ -85,6 +87,85 @@ func RemapPropRefs(plan *Plan) int {
 	return fixed
 }
 
+// FillMissingPropRefs 给**根本没写 `prop_ids`** 的镜，按正文/动作里提到的**卡片名**补上器物引用
+// （返回补了几处）。已有引用的镜不碰（那些交给 RemapPropRefs 对号/去重/必要时丢弃）。
+//
+// 【为什么必须有这一步】（2026-10-06 审计）
+//
+// 器物跨镜一致的**唯一机制**是把该镜引用到的器物卡原文逐字锚进提示词（`EnsurePropAnchors`，
+// 道具不进 H3 参考图集合），而它整条挂在 `prop_ids` 上：
+//
+//	· 模型写了 `prop_ids` 但拼法与卡片 id 不一致 → RemapPropRefs 对号（2026-09-28 已有）；
+//	· 模型**一个字都没写** → 此前**什么都不发生**：`RemapPropRefs` 对空引用是直接 skip，
+//	  于是正文里写着"碑刀握在右手"、锚定却落空 ⇒ 那把刀每镜一个形状。
+//	  实测那一集 25 镜提到刀/烙铁/名册，而 `prop_ids` 全空。
+//
+// 匹配只用**强键**：卡片中文名、卡片 id、id 去 `prop_` 前缀形。**不用描述里的散词**——
+// "磨薄""朱砂"这类词出现在散文里未必在讲这件器物；宁可少锚，也不锚错到别的器物上
+// （与 RemapPropRefs 同一条纪律：它的散词匹配只用在"**已经有引用**、只是拼错"的场合）。
+// 长键优先：命中"名册板"之后，被它包含的短键"名册"不再单独算一件。
+func FillMissingPropRefs(plan *Plan) int {
+	if plan == nil || len(plan.Props) == 0 {
+		return 0
+	}
+	type alias struct{ key, id string }
+	var aliases []alias
+	seen := map[string]bool{}
+	for _, p := range plan.Props {
+		for _, cand := range []string{p.Name, p.ID, strings.TrimPrefix(p.ID, "prop_")} {
+			k := normPropKey(cand)
+			if len([]rune(k)) < 2 || seen[k] {
+				continue
+			}
+			seen[k] = true
+			aliases = append(aliases, alias{key: k, id: p.ID})
+		}
+	}
+	if len(aliases) == 0 {
+		return 0
+	}
+	// 长键优先（"名册板"先于"名册"）
+	sort.SliceStable(aliases, func(i, j int) bool {
+		return len([]rune(aliases[i].key)) > len([]rune(aliases[j].key))
+	})
+	filled := 0
+	for i := range plan.Shots {
+		sh := &plan.Shots[i]
+		if len(sh.PropIDs) > 0 {
+			continue
+		}
+		// 看**模型真正会画**的那几处文本：正文 + 动作 + 尾帧状态
+		text := normPropKey(sh.H3Prompt + " " + sh.Action + " " + sh.EndState)
+		if text == "" {
+			continue
+		}
+		var hit, matched []string
+		for _, a := range aliases {
+			if !strings.Contains(text, a.key) {
+				continue
+			}
+			skip := false
+			for _, m := range matched {
+				if strings.Contains(m, a.key) { // 已被更长的键包含：同一件器物，不重复算
+					skip = true
+					break
+				}
+			}
+			if skip {
+				continue
+			}
+			matched = append(matched, a.key)
+			hit = appendUnique(hit, a.id)
+		}
+		if len(hit) == 0 {
+			continue
+		}
+		sh.PropIDs = hit
+		filled += len(hit)
+	}
+	return filled
+}
+
 // matchPropInText 在文本里找命中别名表的器物（取**最长**命中，避免"刀"命中到无关的刀）。
 func matchPropInText(alias map[string]string, text string) string {
 	t := normPropKey(text)
@@ -121,17 +202,26 @@ func appendUnique(list []string, s string) []string {
 	return append(list, s)
 }
 
-// FillMissingDialogueTags 给"有计划台词/旁白、正文里却一个 `<d>` 都没有"的镜**补上台词标签**，
+// FillMissingDialogueTags 给"计划里有台词/旁白、正文里却没有对应的 `<d>`"的镜**补上台词标签**，
 // 返回补了几镜。
 //
-// 【实测缺陷】真章节那一跑：**4 镜**的 `dialogue` 字段里有词，`h3_prompt` 正文里却没有任何
-// `<d>` 标记 —— 契约的正确处置是 fail（成片里那几句会被说成听不懂的话），但用户看到的是
-// "又说不能渲"。而这件事平台**能确定做对**：台词原文在计划里、说话人是谁也在计划里，
-// 缺的只是把它写进正文这一道手工活。
+// 【实测缺陷】2026-09-28 真章节那一跑：**4 镜**的 `dialogue` 字段里有词，`h3_prompt` 正文里却
+// 没有任何 `<d>` 标记 —— 契约的正确处置是 fail（成片里那几句会被说成听不懂的话），
+// 但用户看到的是"又说不能渲"。而这件事平台**能确定做对**：台词原文在计划里、说话人是谁也在
+// 计划里，缺的只是把它写进正文这一道手工活。
 //
-// 保守做法：只在**一个 `<d>` 都没有**时才补（正文已经有了就绝不插手）；补在正文段末尾，
-// 逐字用计划里的原文，不做任何改写。说话人用正文里已有的 `(Sx)` 标记解析（同一角色在
-// subject_definitions 里是哪一号），解析不到就用 `<Subject 1>`。
+// 【2026-10-06 审计：只判"一个都没有"是不够的】原判据是
+// `if strings.Contains(h3_prompt, "<d>") { continue }` —— 于是**部分缺**（计划 2 句、
+// 正文只写了 1 句）既不补也不报：配音读正文的 `<d>`、字幕读 `Dialogue[]`，
+// 成片里那句话**只有字幕没有声音**，而所有门都是绿的。
+//
+// 现在按**逐句对账**：把正文里已有的 `<d>…</d>` 抽出来（去标点与语言标记后比较 —— 官方要求
+// 台词标点归一成 `, . ? !`，逐字符比较会把"同一句话"判成没说过 ⇒ 重复配音），
+// 只把**确实没说过的那几句**追加到正文末尾，逐字用计划里的原文，不做任何改写。
+// 幂等：补完之后那几句就在 `<d>` 里了，再跑不会重复追加。
+//
+// 边界：**正文整体是空的就不补** —— 往空正文里塞台词会造出"只有台词、没有画面描述"的镜，
+// 那是另一件事（空提示词闸门 + 自纠环负责），这里不越界。
 func FillMissingDialogueTags(plan *Plan) int {
 	if plan == nil {
 		return 0
@@ -139,18 +229,19 @@ func FillMissingDialogueTags(plan *Plan) int {
 	n := 0
 	for i := range plan.Shots {
 		sh := &plan.Shots[i]
-		if strings.Contains(sh.H3Prompt, "<d>") {
+		if strings.TrimSpace(sh.H3Prompt) == "" {
 			continue
 		}
+		said := spokenInPrompt(sh.H3Prompt)
 		var lines []string
 		for _, ln := range sh.Dialogue {
 			txt := strings.TrimSpace(ln.Text)
-			if txt == "" {
+			if txt == "" || alreadySpoken(said, txt) {
 				continue
 			}
 			lines = append(lines, " "+speakerTagFor(sh.H3Prompt, ln.Speaker, plan)+" says: <d>[Chinese]"+txt+"</d>")
 		}
-		if nar := strings.TrimSpace(sh.Narration); nar != "" {
+		if nar := strings.TrimSpace(sh.Narration); nar != "" && !alreadySpoken(said, nar) {
 			lines = append(lines, " "+speakerTagFor(sh.H3Prompt, "", plan)+
 				" speaks in an off-screen voiceover: <d>[Chinese]"+nar+"</d> while the on-screen characters' lips remain completely closed")
 		}
@@ -161,6 +252,59 @@ func FillMissingDialogueTags(plan *Plan) int {
 		n++
 	}
 	return n
+}
+
+// spokenInPrompt 正文里**已经说过的话**（每个 `<d>…</d>` 的内容，做「去标点 + 小写」归一）。
+func spokenInPrompt(h3 string) []string {
+	var out []string
+	rest := h3
+	for {
+		i := strings.Index(rest, "<d>")
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len("<d>"):]
+		j := strings.Index(rest, "</d>")
+		if j < 0 {
+			break // 没有闭合标签：这一段不算"说过了"（宁可补一次，也别漏掉一句）
+		}
+		out = append(out, normSpokenText(rest[:j]))
+		rest = rest[j+len("</d>"):]
+	}
+	return out
+}
+
+// alreadySpoken 计划里的这句台词，正文里是不是已经说过了。
+//
+// 归一化后再比：官方要求台词标点归一成 `, . ? !`、`<d>` 里还带着 `[Chinese]` 语言标记，
+// 而计划里的原文可能与正文逐字不同 —— 逐字符比较会把同一句判成"没说" ⇒ 重复追加一次
+// （成片里那句话被念两遍）。去标点 + 小写 + 子串判据对这两件事都免疫。
+func alreadySpoken(said []string, text string) bool {
+	want := normSpokenText(text)
+	if want == "" {
+		return false
+	}
+	for _, s := range said {
+		if s == "" {
+			continue
+		}
+		if strings.Contains(s, want) || strings.Contains(want, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// normSpokenText 归一化一句话用于比较：只留汉字/字母/数字，其余（标点、空格、方括号、
+// 破折号等）全部去掉，字母转小写。语言标记里的字母会留下（"chinese…"），子串判据不受影响。
+func normSpokenText(s string) string {
+	var sb strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
 }
 
 // speakerTagFor 在正文里找这个说话人的 `<Subject N> (Sx)` 标记；找不到退回 `<Subject 1>`。
@@ -235,10 +379,14 @@ func countDanglingPropRefs(plan *Plan) int {
 
 // HealResult 自愈各件的计数（各处按需播报，不吞掉信息）。
 type HealResult struct {
-	PropRefs  int // 器物引用对号了几处
-	Dialogue  int // 补了几镜的台词标签
-	Voiceover int // 补了几镜的画外演出素材引用
-	MusicNA   int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
+	PropRefs int // 器物引用对号了几处
+	// PropRefsFilled **根本没写 prop_ids** 的镜、按正文/动作里提到的卡片名补上的引用处数
+	//（2026-10-06 审计：锚定机制整条挂在 prop_ids 上，空的就一次都不锚 ⇒ 那几镜的器物
+	// 每镜重新发明；名字是已知量，对号这件事平台能确定做对）。
+	PropRefsFilled int
+	Dialogue       int // 补了几镜的台词标签
+	Voiceover      int // 补了几镜的画外演出素材引用
+	MusicNA        int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
 	// EntityRefs 分镜里的**名字引用**归一成卡片 id 的处数（五步会话输出的是名字，
 	// 见 entity_refs.go）；EntityRefsUnknown 是归一之后仍对不上卡片的引用数。
 	EntityRefs int
@@ -289,6 +437,7 @@ func HealPlan(plan *Plan) HealResult {
 		EntityRefsLoose:   entLoose,
 		CharDupes:         charDupes,
 		PropRefs:          RemapPropRefs(plan),
+		PropRefsFilled:    FillMissingPropRefs(plan),
 		Dialogue:          FillMissingDialogueTags(plan),
 		Voiceover:         FillVoiceoverAssets(plan),
 		MusicNA:           EnsureMusicNA(plan),

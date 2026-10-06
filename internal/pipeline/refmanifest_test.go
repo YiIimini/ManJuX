@@ -259,3 +259,65 @@ func TestWantsAnglesStrip(t *testing.T) {
 		}
 	}
 }
+
+// TestRefManifestSceneSaysItsRealPosition 清单对"场景图是第几张"的断言必须按**实际位次**说。
+//
+// 【2026-10-06 审计】清单存在的全部意义是止住 `<Picture>` 编号混乱（它开篇就写着 OVERRIDES
+// any picture number stated anywhere above）—— 而它在系统镜里自己先说错一句：系统镜会在
+// 场景图**之后**再追加机器人 + 全息面板两张图（refs.go 的 SystemAssets 例外），
+// 场景图并不是最后一张，清单却硬写 "it is the LAST picture"。模型对"还剩几张"最敏感，
+// 这里说错就等于把权威性抵消掉。
+func TestRefManifestSceneSaysItsRealPosition(t *testing.T) {
+	dir, shot, assets := refmanAssets(t)
+	// 系统镜：机器人（角色卡）+ 全息面板（道具卡）同框，两张图与场景图都必须在盘上
+	write := func(name string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("bot.png")
+	write("panel.png")
+	shot.VoKind = "system"
+	shot.SystemAssets = map[string]string{"bot": "char_bot", "panel": "prop_panel"}
+	assets["char:char_bot"] = project.Asset{ID: "char:char_bot", Name: "系统机器人", File: "bot.png"}
+	assets["prop:prop_panel"] = project.Asset{ID: "prop:prop_panel", Name: "全息面板", File: "panel.png"}
+
+	_, roles, missing, _ := RefPlan(dir, shot, assets, false)
+	if len(missing) != 0 {
+		t.Fatalf("夹具不真：系统镜的参考图都该在盘上，实际缺 %v", missing)
+	}
+	// **前提复核**：场景图后面确实还有图，否则本测试测不到东西
+	if roles[len(roles)-1].Kind == "scene" {
+		t.Fatalf("夹具不真：系统镜的场景图之后应当还有机器人/面板 —— 实际顺序 %+v", roles)
+	}
+	m := RefManifest(shot, roles)
+	sceneLine := lineContaining(m, "(the SCENE reference)")
+	if sceneLine == "" {
+		t.Fatalf("清单里没有场景那一行：\n%s", m)
+	}
+	if strings.Contains(sceneLine, "LAST") {
+		t.Errorf("系统镜的场景图并不是最后一张，清单却说它是 LAST —— 权威清单自己先错一句：\n%s", sceneLine)
+	}
+	if !strings.Contains(sceneLine, "NOT the last picture (2 picture(s) follow it)") {
+		t.Errorf("该按实际位次说清后面还有几张：\n%s", sceneLine)
+	}
+	// 普通镜（场景确实是最后一张）：那句文案必须**逐字不变** —— 提示词进渲染指纹，
+	// 改一个字就会把存量项目的参考图镜全部判失效、白渲一遍。
+	plain := RefManifest(shot, []RefRole{
+		{Picture: 1, Kind: "character_front", Name: "顾青禾"},
+		{Picture: 2, Kind: "scene", Name: "旧城派送站棚"},
+	})
+	if !strings.Contains(plain, "This is the scene picture and it is the LAST picture: background layout, props and lighting come from it, the camera stays free.") {
+		t.Errorf("普通镜那句文案被改动了（会让存量项目全量重渲）：\n%s", lineContaining(plain, "(the SCENE reference)"))
+	}
+}
+
+// lineContaining 取含某个标记的那一行（清单是按行写的，逐行判才不会被别的行污染）。
+func lineContaining(s, mark string) string {
+	for _, ln := range strings.Split(s, "\n") {
+		if strings.Contains(ln, mark) {
+			return ln
+		}
+	}
+	return ""
+}
