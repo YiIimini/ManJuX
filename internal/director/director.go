@@ -307,33 +307,52 @@ func Generate(ctx context.Context, client *llm.Client, sourceText string, opt Op
 	if opt.TotalSeconds <= 0 {
 		opt.TotalSeconds = opt.MaxShots * 7
 	}
-	// 两条产出路径**共用**的收尾：归一化 → **自纠一轮**。
-	//
-	// 【2026-09-28 修一个真缺口】自纠轮（治"一镜到底"这类机器可判定的违规）此前只挂在
-	// 单轮直出那条路上，而**分批路径在它之前就 return 了** —— 于是分批生成的方案（正好是长集数、
-	// 也正是用户实际在跑的那条路）**从来没跑过自纠**。实证：真方案 35/35 镜一镜到底，
-	// 而提示词里明明写着"4 秒以上必须内部切 2-4 个小镜头"—— 不是模型不听话，是**这步没跑**。
-	finish := func(plan *project.Plan) (*project.Plan, error) {
-		enforceStyleLock(plan, sourceText)
-		normalizePlan(plan, opt)
-		if n, note := RepairPlan(ctx, client, plan, opt); n > 0 && opt.OnNote != nil {
-			opt.OnNote("%s", note)
-		}
-		return plan, nil
-	}
+	// 收尾（画风锁定 → 归一化 → **自纠一轮**）由 `finishPlan` **一处**承担，
+	// 三条产出路径（单轮直出 / 分批 / 五步专职会话）都走它 —— 理由写在那个函数上。
 
 	if opt.MaxShots > batchThresholdShots || len([]rune(sourceText)) > batchThresholdRunes {
 		plan, err := generateBatched(ctx, client, sourceText, opt, contentDriven)
 		if err != nil {
 			return nil, err
 		}
-		return finish(plan)
+		return finishPlan(ctx, client, plan, sourceText, opt)
 	}
 	plan, err := generateSingle(ctx, client, sourceText, opt, contentDriven, secondsGiven)
 	if err != nil {
 		return nil, err
 	}
-	return finish(plan)
+	return finishPlan(ctx, client, plan, sourceText, opt)
+}
+
+// finishPlan 三条产出路径**共用**的收尾：画风锁定 → 归一化 → **自纠一轮**。
+//
+// 【为什么必须收成一个包级函数】（2026-10-06 审计）
+//
+// 2026-09-28 修过一次同型缺口：自纠轮（治"一镜到底"这类**机器可判定**的违规）当时只挂在
+// 单轮直出那条路上，分批路径在它之前就 return 了 —— 实证是真方案 **35/35 镜全一镜到底**，
+// 而提示词里明明写着"4 秒以上必须内部切 2-4 个小镜头"。当时的修法是让 director.go 内部
+// **两条路共用一个 `finish` 闭包**，并留了一条测试钉住它。
+//
+// 但那个闭包只覆盖 `Generate` 内部的两条路：**第三个入口 `GenerateSessions`（五步专职会话）
+// 是另一个函数、另一条路**（设置页 `split.five_sessions` 开启后走它，正是用户 2026-09-28 自己
+// 定的架构）—— 它当时没被覆盖，于是开五步会话的机器上：
+//
+//	· 自纠环**整条不存在**（散文规则又变成"写了没人执行"）；
+//	· `enforceStyleLock` 没跑（同一集的画风靠模型自觉与源文本对齐）；
+//	· `normalizePlan` 没跑（"说话人不在画面里"的台词不会被标成画外音、Q版/系统素材 id 不会补）
+//	  —— 两条路产出的方案连**归一化程度**都不一样，而它们是同一条流水线的同一个阶段。
+//
+// 现在收成这一个函数，三个入口都调它；`director/finish_paths_test.go` 钉住"只有一处收尾、
+// 而且入口都真的调用它"。以后再加入口也不会漏。
+func finishPlan(ctx context.Context, client *llm.Client, plan *project.Plan, sourceText string, opt Options) (*project.Plan, error) {
+	enforceStyleLock(plan, sourceText)
+	normalizePlan(plan, opt)
+	// 自纠一轮：把机器能判定的违规连同原文回给模型改一次（判据见 repair.go 的 collectRepairable）。
+	// 幂等 —— 没有可修的项时它一次调用都不发，所以"上游已经修过"不会造成重复开销。
+	if n, note := RepairPlan(ctx, client, plan, opt); n > 0 && opt.OnNote != nil {
+		opt.OnNote("%s", note)
+	}
+	return plan, nil
 }
 
 // normalizePlan 直出结果进契约之前的**最后一手归一化**（两条产出路径共用，只此一处）。

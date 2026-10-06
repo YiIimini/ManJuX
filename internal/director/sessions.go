@@ -492,7 +492,10 @@ func GenerateSessions(ctx context.Context, client *llm.Client, sourceText, setti
 	if planHasNothing(plan) {
 		return nil, fmt.Errorf("专职会话跑完但没有任何产出")
 	}
-	return plan, nil
+	// **收尾必须与另一条入口同一处**（2026-10-06 审计）：这一条路（五步专职会话）此前是
+	// 唯一**没有**跑「画风锁定 → 归一化 → 自纠一轮」的入口 —— 开五步会话的机器上，
+	// 治"一镜到底"的自纠环整条不存在，两条路产出的方案连归一化程度都不一样。
+	return finishPlan(ctx, client, plan, sourceText, opt)
 }
 
 // planHasNothing 方案里一个字段都没有（合并后用来判"整批会话都白跑了"）。
