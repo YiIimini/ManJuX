@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/compose"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/h3api"
 	"github.com/YiIimini/ManJuX/internal/ff"
@@ -130,7 +131,17 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		// 上文猜错的编号理解拼合图(见 refmanifest.go)。
 		prompt = EnsureRefManifest(prompt, *shot, roles)
 	} else {
-		base = filepath.Join(c.store.Dir(projectID), "output", "final.mp4")
+		// **优先用 768p 母版**（compose 在交付缩放之前另存的那一份）。
+		//
+		// 【为什么不是直接用 final.mp4】交付档默认把成片放大到 1080×1920，而
+		// H3-Regenerate-2K 只接受 768P 规格的源（官方模型卡 + `Validate2KBase`）——
+		// 于是"拿成片去升 2K"**必然**被预校验拦下，整片 2K 这条路从来没成功过。
+		// 母版存在时它就是那份合法源；不存在（老项目/母版写失败）才退回成片，
+		// 并让**校验**去说清差在哪（而不是这里猜）。
+		base = compose.MasterPath(filepath.Join(c.store.Dir(projectID), "output"))
+		if _, statErr := os.Stat(base); statErr != nil {
+			base = filepath.Join(c.store.Dir(projectID), "output", "final.mp4")
+		}
 		out = filepath.Join(c.store.Dir(projectID), "output", "final_2k.mp4")
 		label = "成片"
 		// 成片 2K 与其余四条出像素路径**共用同一套介质锁与身份锚定**:
@@ -159,11 +170,23 @@ func (c *Coordinator) Upgrade2K(ctx context.Context, projectID string, shotID in
 		}
 	}
 
+	// 源的选择已经在上面按分支定好（成片分支优先 768p 母版）。这里只做"存在性 + 契约校验"，
+	// 并把**两个候选**都点出来 —— 用户看到"短边须为 768"时，需要知道该补哪份文件。
 	if _, err := os.Stat(base); err != nil {
+		if shotID == 0 {
+			return fmt.Errorf("成片 2K 的源不存在：%s（整片 2K 需要 768p 母版 %s 或成片 %s —— "+
+				"母版由「合成成片」这一步写出，请先跑一次合成）",
+				filepath.Base(base), compose.MasterFileName, "final.mp4")
+		}
 		return fmt.Errorf("%s源视频不存在,请先完成渲染/合成", label)
 	}
 	c.emit(projectID, "pipeline", shotID, "info", 5, "2K 定稿(%s)预校验…", label)
 	if err := h3api.Validate2KBase(c.ff, base, true); err != nil {
+		if shotID == 0 {
+			// 把"拿哪份当源"一并说清：这是整片 2K 唯一容易踩的地方（成片默认已放大到 1080p）。
+			return fmt.Errorf("成片 2K 源不合格（%s）：%w —— 用 %s（768p 母版）才是官方要的 H3 768P 规格；"+
+				"若母版不在，请重跑一次「合成成片」（它会另存一份）", filepath.Base(base), err, compose.MasterFileName)
+		}
 		return err
 	}
 	taskID, err := reg.Regenerate2K(ctx, base, prompt, refs, out, func(pct int, note string) {

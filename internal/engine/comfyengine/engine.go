@@ -883,6 +883,75 @@ func turboLoRAFor(job engine.Job, c config.ComfySettings) string {
 	return c.TurboLoRARef2VA
 }
 
+// ---------- 默认（turbo）档：LoRA 与**请求步数**配对 ----------
+
+// turbo 族的两个锚定步数。盘上同时有这两族（**都源自官方推荐的 lightx2v/Minimax-h3-Turbo**），
+// 而一条蒸馏 LoRA 必须跑在它自己的训练锚点上：挂 4 步族跑 8 步 = 偏离锚点。
+const (
+	turbo4StepSteps = 4
+	turbo8StepSteps = 8
+)
+
+// 8 步族的文件名（与 `TurboLoRARef2VA/FL2VA` 那两条 4 步族同源、只是锚定步数不同）。
+const (
+	turbo8StepRef2VA = "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors"
+	turbo8StepFL2VA  = "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors"
+)
+
+// turbo8StepFile 8 步族 LoRA 的文件名（盘上没有则空串）。
+func turbo8StepFile(job engine.Job, c config.ComfySettings) string {
+	name := turbo8StepRef2VA
+	if job.Mode != "ref2va" {
+		name = turbo8StepFL2VA
+	}
+	if !modelFileExists(c, name, []string{"loras"}) {
+		return ""
+	}
+	return name
+}
+
+// turboRecipeFor 默认（turbo）档要挂哪条加速 LoRA —— **按请求步数挑锚定吻合的那一族**。
+//
+// 【为什么要有这一步（2026-09-30 深度分析，结合官方与社区口径）】
+// 平台默认 `render.steps = 8`，而这里一直返回配置里那条 **4 步**蒸馏 LoRA ——
+// 也就是"挂 4 步族跑 8 步"。本文件自己写过这条纪律（见上面 expressRecipe 的注释：
+// "LoRA 与步数必须成对决定……混着配会偏离训练锚点"），却唯独默认档没遵守。
+// 而官方推荐的 LoRA 发布源（`lightx2v/Minimax-h3-Turbo`）**同时提供 4 步与 8 步两族** ——
+// 8 步族的意义就是"要 8 步就用它"；本机盘上**早就有**那份 8 步权重，从未被挂过。
+//
+// 判据用**文件存在性**做开关（与 `expressRecipe` 同一套做法，不新增设置项）：
+// 没有 8 步文件的机器上原样退回配置里那条 —— 行为与旧版一致，不会因为缺文件而失败。
+// 步数本身**不动**（`accelSteps` 的既有语义与测试表保持原样）：这里只换"挂哪一族"。
+func turboRecipeFor(job engine.Job, c config.ComfySettings, steps int) string {
+	if steps >= turbo8StepSteps {
+		if f := turbo8StepFile(job, c); f != "" {
+			return f
+		}
+	}
+	return turboLoRAFor(job, c)
+}
+
+// turboAnchorNote 请求的步数**没有**落在所挂 LoRA 的锚点上时给一行可检索的说明（一致时空串）。
+//
+// 只在这种情形下开口：请求 ≥8 步（= 想要 8 步族）而盘上没有 8 步文件 —— 于是仍按 4 步族跑，
+// 画面会偏离该 LoRA 的训练锚点。**这不是"少清一项"式的静默**：用户抱怨"成品不理想"时，
+// 这行字就是"补一个文件即可"的可执行答案（文件名一并给出）。
+func turboAnchorNote(mode string, steps int, c config.ComfySettings) string {
+	if steps < turbo8StepSteps {
+		return ""
+	}
+	if turbo8StepFile(engine.Job{Mode: mode}, c) != "" {
+		return ""
+	}
+	want := turbo8StepRef2VA
+	if mode != "ref2va" {
+		want = turbo8StepFL2VA
+	}
+	return fmt.Sprintf("⚠ 本镜请求 %d 步，但盘上没有 8 步族加速 LoRA（应有 %s）—— 仍按 4 步族(%s)跑，"+
+		"画面会偏离该 LoRA 的训练锚点。补上那个文件即自动生效（4 步族与 8 步族同源，都来自官方推荐的 lightx2v/Minimax-h3-Turbo）",
+		steps, want, turboLoRAFor(engine.Job{Mode: mode}, c))
+}
+
 // accelQualityPlan quality 档**打算**挂哪条加速 LoRA，以及"挂不上"的原因（空 = 能挂）。
 //
 // 抽出来是为了让**选路**（accelLoraFor）与**播报**（AccelTierNote）共用同一条判据 ——
@@ -911,20 +980,33 @@ func accelQualityPlan(job engine.Job, c config.ComfySettings) (string, string) {
 // 而回退是**静默**的：界面上写着"画质档"，跑出来的却是交付默认那套，
 // 事后只能靠翻代码才知道"我选的档没生效"。
 //
-// 只加可见性，**不动选路**（门禁与既有测试原样保留）。
-func AccelTierNote(accel, mode string, c config.ComfySettings) string {
-	if accel != "quality" {
+// 2026-09-30 又加一半：**请求步数与所挂 LoRA 的锚点不一致**时也要说话
+// （见 turboAnchorNote）。两处都是"档位/参数与真实执行对不上"，同一类可见性问题，
+// 所以收在同一个播报入口 —— 新增一处播报就又多一个调用点，必然漏。
+func AccelTierNote(accel, mode string, steps int, c config.ComfySettings) string {
+	// 精修档不挂任何蒸馏 LoRA，步数是"完整采样"，没有锚点这回事。
+	if accel == "refine" {
 		return ""
 	}
-	if _, why := accelQualityPlan(engine.Job{Accel: accel, Mode: mode}, c); why != "" {
-		return fmt.Sprintf("所选「画质档(quality)」**没有生效**，实际按 turbo 档渲染：%s。"+
-			"画质档需要**非剪枝 H3 底座**（40 GB 级，本机没有）；要真正的画质档请先补那个底座，"+
-			"否则这一步与「默认档」出的图完全一样", why)
+	if accel == "quality" {
+		if _, why := accelQualityPlan(engine.Job{Accel: accel, Mode: mode}, c); why != "" {
+			return fmt.Sprintf("所选「画质档(quality)」**没有生效**，实际按 turbo 档渲染：%s。"+
+				"画质档需要**非剪枝 H3 底座**（40 GB 级，本机没有）；要真正的画质档请先补那个底座，"+
+				"否则这一步与「默认档」出的图完全一样", why)
+		}
+		return ""
 	}
-	return ""
+	if accel == "express" {
+		return ""
+	}
+	return turboAnchorNote(mode, steps, c)
 }
 
-// accelLoraFor 量化底模自动回退 Turbo,配合 fp16 VAE + ref_image_size=max。
+// accelLoraFor 本次作业该挂的加速 LoRA。**唯一实现点**（渲染图与局部重绘图都问它）。
+//
+// 默认（turbo）档按**请求步数**挑族（8 步及以上挂 8 步族，见 turboRecipeFor 的说明）；
+// quality 档在量化底模上挂不上 Acc-8Step（tensor 形状不兼容）就回退 turbo 族，并把结论交给
+// AccelTierNote 播报 —— 原来那条"量化底模自动回退 Turbo"的语义**保持不变**。
 func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 	if job.Accel == "refine" {
 		return "" // 精修档:什么加速都不挂,让底模按自己的步数好好出图
@@ -933,14 +1015,14 @@ func accelLoraFor(job engine.Job, c config.ComfySettings) string {
 		lora, _ := expressRecipe(job, c)
 		return lora
 	}
-	turbo := turboLoRAFor(job, c)
-	if job.Accel != "quality" {
-		return turbo
+	if job.Accel == "quality" {
+		if acc, why := accelQualityPlan(job, c); why == "" {
+			return acc
+		}
+		// 挂不上（量化底模/缺文件）→ 回退默认族，同样按步数配对
+		return turboRecipeFor(job, c, job.Steps)
 	}
-	if acc, why := accelQualityPlan(job, c); why == "" {
-		return acc
-	}
-	return turbo
+	return turboRecipeFor(job, c, job.Steps)
 }
 
 // accelSteps 档位 → 实际采样步数。**唯一实现**:凡自带采样链的图都必须走它。

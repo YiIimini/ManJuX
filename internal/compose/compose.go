@@ -116,6 +116,9 @@ type Result struct {
 	Width, Height int
 	// AudioNotes 音频处理实况(切点是否落在静音、降噪是否生效),供管线如实回显。
 	AudioNotes []string
+	// MasterPath 768p 母版的落盘路径（空 = 没写成，播报里已有原因）。
+	// 它是云端「整片 2K 定稿」的合法源（与渲染同规格 + 含音轨），见 master.go。
+	MasterPath string
 }
 
 // Compose 执行合成。clips 为有序镜头文件(绝对路径),plan 用于字幕。
@@ -260,6 +263,20 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	// ---- 保留 768p 母版（云端「整片 2K」的唯一合法源）----
+	//
+	// 交付档会把成片放大到 1080×1920，而 H3-Regenerate-2K 只收 768P 规格的源
+	// （官方模型卡：2K 只能靠 in-context 重新生成，且该模块未开源、只能走 API）——
+	// 不另存一份母版，整片 2K 就永远被预校验拦下（这条链从来没成功过）。
+	// 位置很关键：必须在交付缩放/调色/字幕**之前**（那三步都会改像素，母版要的是"与渲染同规格"）。
+	if mp, note := publishMaster(ctx, f, master, outDir); note != "" {
+		if mp != "" {
+			res.MasterPath = mp
+		}
+		res.AudioNotes = append(res.AudioNotes, note)
+		announce(note)
 	}
 
 	// ---- 步骤三:字幕 + 调色 + 响度 + faststart 终混 ----
