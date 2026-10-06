@@ -43,12 +43,17 @@
 一律在装配点（或唯一读取边界 `project.LoadPlan`）补上，并**如实播报**改了什么。
 自愈逻辑只写**一个入口**（`project.HealPlan`），因为预检/渲染/人审三个消费方必须看到同一份方案
 （2026-09-28 实测：只挂在生成链上导致预检报了 5 条假 fail）。
-## 自检现在是**七门**（2026-09-28 起）
+## 自检现在是**八门**（2026-09-30 起；原来写七门，漏了脚本 BOM 那一道）
 
-`scripts/check.ps1` 的闸门：gofmt → go vet → go build → go test → **go test -race** → vite build → go-webview2 补丁在位。
+`scripts/check.ps1` 的闸门：gofmt → go vet → go build → go test → **go test -race** → vite build
+→ go-webview2 补丁在位 → 脚本文本编码（含中文的 .ps1/.cmd/.bat 必须有 UTF-8 BOM）。
 
 - 第 5 门是竞态检测，需要 cgo ⇒ 本机装了 C 工具链 **`D:\Ai\Tools\mingw64`**（winlibs gcc，免安装解压即用）。
   没装的机器上这道门会**如实跳过**并说明原因（不假装验过）。
+- 第 6 门（vite）需要 Node + pnpm ⇒ 本机装的是 **`D:\Ai\Tools\nodejs`**（node v24.21.0 免安装 zip +
+  `npm i -g pnpm@11.8.0`，版本照 `frontend/node_modules/.modules.yaml` 的 `packageManager` 钉，
+  免得 pnpm 换版本重排依赖树；store 在 `D:\.pnpm-store\v11`）。**这个目录已加进用户 PATH**
+  （2026-09-30 装；撤掉它就等 `scripts\check.ps1` 第 6 门重新变红）。
 - 只跑两个并发最重的包（`internal/pipeline`、`internal/server`，合计约 19 秒）—— 全量 -race 会明显拖慢自检。
 - 改 `scripts/check.ps1` 时必须**保留 UTF-8 BOM**：Windows PowerShell 5.1 依赖 BOM 才按 UTF-8 解析，
   丢 BOM 会让中文变乱码、脚本直接语法崩（2026-09-28 栽过一次）。
@@ -57,7 +62,7 @@
 
 本窗口的对话历史**不进仓库**，所以新会话只能靠文件重建上下文。开工前按顺序读：
 
-0. **`docs/审计与升级-2026-09-30.md`** —— 最新一轮：三个只读审计 + 九处真缺陷修复（含两条会**毁数据/白烧 GPU** 的）+ 反向验证记录 + **本机没有 Node/pnpm、前端构建门跑不了**这个环境事实（**先读这份**）
+0. **`docs/审计与升级-2026-09-30.md`** —— 最新一轮：三个只读审计 + 九处真缺陷修复（含两条会**毁数据/白烧 GPU** 的）+ 反向验证记录 + **Node 已现场装好（`D:\Ai\Tools\nodejs`）、八门自检全过**（**先读这份**）
 1. `docs/交接备忘-2026-09-29.md` —— 上一轮的状态与踩过的坑
 2. `docs/门目录.md` —— 109 道契约门的清单（生成物，改完跑 `go run ./tools/gatecat`）
 3. `docs/审计遗留-2026-09-29.md` —— 四轮审计里"做完的"与"明确不做的"，防止把已定性的事当新缺口重报

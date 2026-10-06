@@ -52,10 +52,15 @@
 微调保存失败仍继续重渲并提示"已按微调参数重渲"、拆集占位卡在日志缓冲封顶 800 条后不再即时刷新、
 资产库批量勾选跨分类残留）。
 
-**本轮跑不了的一门（如实记）**：`scripts/check.ps1` 的第 6 门（vite build）在这台机器上跑不了 ——
-**本机没有 Node/pnpm**（全盘搜过）。所以前端源码改动**已改完但未编译**，
-本轮重编的 exe 里嵌的是旧 webdist（后端修复全部生效）。其余各门手动等价跑过：gofmt / vet /
-build / `go test ./...`（16 包全 ok）/ `go test -race`（pipeline+server+library，33.3s）全过。
+**第 6 门（vite build）本来跑不了 —— 已现场解决**：这台机器上原先**没有 Node/pnpm**（全盘搜过），
+用户指示「node 你直接安装」之后，照 portable 工具链的老规矩装在 **`D:\Ai\Tools\nodejs`**
+（node v24.21.0 官方 win-x64 zip + `npm i -g pnpm@11.8.0`，pnpm 版本照
+`frontend/node_modules/.modules.yaml` 的 `packageManager` 钉，免得重排依赖树），并加进用户 PATH。
+
+于是 `scripts\check.ps1` **八门全过**（60s：gofmt / vet / build / `go test ./...` 16 包 /
+`go test -race` pipeline+server+library / **vite build ✓ 1632 modules** / webview2 补丁 / 脚本 BOM），
+`scripts\build.ps1` 出片（v0.34.4-384-g0c505e6），并**核对新前端产物真的进了 exe**
+（`assets/index-CRKyrWHV.js` 在二进制字节流里搜得到）—— 不是"源码改了、产物没跟上"那种假绿。
 
 
 
