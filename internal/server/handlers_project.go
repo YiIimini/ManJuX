@@ -836,7 +836,13 @@ func (s *Server) runProject(w http.ResponseWriter, r *http.Request) {
 		Engine string `json:"engine"` // 单次引擎覆盖(auto/comfy/api,空=项目配置)
 		Seed   int64  `json:"seed"`   // 单镜微调种子(>0 生效:seed+N*101)
 	}
-	_ = readBody(r, &in)
+	// 【2026-09-30 深度审计】原来是 `_ = readBody(...)`：body 坏了所有字段留在零值，
+	// `phase` 空 ⇒ 兜底 PhaseAll ⇒ **整个流程跑起来**（用户以为点的是"只跑渲染"）。
+	// 宽容读法：不带 body 合法（按默认值），body 坏了则明确拒绝。
+	if err := readBodyOptional(r, &in); err != nil {
+		writeErr(w, 400, fmt.Errorf("请求体读不出来(%v) —— 不敢按默认值开跑,请重新提交", err))
+		return
+	}
 	if in.Phase == "" {
 		in.Phase = pipeline.PhaseAll
 	}
@@ -868,7 +874,13 @@ func (s *Server) upgrade2K(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Shot int `json:"shot"`
 	}
-	_ = readBody(r, &in)
+	// 【2026-09-30 深度审计】`shot` 的**零值是有含义的**（0 = 整片 2K），所以 body 坏了时
+	// 悄悄按 0 走 = 把"升这一镜"变成"把整部片子送云端再生成一遍"（真花额度，且用户看不出
+	// 是哪一步变味的）。body 坏了就明确拒绝。
+	if err := readBodyOptional(r, &in); err != nil {
+		writeErr(w, 400, fmt.Errorf("请求体读不出来(%v) —— 不敢按「整片 2K」处理(shot=0 是整片),请重新提交", err))
+		return
+	}
 	if err := s.pipe.StartUpgrade2K(id, in.Shot); err != nil {
 		writeErr(w, 409, err)
 		return

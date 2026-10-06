@@ -904,7 +904,11 @@ func (l *Library) RelatedFiles(kind, name string) []string {
 func (l *Library) SetMeta(kind, name, description, imagePrompt string) (*Entry, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.locateByNameLocked(kind, name)
+	// **定位走 locateEntryLocked（id 优先）**（2026-09-30 深度审计）：界面传的是卡片 id
+	// （`libKey(e)` = `e.id`），而只按名字定位在同名不同人的库里只到第一条 ——
+	// 症状是"保存描述/提示词"报「库资产不存在: char_qiqi」，而同屏的抽卡/AI 生成描述能用
+	// （它们走 Match，本来就是 id 优先）⇒ 看着像随机失败。判据与 Match / SetEntityKind 同一份。
+	dir, err := l.locateEntryLocked(kind, name)
 	if err != nil {
 		return nil, err
 	}
@@ -1321,7 +1325,11 @@ func (l *Library) List() map[string][]Entry {
 func (l *Library) Delete(kind, name string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	dir, err := l.locateByNameLocked(kind, name)
+	// **定位走 locateEntryLocked（id 优先）**（2026-09-30 深度审计）：
+	// 界面的垃圾桶与批量删除传的是卡片 id（`libKey(e)`），只按名字定位时
+	// **同名不同人的库会删错那一条**（名字匹配只到第一条）—— 用户点第二个「老张」的垃圾桶，
+	// 判据与 Match / SetEntityKind 同一份（id 优先，名字兜底）。
+	dir, err := l.locateEntryLocked(kind, name)
 	if err != nil {
 		return err
 	}

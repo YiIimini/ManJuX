@@ -224,7 +224,10 @@ onMounted(() => {
       }
     } catch { /* 服务重启中 */ }
   }
-  let sysTimer = null
+  // 【2026-09-30 审计】这里原来又写了一次 `let sysTimer = null` —— **遮蔽**了外层那个，
+  // 于是 onUnmounted 里 `clearInterval(sysTimer)` 清的是外层那个（永远是 null）：
+  // 定时器从来停不掉，每 3/10 秒继续打一次 /api/sysmon（每次都起一个 nvidia-smi）。
+  // 根组件平时不卸载所以看不出来，但只要热重载/重挂一次就开始叠加轮询。
   const scheduleSys = () => {
     if (sysTimer) clearInterval(sysTimer)
     sysTimer = setInterval(sysTick, sysBusy ? 10000 : 3000)

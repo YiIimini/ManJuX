@@ -496,6 +496,25 @@ func condSidecarDir(c config.ComfySettings) string {
 	return filepath.Join(sidecarRoot(c), "cond_cache")
 }
 
+// CondSidecarDir 条件缓存**记账目录**（sidecar）的对外唯一入口。
+//
+// 【为什么必须导出】2026-09-30 深度审计（实机证据）：这条路径按 ComfyUI 的 root_dir 推导
+// （`<ComfyUI 的上级>/data/cond_cache`），而「一键清理」此前自己拼
+// `<DataDir>/cond_cache` —— 本机两者**根本不是同一个目录**（引擎写 `D:\Ai\data\cond_cache`，
+// 清理读 `D:\Ai\Datas\ManJuX\data\cond_cache`，后者压根不存在）。后果：
+//
+//	① 清理读不到任何 `.ok` ⇒ 认定"没有任何活缓存" ⇒ 把 ComfyUI 侧 **12 个正在被引用**的
+//	   `.pt`（1.8 GB，与那 12 个 sidecar 一一对应）全删了，而 sidecar 还在；
+//	② 下次渲这些镜头时 condExists 仍返回真 ⇒ 走缓存命中分支 ⇒ `MiniMaxH3CondLoad` 去读
+//	   一个已被删掉的 `.pt` ⇒ 报的是 ComfyUI 节点错误（**看不出真正原因**），且不自愈
+//	   （键标记 `.keyck2` 在，purgeLegacyCondCache 不会再清那批 sidecar）；
+//	③ ③ 孤儿清扫与 ⑤b"每项目只留最近 120 份"同样永远扫不到东西（目录不存在）；
+//	④ 按钮一路报"清理完成"，释放量还照算。
+//
+// 判据写成**结构性**的（不是"结果对不对"）：清理读的目录必须就是引擎写的那个 ——
+// 见 `internal/server/cleanup_sidecar_root_test.go`（夹具照真机形态：root_dir 在 data 之外）。
+func CondSidecarDir(c config.ComfySettings) string { return condSidecarDir(c) }
+
 // condProjectDir 某项目的条件缓存子目录(cond_cache/{projectID}/)。
 // 按项目分目录存放,删项目时整目录移除即可(2026-09-11 用户定调)。
 func condProjectDir(c config.ComfySettings, projectID string) string {

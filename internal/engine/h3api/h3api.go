@@ -428,6 +428,48 @@ func parseSeg(seg string) (key string, idx int, hasIdx, all bool) {
 // 而我们要替换的正是**整个 JSON 值**（含那对引号）—— `writeFileDataURI` 自己会写出
 // 首尾引号。只替换裸占位串会把引号留下来，产物变成 `"url":""data:...`（语法错）。
 // 这个坑是被 `TestStreamingBodyMatchesNaiveMarshal` 咬出来的（它逐字节比对两条路）。
+// dataURIPrefix 源视频 data URI 的媒体前缀。
+//
+// **算长度的地方与写字节的地方必须共用它**：两处各写一份时，改了其中一处就会让
+// ContentLength 与实际字节数不符 —— 那种错在开发机上表现为
+// `提交云端任务失败: http: ContentLength=… with Body length …`，一眼看不出是前缀变了。
+const dataURIPrefix = "data:video/mp4;base64,"
+
+// blobBodyLen 一个 blob 在请求体里占的字节数（含 JSON 值两侧的引号）。
+//
+// 能算准的原因是写出去的形态是**确定的**：`"` + dataURIPrefix + base64(StdEncoding) + `"`，
+// 而 base64 字母表里没有需要 JSON 转义的字符、前缀也全是 ASCII ——
+// 所以"JSON 转义后的长度"就等于原始长度（不需要再走一遍转义）。
+func blobBodyLen(path string) (int64, error) {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0, fmt.Errorf("读 blob 文件失败(%s): %w", path, err)
+	}
+	return int64(2 + len(dataURIPrefix) + base64.StdEncoding.EncodedLen(int(st.Size()))), nil
+}
+
+// streamingBodyLen 流式请求体的**总字节数**（占位串都换成真 data URI 之后）。
+//
+// 为什么非得算准：ContentLength 给 0（或不给）时，net/http 对 io.PipeReader 会退化成
+// `Transfer-Encoding: chunked`；而带 blobs 的唯一生产调用方是**付费的 2K 定稿**，
+// 云端网关接不接受 chunked 在本机验不了 —— 一旦不接受，每次 2K 都失败在一个
+// 与真实原因无关的报错上（2026-09-30 深度审计查出的就是这条死分支）。
+func streamingBodyLen(raw []byte, refs []blobRef) (int64, error) {
+	total := int64(len(raw))
+	for i, ref := range refs {
+		quoted, _ := json.Marshal(dataURIPlaceholder(i))
+		if !bytes.Contains(raw, quoted) {
+			return 0, fmt.Errorf("占位串 %d 没出现在请求体里（路径 %s）", i, ref.Path)
+		}
+		n, err := blobBodyLen(ref.File)
+		if err != nil {
+			return 0, err
+		}
+		total += n - int64(len(quoted))
+	}
+	return total, nil
+}
+
 func writeBodyWithBlobs(w io.Writer, raw []byte, refs []blobRef) error {
 	for i, ref := range refs {
 		quoted, _ := json.Marshal(dataURIPlaceholder(i)) // 得到 "…" 形式（带引号）
@@ -496,11 +538,24 @@ func (e *Engine) create(ctx context.Context, c config.MiniMaxSettings, body map[
 func (e *Engine) createStreaming(ctx context.Context, c config.MiniMaxSettings,
 	body map[string]any, blobs []blobRef) (string, error) {
 
+	// 【2026-09-30 深度审计】这一段原来有个**遮蔽 bug**：blob 分支里写的是
+	// `raw, err := json.Marshal(body)` —— 新建了一个内层 `raw`，外层的还是 nil，
+	// 于是下面那句 `if len(raw) > 0 { req.ContentLength = … }` 在**带 blobs 的那条路
+	// 永远不成立** ⇒ io.PipeReader + ContentLength==0 ⇒ net/http 自动退化成
+	// `Transfer-Encoding: chunked`。而带 blobs 的唯一生产调用方正是**付费的 2K 定稿**
+	// （`regen.go`: 整片源视频 ~50MB）—— 云端网关接不接受 chunked，本机验不了。
+	//
+	// 现在两件事一起做对：① 变名（`enc`）杜绝遮蔽；② ContentLength **算准**（不是删掉）。
+	// 长度是可精确计算的（前缀 + base64 填充都在掌握里），见 streamingBodyLen。
 	var reader io.Reader
-	var raw []byte
+	var contentLen int64
 	if len(blobs) == 0 {
-		raw, _ = json.Marshal(body)
+		raw, err := json.Marshal(body)
+		if err != nil {
+			return "", err
+		}
 		reader = bytes.NewReader(raw)
+		contentLen = int64(len(raw))
 	} else {
 		// ① 换占位串（改的是本地 map，调用方已经不再需要它）
 		for i, b := range blobs {
@@ -509,14 +564,20 @@ func (e *Engine) createStreaming(ctx context.Context, c config.MiniMaxSettings,
 			}
 		}
 		// ② 序列化（产物只有几十 KB —— 大字段的位置上是占位串）
-		raw, err := json.Marshal(body)
+		enc, err := json.Marshal(body)
 		if err != nil {
 			return "", err
 		}
-		// ③ 边写边编码
+		// ③ 长度：把每个占位串换成真实 data URI 之后的字节数（streamingBodyLen 的注释说明怎么算的）
+		n, err := streamingBodyLen(enc, blobs)
+		if err != nil {
+			return "", err
+		}
+		contentLen = n
+		// ④ 边写边编码
 		pr, pw := io.Pipe()
 		go func() {
-			pw.CloseWithError(writeBodyWithBlobs(pw, raw, blobs))
+			pw.CloseWithError(writeBodyWithBlobs(pw, enc, blobs))
 		}()
 		reader = pr
 	}
@@ -528,9 +589,10 @@ func (e *Engine) createStreaming(ctx context.Context, c config.MiniMaxSettings,
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	if len(raw) > 0 {
-		req.ContentLength = int64(len(raw))
-	}
+	// 显式给长度：既是真实字节数，也让 net/http 不必退化成 chunked。
+	// 写出的字节数与它对不上时，客户端自己会报
+	// `http: ContentLength=N with Body length M` —— 那正是我们想要的（静默少发/多发才是灾难）。
+	req.ContentLength = contentLen
 	resp, err := (&http.Client{Timeout: 60 * time.Second}).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("提交云端任务失败: %w", err)

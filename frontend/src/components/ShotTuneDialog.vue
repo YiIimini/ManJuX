@@ -39,6 +39,10 @@ const dirty = computed(() =>
 // 条件与文案与项目参数抽屉共用同一份实现(renderHints.cloudSeedWarning)。
 const cloudSeedNote = computed(() => cloudSeedWarning(form.engine, form.seed))
 
+// save 返回**是否真的保存成功**（2026-09-30 审计）：
+// 原来它在自己的 catch 里吞掉失败、返回 undefined，而调用方 `if (dirty.value) await save()`
+// 之后**照样继续重渲**并提示「镜头 N 已按微调参数重渲」—— 用户同时看到「保存失败」与
+// 「已按微调参数重渲」，而实际重渲用的是**旧提示词**（改的东西一个字都没进去）。
 async function save() {
   saving.value = true
   try {
@@ -50,13 +54,15 @@ async function save() {
     })
     ElMessage.success(`镜头 ${shot.value.id} 微调已保存(该镜指纹已变,重渲生效)`)
     refreshProject()
-  } catch (e) { ElMessage.error(e.message) } finally { saving.value = false }
+    return true
+  } catch (e) { ElMessage.error(e.message); return false } finally { saving.value = false }
 }
 
 async function render() {
   rendering.value = true
   try {
-    if (dirty.value) await save()
+    // 保存失败就**不要**重渲：重渲的是旧提示词，而提示语会让人以为改的那份生效了。
+    if (dirty.value && !(await save())) return
     await api.run(pj.value.project.id, 'render', [shot.value.id], form.engine || undefined, form.seed || undefined)
     ElMessage.success(`镜头 ${shot.value.id} 已按微调参数重渲`)
     G.tuneShot = null

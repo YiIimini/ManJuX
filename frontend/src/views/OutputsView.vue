@@ -34,8 +34,15 @@ async function removeOut(item, what, label) {
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   try {
-    await api.deleteOutput(item.project)
-    ElMessage.success('已删除')
+    // what 是这一行按钮的语义（删 768P / 删 2K / 删全部）—— 以前漏传，请求体是空的，
+    // 后端一律 400「what 须为 final/final2k/all」⇒ 这个按钮**从来没删掉过东西**。
+    const res = await api.deleteOutput(item.project, what)
+    if (res && res.ok === false) {
+      // 只删掉一部分：如实报（Windows 上播放器占着 final.mp4 就是这种情况）
+      ElMessage.warning(`删掉了 ${res.removed} 个，${(res.failed || []).length} 个没删掉（${(res.failed || []).join('、')}）—— 多半被别的程序占着，关掉再删`)
+    } else {
+      ElMessage.success('已删除')
+    }
     refresh()
   } catch (e) { ElMessage.error(e.message) }
 }

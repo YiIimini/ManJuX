@@ -91,7 +91,11 @@ const totalScenes = computed(() => G.projects.reduce((a, p) => a + (p.scenes || 
 
 // 进行中拆集任务(首页占位卡:提交一键创作后书卡立即出现)
 const novelJobs = ref([])
-watch(() => G.logs.length, () => {
+// 【2026-09-30 审计】原来 watch 的是 `G.logs.length`，而 store 里日志缓冲**封顶 800 条**
+// （`if (G.logs.length > 800) G.logs.splice(...)`）—— 长度到 800 之后就不再变化，
+// 而 Vue 对"值没变"的回调会跳过，于是**跑到 800 条以后拆集事件再也不即时刷新占位卡**，
+// 只剩 8 秒一次的兜底轮询。改 watch 递增的游标 `logSeq`（它永不封顶）。
+watch(() => G.logSeq, () => {
   const last = G.logs[G.logs.length - 1]
   if (last && last.phase === 'novel') refreshJobs() // 拆集事件即时刷新占位卡
 })

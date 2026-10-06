@@ -417,6 +417,24 @@ func readBody[T any](r *http.Request, v *T) error {
 	return json.Unmarshal(raw, v)
 }
 
+// readBodyOptional 请求体的**宽容读法**：没有 body 时按默认值走，body 坏了则**报错**。
+//
+// 【2026-09-30 深度审计】这三个端点原来写的是 `_ = readBody(r, &in)`。body 坏了（网络截断、
+// 非 JSON）时所有字段都停在零值，而**零值在这几个端点上是有含义的**：
+//
+//	runProject   phase 空 ⇒ 兜底 PhaseAll ⇒ 用户点的"只跑渲染"变成从剧本到成片的全流程；
+//	upgrade2K    shot 0  ⇒ 整片 2K ⇒ 一次截断就按**整部片子**去花云额度（而且看不出来）；
+//	成片删除     what 空 ⇒ 报"what 须为 final/final2k/all"，理由对不上（真正的原因是 body 坏了）。
+//
+// 也不能一律要求必须有 body：这几个端点的"不带 body"是合法用法（按默认值），
+// 所以只把「**有 body 但读不出来**」当成错误。判据见 read_body_optional_test.go。
+func readBodyOptional[T any](r *http.Request, v *T) error {
+	if r.ContentLength == 0 {
+		return nil
+	}
+	return readBody(r, v)
+}
+
 // ---------- 基础 ----------
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

@@ -222,7 +222,9 @@ export const api = {
   upscale: (id, shotID, opts) => req('POST', `/api/projects/${encodeURIComponent(id)}/shot/${shotID}/upscale`, opts || {}),
   uploadCover: (id, payload) => req('POST', `/api/projects/${encodeURIComponent(id)}/cover`, payload),
   exportPack: (id) => req('POST', `/api/projects/${encodeURIComponent(id)}/export-pack`),
-  deleteOutput: (projectID) => req('DELETE', `/api/projects/${encodeURIComponent(projectID)}/output`),
+  // what 必须发：后端只认 body 里的 final/final2k/all，不带 body 会 400
+  // （2026-09-30 审计：此前一个字节都不发 ⇒ 作品库的「删除成片」与批量删除**从来没成功过**）。
+  deleteOutput: (projectID, what) => req('DELETE', `/api/projects/${encodeURIComponent(projectID)}/output`, { what: what || 'all' }),
   novelJobs: () => req('GET', '/api/novel-jobs'),
   novelJobDelete: (series) => req('DELETE', '/api/novel-jobs?series=' + encodeURIComponent(series)),
   novels: (withHidden) => req('GET', '/api/novels' + (withHidden ? '?hidden=1' : '')),

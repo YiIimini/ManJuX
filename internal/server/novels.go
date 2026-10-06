@@ -339,6 +339,15 @@ func (s *Server) handleNovelDetail(w http.ResponseWriter, r *http.Request) {
 	} else {
 		chapters = append(chapters, novelChapter{Path: p, Name: filepath.Base(p), KB: fi.Size() / 1024, Chars: int(fi.Size() / 3)})
 	}
+	// **空切片必须是 []，不能是 null**（2026-09-30 深度审计）：一本书的目录里没有
+	// .md/.txt（只有 epub / 图片 / 空目录）时 `chapters` 是 nil，Go 把它 marshal 成 `null`；
+	// 而详情弹窗直接读 `dlg.chapters.length`（三处）⇒ 点开就整页炸
+	// `Cannot read properties of null (reading 'length')`，弹窗内容一个字都不显示。
+	// 前端不必给每个字段都加 `?.`（新界面不会再踩）。
+	// 前端不必给每个字段都加 `?.`（新界面不会再踩）。
+	if chapters == nil {
+		chapters = []novelChapter{}
+	}
 	writeJSON(w, 200, map[string]any{"novel": d, "chapters": chapters})
 }
 

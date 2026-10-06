@@ -2,12 +2,19 @@ package h3api
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/YiIimini/ManJuX/internal/config"
 )
 
 // 流式请求体与"整体拼再 marshal"必须**逐字节等价**（2026-09-29 性能审计 #7）。
@@ -142,6 +149,139 @@ func TestBlobPathErrors(t *testing.T) {
 	// 正常路径必须成功（别把对的也拒了）
 	if err := setBlobPlaceholder(mk(), blobRef{Path: "content[1].video_url.url", File: "x"}, "P"); err != nil {
 		t.Errorf("正常路径不该报错:%v", err)
+	}
+}
+
+// ContentLength 必须**等于实际写出的字节数**（2026-09-30 深度审计）。
+//
+// 【现场】`createStreaming` 的 blob 分支里写的是 `raw, err := json.Marshal(body)` ——
+// 遮蔽了外层 `raw`，于是 `if len(raw) > 0 { req.ContentLength = … }` 在**带 blobs 的那条路
+// 永远不成立**：io.PipeReader + ContentLength==0 ⇒ net/http 自动退化成
+// `Transfer-Encoding: chunked`。而带 blobs 的唯一生产调用方是**付费的 2K 定稿**
+// （整片源视频，~50MB）—— 云端网关接不接受 chunked，本机验不了。
+//
+// 判据是结构性的：**算出来的长度 == 真的写出来的字节数**（两条路各算各的，对不上就红）。
+// 顺带把"前缀只写一份"也钉住：改了 writer 忘了改算法，这条立刻失败。
+func TestStreamingBodyLenMatchesWrittenBytes(t *testing.T) {
+	dir := t.TempDir()
+	// 尺寸刻意铺开：3 的倍数（base64 无填充）、非 3 的倍数（有 '=' 填充）、以及 0 字节
+	sizes := []int{5000, 4096, 0, 1, 2}
+	for _, size := range sizes {
+		t.Run(fmt.Sprintf("%d字节", size), func(t *testing.T) {
+			payload := make([]byte, size)
+			for i := range payload {
+				payload[i] = byte(i % 251)
+			}
+			blobPath := filepath.Join(dir, fmt.Sprintf("blob_%d.mp4", size))
+			if err := os.WriteFile(blobPath, payload, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			// 两张参考图 + 一个源视频：多 blob 的占位串替换顺序不能算错
+			refs := []blobRef{
+				{Path: "content[1].video_url.url", File: blobPath},
+				{Path: "content[2].image_url.url", File: blobPath},
+			}
+			body := map[string]any{
+				"model": "MiniMax-H3",
+				"content": []map[string]any{
+					{"type": "text", "text": "中文提示词 with \"quotes\""},
+					{"type": "video_url", "video_url": map[string]any{"url": ""}, "role": "base_video"},
+					{"type": "image_url", "image_url": map[string]any{"url": ""}},
+				},
+			}
+			for i, b := range refs {
+				if err := setBlobPlaceholder(body, b, dataURIPlaceholder(i)); err != nil {
+					t.Fatalf("占位替换失败:%v", err)
+				}
+			}
+			enc, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := streamingBodyLen(enc, refs)
+			if err != nil {
+				t.Fatalf("算长度失败:%v", err)
+			}
+			var got bytes.Buffer
+			if err := writeBodyWithBlobs(&got, enc, refs); err != nil {
+				t.Fatalf("分块写失败:%v", err)
+			}
+			if int64(got.Len()) != want {
+				t.Errorf("算出来的长度 %d 与实际写出的字节数 %d 不符 —— "+
+					"给 net/http 的 ContentLength 对不上时，请求要么被拦（ContentLength with Body length），"+
+					"要么退化成 chunked（云端网关接不接受本机验不了）", want, got.Len())
+			}
+		})
+	}
+}
+
+// 真的发出去的请求：**有 ContentLength、不是 chunked**（2026-09-30 深度审计）。
+//
+// 上面那条钉的是"算得对"，这条钉的是"真的用在请求上了"：把 createStreaming 打到一个
+// 本地服务端，读服务端侧看到的 ContentLength / TransferEncoding / 实际收到的字节数。
+// 少了这条，把 `req.ContentLength = contentLen` 删掉照样能全绿。
+func TestCreateStreamingSendsExplicitContentLength(t *testing.T) {
+	dir := t.TempDir()
+	payload := make([]byte, 5000) // 非 3 字节对齐 ⇒ base64 末尾有填充（最容易算错的那种）
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+	blobPath := filepath.Join(dir, "base.mp4")
+	if err := os.WriteFile(blobPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	type seen struct {
+		contentLen  int64
+		transferred []string
+		bodyLen     int
+		bodyHasBlob bool
+	}
+	got := make(chan seen, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		got <- seen{
+			contentLen:  r.ContentLength,
+			transferred: r.TransferEncoding,
+			bodyLen:     len(raw),
+			bodyHasBlob: strings.Contains(string(raw), "data:video/mp4;base64,"),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"task_id":"t"}`))
+	}))
+	defer ts.Close()
+
+	e := New(func() config.MiniMaxSettings {
+		return config.MiniMaxSettings{BaseURL: ts.URL, APIKey: "k", Model: "MiniMax-H3"}
+	})
+	body := map[string]any{
+		"model": "MiniMax-H3",
+		"content": []map[string]any{
+			{"type": "text", "text": "t"},
+			{"type": "video_url", "video_url": map[string]any{"url": ""}, "role": "base_video"},
+		},
+	}
+	if _, err := e.createStreaming(context.Background(), config.MiniMaxSettings{
+		BaseURL: ts.URL, APIKey: "k", Model: "MiniMax-H3",
+	}, body, []blobRef{{Path: "content[1].video_url.url", File: blobPath}}); err != nil {
+		t.Fatalf("提交失败:%v", err)
+	}
+
+	s := <-got
+	for _, te := range s.transferred {
+		if strings.EqualFold(te, "chunked") {
+			t.Error("请求体被发成 chunked 了 —— 带 blobs 的这条路是付费的 2K 定稿，" +
+				"云端网关接不接受 chunked 本机验不了；ContentLength 必须显式给对")
+		}
+	}
+	if s.contentLen != int64(s.bodyLen) {
+		t.Errorf("ContentLength=%d 与实际收到的 %d 字节不符", s.contentLen, s.bodyLen)
+	}
+	if s.contentLen <= 0 {
+		t.Error("ContentLength 必须是正的（为 0 就会被 net/http 当成不发送已知长度）")
+	}
+	if !s.bodyHasBlob {
+		t.Error("服务端没收到 data URI —— 说明流式那一段没真的写出去")
 	}
 }
 

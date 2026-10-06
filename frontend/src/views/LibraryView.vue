@@ -87,16 +87,25 @@ const libCards = computed(() => {
 
 // 批量删除
 const batch = ref(false)
+// sel 里存的是 **libKey（卡片 id 优先，见 libKey）**，不是显示名：
+// 同名不同人是合法数据，按名字选/删会落到另一个人身上（2026-09-30 审计）。
 const sel = ref(new Set())
-function toggleSel(name) {
-  if (sel.value.has(name)) sel.value.delete(name)
-  else sel.value.add(name)
+function toggleSel(key) {
+  if (sel.value.has(key)) sel.value.delete(key)
+  else sel.value.add(key)
   sel.value = new Set(sel.value)
 }
-const allSelected = computed(() => list.value.length > 0 && list.value.every(e => sel.value.has(e.name)))
+const allSelected = computed(() => list.value.length > 0 && list.value.every(e => sel.value.has(libKey(e))))
 function toggleAllSel() {
-  sel.value = allSelected.value ? new Set() : new Set(list.value.map(e => e.name))
+  sel.value = allSelected.value ? new Set() : new Set(list.value.map(e => libKey(e)))
 }
+// 切分类必须清空勾选（2026-09-30 审计）：原来 `sel` 跨分类残留，
+// 从「角色」切到「场景」后表头还写着"已选 2 项"，一点删除就是**拿旧勾选去删新分类** ——
+// 要么删掉了用户没勾的条目，要么报一串"库资产不存在"。
+watch(kind, () => {
+  sel.value = new Set()
+  batch.value = false
+})
 async function batchDelete() {
   if (!sel.value.size) return
   try {
@@ -104,9 +113,10 @@ async function batchDelete() {
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' })
   } catch { return }
   let ok = 0, fail = 0
-  for (const n of sel.value) {
+  // 传的是 libKey（卡片 id 优先）—— 库侧 Delete 已按同一判据解析（id 优先、名字兜底）
+  for (const key of sel.value) {
     try {
-      await api.libraryDelete(kind.value, n)
+      await api.libraryDelete(kind.value, key)
       ok++
     } catch { fail++ }
   }
@@ -422,9 +432,9 @@ async function remove(e) {
           <span>{{ row._count }} 个造型档 —— 同一个人按场切换的服装/状态(声线与身份继承主卡),不是 {{ row._count }} 个新角色</span>
         </div>
         <div v-else class="shot-card p-3 flex flex-col gap-2 relative"
-             :class="{ 'sel-on': sel.has(row.name) }" @click="batch && toggleSel(row.name)">
-          <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(row.name)">
-            <el-checkbox :model-value="sel.has(row.name)" size="large" />
+             :class="{ 'sel-on': sel.has(libKey(row)) }" @click="batch && toggleSel(libKey(row))">
+          <div v-if="batch" class="absolute top-2 left-2 z-10 bg-black/40 rounded px-1" @click.stop="toggleSel(libKey(row))">
+            <el-checkbox :model-value="sel.has(libKey(row))" size="large" />
           </div>
           <!-- 配乐条目用**播放器**，不是图：<img> 指向一个 mp3 只会一片空白 -->
           <div v-if="row.kind === 'music'" class="relative p-3 rounded-lg flex flex-col gap-2"

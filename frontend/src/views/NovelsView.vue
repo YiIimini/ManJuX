@@ -904,7 +904,7 @@ function onCardCmd(cmd, n) {
           {{ deliverable.chars }} 字{{ deliverable.truncated ? '（过大已截断）' : '' }} · 技能侧产物，只读
         </div>
         <pre class="text-xs overflow-y-auto tree-scroll p-3"
-             style="white-space:pre-wrap;max-height:70vh;background:var(--mx-panel2);border-radius:8px">{{ deliverable.text }}</pre>
+             style="white-space:pre-wrap;max-height:70vh;background:var(--mx-panel-bg2);border-radius:8px">{{ deliverable.text }}</pre>
       </div>
     </el-dialog>
   </div>

@@ -11,6 +11,54 @@
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
 
+## 深度分析与升级：先审后改，九处真缺陷（2026-09-30）
+
+这轮不是碎修：先跑三个**只读审计**（Go 后端 / 契约门覆盖 / 前端），逐条自己复核，
+只改能证明的真问题，每条都配"把修复改坏 → 确认守卫变红 → 改回来"的反向验证。
+完整证据、跑不了的门、下一步都在 `docs/审计与升级-2026-09-30.md`。
+
+三处会**毁数据 / 白烧 GPU**、两处让界面按钮"看着能用其实永远失败"：
+
+* **一键清理读错了条件缓存的记账目录**（🔴 最严重）：引擎按 ComfyUI 的 `root_dir` 推导记账
+  （实机 `D:\Ai\data\cond_cache`），而清理自己拼 `<DataDir>/cond_cache`（实机**不存在**）⇒
+  读到 0 个 `.ok` ⇒ 认定"没有任何活缓存" ⇒ 把 ComfyUI 侧 **12 个正在被引用的 `.pt`（1,877 MB）**
+  全删掉，而 sidecar 还在 ⇒ 下次渲这些镜头走"缓存命中"分支去读一个已删的文件，报的是
+  ComfyUI 节点错误、且**不自愈**（键标记在）—— 按钮一路报"清理完成"。
+  修法：记账目录收口到引擎的 `CondSidecarDir`（并兼顾历史位置），并把**"读不到"与"没有"分开**
+  （读不到就一个 `.pt` 都不删，如实播报）。守卫：`internal/server/cleanup_sidecar_root_test.go`。
+* **管线在跑时，一键清理会整删 `output/manjux`**：那一片正是**本次渲染的产物落点**
+  （`filename_prefix: manjux/shot_…`，完成后立刻按 `GET /view?subfolder=manjux` 取回），
+  而它此前连 1 小时的界限都不看、无条件 `RemoveAll` ⇒ 渲染 3–5 分钟后"取产物 404 →
+  产物下载失败"，原因完全对不上。修法：管线在跑时跳过并**如实播报**（walk 里也 SkipDir）。
+  守卫：`TestSweepRunDirKeepsManjuxWhileBusy`（两头都钉）。
+* **删成片产物：删不掉也计数**：`os.Remove` 的返回值被丢掉 ⇒ Windows 上 `final.mp4` 被播放器
+  占着（实测本机**真的删不掉**）时照样报「🗑 已删除成片产物 N 个文件」，作品库那张卡还在。
+  现在删不掉的进 `failed[]`、`ok=false`，日志点名哪几个、为什么。守卫见
+  `read_body_optional_test.go`（判据是"报告 = 盘上事实"）。
+* **三处 `_ = readBody(...)`：坏请求体会静默换目标**：body 读不出来时字段全留零值，而零值在
+  这几个端点上**是有含义的**（`phase` 空 ⇒ 全流程；`shot 0` ⇒ **整片 2K**，一次截断就按整部
+  片子去花云额度）。新增 `readBodyOptional`：**不带 body 合法**、body 坏了 400 拒绝。
+* **流式请求体的 `ContentLength` 是死分支**：blob 分支里 `raw, err := json.Marshal(body)`
+  **遮蔽**外层 `raw` ⇒ `if len(raw) > 0 { req.ContentLength = … }` 在带 blobs 的那条路
+  永远不成立 ⇒ `io.PipeReader` + 长度 0 ⇒ net/http 退化成 `Transfer-Encoding: chunked`。
+  而带 blobs 的唯一生产调用方是**付费的 2K 定稿**（整片 ~50MB）。现在把长度**算准**
+  （`streamingBodyLen`：前缀 + base64 填充都在掌握里），并加两条守卫
+  （"算出来的长度 == 真的写出来的字节数"、"发出去的请求不是 chunked"）。
+
+另外五处：**资产库改描述/删除只按名字定位**（界面传的是卡片 id ⇒ 改不动；同名不同人时**删错人**）、
+**小说详情 `chapters` 可能是 `null`**（没有正文的目录点开整页炸 `Cannot read properties of null`）、
+**作品库「删除成片」从来没成功过**（前端不发 `what`，后端一律 400）、
+以及前端四处"看着正常其实坏"（`App.vue` 的 `sysTimer` 遮蔽 ⇒ 系统监视轮询停不掉、
+微调保存失败仍继续重渲并提示"已按微调参数重渲"、拆集占位卡在日志缓冲封顶 800 条后不再即时刷新、
+资产库批量勾选跨分类残留）。
+
+**本轮跑不了的一门（如实记）**：`scripts/check.ps1` 的第 6 门（vite build）在这台机器上跑不了 ——
+**本机没有 Node/pnpm**（全盘搜过）。所以前端源码改动**已改完但未编译**，
+本轮重编的 exe 里嵌的是旧 webdist（后端修复全部生效）。其余各门手动等价跑过：gofmt / vet /
+build / `go test ./...`（16 包全 ok）/ `go test -race`（pipeline+server+library，33.3s）全过。
+
+
+
 
 ## 产线主链路审计：交付判据、阶段枚举、名字别名（2026-09-28）
 

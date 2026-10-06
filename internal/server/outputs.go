@@ -112,7 +112,12 @@ func (s *Server) projectOutputDelete(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		What string `json:"what"` // final / final2k / all
 	}
-	_ = readBody(r, &in)
+	// 【2026-09-30 深度审计】原来是 `_ = readBody(r, &in)`：body 坏了 ⇒ what 空 ⇒
+	// 报的是"what 须为 final/final2k/all"，理由对不上（真正原因是 body 读不出来）。
+	if err := readBodyOptional(r, &in); err != nil {
+		writeErr(w, 400, fmt.Errorf("请求体读不出来(%v)", err))
+		return
+	}
 	outDir := filepath.Join(s.store.Dir(id), "output")
 	targets := map[string][]string{
 		"final":   {"final.mp4", "final.srt", "final.ass"},
@@ -123,16 +128,32 @@ func (s *Server) projectOutputDelete(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("what 须为 final/final2k/all"))
 		return
 	}
+	// 【2026-09-30 深度审计】原来只要 `os.Stat` 成功就 `removed++`，而 `os.Remove` 的返回值
+	// 被丢掉 —— Windows 上 final.mp4 正被播放器/编辑器打开时删除会失败（共享冲突），
+	// 于是日志与事件流照样报「🗑 已删除成片产物 N 个文件」，作品库那张卡也还在：
+	// 用户看到"删了"和"还在"同时成立，只能得出"这软件在骗我"。删不掉要**如实报**。
 	removed := 0
+	var failed []string
 	for _, f := range targets {
-		if _, err := os.Stat(filepath.Join(outDir, f)); err == nil {
-			_ = os.Remove(filepath.Join(outDir, f))
-			removed++
+		p := filepath.Join(outDir, f)
+		if _, err := os.Stat(p); err != nil {
+			continue
 		}
+		if err := os.Remove(p); err != nil {
+			failed = append(failed, f)
+			continue
+		}
+		removed++
 	}
-	s.bus.Publish(pipeline.Event{Phase: "system", Level: "info",
-		Message: fmt.Sprintf("🗑 已删除成片产物 %d 个文件(项目「%s」)", removed, id)})
-	writeJSON(w, 200, map[string]any{"ok": true})
+	msg := fmt.Sprintf("🗑 已删除成片产物 %d 个文件(项目「%s」)", removed, id)
+	if len(failed) > 0 {
+		msg += fmt.Sprintf("；⚠ %d 个没删掉（%s）—— 多半是被别的程序占着（播放器/剪辑软件开着它），关掉再删",
+			len(failed), strings.Join(failed, "、"))
+	}
+	s.bus.Publish(pipeline.Event{Phase: "system", Level: "info", Message: msg})
+	// ok 只在**真的全删掉**时为真：界面据此决定要不要刷新"已删除"的观感，
+	// 而"只删掉一半"必须让调用方能分辨出来（前端据 failed 提示原因）。
+	writeJSON(w, 200, map[string]any{"ok": len(failed) == 0, "removed": removed, "failed": failed})
 }
 
 var _ = json.Marshal

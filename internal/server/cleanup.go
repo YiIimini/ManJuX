@@ -14,6 +14,9 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 type cleanupResult struct {
@@ -42,18 +45,24 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	//   ① **只删 1 小时前的文件**：正在跑的那一镜刚上传/刚写出的东西不能被删（此前 input 的 24 小时
 	//      窗口太保守，用户要的是"能用"而不是"绝对不误删"；1 小时足够覆盖任何在跑的任务）；
 	//   ② **input 的子目录不动**（旧决定保留：可能是用户自己放的素材）；output 的子目录按同样规则清文件；
-	//   ③ 文件清空后顺手删掉**空目录**（空目录不占空间但会让人以为还有东西）；
-	//   ④ `output/manjux/` 仍整删（平台自己的产物，无回收价值）。
 	g := s.cfg.Get()
+	// busy：本机是否还有管线在跑。**提到最前面**（2026-09-30 深度审计）：此前只有 ④ 用它，
+	// 而 ① 的 `output/manjux` 整删同样会踩到正在渲染的那一镜（见 sweepRunDir 的注释）。
+	busy := s.pipe != nil && s.pipe.HasRunning()
 	var outCount int
 	var outSize int64
 	sweepCut := time.Now().Add(-time.Hour)
+	manjuxSkipped := false
 	for _, name := range []string{"output", "input"} {
 		for _, dir := range comfyRunDirs(g.Comfy.RootDir, name) {
-			n, size := sweepRunDir(dir, name, sweepCut)
+			n, size, skipped := sweepRunDir(dir, name, sweepCut, busy)
 			outCount += n
 			outSize += size
+			manjuxSkipped = manjuxSkipped || skipped
 		}
+	}
+	if manjuxSkipped {
+		res.Skipped = append(res.Skipped, project.ErrCleanupBusy("ComfyUI output/manjux 里的渲染中间产物"))
 	}
 	if outCount > 0 {
 		add(fmt.Sprintf("ComfyUI input/output 运行时文件 %d 个（1 小时前的）", outCount), outSize)
@@ -89,9 +98,17 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		add(fmt.Sprintf("截帧预览缓存 %d 个", frameCount), 0)
 	}
 
-	// ③ 孤儿 cond_cache(项目已删但 cond_cache/{id}/ 残留)
-	condDir := filepath.Join(s.dataDir(), "cond_cache")
-	if ents, err := os.ReadDir(condDir); err == nil {
+	// ③ 孤儿 cond_cache(项目已删但 cond_cache/manjux_{id}/ 残留)
+	//
+	// 记账目录取 s.condSidecarDirs()（**全部**已知位置）。原来只认 <DataDir>/cond_cache，
+	// 而引擎写的是按 ComfyUI root_dir 推导的那一份 —— 本机两个目录不同名，于是这条清扫
+	// 永远扫不到真东西（详见 comfyengine.CondSidecarDir 的注释）。
+	sidecarDirs := s.condSidecarDirs()
+	for _, condDir := range sidecarDirs {
+		ents, err := os.ReadDir(condDir)
+		if err != nil {
+			continue
+		}
 		for _, e := range ents {
 			if !e.IsDir() {
 				continue
@@ -125,58 +142,85 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	// `<root>/ComfyUI/shared/models/`(extra_model_paths.yaml 的 base_path)——
 	// 于是真正堆着 838 文件 / 17.4GB 的那份目录从未被清理,按钮却报"清理完成"。
 	// 现在对所有**实际存在**的布局逐一清理(标准布局与 shared 布局可能各有一批残留)。
-	live := collectLiveCondNames(condDir)
-	var ptCount int
-	var ptSize int64
-	var ptDirs []string
-	for _, ptDir := range comfyModelDirs(g.Comfy.RootDir, "conditioning") {
-		n, sz, err := cleanCondCacheFiles(ptDir, live)
-		if err != nil {
-			continue
-		}
-		if n > 0 {
-			ptCount += n
-			ptSize += sz
-			ptDirs = append(ptDirs, ptDir)
+	//
+	// 【2026-09-30 深度审计】记账目录改用 s.condSidecarDirs()（引擎真实写入的那一份 +
+	// 历史位置），并把「读不到记账」与「没有任何活缓存」**分开**：前者是"不知道"，
+	// 后者才是"可以删"。原来两者都表现为空集合，于是记账目录一错位，
+	// 12 个活着的 .pt（1.8 GB）被当成孤儿删掉，而 sidecar 还在 ⇒ 下次渲染命中坏缓存、
+	// 报的是 ComfyUI 节点错误。这条改动让"误删活缓存"在两种情况下都不可能发生。
+	live := map[string]bool{}
+	for _, condDir := range sidecarDirs {
+		for name := range collectLiveCondNames(condDir) {
+			live[name] = true
 		}
 	}
-	if ptCount > 0 {
-		add(fmt.Sprintf("条件缓存数据文件 %d 个(.pt;目录 %s)", ptCount, strings.Join(ptDirs, "、")), ptSize)
-	}
-
-	// ⑤b 活项目里**过期**的条件缓存（2026-09-29 性能审计 #8）。
-	//
-	// ③ 清"项目已删的孤儿"、⑤ 清"没被任何 .ok 引用的数据"，但**仍在被引用的旧条目**
-	// 从来没人清：改一次提示词重渲，同一镜会生成新的 `s{shot}_{hash}`，旧的那份
-	// sidecar 还在、.pt 也还在 —— 一集 60 镜就是 60 个 .pt（每个 20MB 上下），
-	// 40 集 ≈ 2400 个。代码注释里记的历史实测是 **838 文件 / 17.4GB**。
-	//
-	// 判据取"每个项目保留最近 N 份"：缓存是**可重算**的（下次渲染会重新预编码），
-	// 留最近的那批就够"接着渲"用；更早的条目只有在"把镜头改回原样再渲"时才会命中，
-	// 而那种情况下重算一次的代价远小于长期占着几 GB。
-	liveOld := collectStaleCondNames(condDir, condCacheKeepPerProject)
-	var oldCount int
-	var oldSize int64
-	for _, ptDir := range comfyModelDirs(g.Comfy.RootDir, "conditioning") {
-		for name := range liveOld {
-			p := filepath.Join(ptDir, name+".pt")
-			st, err := os.Stat(p)
+	if bad := unreadableCondSidecar(sidecarDirs); bad != "" {
+		// 判据是"这些 .pt 还有没有人引用"，而记账读不出来时这个判据是**不知道**。
+		// 不知道就不删：宁可少清（缓存是可重算的，留着只占空间），也不能删活的那份。
+		add(fmt.Sprintf("⚠ 条件缓存记账目录读不出来（%s）—— 本次**一个 .pt 都没删**（判断不了哪些是活的）", bad), 0)
+	} else {
+		var ptCount int
+		var ptSize int64
+		var ptDirs []string
+		for _, ptDir := range comfyModelDirs(g.Comfy.RootDir, "conditioning") {
+			n, sz, err := cleanCondCacheFiles(ptDir, live)
 			if err != nil {
 				continue
 			}
-			if os.Remove(p) == nil {
-				oldCount++
-				oldSize += st.Size()
+			if n > 0 {
+				ptCount += n
+				ptSize += sz
+				ptDirs = append(ptDirs, ptDir)
 			}
 		}
-	}
-	if oldCount > 0 {
-		// 同步清掉 sidecar（否则下次会按"有 .ok 没 .pt"当成缓存损坏）
-		removeCondSidecars(condDir, liveOld)
-		add(fmt.Sprintf("过期条件缓存 %d 个(.pt;每项目只留最近 %d 份)", oldCount, condCacheKeepPerProject), oldSize)
+		if ptCount > 0 {
+			add(fmt.Sprintf("条件缓存数据文件 %d 个(.pt;目录 %s)", ptCount, strings.Join(ptDirs, "、")), ptSize)
+		}
+
+		// ⑤b 活项目里**过期**的条件缓存（2026-09-29 性能审计 #8）。
+		//
+		// ③ 清"项目已删的孤儿"、⑤ 清"没被任何 .ok 引用的数据"，但**仍在被引用的旧条目**
+		// 从来没人清：改一次提示词重渲，同一镜会生成新的 `s{shot}_{hash}`，旧的那份
+		// sidecar 还在、.pt 也还在 —— 一集 60 镜就是 60 个 .pt（每个 20MB 上下），
+		// 40 集 ≈ 2400 个。代码注释里记的历史实测是 **838 文件 / 17.4GB**。
+		//
+		// 判据取"每个项目保留最近 N 份"：缓存是**可重算**的（下次渲染会重新预编码），
+		// 留最近的那批就够"接着渲"用；更早的条目只有在"把镜头改回原样再渲"时才会命中，
+		// 而那种情况下重算一次的代价远小于长期占着几 GB。
+		liveOld := map[string]int{}
+		for _, condDir := range sidecarDirs {
+			for name := range collectStaleCondNames(condDir, condCacheKeepPerProject) {
+				liveOld[name] = 1
+			}
+		}
+		var oldCount int
+		var oldSize int64
+		for _, ptDir := range comfyModelDirs(g.Comfy.RootDir, "conditioning") {
+			for name := range liveOld {
+				p := filepath.Join(ptDir, name+".pt")
+				st, err := os.Stat(p)
+				if err != nil {
+					continue
+				}
+				if os.Remove(p) == nil {
+					oldCount++
+					oldSize += st.Size()
+				}
+			}
+		}
+		if oldCount > 0 {
+			// 同步清掉 sidecar（否则下次会按"有 .ok 没 .pt"当成缓存损坏）
+			for _, condDir := range sidecarDirs {
+				removeCondSidecars(condDir, liveOld)
+			}
+			add(fmt.Sprintf("过期条件缓存 %d 个(.pt;每项目只留最近 %d 份)", oldCount, condCacheKeepPerProject), oldSize)
+		}
 	}
 
 	// ④ 系统临时文件(mx-* 前缀,应用自身产生的)
+	//
+	// busy 已在函数开头取过（① 的 manjux 整删同样要用它）—— 这里**只读**，不再取一次：
+	// 两次采样之间管线可能刚好开跑/跑完，两个值不同步就会出现"这一项跳过了、那一项没跳过"。
 	//
 	// 【2026-09-29 运行时审计 P3-10】**运行时不能无条件清这一片**：
 	// `mx-audio-*.pcm`（合成阶段做语音边界检测，写完**立刻** `os.ReadFile`）与
@@ -184,7 +228,6 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	// 症状是随机性的"解码音轨失败 → 回退中点切"或"截帧产物不可读"—— 事后完全对不上因。
 	// 所以管线在跑时**跳过**这一项并如实说明（清理是用户的显式动作，默默少清要讲出来）。
 	tmpDir := os.TempDir()
-	busy := s.pipe != nil && s.pipe.HasRunning()
 	if ents, err := os.ReadDir(tmpDir); err == nil && !busy {
 		var tmpCount int
 		var tmpSize int64
@@ -279,6 +322,54 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 // dataDir 返回数据根目录。
 func (s *Server) dataDir() string {
 	return s.cfg.Get().DataDir
+}
+
+// condSidecarDirs 条件缓存**记账目录**的全部已知位置。
+//
+// 第一项是引擎真实写入的那一份（`comfyengine.CondSidecarDir`，按 ComfyUI 的 root_dir
+// 推导：`<ComfyUI 的上级>/data/cond_cache`），第二项是老代码自己拼的
+// `<DataDir>/cond_cache`。两者在"ComfyUI 装在本应用目录里"时重合，在"ComfyUI 装在别处"
+// 时**不重合** —— 本机正是后者（引擎写 `D:\Ai\data\cond_cache`，而
+// `D:\Ai\Datas\ManJuX\data\cond_cache` 不存在）。
+//
+// 全部扫而不是只留一项，有两个好处：① 修掉"只认后者 ⇒ 读不到任何 .ok ⇒ 把活 .pt 全删"
+// 这个误删（2026-09-30 审计）；② 早期落在老位置上的残留也一并收干净。
+func (s *Server) condSidecarDirs() []string {
+	var out []string
+	seen := map[string]bool{}
+	addDir := func(p string) {
+		if strings.TrimSpace(p) == "" {
+			return
+		}
+		clean := filepath.Clean(p)
+		if seen[clean] {
+			return
+		}
+		seen[clean] = true
+		out = append(out, clean)
+	}
+	addDir(comfyengine.CondSidecarDir(s.cfg.Get().Comfy))
+	addDir(filepath.Join(s.dataDir(), "cond_cache"))
+	return out
+}
+
+// unreadableCondSidecar 返回第一个"存在但读不出来"的记账目录（没有则空串）。
+//
+// 为什么要单独判：`collectLiveCondNames` 读不到目录时返回**空集合**，而空集合的语义是
+// "没有任何活缓存"。两者混在一起时，一次路径错位（或临时权限问题）就会被读成
+// "这些 .pt 全是孤儿" —— 清理是破坏性动作，"不知道"必须与"没有"分开（本仓老口径：
+// 读不到要如实说，不许把读失败当成空）。
+func unreadableCondSidecar(dirs []string) string {
+	for _, d := range dirs {
+		st, err := os.Stat(d)
+		if err != nil || !st.IsDir() {
+			continue // 目录本来就没有：不算"读不出来"
+		}
+		if _, err := os.ReadDir(d); err != nil {
+			return d
+		}
+	}
+	return ""
 }
 
 // collectLiveCondNames 收集所有项目 sidecar 中仍在使用的缓存名(.ok 文件名去扩展名)。
