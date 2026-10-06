@@ -1015,7 +1015,7 @@ func (c *Coordinator) takeManifestSaveFailure() (int, error) {
 	return n, err
 }
 
-// assembleShotPrompt 渲染提示词的**唯一装配入口**（四步，顺序固定）。
+// assembleShotPrompt 渲染提示词的**唯一装配入口**（顺序固定）。
 //
 // 【为什么必须收成一个函数】（2026-10-06 审计）降级阶梯第二级"缩短到 6 秒再出"此前是
 // 从裸 `shot.H3Prompt` 另拼一份提示词的 —— 那份**没有**参考图权威清单、没有道具锚定、
@@ -1023,12 +1023,14 @@ func (c *Coordinator) takeManifestSaveFailure() (int, error) {
 // 镜头 6 角色漂移的根因）；少了它，模型就回到"按文字重画角色/把多视角拼合图当场景图"。
 // 收成一个入口之后，"正常渲染"与"缩短重出"走的是同一条链，不可能再漏一层。
 //
-// 四步的顺序也是契约的一部分（改顺序 = 改提示词结构）：
+// 顺序也是契约的一部分（改顺序 = 改提示词结构）：
 //
-//	① ShotRenderPrompt      身份锚定 + 画风硬约束 + 场级光照锚 + 台词语言标记
-//	② EnsureRefManifest     参考图**权威清单**（张数与编号按实际附了几张图算）
-//	③ EnsurePropAnchors     关键道具的跨镜**文字**锚定（道具不进参考图集合）
+//	① ShotRenderPrompt       身份锚定 + 画风硬约束 + 场级光照锚 + 台词语言标记
+//	② EnsureRefManifest      参考图**权威清单**（张数与编号按实际附了几张图算）
+//	③ EnsurePropAnchors      关键道具的跨镜**文字**锚定（道具不进参考图集合）
 //	④ EnsureTransitionCaption 换场时的 "[地点・时间]" 转场字幕
+//	⑤ EnsureShotSpecClause   镜头表的**结构字段**（机位/运镜/尾帧状态/位置/离屏）——
+//	  这些字段此前只有门读、渲染端零消费，用户改掉它们等于没改（2026-10-06 审计 §八-13）
 func assembleShotPrompt(proj *project.Project, plan *project.Plan, shot *project.Shot, roles []RefRole, prevShot *project.Shot) string {
 	prompt := ShotRenderPrompt(proj, plan, shot)
 	// 参考图权威清单：张数与编号由渲染器按**实际装配结果**写出（LLM 看不见张数，猜错就
@@ -1040,7 +1042,10 @@ func assembleShotPrompt(proj *project.Project, plan *project.Plan, shot *project
 	// 场次切换的转场字幕（用户《仿真人10S分镜头指令》/《3D漫剧15秒分镜》：渐隐渐显 + "[地点・时间]" 字幕）。
 	// 放在装配点的理由同道具锚定：这是**已知量**（场次一变，地点时间就在场景卡名字里），
 	// 让 LLM 每镜自觉复述只会时灵时不灵；而且官方屏幕文字规则要求文字逐字进英文双引号。
-	return EnsureTransitionCaption(prompt, plan, *shot, prevShot)
+	prompt = EnsureTransitionCaption(prompt, plan, *shot, prevShot)
+	// ⑤ 镜头表的结构字段（机位/运镜/尾帧状态/位置/离屏）：**缺什么补什么**。这些字段此前只有门读、
+	// 渲染端零消费 —— 用户在工作台改掉它们，提示词与指纹都不动，等于没改（2026-10-06 审计 §八-13）。
+	return EnsureShotSpecClause(prompt, plan, *shot)
 }
 
 // anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格

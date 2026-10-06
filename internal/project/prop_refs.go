@@ -396,6 +396,13 @@ type HealResult struct {
 	EntityRefsUnknown int
 	// CharDupes 同名两卡被并掉的张数（②人物道具与③角色多视图 各起了一个 id 的同一个角色）。
 	CharDupes int
+	// Cuts 从正文**回填**出小镜头结构的片段数（2026-10-06 审计 §八-11）。
+	//
+	// 权威字段 `shot.cuts` 在平台自己的生成链上**从来没被写过**（schema 里没要它、也没人回填），
+	// 而分镜实际是把内切写在正文里（`[Shot N] At MM:SS.mmm`）⇒ 于是 `CutIssues` 的
+	// **每刀 1.5–4 秒 / 首刀为 0 / 时间点严格递增 / 各刀之和 = 片段时长**这几条（用户文件里的
+	// 硬要求）**永久空转**。`ParseCutsFromPrompt` 早就写好了，缺的只是在**唯一读取边界**调用它。
+	Cuts int
 }
 
 // HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
@@ -441,5 +448,8 @@ func HealPlan(plan *Plan) HealResult {
 		Dialogue:          FillMissingDialogueTags(plan),
 		Voiceover:         FillVoiceoverAssets(plan),
 		MusicNA:           EnsureMusicNA(plan),
+		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
+		// 补上之后 `CutIssues` 那几条（每刀 1.5–4 秒等）才真正开始工作。
+		Cuts: plan.FillCutsFromPrompt(),
 	}
 }

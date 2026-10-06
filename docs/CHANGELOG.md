@@ -82,6 +82,25 @@ raw **逐行一致**，HF 仓 `lastModified` 仍停在 2026-08-13）—— 坏�
 守卫 `internal/project/heal_props_dialogue_test.go` + `TestRefManifestSceneSaysItsRealPosition`；
 三条都做了反向验证（改坏 → 门红 → 改回，见文档 §九末表）。
 
+**§八-11 与 §八-13 也一并落地了**（用户：「不要给我留着」）—— 两条都不是"删掉算了"的事，都补上了消费点：
+
+* **`cuts` 活过来了**：事实复核发现 `CutCoverageIssues`（4 秒以上必须切 / 刀数上限）**早就在读正文**，
+  真正空转的是 `CutIssues`（每刀 1.5–4 秒 / 首刀为 0 / 时间点递增 / 各刀之和 = 片段时长）——
+  它只看结构字段，而那个字段从来没人写。落在**唯一自愈入口** `HealPlan`：
+  `plan.FillCutsFromPrompt()` 把正文里的 `[Shot N] At MM:SS.mmm` 回填进结构，并如实播报
+  （渲染日志 + `cmd/preflight`）。解析器只认规范多镜形式、读不出就返回 nil，回填幂等，`CutIssues`
+  是 warn 级 ⇒ 不会因为回填拒收任何包。
+* **结构字段真的进渲染输入了**：新增 `internal/pipeline/shot_spec.go` 的 `EnsureShotSpecClause`，
+  挂在唯一装配入口 `assembleShotPrompt` 最后一环，按"**缺什么补什么**"补：机位词 / 运镜 /
+  **尾帧状态（continuity handoff）** / 每个出场角色的**画面位置** / **离屏角色**（正文已有就不重复写）。
+  于是"用户在工作台改 `end_state`"⇒ 提示词变 ⇒ 指纹失配 ⇒ 会重渲（此前改了等于没改）。
+  `angle_zh` 明确**不进**提示词（中文短标签，给工作台与词表门看；塞进去会撞自家的汉字卫生门）。
+* **副作用如实记**：提示词变了 ⇒ 补了这些条款的镜会重渲一次；字段全空的镜不受影响。
+* 守卫：`TestCutsAreBackfilledAtTheReadBoundary` / `TestBackfilledCutsMakeCutIssuesLive` /
+  `TestShotSpecChangesReachTheRenderedPrompt`；两条都做了反向验证（注掉回填 / 摘掉装配 → 门红）。
+  附带一条夹具教训：第一版多刀夹具把四刀挤在同一行（解析器正则锚行首），**门当场就响了**。
+
+
 
 
 
