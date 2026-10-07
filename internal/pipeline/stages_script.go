@@ -195,6 +195,13 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 				"（锚表是硬约束、逐项照抄即可；这些卡同样会出定妆照并入库）",
 			len(ParseCastAnchor(text)), len(plan.Characters)-len(added), strings.Join(added, "、"))
 	}
+	// **锚表原文回填**（2026-10-07）：②人物道具会话照名字出了卡、却没写 `description` —— 只补兜底串
+	// 的话，下面的专职翻译会话**永远不会**为它们启动（NeedsPromptTranslation 要求"有描述可翻"）。
+	if names := FillAnchorDescriptions(plan, text); len(names) > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "info", 15,
+			"📇 %d 张角色卡的身份真源从【人物外形锚表】补回（原先只有年龄、描述是空的）：%s",
+			len(names), strings.Join(names, "、"))
+	}
 	// **专职翻译会话（用户架构第②步）**：锚表补齐的卡只有**中文**设定，而出图只吃英文 ——
 	// 不翻译的话模型只知道"几岁、几头身"，服装/脸型/发型全靠想象。用户 2026-09-28 报的
 	// 「角色三视图渲染异常」就是这么来的：设定写"深灰值勤装甲、方中带圆脸、剑眉、左手小指缺一节"，
@@ -206,6 +213,20 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	} else if n > 0 {
 		c.emit(proj.ID, PhaseScript, 0, "success", 16,
 			"✔ 已为 %d 张只有中文设定的角色卡生成英文定妆提示词（逐项照抄锚表：脸型/眉眼/发型/服装/记号）", n)
+	}
+	// **身份提示词缺口点名**（2026-10-07）：这些卡的参考图提示词只有年龄（兜底串）或干脆是空的 ——
+	// 出图时脸会被现编。此前这件事只在下游**撞脸门事后报警**时才看得见（那是症状），
+	// 这里在存盘前把"是哪几张卡、为什么"一次说清。不拦人：锚表里真没有这个人时，也只能现编。
+	if gaps := IdentityPromptGaps(plan); len(gaps) > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"⚠ 这些角色卡的参考图提示词**只有年龄**（身份没锁：脸靠现编，跨镜/跨集很难一致）：%s —— "+
+				"锚表里有他们的外形就补进 description（平台会自动补），锚表里没有就先补源文本再重跑本阶段",
+			strings.Join(gaps, "、"))
+	}
+	if cut := TruncatedAnchorSections(text); len(cut) > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"⚠ 【人物外形锚表】里这些小节被剧本正文截断了（源文本本身不全，只能照抄到断点）：%s —— "+
+				"补全源文本后重跑本阶段，这些人的外形才能逐项照抄", strings.Join(cut, "、"))
 	}
 	if err := c.store.SavePlan(proj.ID, plan); err != nil {
 		return err

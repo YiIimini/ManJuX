@@ -30,6 +30,12 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 	// 放在这里而不是各出图点：下面每条路径（初出/补缺/多视角/三视图板）都从 plan 取提示词，
 	// 在**读完之后、出第一张图之前**覆盖一次，四条路才会看到同一个真源。
 	c.applyCardPrompts(proj, plan)
+	// **锚表回填 + 专职翻译**（2026-10-07）：让"已存在但描述为空"的卡也拿到身份真源 ——
+	// 存量项目（plan 已落盘、卡片只有兜底串）**重跑「资产生成」**就能修好，不必重跑剧本阶段
+	// （重跑剧本会重排分镜、把已经渲过的镜头全废掉）。
+	// 三件事按顺序做，都是幂等的：锚表原文补进 description → 专职会话译成英文定妆提示词 →
+	// 出图前点名"谁的提示词还只有年龄"。补过/译过就一个字都不再动。
+	c.backfillCastIdentity(ctx, proj, plan)
 	assets, err := c.store.LoadAssets(proj.ID)
 	if err != nil {
 		return err

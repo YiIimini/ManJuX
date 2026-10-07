@@ -111,6 +111,73 @@ func EnsureAnchorCast(plan *project.Plan, src string) []string {
 	return added
 }
 
+// FillAnchorDescriptions 把锚表原文补进**已存在但描述为空**的角色卡，返回补了哪几个（按方案顺序）。
+//
+// 【为什么必须有这一步】（2026-10-07 用户问：「人物生成的角色提示词去哪了？墨洄、尉迟彻、断桅、
+// 邵舷、霜见等不是主角的角色都随机生成的吗？」）
+//
+// 真机第01集现场：这五张卡 `description` 是**空的**、`image_prompt` 是锚表兜底串
+// （`[ANCHOR-STUB] a Chinese period-film character, aged 58 to 66`）。后果是三连：
+//
+//	① 专职翻译会话（NeedsPromptTranslation 要求"有描述可翻"）**永远不会**为它们启动；
+//	② 出图装配只拿到"一个古装人、58–66 岁" ⇒ 脸是现编的，跨镜/跨集都不一致；
+//	③ 撞脸门当场报警（真机日志：「墨洄」与「霜见」长得像同一个人，重出一次仍像，已收手）。
+//
+// 而锚表里这五个人的外形是**逐项写全**的（脸型/眉眼/鼻唇/肤色/记号/发型/服装，每人 275~471 字）。
+// 上游为什么漏了：EnsureAnchorCast 只在"**新增卡片**"那条路写 Description —— 名字已经存在于方案里时
+// （②人物道具会话照名字出了卡、但没写描述），它只补英文兜底串，**从不把锚表原文补进 description**，
+// 于是"硬约束"到了卡上就断了。
+//
+// 判据与 EnsureAnchorCast 同一套：按**归一化名字**匹配；**只填空的** —— 已有的描述一个字都不覆盖
+// （那是作者/模型的口径）。幂等：补过之后再调返回空。
+func FillAnchorDescriptions(plan *project.Plan, src string) []string {
+	if plan == nil {
+		return nil
+	}
+	anchors := ParseCastAnchor(src)
+	if len(anchors) == 0 {
+		return nil
+	}
+	byName := map[string]project.SettingChar{}
+	for _, a := range anchors {
+		if k := normCastName(a.Name); k != "" {
+			byName[k] = a
+		}
+	}
+	var filled []string
+	for i := range plan.Characters {
+		ch := &plan.Characters[i]
+		if strings.TrimSpace(ch.Description) != "" {
+			continue // 已有描述：不覆盖
+		}
+		a, ok := byName[normCastName(ch.Name)]
+		if !ok || strings.TrimSpace(a.Raw) == "" {
+			continue
+		}
+		ch.Description = a.Raw
+		if strings.TrimSpace(ch.ImagePrompt) == "" {
+			// 兜底串（只有年龄+头身比）——它同时是"待专职翻译"的标记，见 AnchorStubTag。
+			ch.ImagePrompt = anchorImagePrompt(a)
+		}
+		filled = append(filled, ch.Name)
+	}
+	return filled
+}
+
+// TruncatedAnchorSections 锚表里**被剧本正文截断**的小节（源文本本身不全）——如实点名用。
+//
+// 真机：断桅那一节只写到 `- 身形：瘦，背驼，走路` 就接上了【本集剧情】。平台不会替作者编外形，
+// 但必须说清"这一张的身份真源不全"，否则用户只会看到"这张脸跟设定对不上"。
+func TruncatedAnchorSections(src string) []string {
+	var out []string
+	for _, a := range ParseCastAnchor(src) {
+		if a.Cut {
+			out = append(out, a.Name)
+		}
+	}
+	return out
+}
+
 // anchorCardKind 锚表补出来的卡片的**实体类型**。
 //
 // 【2026-09-29 真机实测】锚表是《**人物**外形锚表》，但补出来的卡没有 kind 字段，

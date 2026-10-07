@@ -47,6 +47,41 @@ func NeedsPromptTranslation(ch project.Character) bool {
 	return p == "" || strings.Contains(p, AnchorStubTag)
 }
 
+// IdentityPromptGaps 这些角色卡的参考图提示词**没有身份约束**（空，或还是锚表兜底串 = 只有年龄）。
+//
+// 【为什么要在出图前点名】一张兜底串卡出图时，模型只知道"一个古装人、58–66 岁"，脸是现编的 ——
+// 而这一点此前只有在下游**撞脸门事后报警**时才被看见（真机日志：「墨洄」与「霜见」长得像同一个人，
+// 重出一次仍像，已收手）。那是症状，不是原因；原因是"这张卡没有可照抄的外形描述"。
+// 播报不等于拦人：锚表里没有这个人时，出图也只能现编，用户该知道这件事发生在谁身上。
+func IdentityPromptGaps(plan *project.Plan) []string {
+	if plan == nil {
+		return nil
+	}
+	var out []string
+	for _, ch := range plan.Characters {
+		p := strings.TrimSpace(ch.ImagePrompt)
+		if p == "" || strings.Contains(p, AnchorStubTag) {
+			out = append(out, ch.Name)
+		}
+	}
+	return out
+}
+
+// NeedsTranslationCount 有几张卡在等专职翻译会话（判据与 NeedsPromptTranslation 同一套）。
+// 资产阶段用它决定"要不要为此建一个 LLM 客户端"。
+func NeedsTranslationCount(plan *project.Plan) int {
+	if plan == nil {
+		return 0
+	}
+	n := 0
+	for _, ch := range plan.Characters {
+		if NeedsPromptTranslation(ch) {
+			n++
+		}
+	}
+	return n
+}
+
 // TranslateCardPrompts 给"没有英文画图提示词"的角色卡生成英文定妆提示词（一次调用）。
 //
 // 返回改了几张卡。client 为 nil 或没有待补的卡时直接返回（不打断流水线）。

@@ -1,10 +1,12 @@
 package pipeline
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -74,4 +76,74 @@ func (c *Coordinator) applyCardPrompts(proj *project.Project, plan *project.Plan
 				"—— 来源:%s", applied, filepath.ToSlash(filepath.Join(series, "素材", "角色卡.md")))
 	}
 	return applied
+}
+
+// backfillCastIdentity 出图前把角色卡的身份真源补齐，并**如实播报**缺口（幂等）。
+//
+// 【为什么落在资产阶段】（2026-10-07 用户问：「人物生成的角色提示词去哪了？墨洄、尉迟彻、断桅、
+// 邵舷、霜见等不是主角的角色都随机生成的吗？」）
+//
+// 真机第01集：这五张卡没有 `description`、`image_prompt` 只有锚表兜底串（"一个古装人、58–66 岁"）
+// ⇒ 定妆照的脸是现编的，撞脸门当场报警（墨洄与霜见"长得像同一个人"，重出一次仍像）。
+// 补齐它们需要三步（锚表原文 → 专职会话英译 → 出图），而**只补 script 阶段是不够的**：
+// 那要重跑剧本、会重排分镜、把已经渲过的镜头全废掉。放在这里，用户重跑「资产生成」就能修好。
+//
+// 三件事都是幂等的：补过不再动、真提示词一个字不覆盖、没有待办时不建 LLM 客户端。
+func (c *Coordinator) backfillCastIdentity(ctx context.Context, proj *project.Project, plan *project.Plan) {
+	if c == nil || proj == nil || plan == nil || c.store == nil {
+		return
+	}
+	changed := 0
+	src, _ := c.store.LoadSource(proj.ID)
+	if strings.TrimSpace(src) != "" {
+		if names := FillAnchorDescriptions(plan, src); len(names) > 0 {
+			changed += len(names)
+			c.emit(proj.ID, PhaseAssets, 0, "info", 0,
+				"📇 %d 张角色卡的身份真源从【人物外形锚表】补回（原先没有描述，出图只能现编脸）：%s",
+				len(names), strings.Join(names, "、"))
+		}
+		if cut := TruncatedAnchorSections(src); len(cut) > 0 {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+				"⚠ 【人物外形锚表】里这些小节被剧本正文截断了（源文本本身不全，只能照抄到断点）：%s —— "+
+					"补全源文本后重跑本阶段，这些人的外形才能逐项照抄", strings.Join(cut, "、"))
+		}
+	}
+	if n := NeedsTranslationCount(plan); n > 0 {
+		if client := c.cardTranslateClient(); client == nil {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+				"⚠ %d 张角色卡只有中文设定、需要专职会话译成英文定妆提示词，但**没有可用的 LLM**"+
+					"（设置页未配置）—— 这些人出图时只有年龄与头身比，脸靠现编；配好 LLM 后重跑本阶段即可补上", n)
+		} else if m, err := TranslateCardPrompts(ctx, client, plan); err != nil {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+				"⚠ 角色卡的英文定妆提示词生成失败(%v) —— 这些人出图时只有年龄与头身比，"+
+					"服装/脸型/发型照不上设定；可重跑本阶段", err)
+		} else if m > 0 {
+			changed += m
+			c.emit(proj.ID, PhaseAssets, 0, "success", 0,
+				"✔ 已为 %d 张角色卡补写英文定妆提示词（逐项照抄锚表：脸型/眉眼/发型/服装/记号）", m)
+		}
+	}
+	if changed > 0 {
+		if err := c.store.SavePlan(proj.ID, plan); err != nil {
+			c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+				"⚠ 角色卡已补，但方案存盘失败(%v) —— 重跑本阶段会再来一次", err)
+		}
+	}
+	if gaps := IdentityPromptGaps(plan); len(gaps) > 0 {
+		c.emit(proj.ID, PhaseAssets, 0, "warn", 0,
+			"⚠ 这些角色卡的参考图提示词**只有年龄**（身份没锁：出图会现编脸，跨镜/跨集很难一致）：%s",
+			strings.Join(gaps, "、"))
+	}
+}
+
+// cardTranslateClient 专职翻译会话要用的 LLM 客户端；未配置就返回 nil（调用方如实播报，不静默跳过）。
+func (c *Coordinator) cardTranslateClient() *llm.Client {
+	if c == nil || c.cfg == nil {
+		return nil
+	}
+	g := c.cfg.Get()
+	if strings.TrimSpace(g.LLM.BaseURL) == "" || strings.TrimSpace(g.LLM.Model) == "" {
+		return nil
+	}
+	return llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 }

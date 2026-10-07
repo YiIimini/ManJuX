@@ -44,6 +44,13 @@ type SettingChar struct {
 	Note   string         // 标题括号里的定位说明（"主角。机器人／机甲形态……"）
 	Fields []SettingField // 按**原文顺序**（拼提示词时要保序，别打乱作者的排列）
 	Raw    string         // 原始小节文本（"逐项照抄"用）
+	// Cut 这一节是被**剧本正文的起点标记**截断的（而不是被下一个角色标题正常结束）。
+	//
+	// 【为什么值得单独记一位】（2026-10-07 真机）《名册之外》第01集 source.txt 里「断桅」那一节
+	// 只写到 `- 身形：瘦，背驼，走路` 就直接接上了【本集剧情】…，随后是整集剧本 ——
+	// 不设边界时 Raw 一路吞到文末（4846 字，大半是剧本正文）。截断本身是**源文本的问题**，
+	// 平台能做的只有两件事：不把正文当成外形描述用，以及**如实点名**告诉用户这一节不全。
+	Cut bool
 }
 
 // Field 按键取值（找不到返回空串）。
@@ -218,8 +225,11 @@ func ParseCharAnchor(md string) []SettingChar {
 		if name == "" {
 			continue
 		}
-		c := SettingChar{Name: name, Note: note, Raw: strings.TrimSpace(sec.Body)}
-		for _, m := range reField.FindAllStringSubmatch(sec.Body, -1) {
+		// **正文边界**：锚表被整段塞进 source.txt 时，最后一个角色的"小节"会一路吃到文末，
+		// 把整集剧本吞进来（真机：断桅 Raw 4846 字，里面大半是【本集剧情】与逐场正文）。
+		body, cut := cutAtScriptBody(sec.Body)
+		c := SettingChar{Name: name, Note: note, Raw: strings.TrimSpace(body), Cut: cut}
+		for _, m := range reField.FindAllStringSubmatch(body, -1) {
 			k := strings.TrimSpace(m[1])
 			v := strings.TrimSpace(m[2])
 			if k == "" {
@@ -234,6 +244,27 @@ func ParseCharAnchor(md string) []SettingChar {
 		out = append(out, c)
 	}
 	return out
+}
+
+// scriptBodyMarkers 剧本正文 / 平台节的起点标记：锚表小节吃到这些标记就说明**这一节被正文截断了**。
+//
+// 与 `internal/server` 的 briefEndMarkers 同一口径（那里治的是"【本集剧情】段的读写边界"）：锚表与剧本
+// 被拼进同一个 source.txt 时，只有平台自己的节标记能可靠地划出边界 —— 空行、缩进、井号都不行
+// （作者在每一项之间就爱空一行）。
+var scriptBodyMarkers = []string{"【本集剧情】", "【本集原文】", "【前情提要】", "【开场爆点】", "【场 "}
+
+// cutAtScriptBody 在**最早出现的**正文标记处截断；没有标记就原样返回（cut=false）。
+func cutAtScriptBody(md string) (string, bool) {
+	cut := -1
+	for _, m := range scriptBodyMarkers {
+		if i := strings.Index(md, m); i >= 0 && (cut < 0 || i < cut) {
+			cut = i
+		}
+	}
+	if cut < 0 {
+		return md, false
+	}
+	return md[:cut], true
 }
 
 // ParsePropTable 解析《重点道具表》。
