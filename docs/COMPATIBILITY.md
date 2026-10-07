@@ -2,7 +2,9 @@
 
 > 首次建档:2026-09-11(实测采集)。**版本会漂移,渲染出问题时先从这里比对。**
 >
-> 最近更新:2026-09-27(**同一批实测的口径更正**:第八节里 2026-09-24 的耗时/显存是「参考图被静默丢弃」的口径,带参考图的真实数字见 `docs/ComfyUI侧交付-加速路线与显存回退-2026-09-27.md` §2;另交付了 TaoMate 三步 LoRA 与 w4a8 一键切换脚本)。
+> 最近更新:2026-10-08(**ComfyUI 本体 v0.37.4 → v0.39.1** + 7 个插件整表刷新 + 模型补装;第一节版本行、
+> 第二节 commit 表同步,第八节新增一条升级记录 —— 见 `docs/ComfyUI侧交付-v0.39.1升级与模型补装-2026-10-08.md`)。
+> 上次更新:2026-09-27(**同一批实测的口径更正**:第八节里 2026-09-24 的耗时/显存是「参考图被静默丢弃」的口径,带参考图的真实数字见 `docs/ComfyUI侧交付-加速路线与显存回退-2026-09-27.md` §2;另交付了 TaoMate 三步 LoRA 与 w4a8 一键切换脚本)。
 > 上次更新:2026-09-26(ComfyUI v0.37.2 → **v0.37.4**,第一节版本行与第二节 commit 表同步,第八节新增升级记录;并首次写明**渲染根节点是本体内置**这条机制 —— 见第二节末)。
 > 上次更新:2026-09-24 二次更新(ComfyUI v0.35.1 → **v0.37.2**,第二节 commit 表整表刷新,第八节新增一条 ComfyUI 升级记录,第九节改为「只 `shared_current` 一段生效」)。
 > 上次更新:2026-09-24(第四节补 LTX 视频 VAE;第一节新增「ManJuX 自身构建栈」表并记入
@@ -23,7 +25,7 @@
 
 | 组件 | 版本 |
 |---|---|
-| ComfyUI | **v0.37.4**(`git describe` = `v0.37.4`,HEAD `8ff6dc38`,`comfyui_version.py` = 0.37.4;2026-09-26 升级,回退基线 `backup_before_v0.37.4` = `830232b8`;再往前 `backup_before_v0.37.2` = `856a922b`) |
+| ComfyUI | **v0.39.1**(`git describe` = `v0.39.1`,HEAD `de0125d9`,`HEAD == tag` 实测 True;2026-10-08 升级,回退基线 `backup_before_v0.39.1` = `8ff6dc38`(即上一版 `v0.37.4`);更早 `backup_before_v0.37.4` = `830232b8`) |
 | Python | **3.13.12**(`comfyui/standalone-env`) |
 | PyTorch | **2.11.0+cu130**(CUDA 13.0) |
 | OS | Windows 10/11 |
@@ -47,19 +49,22 @@
 
 ManJuX 的渲染图**直接依赖**下列节点类,任何升级改名都会让渲染在运行期失败:
 
-| 包 | 当前 commit (2026-09-24 全表刷新) | 被谁使用 |
+| 包 | 当前 commit (**2026-10-08 刷新**:7 仓升上游 HEAD,18 仓落后 0) | 被谁使用 |
 |---|---|---|
 | ComfyUI-H3-Motion-Context | `5335715`(未变) | 镜间接缝(`MiniMaxH3MotionContext*` 四个节点) |
 | ComfyUI-H3-ConditioningCache | `4eead31`(原 `239d21e`,2026-09-24 整改;回退点 `239d21e`) | 两阶段条件缓存(`MiniMaxH3CondSave/Load`) |
 | ComfyUI-MiniMax-H3-PDD-Acc | `311a65d`(未变) | quality 加速档(Acc-8Step LoRA;它注册的是 `MiniMaxH3PDDAcc*` 四个 —— `MiniMaxH3SigmaShift` 实为本体内置,此行原记法已更正) |
-| ComfyUI-MiniMaxH3-Easy | `61ceb3c`(旧表记 `d100200`,实测早已不符,本次按实测改回) | H3 相关辅助节点 |
+| ComfyUI-MiniMaxH3-Easy | `23ba347c`(原 `61ceb3c`,2026-10-08 升上游 HEAD) | H3 相关辅助节点 |
 | ComfyUI-KJNodes | `d3cfe21`(旧 `5710537`) | 通用图像节点 |
 | ComfyUI_IPAdapter_plus | `a0f451a`(未变;**2026-09-27 已停用**) | 参考图相关;ManJuX go/json **零引用**、上游 2025-04 起未更新 → 目录改名 `ComfyUI_IPAdapter_plus.disabled`(ComfyUI 跳过 `*.disabled`)。要恢复:去掉后缀,并把新路径补进 `safe.directory`(本机仓 owner 是另一台机器的 SID,改名会触发 `dubious ownership`) |
-| rgthree-comfy | `449c58fc`(原 `2c5342a`,2026-09-26 升级 6 个提交) | 图工具 |
-| was-node-suite-comfyui | `8f80db30`(原 `eb772ed`,2026-09-26 升级 1 个提交:新增 Execution Gate Controlboard / Fast Generate Text;视频加载器改为默认读全部帧) | 通用图像节点 |
+| rgthree-comfy | `d7297b42`(原 `449c58fc`,2026-10-08 升上游 HEAD) | 图工具 |
+| was-node-suite-comfyui | `d1f76065`(原 `8f80db30`,2026-10-08 升上游 HEAD;此前 2026-09-26 新增 Execution Gate Controlboard / Fast Generate Text,视频加载器改为默认读全部帧) | 通用图像节点 |
 | MaskVidExperiments | `c32ed8c`(旧 `e5c4450`) | **局部重绘**(遮罩裁切/回贴) |
-| comfyui-vrgamedevgirl | `8c49237b`(2026-09-26 `75d4370`→`81a33b20` 29 个提交;2026-09-27 再 →`8c49237b` 16 个提交,均为许可/文档与向导字段顺序) | 音频处理节点;该包只注册 `VRGDG_*`(**265** 个;2026-09-27 补齐 librosa 与 ComfyUI-LTXVideo 后,启动时 3 个失败子模块归零),ManJuX 图**零引用** |
-| ComfyUI-LTXVideo | `61ee82b`(**2026-09-27 新装**,Lightricks 官方,72 MB) | 官方 LTX 节点包(83 个节点)。**装它的直接原因是 VRGDG**:`VRGDG_LTXLoopingSampler` 按**目录名**反射加载 `ComfyUI-LTXVideo` 包、再取 `looping_sampler`/`easy_samplers`/`latents` 三个子模块,包不在就整块子模块 import 失败。ManJuX 图**不引用**它 |
+| comfyui-vrgamedevgirl | `3432b03f`(2026-10-08 升上游 HEAD;此前 2026-09-27 →`8c49237b` 16 个提交,均为许可/文档与向导字段顺序) | 音频处理节点;该包只注册 `VRGDG_*`(**265** 个;2026-09-27 补齐 librosa 与 ComfyUI-LTXVideo 后,启动时 3 个失败子模块归零),ManJuX 图**零引用** |
+| ComfyUI-LTXVideo | `3bf3ca62`(2026-10-08 升上游 HEAD;2026-09-27 新装,Lightricks 官方,72 MB) | 官方 LTX 节点包(83 个节点)。**装它的直接原因是 VRGDG**:`VRGDG_LTXLoopingSampler` 按**目录名**反射加载 `ComfyUI-LTXVideo` 包、再取 `looping_sampler`/`easy_samplers`/`latents` 三个子模块,包不在就整块子模块 import 失败。ManJuX 图**不引用**它 |
+
+> **2026-10-08 那 7 仓里有两个不在上表**:`audio-T8` `6063fafb` → **`1048066c`**、`Director` `4b4fe6e1` → **`a8f57b8e`**
+> —— 它们同属"18 仓",整表快照见本次留档 `D:\Ai\ComfyUI\_maintenance\20261007-upgrade\accept-after.txt`(18 仓落后 0)。
 
 > 上表 commit 只作**回退参照**:平时无需钉版,出问题时可 `git -C <插件目录> checkout <commit>` 回退。
 > 完整 **18** 个节点(含上表之外的 FaceRefine / Turbo / Director / audio-T8 / Spectrum / latent-Upscaler / LTXVideo)
@@ -178,6 +183,28 @@ ManJuX 是 Wails 应用,**直接用 `go build` 编译出来的是「占位实现
 - 发现新的冲突时,请按第三节的格式补充**机制说明**(为什么冲突、影响哪些模式、怎么绕过),而不只写症状。
 
 ## 八、升级记录
+
+### 2026-10-08:ComfyUI 本体 v0.37.4 → v0.39.1 + 7 个插件整表刷新 + 模型补装(**已生效**)
+
+* 本体 `8ff6dc38` → **`de0125d9`(v0.39.1)**;pip 受控包 frontend 1.53.10 / templates 0.11.77 / docs 0.5.13 / kitchen 0.2.37;
+  **torch / torchvision / torchaudio / transformers / numpy / tokenizers / huggingface_hub / safetensors / Pillow / av / sageattention 逐项零漂移**。
+* 插件 7 仓升到上游 HEAD(audio-T8 / rgthree / was-node-suite / Director / LTXVideo / MiniMaxH3-Easy / vrgamedevgirl),
+  18 仓落后 0;`/object_info` 2503 → 2849;`IMPORT FAILED` 0;平台阻断级 10 类 + 在用 54 类全在,schema 零破坏性变更。
+* **生产配方真跑(768×1344/124 帧/8 步/8 步族 LoRA/3 参考图/seed 20260924):291.1 s → 256.5 s(−11.9%),
+  峰值 19558 → 19552 MiB;规格与音轨不变**。逐帧指纹:视频流 124/124 帧全不同、音频流 162/162 帧逐字节相同。
+* 模型补装:`minimax_h3_{ref2va,fl2va}_pruned_w6a8`(各 15.98 GB,sha256 对上游 LFS oid)、
+  `minimax_h3_fun_controlnet_union_pruned_int8_convrot`(2.30 GB)、`embeddings\minimaxh3_*` 10 个。
+  **`data\settings.json` 逐字节未动**;未删除/未覆盖任何在用权重。
+* 回滚点:本体分支 `backup_before_v0.39.1`、被更新的 7 个插件仓各有 `backup_before_20261007`。
+* 留档与全部证据:`D:\Ai\ComfyUI\_maintenance\20261007-upgrade\`(升级记录 + evidence/ + 三段实跑报告)。
+* 未做/未验:**没升 github/master(比 tag 多 21 个提交)**;**画质未做人眼判定**(所有数字只覆盖耗时/显存/规格/指纹)。
+* **平台侧本轮不动的四项(按交付文档 §3–§6 的建议拍板,不自行扩大范围)**:
+  ① 画质基线标记 **`q1` 不升 `q2`**(`stages_render.go` 的指纹串不含 ComfyUI 版本 ⇒ 升级不会让存量镜头判失效;
+  "混版本"只在同一集内有观感意义,按集重出比重出全量便宜 —— 选项 A);
+  ② `w6a8` 备选档**不接线**(实测同参既不快也不省显存:261.9 s / 峰值同为 19552 MiB);
+  ③ Fun ControlNet + 10 个特效 embedding **不接线**(新增能力、无消费点,且需先做 A/B 抽帧目视);
+  ④ Acc-8Step 上游转换版**不替换**(该 LoRA 只在 quality 档用,而四款底模全量化 ⇒ quality 档必然回退 turbo,换它当前零影响)。
+  另:`input\` 同名覆盖现象与"归档 2026-09-29 方案在现门禁下渲不出"两条为**记账**(交付文档 §10,不是要求平台改)。
 
 ### 2026-09-26:ComfyUI 本体 v0.37.2 → v0.37.4 + 三个插件整表刷新(**已生效**)
 
