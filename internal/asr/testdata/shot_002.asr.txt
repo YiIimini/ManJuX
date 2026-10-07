@@ -1,0 +1,4 @@
+# shot_002.mp4
+# model=medium lang=zh prob=1.00 dur=8.0s segs=2
+[  0.24-  2.24] 该单元不在名册上。
+[  2.24-  6.93] 名册最后一行是多少?

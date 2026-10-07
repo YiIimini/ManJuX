@@ -1,0 +1,3 @@
+# shot_009.mp4
+# model=medium lang=zh prob=1.00 dur=7.3s segs=1
+[  0.11-  2.55] 游戏期99998

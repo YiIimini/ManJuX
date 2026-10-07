@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/asr"
 	"github.com/YiIimini/ManJuX/internal/compose"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -72,6 +73,27 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			}
 		}
 	}
+
+	// 语音核对（ASR）：把每镜音轨转写一遍，再与**计划台词**逐句对账 —— 判「念的是不是那句台词」
+	//（同句念多遍 / 凭空加话 / 整句漏念）。真机第01集 13 镜当场抓到三类硬伤（见 docs）。
+	//
+	// 它与 VLM/文字检测不同：不需要任何模型配置，只要本机装了 ASR。找不到入口就**如实播报并留痕**
+	//（报告里每镜写"未验"），不假装验过、也不当作不合格 —— 没装 ASR 的机器不该因此整集卡住。
+	speechOn := p.ASROn()
+	asrTool := ""
+	if speechOn {
+		if asrTool = asr.Locate(); asrTool != "" {
+			c.emit(proj.ID, PhaseQC, 0, "info", 0,
+				"🔊 语音核对已开启：用 %s（模型 %s，CPU 推理）把每镜音轨转写一遍，再与剧本台词逐句对账"+
+					"（每镜约 10~15 秒；它**不与 ComfyUI 抢显存**）", filepath.Base(asrTool), p.ASRModelOr())
+		} else {
+			c.emit(proj.ID, PhaseQC, 0, "warn", 0,
+				"⚠ 语音核对（ASR）已开启，但本机找不到 ASR 入口 —— 本次**没有**核对音轨里念的是不是台词，"+
+					"报告里每镜会如实标注「未验」。装法见 D:\\Ai\\Tools\\ASR\\README.md，"+
+					"或用环境变量 MANJUX_ASR_CMD 指定入口")
+		}
+	}
+	speechFlagged := 0 // 语音与剧本对不上的镜数（只标记、不自动重渲、不拦批次）
 
 	for _, shot := range plan.Shots {
 		if ctx.Err() != nil {
@@ -176,6 +198,32 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 				}
 			}
 		}
+
+		// 语音核对(ASR):同样在**镜级原始产物**上做 —— 合成会把片段拼成整片、还要铺一条 BGM,
+		// 那时音轨已经混过,再转写就不是在核对"模型当初念的那一轨"了。
+		// 与画面文字检测同一套结构:处置由纯函数决定(开关 / 本机有没有 ASR / 机械质检)。
+		if pl := planSpeechCheck(speechOn, asrTool != "", r.OK); !pl.Run {
+			// 开关关闭时 Skipped 为空 → 连条目都不写;没装 ASR / 机械质检未通过则必须留痕。
+			if pl.Skipped != "" {
+				r.Speech = qc.SpeechSkipped(pl.Skipped)
+			}
+		} else {
+			// **逐镜单独限时**:ASR 卡住不该把整个质检阶段拖死(超时同样记成"没验过")。
+			sctx, cancel := context.WithTimeout(ctx, qc.SpeechBudget(float64(shot.Duration)))
+			rep := qc.CheckSpeech(sctx, asrTool, p.ASRModelOr(), full, project.PlanSpokenTexts(&shot))
+			cancel()
+			r.Speech = rep
+			if rep.Error != "" {
+				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+					"镜头 %d 语音核对失败(未判定,不当作通过):%s", shot.ID, rep.Error)
+			}
+			if len(rep.Findings) > 0 {
+				speechFlagged++
+				for _, f := range rep.Findings {
+					r.Warnings = append(r.Warnings, qc.SpeechWarnText(f))
+				}
+			}
+		}
 		reports[key] = *r
 		pct := checked * 100 / max(1, len(plan.Shots))
 		if r.OK {
@@ -183,8 +231,8 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			if r.VLM != nil {
 				score = fmt.Sprintf(",VLM %d 分", r.VLM.Score)
 			}
-			c.emit(proj.ID, PhaseQC, shot.ID, "info", pct, "镜头 %d 通过(暗像素 %.0f%%,%.1fs,音轨%v%s)",
-				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio), score)
+			c.emit(proj.ID, PhaseQC, shot.ID, "info", pct, "镜头 %d 通过(暗像素 %.0f%%,%.1fs,音轨%v%s%s)",
+				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio), score, speechLabel(r.Speech))
 		} else {
 			failed++
 			c.emit(proj.ID, PhaseQC, shot.ID, "error", pct, "✕ 镜头 %d 不合格:%s", shot.ID, strings.Join(r.Problems, ";"))
@@ -222,7 +270,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	// 预算：最多 3 个角色 × 每人最多 3 帧，一次 Python 调用（模型加载约 5 秒），不随镜头数线性膨胀。
 	c.measureFaceConsistency(ctx, proj, plan, manifest)
 
-	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, textAlert)
+	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, textAlert)
 	if v.Msg != "" {
 		c.emit(proj.ID, PhaseQC, 0, v.Level, 100, "%s", v.Msg)
 	}
@@ -237,8 +285,8 @@ type qcVerdict struct {
 }
 
 // qcVerdictOf 由几个计数折出结论:total 方案总镜数、checked 实际检查过、failed 不合格、
-// notChecked 根本没产物因而没被看、vlmFlagged VLM 未通过、textAlert 画面文字检测的集级告警
-// (nil = 未超阈值;判据见 qc.TextHitAlert)。
+// notChecked 根本没产物因而没被看、vlmFlagged VLM 未通过、speechFlagged 语音核对发现问题的镜数、
+// textAlert 画面文字检测的集级告警(nil = 未超阈值;判据见 qc.TextHitAlert)。
 //
 // 为什么值得抽成纯函数:旧实现的判据只有 checked==0 与 failed>0 —— **缺镜既不影响结论
 // 也不进文案**,于是一集 20 镜里挂了 5 镜也能得到「✔ 质检通过:15 镜全部合格」和一份
@@ -250,7 +298,7 @@ type qcVerdict struct {
 // "以为已经解决了"),而要转成点名命中镜号的 warn。它**不升级为 error**:
 // 这一步是监控,单镜误报本来就允许(场景招牌),且 error 会让批产线整集停住、
 // 逼人逐镜复核 —— 重渲与否应当由人看着命中镜号来定(与 VLM 审片同一处置原则)。
-func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged int, textAlert *qc.TextAlert) qcVerdict {
+func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speechFlagged int, textAlert *qc.TextAlert) qcVerdict {
 	missing := len(notChecked)
 	switch {
 	case checked == 0:
@@ -266,12 +314,19 @@ func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged int, t
 		msg := fmt.Sprintf("质检只覆盖 %d/%d 镜:%d 镜尚无可用产物(未质检:%s)请先「渲染出片」补齐后再质检/合成",
 			checked, total, missing, shotIDList(notChecked))
 		return qcVerdict{Level: "error", Msg: msg, Err: fmt.Errorf("%s", msg)}
-	case vlmFlagged > 0 || textAlert != nil:
+	case vlmFlagged > 0 || speechFlagged > 0 || textAlert != nil:
 		// 只标记、不自动重渲:同一 prompt 同一 seed 重跑大概率复现同样结果,
 		// 真正的返工要改提示词或换 seed,由用户看过标记后自行决定(2026-09-11 定调)。
+		//
+		// 语音核对（2026-10-07）同一处置,而且**更**不该升级为 error:它的判据是"听出来的",
+		// ASR 的同音字误差与转写幻觉都在,重渲一镜要十几分钟 GPU —— 上一轮(darkScene)因为
+		// 把计划内的暗调判成黑屏,已经让批量产线停在 1/88 集,这一条不重复那个错误。
 		var parts []string
 		if vlmFlagged > 0 {
 			parts = append(parts, fmt.Sprintf("%d 镜 VLM 审片未通过", vlmFlagged))
+		}
+		if speechFlagged > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜语音与剧本对不上(重复念/加话/漏念,镜号与 ASR 原文见 output/qc_report.json)", speechFlagged))
 		}
 		if textAlert != nil {
 			parts = append(parts, textAlert.Msg)
@@ -317,6 +372,63 @@ func planTextDetect(enabled, haveClient, mechOK bool) textDetectPlan {
 		return textDetectPlan{Run: false, Skipped: textSkipMechanical}
 	default:
 		return textDetectPlan{Run: true}
+	}
+}
+
+// speechPlan 本镜的语音核对(ASR)该怎么走(纯函数,便于穷举)。
+type speechPlan struct {
+	Run     bool   // 真的去转写 + 对账
+	Skipped string // 不跑的原因(写进报告;空串 = 连条目都不写)
+}
+
+// 不跑语音核对的三种原因。
+const (
+	// speechSkipDisabled 开关关闭:连报告条目都不写(关掉的功能不该在报告里留痕)。
+	speechSkipDisabled = ""
+	// speechSkipNoTool 本机没有 ASR:如实降级 —— 报告里写"未做语音核对:本机没有 ASR",
+	// 不假装验过(这是"没量到",不是"量过且干净")。
+	speechSkipNoTool = "未做语音核对:本机没有 ASR(装法见 D:\\Ai\\Tools\\ASR\\README.md)"
+	// speechSkipMechFail 机械质检已判不合格(黑屏/残片)的镜头不送转写:那画面本就要重渲,
+	// 再花 10~15 秒 CPU 听一遍没有新信息。
+	speechSkipMechFail = "未做语音核对:机械质检未通过(该镜本就要重渲)"
+)
+
+// planSpeechCheck 由(开关、本机有没有 ASR、机械质检结论)决定本镜怎么处置。
+//
+// 与 planTextDetect 同一取向,而且这里更依赖"如实"二字:语音核对是**唯一**能看见
+// "音轨里念的是不是台词"的判据,一旦它静默跳过,报告看起来就是"语音没问题"——
+// 那比方寸大乱更糟。三种情形各自留痕,且没装 ASR 不许判不合格(那是环境问题,不是片子的问题)。
+func planSpeechCheck(enabled, haveTool, mechOK bool) speechPlan {
+	switch {
+	case !enabled:
+		return speechPlan{Run: false, Skipped: speechSkipDisabled}
+	case !haveTool:
+		return speechPlan{Run: false, Skipped: speechSkipNoTool}
+	case !mechOK:
+		return speechPlan{Run: false, Skipped: speechSkipMechFail}
+	default:
+		return speechPlan{Run: true}
+	}
+}
+
+// speechLabel 通过行里的语音核对标记(空串 = 这一集没开这项功能)。
+//
+// 【为什么"验过且干净"也要说出来】报告里"没有 findings"与"根本没验"长得一模一样,
+// 日志上也是 —— 把这一位打在每镜的通过行上,人一眼就能分清"这一集听了 13 遍且对得上"
+// 与"这一集的语音没人验过"。
+func speechLabel(s *qc.SpeechReport) string {
+	if s == nil {
+		return ""
+	}
+	switch {
+	case s.Skipped != "":
+		return ",语音未验"
+	case s.Error != "":
+		return ",语音未验(核对失败)"
+	case len(s.Findings) > 0:
+		return fmt.Sprintf(",语音✗%d 处", len(s.Findings))
+	default:
+		return ",语音✔"
 	}
 }
 

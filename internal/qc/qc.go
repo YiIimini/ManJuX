@@ -45,6 +45,10 @@ type Report struct {
 	ExpectedSpeechSec float64 `json:"expected_speech_sec,omitempty"`
 	// ExpectedDuration 本镜计划时长(秒,0 = 调用方没给);与实测时长对账用(审计 M29)。
 	ExpectedDuration float64 `json:"expected_duration,omitempty"`
+	// Speech 语音核对(可选,见 speech.go):ASR 转写这一镜的音轨,再与计划台词逐句对账 ——
+	// 判「念的是不是那句台词」(重复/自造/漏念)。它是**听出来的**结论,只标 warn 不拦批次;
+	// 没装 ASR 时 Skipped 里如实写"没验过"。
+	Speech *SpeechReport `json:"speech,omitempty"`
 }
 
 // Params 质检阈值。

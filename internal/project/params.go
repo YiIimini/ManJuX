@@ -151,6 +151,36 @@ type QCParams struct {
 	// 与 EnableTextDetect 同一套三态语义,理由也相同:默认**开**,而 bool 的 false 同时
 	// 表示"用户关了"和"这个字段还没有" —— 存量项目会被静默读成"显式关闭"。
 	EnableProportionCheck *bool `json:"enable_proportion_check"`
+	// EnableASR 语音核对(2026-10-07,用户「配音存在乱配音」):渲染完成后用本机 ASR
+	// (faster-whisper,D:\Ai\Tools\ASR)把每镜音轨转写一遍,再与计划台词逐句对账 ——
+	// 判「念的是不是那句台词」:重复念、凭空加话(剧本里没有)、整句漏念。
+	//
+	// 【为什么默认开】它是这条链上**唯一**能看见"乱配音"的机器判据:音轨里说了什么,
+	// 此前只有"有没有人声/人声多长"两个数可量(字幕是平台自己烧的,跟音轨是两回事)。
+	// 代价是每镜 10~15 秒 CPU(不与 ComfyUI 抢显存),一集 13 镜约 3 分钟 —— 换来的是
+	// 真机第01集当场抓到的三类硬伤。没装 ASR 的机器上如实播报"跳过",不假装验过。
+	//
+	// 与 EnableTextDetect 同一套三态语义(默认开,缺键不能读成"显式关闭")。
+	EnableASR *bool `json:"enable_asr"`
+	// ASRModel 转写模型档(tiny/base/small/medium/large-v3);空 = medium。
+	// 更大的档更准也更慢,与渲染显存无关(ASR 固定走 CPU)。
+	ASRModel string `json:"asr_model,omitempty"`
+}
+
+// ASROn 语音核对是否生效:未表态(nil)按开处理(理由与 TextDetectOn 相同)。
+// 关掉它连报告条目都不写(见 pipeline.planSpeechCheck)——"关掉"看起来就是"没这项",
+// 而不是"每镜都验过且干净"。
+func (q QCParams) ASROn() bool { return q.EnableASR == nil || *q.EnableASR }
+
+// ASRModelOr 转写模型档:空/非法一律回落 medium(与 asr.Transcribe 的默认一致)。
+func (q QCParams) ASRModelOr() string {
+	m := strings.TrimSpace(q.ASRModel)
+	for _, ok := range []string{"tiny", "base", "small", "medium", "large-v3"} {
+		if m == ok {
+			return m
+		}
+	}
+	return "medium"
 }
 
 // TextDetectOn 画面文字检测是否生效:未表态(nil)按开处理。
@@ -393,6 +423,11 @@ func DefaultStageParams() StageParams {
 			// 换来"人物比例有没有偏离技能侧锚点"这条可测的信号 —— 不默认开,就又要靠人
 			// 拿肉眼盯"丑不丑"。未配置视觉模型时如实降级(事件流里写明"未做",不假装通过)。
 			EnableProportionCheck: Bool(true),
+			// 语音核对默认开(2026-10-07,用户「配音存在乱配音」):渲染完成后把每镜音轨
+			// 转写一遍再与计划台词对账 —— 这是这条链上唯一能看见"念的是不是那句台词"的
+			// 机器判据,代价是每镜 10~15 秒 CPU(不与 ComfyUI 抢显存)。没装 ASR 的机器上
+			// 如实播报"跳过",不假装验过、也不当作不合格。
+			EnableASR: Bool(true),
 		},
 		Assemble: AssembleParams{
 			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)

@@ -21,6 +21,7 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 		failed     int
 		notChecked []int
 		vlmFlagged int
+		speechFlag int
 		textAlert  *qc.TextAlert
 		wantLevel  string
 		wantErr    bool
@@ -64,6 +65,13 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 			wantInMsg: []string{"画面文字检测", "4/20", "命中镜", "2、5、11、17", "未自动重渲"},
 		},
 		{
+			// 语音核对（2026-10-07）发现镜数 > 0 ⇒ 与 VLM 标记同一处置:warn、不拦批次、
+			// 不改 error（判据是听出来的，重渲一镜十几分钟，不能把整集卡住）。
+			name: "语音与剧本对不上 → warn 且不算失败", total: 13, checked: 13, speechFlag: 5,
+			wantLevel: "warn", wantErr: false,
+			wantInMsg: []string{"5 镜语音与剧本对不上", "重复念", "qc_report.json", "未自动重渲"},
+		},
+		{
 			name: "VLM 标记与画面文字告警同时出现 → 两条都要说", total: 10, checked: 10, vlmFlagged: 1,
 			textAlert: qc.TextHitAlert(10, []int{3, 4}),
 			wantLevel: "warn", wantInMsg: []string{"VLM", "画面文字检测"},
@@ -75,7 +83,7 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := qcVerdictOf(tc.total, tc.checked, tc.failed, tc.notChecked, tc.vlmFlagged, tc.textAlert)
+			v := qcVerdictOf(tc.total, tc.checked, tc.failed, tc.notChecked, tc.vlmFlagged, tc.speechFlag, tc.textAlert)
 			if v.Level != tc.wantLevel {
 				t.Errorf("结论级别 = %s,期望 %s(文案:%s)", v.Level, tc.wantLevel, v.Msg)
 			}

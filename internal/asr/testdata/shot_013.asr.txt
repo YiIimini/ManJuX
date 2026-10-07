@@ -1,0 +1,3 @@
+# shot_013.mp4
+# model=medium lang=zh prob=1.00 dur=9.4s segs=1
+[  5.65-  9.37] 谁烧的门,外面还有活物吗?

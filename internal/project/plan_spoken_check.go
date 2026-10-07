@@ -178,6 +178,14 @@ func plannedLineTexts(sh *Shot) []string {
 	return out
 }
 
+// PlanSpokenTexts 这一镜**计划里该说出去的每一句原文**（按口播顺序：台词在前、旁白最后）。
+//
+// 【为什么要有导出版】语音核对（internal/qc/speech.go 的 CheckSpeech）要拿它当权威台词：
+// 音轨里念的东西与它逐句对账，才能判「重复念 / 凭空加话 / 整句漏念」。
+// 内部另有一份归一化版（plannedSpokenLines，判 `<d>` 标签是否与计划一致用），
+// 这里要的是**原文** —— 报告里贴给用户看的必须是剧本上那句话，不是归一化产物。
+func PlanSpokenTexts(sh *Shot) []string { return plannedLineTexts(sh) }
+
 // normalizedTagBody 去掉语言标签与 [unclear] 之后的标签内容（对齐与对账共用）。
 func normalizedTagBody(body string) string {
 	t := strings.TrimSpace(body)

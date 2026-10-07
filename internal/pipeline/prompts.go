@@ -476,6 +476,10 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 		plan.VoiceRebound += nBound
 		plan.VoiceUnresolved += nUnresolved
 	}
+	// 语音纪律条款（2026-10-07，用户「配音存在乱配音」）：把「只说 <d> 里那几句、其余时间没有人声」
+	// 写成硬约束。判据来自 ASR 实测：写这一条之前，13 镜里 3 镜把同一句念了 2~3 遍、
+	// 3 镜凭空多出剧本里没有的话（详见 internal/asr/compare.go 的文件头）。
+	promptOut = EnsureSpokenLinesClause(promptOut, shot)
 	return promptOut
 }
 
@@ -570,6 +574,53 @@ func EnsureOnScreenTextRule(prompt string) string {
 		"制作说明,**不许画进画面、不许当字幕、不许念出来** —— 真机实测里被念出来/被烧成字幕的正是这些行;" +
 		"③ **不许烧任何字幕/说明条/水印/系统面板**:本片的字幕与系统面板一律由后期合成;④ 剧本里的括号批注" +
 		"(如【检测到宿主处于…状态】)是**剧情内容**,要把它描述的戏演出来,而不是把括号里的字显示出来。)"
+}
+
+// spokenLinesMarker 幂等判据（改了文案必须保留这个串，否则会重复叠加）。
+const spokenLinesMarker = "SPOKEN LINES ONLY (MANDATORY)"
+
+// EnsureSpokenLinesClause 「只说这些台词，其余时间没有人声」的硬约束（幂等）。
+//
+// 【为什么需要它】（2026-10-07，用户「配音存在乱配音」；判据来自 ASR 实测）
+// H3 是音画同生模型，一次要输出整整几秒的音轨；而计划里的台词往往只占 2~4 秒。此前
+// 提示词只写了「谁用什么声线说哪句话」，**没有一句话管"其余时间怎么办"** —— 于是模型在
+// 剩下的秒数里自己填：真机第01集 13 镜里
+//
+//	镜 4「已读取。无对应档位。」被念了两遍、镜 6 两遍、镜 7「自检窗口，七十二标准时。」三遍；
+//	镜 3 凭空多出一整串「跟强我的对数还修戴眼影一下,也续点倾向」而第一句「80000。」根本没念；
+//	镜 1 多出「没禁条」、镜 11 多出「图墙白头圣呢﹔裙尾便宜着人呢」。
+//
+// 这条约束把三件事一次说清：**只念 <d> 里的、每句只念一遍、其余时间不许有人声**。
+// 没有台词的镜头另给一句（那些镜头本来最容易被填成人声嘈杂 —— 见 ShotSpeakers 的文件头：
+// 「本集 54 个镜头里 17 个既没有台词也没有旁白，却都背着一份音色授权清单」）。
+//
+// 【它是否有效，只能由重渲 + ASR 复验来说】（诚实边界）本函数保证的只是这句话**在**提示词里、
+// 且不多不少只出现一次；它能不能管住模型，要重渲一镜（每镜十几分钟 GPU）再用 ASR 听一遍才知道。
+func EnsureSpokenLinesClause(prompt string, shot *project.Shot) string {
+	if shot == nil || strings.Contains(prompt, spokenLinesMarker) {
+		return prompt
+	}
+	var body string
+	if lines := project.PlanSpokenTexts(shot); len(lines) > 0 {
+		body = "the ONLY human speech in this shot is the line or lines enclosed in <d>…</d> tags. Say each of them " +
+			"exactly once, verbatim, in the order written, inside the time window it is placed in. Do NOT repeat, " +
+			"re-read, paraphrase, extend, answer or improvise any line, and do NOT add any speech that is not " +
+			"inside a <d> tag — no extra dialogue, no commentary, no counting, no readings of signs, numbers or " +
+			"panel text. For every remaining moment of this shot there is NO human voice at all: keep the audio to " +
+			"the ambient soundscape, room tone and physical foley of the scene. A silent stretch is correct — " +
+			"filling it with speech is a defect." + "\n" +
+			"(中文对照：本镜**唯一**的人声就是 <d>…</d> 里的那几句台词 —— 逐字、按顺序、**每句只念一遍**，" +
+			"不许重复、不许改写、不许续说、不许自行应答，也不许加入任何不在 <d> 标签里的话（包括念招牌、" +
+			"念编号、报数、自言自语）；其余时间**没有任何人声**，只有场景的环境声与动作音。留白是对的，" +
+			"拿话把留白填满是缺陷。)"
+	} else {
+		body = "this shot has NO spoken dialogue at all — there is no <d> tag and no narration in it. Do NOT invent " +
+			"any human speech, muttering, counting or crowd chatter; the human voice track stays silent for the whole " +
+			"shot. Only the ambient soundscape, room tone and physical foley are audible." + "\n" +
+			"(中文对照：本镜**没有**任何台词 —— 不许自己造人声、不许嘟囔、不许报数、不许人群嘈杂；" +
+			"整镜的人声轨是安静的，只有环境声与动作音。)"
+	}
+	return strings.TrimRight(prompt, "\n") + "\n\n" + spokenLinesMarker + ":\n" + body
 }
 
 // facesOnOf 项目开关(未表态 = 开);proj 为 nil 时按开处理。

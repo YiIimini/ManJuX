@@ -52,6 +52,14 @@ watch(stageId, () => {
   // 读成开,这里必须同步兜底成 true,否则存量项目打开抽屉会看到"关着",而实际在跑(或反之:
   // 看着是关、一保存就真的把它关掉了)。
   form.qc.enable_text_detect = form.qc.enable_text_detect !== false
+  // 语音核对(2026-10-07,用户「配音存在乱配音」):同一套「未表态即开」语义(后端
+  // QCParams.ASROn() 把缺键读成开)。不兜底的话,存量项目一开抽屉就显示成"关着"而实际在跑,
+  // 甚至"看着是关、一保存就真的把它关掉了" —— 关掉它等于把这条链上唯一能看见
+  // "音轨里念的是不是台词"的判据扔掉。
+  form.qc.enable_asr = form.qc.enable_asr !== false
+  // 转写模型档:老项目快照里没有这个键 ⇒ 兜底成空串(后端 ASRModelOr() 空串 = medium),
+  // 不兜底的话下拉会显示空白,而保存是整份快照回写。
+  form.qc.asr_model = form.qc.asr_model || ''
   // 定妆照比例自检(清单 §5.1):同一套「未表态即开」语义(后端 QCParams.ProportionCheckOn()
   // 把缺键读成开)。不在这里兜底,存量项目一开抽屉就会显示成"关着",而实际在跑;
   // 更糟的是"看着是关、一保存就真的把它关掉了"。它跑在资产阶段(每张新出定妆照一次视觉调用)。
@@ -287,6 +295,27 @@ async function save() {
             默认开。在镜头原始产物上做(合成前),查有没有被模型画成字形的字幕/招牌/UI;命中逐镜告警,
             整集命中率超 10% 时升级为显式告警。每镜一次视觉调用(与 VLM 审片共用设置页的视觉模型),
             未配置视觉模型时如实标注「未配置视觉模型」,不当作通过。关掉它不影响其它质检项。
+          </div>
+        </el-form-item>
+        <el-form-item label="语音核对(ASR:转写每镜音轨,与剧本台词逐句对账)">
+          <el-switch v-model="form.qc.enable_asr" />
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            默认开。渲染完成后用本机 ASR(faster-whisper,D:\Ai\Tools\ASR)把每镜音轨转写一遍,再与剧本台词
+            逐句对账 —— 这是这条链上唯一能看见「念的是不是那句台词」的判据(字幕是平台后期烧的,跟音轨是
+            两回事)。当场能抓三类问题:同一句念了多遍、凭空多出剧本里没有的话、整句漏念。只在**镜级原始产物**
+            上做(合成前),成本约每镜 10~15 秒 CPU(不与 ComfyUI 抢显存)。命中只逐镜告警、不拦批次、不自动重渲;
+            本机没装 ASR 时如实播报"跳过"并在报告里标注「未验」,不当作通过。关掉它不留任何痕迹。
+          </div>
+        </el-form-item>
+        <el-form-item label="ASR 转写模型档">
+          <el-select v-model="form.qc.asr_model" style="width:220px">
+            <el-option label="medium(默认,推荐)" value="medium" />
+            <el-option label="small(更快更糙)" value="small" />
+            <el-option label="base(最快,只做粗筛)" value="base" />
+            <el-option label="large-v3(最准更慢)" value="large-v3" />
+          </el-select>
+          <div class="text-xs mt-1" style="color:var(--mx-text3)">
+            只影响转写的准确度与耗时(ASR 固定走 CPU,与渲染显存无关)。留空 = medium。
           </div>
         </el-form-item>
         <el-form-item label="定妆照比例自检(出图后核对三庭/眼距/头身比,明显偏离即告警)">
