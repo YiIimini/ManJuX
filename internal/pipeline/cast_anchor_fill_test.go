@@ -172,3 +172,65 @@ func TestFillAnchorDescriptionsDoesNotInvent(t *testing.T) {
 		t.Errorf("这种卡必须被点名（出图会现编，用户该知道），实际 %v", gaps)
 	}
 }
+
+// 原文首现段那条兜底：锚表里**没有**这个人时，用小说原文的首次出场描写当材料。
+//
+// 夹具同样照真机原文（《名册之外，八万零一号》第013章霜见出场那段，连同它前后的剧情与对话）——
+// 每个元素对应原文里的一个自然段，照抄。
+var novelShuangjianPassage = strings.Join([]string{
+	"有人从坡上跳下来。落地的时候他单膝跪了一下，一只手撑在铁皮上。",
+	"",
+	"他站起来。少年，清瘦，肩背不宽，外套的体积大于身体，袖口磨出了毛边。他没有束发，中长过耳直到下颌，额前蓬松微卷的刘海盖过眉毛，几缕碎发遮着眼。冷白的脸上，下颌线清楚。颈侧有一道黑色机械与皮肤交界的接缝纹，正面看得见。双耳各挂着一条细长的银坠，左耳那只歪了，像被人拽过一次。",
+	"",
+	"他右手拇指和食指捏着一块很小的读数板，板上一行冷青色的数在跳。",
+	"",
+	"剥线刀说：“霜见。”",
+	"",
+	"剥线刀说：“你算你的数，别管这个。”",
+	"",
+	"霜见没看他。他先看甲板，再看那三只箱子，最后看剥线刀脚底下。",
+}, "\n\n")
+
+func TestFillCastDescriptionsFromSourceUsesTheNovel(t *testing.T) {
+	plan := &project.Plan{Characters: []project.Character{
+		// 锚表里没有、卡上也没有：应当从原文首现段拿到材料。
+		{ID: "char_shuangjian", Name: "霜见"},
+		// 已有描述（作者口径）：一个字都不许动。
+		{ID: "char_qiqi", Name: "祁七", Description: "瓷白装甲的维护单元", ImagePrompt: "porcelain android"},
+		// 原文里没有外形材料：宁可不填，留给点名播报。
+		{ID: "char_nobody", Name: "查无此人"},
+	}}
+	filled := FillCastDescriptionsFromSource(plan, novelShuangjianPassage)
+	if strings.Join(filled, "、") != "霜见" {
+		t.Fatalf("只该补「霜见」，实际 %v", filled)
+	}
+	if !strings.Contains(plan.Characters[0].Description, "接缝纹") {
+		t.Errorf("霜见应从原文首现段拿到外形材料，实际 %q", plan.Characters[0].Description)
+	}
+	for _, leak := range []string{"剥线刀说", "读数板", "数不对"} {
+		if strings.Contains(plan.Characters[0].Description, leak) {
+			t.Errorf("原文里的剧情/对话不该进材料（%q）：%q", leak, plan.Characters[0].Description)
+		}
+	}
+	// 兜底串装上 ⇒ 专职翻译会话会认这张卡（与锚表那条同一套链条）。
+	if !strings.Contains(plan.Characters[0].ImagePrompt, AnchorStubTag) || !NeedsPromptTranslation(plan.Characters[0]) {
+		t.Errorf("补完材料要留下「待翻译」标记，实际 %q", plan.Characters[0].ImagePrompt)
+	}
+	if plan.Characters[1].Description != "瓷白装甲的维护单元" || plan.Characters[1].ImagePrompt != "porcelain android" {
+		t.Error("已有描述的卡被覆盖了 —— 那是作者口径")
+	}
+	if plan.Characters[2].Description != "" {
+		t.Errorf("原文里没有材料的人不该被编出描述，实际 %q", plan.Characters[2].Description)
+	}
+	// 注意：霜见**也在**缺口名单里 —— 材料有了，但英文定妆提示词要等专职翻译会话写回来
+	//（`backfillCastIdentity` 里紧接着就跑），在那之前出图仍然只能现编。这是如实的态度，不是漏。
+	// 注意：霜见**也在**缺口名单里 —— 材料有了，但英文定妆提示词要等专职翻译会话写回来
+	//（`backfillCastIdentity` 里紧接着就跑），在那之前出图仍然只能现编。这是如实的态度，不是漏。
+	if gaps := IdentityPromptGaps(plan); strings.Join(gaps, "、") != "霜见、查无此人" {
+		t.Errorf("译前这两张都算缺口，实际 %v", gaps)
+	}
+	// 幂等。
+	if again := FillCastDescriptionsFromSource(plan, novelShuangjianPassage); len(again) != 0 {
+		t.Errorf("幂等失败：第二次还补了 %v", again)
+	}
+}

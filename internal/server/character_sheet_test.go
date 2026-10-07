@@ -14,10 +14,10 @@ import (
 // 就可能换一张脸。锚表把外形变成**硬约束**。见 docs/技能侧调整-人物外形锚表.md。
 func TestReadCharacterSheet(t *testing.T) {
 	dir := t.TempDir()
-	if got := readCharacterSheet(dir); got != "" {
-		t.Errorf("没有锚表时应返回空串(走原来的路,不该让流程失败),实际 %q", got)
+	if got, note := readCharacterSheet(dir); got != "" || note != "" {
+		t.Errorf("没有锚表时应返回空串(走原来的路,不该让流程失败),实际 %q / %q", got, note)
 	}
-	if got := readCharacterSheet(filepath.Join(dir, "不存在的目录")); got != "" {
+	if got, _ := readCharacterSheet(filepath.Join(dir, "不存在的目录")); got != "" {
 		t.Errorf("路径不存在时应返回空串,实际 %q", got)
 	}
 	// 传进来是文件(单本小说)时同样安全返回
@@ -25,7 +25,7 @@ func TestReadCharacterSheet(t *testing.T) {
 	if err := os.WriteFile(f, []byte("正文"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := readCharacterSheet(f); got != "" {
+	if got, _ := readCharacterSheet(f); got != "" {
 		t.Errorf("路径是文件时应返回空串,实际 %q", got)
 	}
 
@@ -37,7 +37,10 @@ func TestReadCharacterSheet(t *testing.T) {
 	if err := os.WriteFile(sheet, []byte("# 人物外形\n\n沈砚:瘦长脸,肩背挺直,左眉尾一道短疤,素麻绳低马尾、及肩胛、额前全部向后梳净。\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := readCharacterSheet(dir)
+	got, note := readCharacterSheet(dir)
+	if note != "" {
+		t.Errorf("没超上限时不该有截断说明,实得 %q", note)
+	}
 	// 【2026-09-29 实测修正】读回来的是**表体**,不带抬头:抬头只在
 	// episodeSourceWithSheet 那一处加。这里原来断言"带抬头",而两个函数各拼一遍,
 	// 结果是每集 source.txt 里印两份抬头(见 novels_sheet_test.go 的 "只许一份")。
@@ -50,16 +53,19 @@ func TestReadCharacterSheet(t *testing.T) {
 		}
 	}
 
-	// 超长截断:按**字符**边界切,不许切坏 UTF-8(中文一个字 3 字节)
-	long := strings.Repeat("甲", characterSheetMaxRunes+500)
+	// 超长:按 rune 切(中文一个字 3 字节,按 rune 切不会切坏 UTF-8),且**必须给出截断说明**。
+	long := strings.Repeat("甲\n\n", characterSheetMaxRunes)
 	if err := os.WriteFile(sheet, []byte(long), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got2 := readCharacterSheet(dir)
-	if n := len([]rune(got2)); n != characterSheetMaxRunes {
-		t.Errorf("超长应截断到 %d 字,实得 %d", characterSheetMaxRunes, n)
+	got2, note2 := readCharacterSheet(dir)
+	if n := len([]rune(got2)); n > characterSheetMaxRunes {
+		t.Errorf("超长应限到 %d 字以内,实得 %d", characterSheetMaxRunes, n)
 	}
 	if !strings.Contains(got2, "甲") {
-		t.Error("截断后内容不该为空")
+		t.Error("限长后内容不该为空")
+	}
+	if !strings.Contains(note2, "超上限") {
+		t.Errorf("截断了就必须如实说明,实得 %q", note2)
 	}
 }

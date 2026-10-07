@@ -30,14 +30,15 @@ func TestCastIdentityBackfillIsWired(t *testing.T) {
 
 	impl := readSource(t, "asset_cards.go")
 	for _, want := range []string{
-		"c.store.LoadSource(proj.ID)",             // 锚表在源文本里
-		"FillAnchorDescriptions(plan, src)",       // ① 锚表原文补进 description
-		"TranslateCardPrompts(ctx, client, plan)", // ② 专职会话译成英文定妆提示词
-		"IdentityPromptGaps(plan)",                // ③ 出图前点名缺口
-		"TruncatedAnchorSections(src)",            // 源文本被截断的节要如实点名
-		"c.store.SavePlan(proj.ID, plan)",         // 补完要落盘，否则下次又从头来
-		"cardTranslateClient()",                   // 没有 LLM 时如实播报，不静默跳过
-		`"warn"`,                                  // 三条降级路径都是 warn（不拦产线）
+		"c.store.LoadSource(proj.ID)",               // 锚表在源文本里
+		"FillAnchorDescriptions(plan, src)",         // ① 锚表原文补进 description
+		"FillCastDescriptionsFromSource(plan, src)", // ①b 锚表里没有的：用小说原文的首现段当材料
+		"TranslateCardPrompts(ctx, client, plan)",   // ② 专职会话译成英文定妆提示词
+		"IdentityPromptGaps(plan)",                  // ③ 出图前点名缺口
+		"TruncatedAnchorSections(src)",              // 源文本被截断的节要如实点名
+		"c.store.SavePlan(proj.ID, plan)",           // 补完要落盘，否则下次又从头来
+		"cardTranslateClient()",                     // 没有 LLM 时如实播报，不静默跳过
+		`"warn"`,                                    // 三条降级路径都是 warn（不拦产线）
 	} {
 		if !strings.Contains(impl, want) {
 			t.Errorf("回填实现缺少 %q —— 会变成「接了但没生效」或「静默跳过」", want)
@@ -46,10 +47,11 @@ func TestCastIdentityBackfillIsWired(t *testing.T) {
 
 	script := readSource(t, "stages_script.go")
 	for _, want := range []string{
-		"FillAnchorDescriptions(plan, text)",      // 新项目在存盘前就补齐
-		"TranslateCardPrompts(ctx, client, plan)", // 翻译照旧挂在脚本阶段
-		"IdentityPromptGaps(plan)",                // 缺口一样要点名
-		"TruncatedAnchorSections(text)",           // 断节一样要点名
+		"FillAnchorDescriptions(plan, text)",         // 新项目在存盘前就补齐
+		"FillCastDescriptionsFromSource(plan, text)", // 锚表里没有的：原文首现段当材料
+		"TranslateCardPrompts(ctx, client, plan)",    // 翻译照旧挂在脚本阶段
+		"IdentityPromptGaps(plan)",                   // 缺口一样要点名
+		"TruncatedAnchorSections(text)",              // 断节一样要点名
 	} {
 		if !strings.Contains(script, want) {
 			t.Errorf("脚本阶段缺少 %q —— 新方案落盘时这些卡还是不完整的", want)

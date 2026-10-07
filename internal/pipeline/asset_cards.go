@@ -107,6 +107,13 @@ func (c *Coordinator) backfillCastIdentity(ctx context.Context, proj *project.Pr
 				"⚠ 【人物外形锚表】里这些小节被剧本正文截断了（源文本本身不全，只能照抄到断点）：%s —— "+
 					"补全源文本后重跑本阶段，这些人的外形才能逐项照抄", strings.Join(cut, "、"))
 		}
+		// **锚表里也没有的人**：用小说原文的"首次出场段"当外形材料（用户 2026-10-07 问的就是这条真源）。
+		if names := FillCastDescriptionsFromSource(plan, src); len(names) > 0 {
+			changed += len(names)
+			c.emit(proj.ID, PhaseAssets, 0, "info", 0,
+				"📖 %d 张卡的外形材料取自**本集原文的首次出场段**（锚表里没有这几个人）：%s",
+				len(names), strings.Join(names, "、"))
+		}
 	}
 	if n := NeedsTranslationCount(plan); n > 0 {
 		if client := c.cardTranslateClient(); client == nil {

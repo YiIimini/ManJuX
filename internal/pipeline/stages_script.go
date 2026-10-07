@@ -202,6 +202,12 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 			"📇 %d 张角色卡的身份真源从【人物外形锚表】补回（原先只有年龄、描述是空的）：%s",
 			len(names), strings.Join(names, "、"))
 	}
+	// **锚表里也没有的人**：同上，用小说原文的"首次出场段"当外形材料。
+	if names := FillCastDescriptionsFromSource(plan, text); len(names) > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "info", 15,
+			"📖 %d 张卡的外形材料取自**本集原文的首次出场段**（锚表里没有这几个人）：%s",
+			len(names), strings.Join(names, "、"))
+	}
 	// **专职翻译会话（用户架构第②步）**：锚表补齐的卡只有**中文**设定，而出图只吃英文 ——
 	// 不翻译的话模型只知道"几岁、几头身"，服装/脸型/发型全靠想象。用户 2026-09-28 报的
 	// 「角色三视图渲染异常」就是这么来的：设定写"深灰值勤装甲、方中带圆脸、剑眉、左手小指缺一节"，

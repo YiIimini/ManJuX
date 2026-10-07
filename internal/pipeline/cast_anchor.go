@@ -164,6 +164,52 @@ func FillAnchorDescriptions(plan *project.Plan, src string) []string {
 	return filled
 }
 
+// FillCastDescriptionsFromSource 锚表里没有、卡上又空的那批 —— 用**本集源文本里"首次出场段"的描写**当材料。
+//
+// 【由来】（2026-10-07 用户问：「小说内容第一次出现角色没有描述角色形象吗？」）
+// 小说里每一个人首次出场都写了外形（见 `project.FirstAppearanceExcerpt` 的文件头，五个人全有原文），
+// 而且那几段**本来就在②人物道具会话的输入里** —— 模型却没把它们写进卡片。锚表能补的那批已经由
+// `FillAnchorDescriptions` 补掉了；这一条是给"锚表里也没有"的人兜底：从原文的首次出场段取外形材料，
+// 再交给同一个专职翻译会话译成英文定妆提示词。
+//
+// 判据全在 `project.FirstAppearanceExcerpt` 里（段落扫描 + 外形线索词 + "别人的描写不许当他的"），
+// 这里只负责写回卡与统计。**取不到就不填** —— 宁可不填，也不要把剧情/别人的脸当他的外形。
+func FillCastDescriptionsFromSource(plan *project.Plan, src string) []string {
+	if plan == nil || strings.TrimSpace(src) == "" {
+		return nil
+	}
+	all := make([]string, 0, len(plan.Characters))
+	for _, c := range plan.Characters {
+		if n := strings.TrimSpace(c.Name); n != "" {
+			all = append(all, n)
+		}
+	}
+	var filled []string
+	for i := range plan.Characters {
+		ch := &plan.Characters[i]
+		if strings.TrimSpace(ch.Description) != "" {
+			continue // 已有描述（锚表原文或模型写的）：不覆盖
+		}
+		others := make([]string, 0, len(all))
+		for _, n := range all {
+			if normCastName(n) != normCastName(ch.Name) {
+				others = append(others, n)
+			}
+		}
+		ex := project.FirstAppearanceExcerpt(src, ch.Name, others)
+		if strings.TrimSpace(ex) == "" {
+			continue // 原文里没有像外形的段落 ⇒ 不填（上面那条点名播报负责说清）
+		}
+		ch.Description = ex
+		if strings.TrimSpace(ch.ImagePrompt) == "" {
+			// 兜底串：标记"待专职翻译"（它同时保证 NeedsPromptTranslation 认这张卡）。
+			ch.ImagePrompt = AnchorStubTag + "a Chinese period-film character"
+		}
+		filled = append(filled, ch.Name)
+	}
+	return filled
+}
+
 // TruncatedAnchorSections 锚表里**被剧本正文截断**的小节（源文本本身不全）——如实点名用。
 //
 // 真机：断桅那一节只写到 `- 身形：瘦，背驼，走路` 就接上了【本集剧情】。平台不会替作者编外形，

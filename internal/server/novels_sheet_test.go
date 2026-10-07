@@ -70,7 +70,7 @@ func TestEpisodeSourceHasSingleSheetHeader(t *testing.T) {
 		[]byte("沈砚:瘦长脸,肩背挺直,低束发、及肩胛。\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	sheet := readCharacterSheet(dir)
+	sheet, _ := readCharacterSheet(dir)
 	src := "《名册之外，八万零一号》系列短视频 第01 集《重新检测到生命反应》\n全局风格:G\n\n【本集剧情】节拍…\n\n【本集原文】正文…"
 	got := episodeSourceWithSheet(src, sheet)
 	if n := strings.Count(got, characterSheetHeader); n != 1 {
@@ -94,9 +94,10 @@ func TestCharacterSheetIsWiredIntoEpisodeSource(t *testing.T) {
 	}
 	ps, ss := string(produce), string(split)
 	for _, want := range []string{
-		"sheet := readCharacterSheet(in.Path)",                                 // 读小说目录下的设定集
+		"sheet, sheetCut := readCharacterSheet(in.Path)",                       // 读小说目录下的设定集(带限长说明)
 		"s.splitNovelToProjects(splitCtx, name, text, maxEp, artStyle, sheet,", // 传给拆集
 		"episodeSourceWithSheet(src, sheet)",                                   // 由拆集拼进每一集
+		"Level: \"warn\", Message: sheetCut",                                   // 限长说明必须**如实播报**,不许静默少喂几个角色
 	} {
 		if !strings.Contains(ps, want) && !strings.Contains(ss, want) {
 			t.Errorf("缺少接线 %q —— 锚表又只走到拆集输入上,角色卡会退回现编", want)
