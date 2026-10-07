@@ -193,3 +193,50 @@ func TestScriptRepairIsWiredAndBacksUpOld(t *testing.T) {
 		t.Error("缺节告警必须说清「重跑会重写这一集」（这是用户唯一的补救动作）")
 	}
 }
+
+// TestBriefSectionsAcceptFullWidthColons 节判据必须**两种冒号都认**（2026-10-07 真机实测）。
+//
+// 现场：那一集的 source.txt 里「目的：」4 处、「目的:」**0** 处 —— 中文模型默认写全角，
+// 而判据只认半角，于是报「缺 5 个必需节」（那五节其实一字不缺）。代价不只是假告警：
+// 跳过判据 `briefIsUsable` 用的就是它 ⇒ **每跑一次这一集都会重写剧本**、把改过的稿子覆盖掉。
+func TestBriefSectionsAcceptFullWidthColons(t *testing.T) {
+	// 照真机那份剧本的形态写：全角冒号 + 半角逐字场次头
+	fullWidth := "【开场爆点】“重新检测到生命反应。”——一个不该存在的编号，在死寂的维护舱里睁开了眼。\n\n" +
+		"【场 1|归墟环·维护舱|灰纪元第八万年|内】\n" +
+		"  目的：3秒建立绝境——主角是“名册之外”的幽灵。\n" +
+		"  冲突：祁七 vs 舱内AI——她要自检，AI以“名册无名”拒绝。\n" +
+		"  转折：祁七说出“读我的钢印”，AI静默三秒。\n" +
+		"  爽点：小爽点——她一句反问逼得AI停顿，冷白光一排排亮起。\n" +
+		"  钩子：AI答“已读取，无对应档位”——名册最后一行是 80000。\n" +
+		"  正文：\n  祁七单膝撑地，右手攥着枚发暗的铭牌。\n" +
+		"【关键道具与信息】\n- 铭牌|右手|身份\n【本集钩子】缝外漆黑，没有光。"
+	if miss := missingBriefSections(fullWidth); len(miss) != 0 {
+		t.Errorf("全角冒号的剧本被误判缺节 %v —— 那五节其实都在（真机 source.txt 就是这么写的）；"+
+			"误判的代价是**每轮重写剧本**、覆盖改过的稿子", miss)
+	}
+	if !briefIsUsable(fullWidth + strings.Repeat("祁七把铭牌按在腿侧，冷白灯只亮右边一排。", 45)) {
+		t.Error("全角冒号 + 字数达标的剧本仍被判不可用 ⇒ briefIsUsable 会每轮重写它")
+	}
+	// 反向面：**真的缺**那一节仍要报出来（放宽的只是冒号宽度，不是"有没有这一节"）
+	missingThin := "【开场爆点】他改了一个字。\n【场 1|碑林|黄昏|外】\n  冲突：甲 vs 乙\n  " +
+		"【关键道具与信息】\n- 碑刀|右手|改字\n【本集钩子】册子翻页"
+	miss := missingBriefSections(missingThin)
+	if len(miss) == 0 {
+		t.Fatal("真的缺节反而不报了 —— 那是把判据放宽成了摆设")
+	}
+	for _, want := range []string{"目的", "转折", "爽点", "钩子"} {
+		found := false
+		for _, m := range miss {
+			if m == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("该报出缺 %q，实际 %v", want, miss)
+		}
+	}
+	// 散文里出现「目的」二字但没有冒号 ⇒ 不算写了这一节
+	if missingBriefSections("【场 1|碑林|黄昏|外】\n  他抱着某种目的走向碑林，没有人拦他。") == nil {
+		t.Error("散文里的「目的」二字被当成了节标记")
+	}
+}

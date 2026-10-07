@@ -89,8 +89,13 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			continue
 		}
 		checked++
+		sc, hasScene := sceneByID(plan, shot.Scene)
 		r := qc.Check(ctx, c.ff, shot.ID, full, qc.Params{
 			DarkRatioFail: p.DarkRatioFail, DarkRatioWarn: p.DarkRatioWarn,
+			// 暗调场景（场景卡光态自己写着"沉在黑暗里/漆黑无光"）→ 暗像素阈值整组上抬。
+			// 2026-10-07 实测：不做这件事时，那一集 5 镜被判"疑似黑屏"不合格 ⇒ 整集"质检未通过"
+			// ⇒ **批量产线暂停在第 1/88 集**，而那 5 镜其实是计划里就定好的暗调戏。
+			DarkScene:   hasScene && darkSceneDeclared(sc),
 			MinDuration: p.MinDuration, MaxDuration: p.MaxDuration,
 			// 台词应有口播时长:与渲染时长同源(镜头时长已按台词做过预算),这里
 			// 用同一套语速常量核对成片里到底说没说够 —— 词与曲同源才比得准。
@@ -104,7 +109,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			ExpectFPS:        24, // 渲染帧数口径即 shot.Duration*24,见 stages_render.go 的 shotFrames
 		})
 		if vlmClient != nil && r.OK {
-			brief := fmt.Sprintf("%s/%s/角色:%v", shot.ShotSize, shot.Camera, shot.Characters)
+			brief := qcShotBrief(plan, shot, sc, hasScene)
 			if vr, verr := qc.VLMJudge(ctx, vlmClient, c.ff.Ffmpeg, full, brief); verr == nil {
 				r.VLM = vr
 				if !vr.Pass {
@@ -841,4 +846,56 @@ func (c *Coordinator) projectDir(projectID string) string {
 		return ""
 	}
 	return c.store.Dir(projectID)
+}
+
+// darkSceneDeclared 场景卡的**光态自己声明了暗调**（"其余沉在黑暗里"、"缝外漆黑无光"…）。
+//
+// 【为什么由场景卡的原文来判，而不是我自己猜】（2026-10-07 真机实测）
+// 那一集被判"疑似黑屏"不合格的 5 镜，全部落在两个光态里写明暗调的场景：
+//
+//	维护舱：主光…**右侧一列先亮，其余沉在黑暗里**，无自然光
+//	舱门缝：**缝外漆黑无光**…无暖色
+//
+// 而同场景里"三排灯全亮"那一镜只判到 warn（0.58）—— 差的是"剧情有没有开灯"，
+// 不是"画面崩没崩"。判据用**计划里的已知量**（场景卡），而不是靠亮度自己猜，
+// 与平台一贯口径一致：能确定性判定的别让模型（这里是我自己）自觉。
+func darkSceneDeclared(sc project.Scene) bool {
+	t := strings.TrimSpace(sc.LightState)
+	if t == "" {
+		return false
+	}
+	for _, kw := range []string{"沉在黑暗", "漆黑", "全黑", "无光", "几乎没有光", "暗调", "仅见轮廓", "微光"} {
+		if strings.Contains(t, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// qcShotBrief 送给视觉模型的**镜头概要**（景别/运镜/角色 + 这一镜的口径说明）。
+//
+// 【为什么要写口径说明】（2026-10-07 真机实测）不带说明时 VLM 会把**平台的既定设计**判成崩坏：
+//
+//	· 内心镜：画面里那个巴掌大的 Q 版形象是"内心活动的演出者"（用户 2026-09-27 口径）——
+//	  VLM 判成"肩膀上多出一个迷你人形/玩偶状附属物，严重主体崩坏"，镜 5 给 55、镜 13 给 42；
+//	· 系统镜：机器人＋悬浮全息面板同样是**演出者**（同一口径），不是多余角色/道具错误；
+//	· 暗调场景：黑暗是计划写定的（见 darkSceneDeclared），VLM 该判的是"暗部细节有没有完全丢失、
+//	  主体是否还看得清"，而不是把"暗"本身当缺陷（它会写进 advice 让用户去改提示词）。
+//
+// 这些都是**事实**（计划里写着），把事实告诉判据不算放水 —— 反而让分数只对"真缺陷"敏感。
+func qcShotBrief(plan *project.Plan, shot project.Shot, sc project.Scene, hasScene bool) string {
+	brief := fmt.Sprintf("%s/%s/角色:%v", shot.ShotSize, shot.Camera, shot.Characters)
+	if strings.TrimSpace(shot.VoKind) == "inner" || len(shot.ChibiIDs) > 0 {
+		brief += "；本镜是**内心戏**：画面里那个巴掌大的 Q 版形象是**设计的一部分**" +
+			"（内心活动的演出者），不是多余角色、不是分身、不是生成崩坏，不得因此扣分"
+	}
+	if strings.TrimSpace(shot.VoKind) == "system" {
+		brief += "；本镜是**系统戏**：机器人（Q 版机体）与悬浮全息面板是**设计的一部分**" +
+			"（系统的演出者），不是多余角色、也不是道具错误"
+	}
+	if hasScene && darkSceneDeclared(sc) {
+		brief += "；本镜是**计划声明的暗调场景**：黑暗本身是设计（场景光态就是这么写的），" +
+			"请只判「暗部细节是否完全丢失、主体是否还看得清」，不要把「暗」本身当成缺陷"
+	}
+	return brief
 }

@@ -51,8 +51,19 @@ type Report struct {
 type Params struct {
 	DarkRatioFail float64
 	DarkRatioWarn float64
-	MinDuration   float64
-	MaxDuration   float64
+	// DarkScene 这一镜的**计划自己声明了它是暗调**（场景卡的 `light_state` 写着"沉在黑暗里/漆黑/无光"）。
+	//
+	// 【为什么要有这一位】（2026-10-07 真机实测）那一集 13 镜里 **5 镜**被判"疑似黑屏"不合格
+	// （最暗采样帧 0.67–0.82 ≥ 阈值 0.60），于是整集"质检未通过"、**批量产线暂停在第 1/88 集**。
+	// 但看现场：那 5 镜全在两个**计划里就写明是暗调**的场景里（维护舱"右侧一列先亮，其余沉在黑暗里"、
+	// 舱门缝"缝外漆黑无光"），而同场景里"三排灯全亮"的那一镜实测只有 0.58（判 warn）——
+	// 也就是说判据测到的是**创作意图**，不是崩坏。
+	//
+	// 处置：`DarkScene=true` 时阈值**整组上抬**（取 max(配置值, 0.90/0.70)），
+	// 因为真崩坏（整镜全黑/尾部全黑）的实测值接近 1.0，仍会被抓住；而"大多数画面是黑的"在这里是设计。
+	DarkScene   bool
+	MinDuration float64
+	MaxDuration float64
 	// ExpectedSpeechSec 本镜台词的应有口播时长(秒);>0 时启用人声完整性判定。
 	ExpectedSpeechSec float64
 	// ExpectedDuration 本镜**计划**时长(秒);>0 时与产物实测时长对账。
@@ -89,6 +100,52 @@ const (
 // 停顿吃掉;低于六成就不像"语速快"而像"话没说完/整句没出声"。只是告警不阻断 ——
 // 重渲同一提示词同一 seed 大概率复现,真正要改的是台词长度或拆镜。
 const speechWarnRatio = 0.6
+
+// darkVerdict 暗像素占比 → (不合格文案, 告警文案)（都为空 = 干净）。
+//
+// 【为什么单独一个纯函数】"暗调场景放宽到多少、真崩坏还抓不抓得住"必须能**逐条断言**，
+// 而不是靠读代码推断（本仓纪律：一条规则一条检）。2026-10-07 真机的那组数是判据的依据：
+// 5 镜被判"疑似黑屏"不合格（0.67–0.82）⇒ 整集质检未通过、批量产线停在第 1/88 集，
+// 而同场景"三排灯全亮"那一镜只有 0.58 —— 真正的分界不在 0.6，而在"画面是不是几乎全黑"。
+//
+// 规则（两条线分开处置）：
+//
+//	· **不合格线**：普通镜照用户配置（默认 0.60）；`DarkScene`（场景卡光态自己写着暗调）时取
+//	  `max(用户值, 0.90)` —— 即"取两者中较宽的那条线"：既不会比用户配的更严，也不会比 0.90 更松。
+//	  真崩坏（整镜全黑、后半段全黑）实测贴近 1.0，落在 0.90 之上，**仍然判不合格**。
+//	· **告警线**：**不动**（用户配的 0.45）。暗调镜照样要在报告里留一条"这一镜有多暗"的记账，
+//	  只是文案说明"按暗调口径放行、不判不合格" —— 信息不丢，只是不再阻断产量。
+func darkVerdict(worst float64, p Params) (problem, warning string) {
+	fail := p.DarkRatioFail
+	if p.DarkScene {
+		fail = math.Max(fail, DarkSceneRatioFail)
+	}
+	switch {
+	case fail > 0 && worst >= fail:
+		msg := fmt.Sprintf("疑似黑屏:采样帧最暗之一达 %.0f%%(阈值 %.0f%%)", worst*100, fail*100)
+		if p.DarkScene {
+			msg += " —— 本镜是**计划声明的暗调场景**，不合格线已取较宽的 90%：达到这个比例意味着画面几乎全黑"
+		}
+		return msg, ""
+	case p.DarkRatioWarn > 0 && worst >= p.DarkRatioWarn:
+		msg := fmt.Sprintf("画面偏暗:采样帧最暗之一达 %.0f%%", worst*100)
+		if p.DarkScene {
+			msg += fmt.Sprintf("（本镜是计划声明的暗调场景，不合格线已放到 %.0f%% —— 这里只记账，不判不合格）",
+				fail*100)
+		}
+		return "", msg
+	}
+	return "", ""
+}
+
+// DarkSceneRatioFail **计划声明的暗调场景**下的暗像素**不合格线**（与 Params.DarkScene 配套）。
+//
+// 取值依据（2026-10-07 真机实测）：被判"疑似黑屏"的 5 镜最暗采样帧是 0.67–0.82，而同一场景里
+// "三排灯全亮"那一镜是 0.58 —— 差的是"有没有按剧情亮灯"，不是"画面崩没崩"。
+// 真崩坏（整镜全黑、或后半段全黑那种）实测值贴近 1.0，所以 0.90 仍然抓得住它
+// （对照 `TestDarkRatioSeesSecondHalf` 用的是 0.60/0.45 那组普通阈值，本改动不动它）。
+// **告警线不跟着放**：暗调镜照样在报告里留一条记账（见 darkVerdict）。
+const DarkSceneRatioFail = 0.90
 
 // Check 检查单个视频文件。
 func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Report {
@@ -166,12 +223,13 @@ func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Re
 			}
 		}
 		r.DarkRatio = worst
-		switch {
-		case worst >= p.DarkRatioFail:
-			r.Problems = append(r.Problems, fmt.Sprintf(
-				"疑似黑屏:采样帧最暗之一达 %.0f%%(阈值 %.0f%%)", worst*100, p.DarkRatioFail*100))
-		case worst >= p.DarkRatioWarn:
-			r.Warnings = append(r.Warnings, fmt.Sprintf("画面偏暗:采样帧最暗之一达 %.0f%%", worst*100))
+		r.DarkRatio = worst
+		// 判定收在一个**纯函数**里（阈值选择 + 文案一起），这样"暗调场景放宽到多少、真崩坏还抓不抓得住"
+		// 可以逐条断言，而不是靠读代码推断。见 darkVerdict 的说明。
+		if problem, warnMsg := darkVerdict(worst, p); problem != "" {
+			r.Problems = append(r.Problems, problem)
+		} else if warnMsg != "" {
+			r.Warnings = append(r.Warnings, warnMsg)
 		}
 	} else {
 		// 抽帧失败**必须是 Problem**:量不到就没资格说"通过"(旧实现把它降级成

@@ -417,7 +417,7 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 				len(miss), strings.Join(miss, "、"))})
 		ask := fmt.Sprintf("你上一稿**缺少**以下必需节：%s\n"+
 			"请**只补全这几节**，并重新输出**完整剧本全文**：节标题逐字照抄（【开场爆点】、【关键道具与信息】、【本集钩子】，"+
-			"以及每场下面的「目的:/冲突:/转折:/爽点:/钩子:」），场号连续，场次头写成「【场 N|地点|时间|内外】」。\n"+
+			"以及每场下面的「目的:/冲突:/转折:/爽点:/钩子:」—— 冒号写成半角或全角都可以，不影响判定），场号连续，场次头写成「【场 N|地点|时间|内外】」。\n"+
 			"不要解释、不要前言后语、不要列出你改了哪里 —— 只输出改编后的剧本全文（中文）。",
 			strings.Join(miss, "、"))
 		if fixed, ferr := client.Chat(ctx, []llm.Message{
@@ -514,15 +514,45 @@ func briefLooksEmpty(brief string) bool {
 // 道具的位置关系就丢（实测「Q版总蹲在碑生左肩上」在成片里变成了单独蹲在石台上）。
 var briefSectionMarkers = []string{
 	"【开场爆点】", "【关键道具与信息】", "【本集钩子】",
-	"目的:", "冲突:", "转折:", "爽点:", "钩子:",
+	"目的", "冲突", "转折", "爽点", "钩子",
+}
+
+// briefHasMarker 剧本里有没有这个节标记（**冒号全角/半角都认**）。
+//
+// 【为什么必须容忍全角冒号】（2026-10-07 真机实测，代价很大）
+// 中文模型写「目的：」是常态 —— 那一集的 source.txt 里「目的：」4 处、「目的:」**0** 处，
+// 而这套判据原来只认半角 ⇒ 报「缺 5 个必需节：目的、冲突、转折、爽点、钩子」。一个冒号宽度
+// 引来三件事：
+//
+//	① 假告警（那五节其实都在，内容一个字不缺）；
+//	② 自纠"补写一轮"**永远补不上**（模型下一轮还写全角）⇒ 白烧一次 LLM；
+//	③ 最要紧：跳过判据 `briefIsUsable` 用的就是它 —— 于是**每跑一次这一集都会重写剧本**，
+//	   把改过的稿子覆盖掉（只在 source-brief-prev.txt 留一份备份）。
+//
+// 判据只放宽"冒号宽度"这一维，不放宽"有没有这一节"：仍然要求「名字 + 冒号」相邻出现，
+// 所以散文里随便提到「目的」二字不会被误判成"这节写了"。
+func briefHasMarker(brief, name string) bool {
+	for _, sep := range []string{":", "：", " :", " ："} {
+		if strings.Contains(brief, name+sep) {
+			return true
+		}
+	}
+	return false
 }
 
 // missingBriefSections 剧本里缺哪些必需节（返回人能读懂的名字）。
 func missingBriefSections(brief string) []string {
 	var missing []string
 	for _, m := range briefSectionMarkers {
-		if !strings.Contains(brief, m) {
-			missing = append(missing, strings.Trim(m, "【】:"))
+		// 【…】类的节名按字面找；「目的/冲突/…」这类要求"名字 + 冒号"（两种冒号都认）
+		if strings.HasPrefix(m, "【") {
+			if !strings.Contains(brief, m) {
+				missing = append(missing, strings.Trim(m, "【】:"))
+			}
+			continue
+		}
+		if !briefHasMarker(brief, m) {
+			missing = append(missing, m)
 		}
 	}
 	// 至少要有一场戏的场次头（【场 1|…】这种写法，允许全角/半角竖线与空格差异）
