@@ -834,22 +834,30 @@ func (s *Server) genOneChapterBrief(ctx context.Context, series string, ep epIte
 }
 
 // replaceEpisodeBrief 把 source.txt 里的【本集剧情】替换为新 brief(没有该段则插入)。
+//
+// 【2026-10-07 修：写入边界同样不能是"第一个空行"】原来与 episodeBriefOf 共用那条错误边界，
+// 于是**新稿后面会残留旧稿**：真机第01集回填 2090 字的新剧本时，写出来的是
+// `【本集剧情】+ 新稿 + 旧稿从【场 1|…】起的全部内容 + 【本集原文】` ——
+// 每重写一轮就多堆一份旧剧本，而那些旧正文正是分镜要读的输入
+// （用户"总感觉剧本提取文章内容不是按爆款要求来的"里另一半就是这个：文件里同时躺着两份）。
+// 现在边界取平台自己的节标记（briefSectionEnd），与新稿里有多少空行无关。
 func replaceEpisodeBrief(src, brief string) string {
 	const mark = "【本集剧情】"
+	body := strings.TrimSpace(brief)
 	if i := strings.Index(src, mark); i >= 0 {
 		head := src[:i+len(mark)]
 		rest := src[i+len(mark):]
-		// 剧情段到下一个空行为止
-		if j := strings.Index(rest, "\n\n"); j >= 0 {
-			return head + brief + rest[j:]
+		tail := rest[briefSectionEnd(rest):] // 下一个平台节（通常是【本集原文】）；没有则到文末
+		if tail == "" {
+			return head + body
 		}
-		return head + brief
+		return head + body + "\n\n" + tail
 	}
 	// 没有剧情段:插到全局风格行之后
 	if i := strings.Index(src, "\n\n"); i >= 0 {
-		return src[:i] + "\n\n" + mark + brief + src[i:]
+		return src[:i] + "\n\n" + mark + body + src[i:]
 	}
-	return src + "\n\n" + mark + brief
+	return src + "\n\n" + mark + body
 }
 
 // upsertPrevSummary 写入/替换该集 source.txt 里的【前情提要】(前情来自上一集 brief)。

@@ -273,6 +273,10 @@ func (s *Server) startBatch(prefix string, eps []string) bool {
 // 要拍的东西：分镜要知道"这句话怎么说、这个动作怎么演"，不是"这里发生了什么事"。
 //
 // 低于 minRunes 视为"没写过"，触发解析（判据与产物语义一起改，别只改一半）。
+//
+// 【2026-10-07 起，上面那四条纪律里有三条有了**机器判据**】见 brief_viral.go：
+// 爆点必须真的演在第 1 场正文最前面、全集至少 2 个大爽点、每一场都要逐节写全。
+// 「放大反差」「砍冗余的取舍」要靠人看，**不进机器门**（进了就是天天误报）。
 const (
 	epScriptMinRunes = 800
 	epScriptMaxRunes = 1600
@@ -305,22 +309,26 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	// 现在的判据：长度够 **且结构完整** 才算"已经是剧本"（见 briefIsUsable）；缺结构就重做这一集。
 	if brief, ok := episodeBriefOf(src); ok {
 		if briefIsUsable(brief) {
-			return // 已经是像样的本集剧本
+			return // 已经是一份像样的本集剧本（结构完整 + 爆款纪律都过）
 		}
-		if miss := missingBriefSections(brief); len(miss) > 0 && len([]rune(strings.TrimSpace(brief))) >= epScriptMinRunes {
-			// 缺结构的旧稿**先备份再重写**：它可能是作者手写或技能侧给的稿子，直接盖掉既丢内容、
-			// 也让人无法对照"原来缺哪几节"。备份写不进去就**不覆盖**（宁可不做这一步，
-			// 也不销毁工作产物）。
+		// 不达标就重写这一集 —— 但**先把旧稿备份出去**：它可能是作者手写或技能侧给的稿子，
+		// 直接盖掉既丢内容、也让人无法对照"原来差哪几条"。
+		//
+		// 【2026-10-07 修】备份门槛原先是「缺节 **且** ≥800 字」—— 两个条件都是**借来的**：
+		// 一份 600 字但真有内容的旧稿（模型少写）会被静默覆盖，连备份都没有。
+		// 现在只问"旧稿里有没有内容"（briefLooksEmpty），与"为什么重写"解耦；
+		// 判据换成 briefContractIssues（结构 + 爆款纪律），播报里逐条列出到底差哪几条。
+		if issues := briefContractIssues(brief); len(issues) > 0 && !briefLooksEmpty(brief) {
 			backup := filepath.Join(dir, "source-brief-prev.txt")
 			if err := os.WriteFile(backup, []byte(brief), 0o644); err != nil {
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-					Message: fmt.Sprintf("⚠ 本集旧稿缺 %d 个必需节（%s），但**备份不出去**(%v) —— 为免销毁内容，本次不重写；"+
-						"请检查项目目录的写入权限后重跑", len(miss), strings.Join(miss, "、"), err)})
+					Message: fmt.Sprintf("⚠ 本集旧稿有 %d 条不合剧本契约（%s），但**备份不出去**(%v) —— 为免销毁内容，本次不重写；"+
+						"请检查项目目录的写入权限后重跑", len(issues), briefIssueSummary(issues, 2), err)})
 				return
 			}
 			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-				Message: fmt.Sprintf("🔁 本集旧稿缺 %d 个必需节（%s）—— 旧稿已备份到 source-brief-prev.txt，本次按契约**重写这一集剧本**",
-					len(miss), strings.Join(miss, "、"))})
+				Message: fmt.Sprintf("🔁 本集旧稿有 %d 条不合剧本契约：%s —— 旧稿已备份到 source-brief-prev.txt，本次按契约**重写这一集剧本**",
+					len(issues), briefIssueSummary(issues, 3))})
 		}
 	}
 	orig := episodeOrigOf(src)
@@ -353,9 +361,12 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 		"\n"+
 		"一、爆款开篇(必执行)\n"+
 		"1. 开篇 3 秒爆点:第一句就必须抛出极致冲突/绝境/反转/悬念 —— 无铺垫、无旁白起手,"+
-		"直接切入高潮名场面(绝境受辱、生死危机、惊天揭秘、逆袭打脸、天降机缘)。\n"+
+		"直接切入高潮名场面(绝境受辱、生死危机、惊天揭秘、逆袭打脸、天降机缘)。"+
+		"**这句台词或动作要写成第 1 场正文的最前面 2-3 行** —— 分镜第一镜就得拍到它;"+
+		"写成「某年某地、某个不该存在的××睁开了眼」这种旁白概述不算爆点。\n"+
 		"2. 爽点密度:每 80 字左右一个小爽点,每 200 字左右一个大爽点;主角全程不憋屈、不拖沓,"+
-		"逆袭/打脸/揭秘/升阶的节奏拉满,给足即时快感。\n"+
+		"逆袭/打脸/揭秘/升阶的节奏拉满,给足即时快感。"+
+		"每场的「爽点:」节必须写明是「小爽点」还是「大爽点」,**全集至少 2 个大爽点**,写清具体是哪一下。\n"+
 		"3. 段段留钩:每一段结尾必须留悬念/伏笔/反转预告,杜绝平淡收尾,让人看完这段必看下一段。\n"+
 		"4. 合规零风险:不写血腥、暴力、色情、恐怖、惊悚、低俗;冲突与惩戒一律用温和方式呈现。\n"+
 		"\n"+
@@ -382,12 +393,15 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 		// 每条都来自作者的《一、网文小说转剧本提示词指令》（爆点/爽点密度/段段留钩/人物与道具细节）
 		// 加上分镜真正需要的"场次与功能"标注。
 		"五、**输出格式(必须逐节写出,节标题逐字照抄 —— 分镜会按这些节取信息)**\n"+
-		"【开场爆点】一句话:3 秒内抛出极致冲突/绝境/反转/悬念(无铺垫、无旁白起手)。\n"+
+		"【开场爆点】一句话:3 秒内抛出极致冲突/绝境/反转/悬念(无铺垫、无旁白起手);"+
+		"**这句台词或动作必须出现在第 1 场正文的最前面 2-3 行**(分镜第一镜就拍它)。\n"+
 		"【场 1|地点|时间|内外】\n"+
+		"  (**每一场**都要把这五节 + 正文逐节写全 —— 缺一节,分镜就少一份依据)\n"+
 		"  目的:这场戏要让观众得到什么(一句话)\n"+
 		"  冲突:谁和谁、争什么\n"+
 		"  转折:在哪里翻(哪一句台词/哪一个动作)\n"+
-		"  爽点:小爽点或大爽点 —— 具体是哪一下\n"+
+		"  爽点:写明「小爽点——…」或「大爽点——…」并说清具体是哪一下"+
+		"(**全集至少 2 个大爽点**:逆袭/打脸/揭秘/升阶,写成能拍的动作或台词)\n"+
 		"  钩子:这场结尾留下的悬念/伏笔\n"+
 		"  正文:该场的动作与台词(短句、画面感、台词逐字)\n"+
 		"【场 2|地点|时间|内外】 …(每场一节,场号连续)\n"+
@@ -408,35 +422,45 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 	}
 	// **生成 → 机器判定 → 喂回去重写**（本仓对模型的一贯口径，见 internal/director/repair.go）。
 	//
-	// 结构是**机器能判定**的东西（missingBriefSections 逐节点名），所以缺节不该只留一句告警：
-	// 把缺的节名连同上一稿一起喂回去，让它补**一轮**。只做一轮 —— 预算失控比留着缺陷更糟
+	// 判据是**机器能判定**的东西 —— 结构缺节（missingBriefSections）**加上**爆款纪律
+	// （briefViralIssues：爆点有没有真的演在第 1 场正文最前面、大爽点够不够、每场有没有逐节写全）
+	// 合起来看 briefContractIssues。所以违规不该只留一句告警：把违规连同上一稿一起喂回去，
+	// 让它改**一轮**。只做一轮 —— 预算失控比留着缺陷更糟
 	// （用户会为了一集反复重跑，每次多一轮调用既慢又容易触发限流）。
-	if miss := missingBriefSections(out); len(miss) > 0 && !briefLooksEmpty(out) {
+	if issues := briefContractIssues(out); len(issues) > 0 && !briefLooksEmpty(out) {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-			Message: fmt.Sprintf("⚠ 本集剧本缺 %d 个必需节（%s）—— 把缺的节喂回去**补写一轮**（剧本少一节，分镜就少一份依据）",
-				len(miss), strings.Join(miss, "、"))})
-		ask := fmt.Sprintf("你上一稿**缺少**以下必需节：%s\n"+
-			"请**只补全这几节**，并重新输出**完整剧本全文**：节标题逐字照抄（【开场爆点】、【关键道具与信息】、【本集钩子】，"+
-			"以及每场下面的「目的:/冲突:/转折:/爽点:/钩子:」—— 冒号写成半角或全角都可以，不影响判定），场号连续，场次头写成「【场 N|地点|时间|内外】」。\n"+
-			"不要解释、不要前言后语、不要列出你改了哪里 —— 只输出改编后的剧本全文（中文）。",
-			strings.Join(miss, "、"))
+			Message: fmt.Sprintf("⚠ 本集剧本有 %d 条不合契约：%s —— 喂回去**补写一轮**（剧本少一份依据，分镜就少一份依据）",
+				len(issues), briefIssueSummary(issues, 3))})
+		// 指令必须写成**可执行动作**（本仓对模型的一贯做法）：不写"要有爆点"，而写
+		// "把这一句放进第 1 场正文的最前面"；不写"爽点要密"，而写"至少 2 个大爽点、写明标签"。
+		ask := fmt.Sprintf("你上一稿有 %d 条不合剧本契约，逐条列在下面：\n%s\n\n"+
+			"请**逐条改掉**，并重新输出**完整剧本全文**（不要解释、不要前言后语、不要只列出改动）：\n"+
+			"· 开场 3 秒爆点：【开场爆点】里的那一句（台词或动作）必须出现在**第 1 场正文的最前面 2-3 行** —— "+
+			"不许让正文从环境描写、外形描写或旁白起手（分镜第一镜就得拍到它）。\n"+
+			"· 爽点：每场的「爽点:」节写明「小爽点——…」或「大爽点——…」；全集至少 2 个大爽点（逆袭/打脸/揭秘/升阶），"+
+			"每个都写成能拍的动作或台词。\n"+
+			"· 结构：节标题逐字照抄（【开场爆点】、【关键道具与信息】、【本集钩子】，以及每场下面的"+
+			"「目的:/冲突:/转折:/爽点:/钩子:」—— 冒号写成半角或全角都可以，不影响判定），场号连续，"+
+			"场次头写成「【场 N|地点|时间|内外】」，**每一场都要把这五节 + 正文写全**。\n"+
+			"· 台词逐字保留（分镜会原样进配音），中文，%d-%d 字。",
+			len(issues), briefIssueBullets(issues), epScriptMinRunes, epScriptMaxRunes)
 		if fixed, ferr := client.Chat(ctx, []llm.Message{
 			{Role: "system", Content: sys},
 			{Role: "user", Content: user},
 			{Role: "assistant", Content: out},
 			{Role: "user", Content: ask},
 		}, false); ferr == nil && strings.TrimSpace(fixed) != "" {
-			after := missingBriefSections(fixed)
-			// **只在真的变好且没改坏时才采纳**（缺节变少、且不是空稿）：与 repair.go 的
+			after := briefContractIssues(fixed)
+			// **只在真的变好且没改坏时才采纳**（违规条数变少、且不是空稿）：与 repair.go 的
 			// adoptRepaired 同一条纪律 —— 自纠不许把产物弄坏。
-			if adoptRepairedBrief(miss, fixed) {
+			if adoptRepairedBrief(issues, fixed) {
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-					Message: fmt.Sprintf("✔ 补写一轮：缺节从 %d 降到 %d（%s）",
-						len(miss), len(after), orDefault(strings.Join(after, "、"), "无"))})
+					Message: fmt.Sprintf("✔ 补写一轮：不合契约从 %d 条降到 %d 条（剩：%s）",
+						len(issues), len(after), orDefault(briefIssueSummary(after, 2), "无"))})
 				out = fixed
 			} else {
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-					Message: fmt.Sprintf("⚠ 补写一轮后缺节没有变少（仍缺 %d 节）—— 保留原稿（改坏的不采纳）", len(after))})
+					Message: fmt.Sprintf("⚠ 补写一轮后不合契约的条数没有变少（仍 %d 条）—— 保留原稿（改坏的不采纳）", len(after))})
 			}
 		}
 	}
@@ -458,11 +482,11 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 				"重跑批量产线（它会先补剧本再进管线）即可，不需要手工补节"})
 		return
 	}
-	if missing := missingBriefSections(out); len(missing) > 0 {
+	if issues := briefContractIssues(out); len(issues) > 0 {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
-			Message: fmt.Sprintf("⚠ 本集剧本补写一轮后仍缺 %d 个必需节：%s —— 分镜会因此少一份依据（重点平摊、机位只能自己猜）。"+
-				"**重跑本阶段会重写这一集**（旧稿会备份成 source-brief-prev.txt）；也可以直接手改 source.txt 的那几节后重跑",
-				len(missing), strings.Join(missing, "、"))})
+			Message: fmt.Sprintf("⚠ 本集剧本补写一轮后仍有 %d 条不合契约：%s —— 分镜会因此少一份依据（重点平摊、机位只能自己猜）。"+
+				"**重跑本阶段会重写这一集**（旧稿会备份成 source-brief-prev.txt）；也可以直接手改 source.txt 的那几处后重跑",
+				len(issues), briefIssueSummary(issues, 3))})
 	}
 }
 
@@ -473,9 +497,9 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 // **批量产线还没轮到这一集**（或中途被打断），`source.txt` 里 `【本集剧情】` 下面是空的。
 // 那时该说的是"这一步没跑成、重跑一次就好"，而不是让人去补五节。判据取 80 字：
 // 一部短剧的一集剧本不可能只有几十字。
-// briefIsUsable 这一份剧情段**能不能当剧本用**（2026-10-06 审计）。
+// briefIsUsable 这一份剧情段**能不能当剧本用**（2026-10-06 审计；2026-10-07 加爆款纪律）。
 //
-// 判据两条，缺一不可：**字数达标** + **结构完整**。
+// 判据三条，缺一不可：**字数达标** + **结构完整** + **爆款纪律**（briefViralIssues）。
 // 只看字数是老判据，它把两份"不是剧本的东西"放了过去：
 //
 //	· 拆集那一步的**剧情节拍 brief**（被要求 400-700 字，模型常态超发到 800+）——
@@ -484,23 +508,31 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 //
 // 两者都会让 `【本集剧情】` 长驻一份"看着有内容"的稿子，而分镜一直少依据；
 // 更要紧的是：告警让人"重跑本阶段"，而重跑正是被这个判据挡住的 ⇒ 建议做不到。
+//
+// 【为什么把爆款纪律也算"不可用"】用户 2026-10-07：「总感觉剧本提取文章内容不是按照爆款短剧
+// 要求来的」。那四条纪律里能确定性判的（爆点有没有真的演在第 1 场正文最前面、大爽点够不够、
+// 每场有没有逐节写全）都是**这份稿子合不合格**的一部分 —— 不合格就该按契约重做这一集
+// （旧稿先备份），而不是"照跑，只留一条告警"。
 func briefIsUsable(brief string) bool {
 	if len([]rune(strings.TrimSpace(brief))) < epScriptMinRunes {
 		return false
 	}
-	return len(missingBriefSections(brief)) == 0
+	return len(briefContractIssues(brief)) == 0
 }
 
-// adoptRepairedBrief 补写一轮的结果能不能采纳：**缺节必须真的变少，且不能变成空稿**。
+// adoptRepairedBrief 补写一轮的结果能不能采纳：**不合契约的条数必须真的变少，且不能变成空稿**。
 //
 // 与 `director.adoptRepaired` 同一条纪律（自纠不许把产物弄坏）：模型"改一遍"完全可能
 // 改得更差（少了两节、把台词删了、只回一句"好的"）。判据写死在这里，别人问"补写到底
 // 有没有用"时看这一个函数即可。
+//
+// 判据与生成后的自检**同一份**（briefContractIssues：结构 + 爆款纪律）——
+// 否则会出现"按结构判变好了、按爆款判更差了"这种自相矛盾的采纳。
 func adoptRepairedBrief(before []string, fixed string) bool {
 	if briefLooksEmpty(fixed) {
 		return false // 空稿 = 这一轮没产出，绝不能顶掉原稿
 	}
-	return len(missingBriefSections(fixed)) < len(before)
+	return len(briefContractIssues(fixed)) < len(before)
 }
 
 func briefLooksEmpty(brief string) bool {
@@ -562,7 +594,45 @@ func missingBriefSections(brief string) []string {
 	return missing
 }
 
-// episodeBriefOf 取 source.txt 里【本集剧情】那一段。
+// briefEndMarkers 剧情段在 source.txt 里的**终止标记**（平台自己写在这一段之后的节）。
+//
+// 【为什么不能用"第一个空行"当边界】（2026-10-07 真机实测，代价最大的一处）
+// 原实现是 `strings.Index(rest, "\n\n")` —— 而**模型写的剧本本来就有空行**：
+// 真机第01集 source.txt 的【本集剧情】下面是
+//
+//	【本集剧情】【开场爆点】“重新检测到生命反应。”——灰纪元第八万年，…
+//	                      ← 这里就有一个空行
+//	【场 1|归墟环·维护舱|灰纪元第八万年·第三千四百六十二标准日|内】
+//
+// 于是 episodeBriefOf 只取回 **51 字**（那一句爆点），而整段剧本是 2090 字。三件事一起发生：
+//
+//	① 完整性判据 `briefIsUsable` 永远判"这份剧本不可用"（字数与结构都按 51 字那一段算）；
+//	② 于是**每跑一次这一集都重新调 LLM 改编剧本**、把上一次的稿子覆盖掉；
+//	③ 连备份都轮不到 —— 备份分支的门槛里写着 `len(brief) >= epScriptMinRunes`，51 字过不去，
+//	   所以是**静默覆盖**（用户"总感觉剧本提取文章内容不是按爆款要求来的"里有一半是这个：
+//	   每轮都是新编的，内容当然飘；而且写回时同样按"第一个空行"切，旧稿会残留在文件里）。
+//
+// 现在的边界取**平台自己写的节标记**（拆集那一步写的是 `\n\n【本集原文】(素材：…)`），
+// 与"模型爱在哪里空行"无关。
+// 标记**不带换行符**：读的时候落在【上、由 TrimSpace 收尾；写回时由调用方补一个空行，
+// 免得吃掉原来那一行分隔。
+var briefEndMarkers = []string{"【本集原文】", "【本集剧情】", "【前情提要】"}
+
+// briefSectionEnd 剧情段在 src[from:] 里的结束下标（不含终止标记）；无标记 ⇒ 到文末。
+func briefSectionEnd(rest string) int {
+	end := -1
+	for _, m := range briefEndMarkers {
+		if i := strings.Index(rest, m); i >= 0 && (end < 0 || i < end) {
+			end = i
+		}
+	}
+	if end < 0 {
+		return len(rest)
+	}
+	return end
+}
+
+// episodeBriefOf 取 source.txt 里【本集剧情】那一段（到下一个平台节标记为止）。
 func episodeBriefOf(src string) (string, bool) {
 	const mark = "【本集剧情】"
 	i := strings.Index(src, mark)
@@ -570,10 +640,7 @@ func episodeBriefOf(src string) (string, bool) {
 		return "", false
 	}
 	rest := src[i+len(mark):]
-	if j := strings.Index(rest, "\n\n"); j >= 0 {
-		return strings.TrimSpace(rest[:j]), true
-	}
-	return strings.TrimSpace(rest), true
+	return strings.TrimSpace(rest[:briefSectionEnd(rest)]), true
 }
 
 // episodeOrigOf 取 source.txt 里【本集原文】那一段（没有标记时退回全文）。
