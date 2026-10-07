@@ -427,6 +427,11 @@ type HealResult struct {
 	// **每刀 1.5–4 秒 / 首刀为 0 / 时间点严格递增 / 各刀之和 = 片段时长**这几条（用户文件里的
 	// 硬要求）**永久空转**。`ParseCutsFromPrompt` 早就写好了，缺的只是在**唯一读取边界**调用它。
 	Cuts int
+	// Voices 补上声线的**角色卡张数**（2026-10-07：走锚表补出来的卡从来不写 voice，
+	// 渲染侧所有"无声线卡"落到同一个常数 ⇒ 几个角色一个嗓子；见 voice_defaults.go）。
+	Voices int
+	// VoiceNames 被补上声线的角色名（要播报"补了谁的嗓子"）。
+	VoiceNames []string
 }
 
 // HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
@@ -462,6 +467,9 @@ func HealPlan(plan *Plan) HealResult {
 	// 并卡会把被丢掉的 id 的引用改写成保留的 id，跑在归一之前才对得上。
 	charDupes := DedupeCharacters(plan)
 	entFixed, entUnknown, entLoose := RemapEntityRefs(plan)
+	// 声线兜底排在并卡之后：并掉的卡不必再补嗓子（不然播报里会多出几个已不存在的名字）。
+	// 它只填空的，已有 voice 的卡一个字不动；同名同声、异名不同声（见 voice_defaults.go）。
+	voices, voiceNames := FillMissingVoices(plan)
 	return HealResult{
 		EntityRefs:        entFixed,
 		EntityRefsUnknown: entUnknown,
@@ -477,6 +485,8 @@ func HealPlan(plan *Plan) HealResult {
 		MusicNA:   EnsureMusicNA(plan),
 		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
 		// 补上之后 `CutIssues` 那几条（每刀 1.5–4 秒等）才真正开始工作。
-		Cuts: plan.FillCutsFromPrompt(),
+		Cuts:       plan.FillCutsFromPrompt(),
+		Voices:     voices,
+		VoiceNames: voiceNames,
 	}
 }

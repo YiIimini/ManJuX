@@ -434,6 +434,13 @@ func normalizePlan(plan *project.Plan, opt Options) {
 				"此前结构字段一直是空的，于是「每刀 1.5–4 秒 / 首刀为 0 / 各刀之和 = 片段时长」这几条判据**从来没跑过**",
 				hr.Cuts)
 		}
+		if hr.Voices > 0 {
+			// 【2026-10-07】走锚表补出来的角色卡从来不写 voice（EnsureAnchorCast 只写
+			// Description/ImagePrompt），渲染侧所有"无声线卡"落到同一个常数 ⇒ 几个角色一个嗓子。
+			// 这里按"基名＋性别"确定性补上：同名同声、异名不同声，跨镜跨集稳定。
+			opt.OnNote("✔ "+project.VoiceSummary(hr.VoiceNames)+" —— "+
+				"此前这些人（以及无卡说话人）停在**同一句**默认声线，成片里是好几个人一个嗓子", hr.Voices)
+		}
 	}
 }
 

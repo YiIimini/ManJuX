@@ -176,6 +176,13 @@ func defaultVoiceFor(name string) string {
 			return syntheticVoiceDefault
 		}
 	}
+	// 认不出的说话人（家丁甲/路人乙…）：**按名字派生**一条池子里的声线，不是所有人共用一句。
+	// 【2026-10-07 真机复核】此前这里返回常数 genericVoiceDefault ⇒ 无卡说话人**同一个嗓子**
+	// （家丁甲与家丁乙、路人丙，一个声音）；与"角色卡缺 voice"那条撞声通路同源。
+	// 派生是确定性的：同名永远同一条（跨镜、跨集），不同名不同条（见 project.DerivedVoice）。
+	if v := project.DerivedVoice(n, ""); v != "" {
+		return v
+	}
 	return genericVoiceDefault
 }
 

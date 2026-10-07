@@ -53,6 +53,25 @@ func TestSessionProgressLogsAreUserFacing(t *testing.T) {
 	}
 }
 
+// TestHealReportTellsTheUserAboutFilledVoices 自愈改了什么必须**看得见**（盯新增的"补声线"那条）。
+//
+// 【2026-10-07】走锚表补出来的角色卡从来没有 voice（`pipeline.EnsureAnchorCast` 只写
+// Description/ImagePrompt），渲染侧于是所有这类卡共用一个常数默认声线 —— 成片里几个角色同一个嗓子。
+// 修法在 `project.HealPlan`（唯一读取边界）里补声线，但**补了必须播报**：否则用户只会觉得
+// "怎么好几个声音一样"，而平台一声不吭（本仓对静默降级的铁律）。这条门盯住那段播报不被删。
+func TestHealReportTellsTheUserAboutFilledVoices(t *testing.T) {
+	raw, err := os.ReadFile("director.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripCommentLines(string(raw))
+	for _, want := range []string{"hr.Voices", "project.VoiceSummary(hr.VoiceNames)"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("自愈结果里的声线播报少了 %q —— 补了声线用户却看不到（静默降级）", want)
+		}
+	}
+}
+
 // stripCommentLines 去掉整行注释（本仓其它源码扫描门同一手法：注释里的反面教材不算违规）。
 func stripCommentLines(src string) string {
 	var out []string

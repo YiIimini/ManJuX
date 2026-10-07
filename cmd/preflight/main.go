@@ -55,10 +55,13 @@ func main() {
 	// 走平台**同一套自愈**（器物对号/补 prop_ids/补台词标签/补画外素材/回填小镜头结构），
 	// 否则预检会报渲染器早已修好的假警。每个计数都要列出来 —— "自愈改了什么"必须看得见。
 	healed := project.HealPlan(&plan)
-	if healed.PropRefs+healed.PropRefsFilled+healed.Dialogue+healed.Voiceover+healed.Cuts > 0 {
+	if healed.PropRefs+healed.PropRefsFilled+healed.Dialogue+healed.Voiceover+healed.Cuts+healed.Voices > 0 {
 		fmt.Printf("（已按平台自愈口径修过：器物对号 %d 处 / 补 prop_ids %d 处 / 补台词标签 %d 镜 / "+
-			"补画外素材 %d 镜 / 回填小镜头结构 %d 片段）\n",
-			healed.PropRefs, healed.PropRefsFilled, healed.Dialogue, healed.Voiceover, healed.Cuts)
+			"补画外素材 %d 镜 / 回填小镜头结构 %d 片段 / 补角色声线 %d 张）\n",
+			healed.PropRefs, healed.PropRefsFilled, healed.Dialogue, healed.Voiceover, healed.Cuts, healed.Voices)
+		if healed.Voices > 0 {
+			fmt.Printf("  补了声线的卡：%s\n", strings.Join(healed.VoiceNames, "、"))
+		}
 	}
 	fmt.Printf("=== 渲染前预检：%s ===\n", filepath.Base(projDir))
 	fmt.Printf("角色 %d 张（%d 个人） / 场景 %d / 道具 %d / 分镜 %d 镜\n\n",

@@ -166,8 +166,58 @@ func TestDefaultVoiceForSeparatesSystemFromNarrator(t *testing.T) {
 	if got := defaultVoiceFor("旁白"); got != narratorVoiceDefault {
 		t.Errorf("旁白该用旁白默认，实得 %q", got)
 	}
-	if got := defaultVoiceFor("家丁甲"); got != genericVoiceDefault {
-		t.Errorf("认不出的说话人该用中性默认（也不能让模型每镜现编），实得 %q", got)
+	// 认不出的说话人：**按名字派生**池子里的声线（2026-10-07 改口径）——
+	// 此前是所有人共用常数 genericVoiceDefault ⇒ 家丁甲/家丁乙/路人丙 一个嗓子。
+	// 判据两条：同名的值必须与派生一致（跨镜稳定），**两个不同名不许相同**。
+	if got, want := defaultVoiceFor("家丁甲"), project.DerivedVoice("家丁甲", ""); got != want {
+		t.Errorf("无卡说话人该按名字派生声线，实得 %q，期望 %q", got, want)
+	}
+	if defaultVoiceFor("家丁甲") == defaultVoiceFor("家丁乙") {
+		t.Error("家丁甲与家丁乙不该共用一句声线（无卡说话人撞声）")
+	}
+}
+
+// TestHealedPlanGivesEachCharacterHisOwnVoice 读取边界补出来的声线**必须真到渲染侧**。
+//
+// 2026-10-07：`EnsureAnchorCast` 补出来的卡（苔生/拾叁/…)与②会话漏写 voice 的卡，
+// 渲染侧要么什么都绑不上、要么全落到同一句默认声线 ⇒ 成片里"好几个人一个嗓子"。
+// 这一条把链路串起来测：**HealPlan（唯一读取边界）→ voiceFor（渲染侧取声线）**，
+// 判据是两个不同角色不许拿到同一条，且三个角色都得有声线。
+func TestHealedPlanGivesEachCharacterHisOwnVoice(t *testing.T) {
+	plan := &project.Plan{Characters: []project.Character{
+		{Name: "苔生", Kind: "human", Description: "- 性别：女"},
+		{Name: "拾叁", Kind: "human", Description: "- 性别：女"},
+		{Name: "邵舷", Kind: "human", Description: "- 性别：男"},
+	}}
+	// 没有走读取边界时：声线只能"按名字从**中性池**派生"（模板不知道性别）——
+	// 这正是这张卡缺 voice 的代价：女角色会拿到中性嗓，而且没有"同一份方案内不撞声"这层保障。
+	before, ok := voiceFor(plan, "苔生")
+	if !ok || before != project.DerivedVoice("苔生", "") {
+		t.Fatalf("未经自愈时应落到按名字派生的中性默认，实得 %q（ok=%v）", before, ok)
+	}
+	project.HealPlan(plan)
+	got := map[string]string{}
+	for i, n := range []string{"苔生", "拾叁", "邵舷"} {
+		v, ok := voiceFor(plan, n)
+		if !ok || strings.TrimSpace(v) == "" {
+			t.Fatalf("自愈之后「%s」还是没有声线 —— 渲染时只能让模型现编", n)
+		}
+		if card := strings.TrimSpace(plan.Characters[i].Voice); v != card {
+			t.Errorf("渲染侧没读到卡片上的声线：「%s」卡上是 %q，voiceFor 给的是 %q", n, card, v)
+		}
+		got[n] = v
+	}
+	if got["苔生"] == before {
+		t.Error("自愈该把锚表里的性别带上（女声池），否则女角色一直在中性嗓里")
+	}
+	if got["苔生"] != project.DerivedVoice("苔生", "female") {
+		t.Errorf("苔生该走女声池，实得 %q", got["苔生"])
+	}
+	if got["苔生"] == got["拾叁"] {
+		t.Errorf("苔生与拾叁拿到同一条声线（%q）—— 成片里是同一个嗓子", got["苔生"])
+	}
+	if got["邵舷"] == got["苔生"] || got["邵舷"] == got["拾叁"] {
+		t.Errorf("男声池与女声池撞了：邵舷 %q", got["邵舷"])
 	}
 }
 
