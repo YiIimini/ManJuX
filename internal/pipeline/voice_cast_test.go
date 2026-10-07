@@ -95,8 +95,10 @@ func TestShotRenderPromptPassesShotSpeakers(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, "ShotSpeakers(plan, shot)") {
-		t.Error("装配点必须按镜头过滤音色清单(ShotSpeakers)—— 传全剧角色表会让每个镜头都背一份含童声的清单")
+	// 2026-10-07：装配点从 ShotSpeakers 换成 ShotCasting（= ShotSpeakers + 无卡说话人的平台默认
+	// 音色）—— 判据仍是"按镜头过滤"，且**不得**退回全剧角色表。
+	if !strings.Contains(src, "ShotCasting(plan, shot)") {
+		t.Error("装配点必须按镜头过滤音色清单(ShotCasting)—— 传全剧角色表会让每个镜头都背一份含童声的清单")
 	}
 	// 反面判据:装配点不得再把全剧角色表传进去(那正是本次修的 bug)。
 	// 允许 voice_bind.go 自己保留 plan 形参(签名不变),只看装配点那一行。

@@ -607,6 +607,22 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return nil
 	}
 	c.emit(proj.ID, PhaseRender, 0, "success", 100, "✔ 渲染完成:新出 %d 镜,跳过 %d 镜", done, skipped)
+	// 【2026-10-07】声线重绑与"认不出"的句数也在这里一并播报（与清单失败同一个收尾处；
+	// 逐镜播报会刷屏）。计数由 pipeline.BindLineVoices 在装配每一镜时累加。
+	if plan != nil && (plan.VoiceRebound > 0 || plan.VoiceUnresolved > 0) {
+		if plan.VoiceRebound > 0 {
+			c.emit(proj.ID, PhaseRender, 0, "info", 100,
+				"🔊 已把 %d 句台词的声线**逐字绑**成角色卡上的原文（模型自己写的那版措辞被换掉了）—— "+
+					"H3 拿这段文字当音频条件，措辞一变音色就变（官方 §4.4：rewording changes the timbre）；"+
+					"这是平台自动处理，无需你做什么", plan.VoiceRebound)
+		}
+		if plan.VoiceUnresolved > 0 {
+			c.emit(proj.ID, PhaseRender, 0, "warn", 100,
+				"⚠ 另有 %d 句台词**认不出说话人/权威声线**（`<d>` 里的文本与 dialogue 对不上，或说话人名两边写法不同）—— "+
+					"这几句保持原样（宁可让模型自由发挥，也不塞错人的音色）；要根治请让这几句的 `<d>` 与 dialogue 逐字一致",
+				plan.VoiceUnresolved)
+		}
+	}
 	// 【2026-09-28 审计 A12 的收尾】清单落盘失败在这里**统一报一次**（逐镜报会刷屏，
 	// 不报则用户只看到上面那句"渲染完成"，重开应用才发现已渲镜头全被判为未渲）。
 	if n, err := c.takeManifestSaveFailure(); n > 0 {
@@ -986,7 +1002,6 @@ func (c *Coordinator) setShotStatusLen(projectID string, manifest map[string]pro
 	manifest[key] = m
 	// 【2026-09-28 审计 A12】原来是 `c.store.SaveManifest(...)` —— **返回值整个丢弃**。
 	// 后果：清单写不进时，每镜的状态只活在内存里；**重开应用后已渲的镜头全部判为未渲**，
-	// 一集几十镜白渲一遍。而这条链每一镜都会走，所以**不能每镜播报**（会刷屏），
 	// 用 `manifestSaveFailed` 记一次、阶段末统一说（见 renderStage 的收尾播报）。
 	if err := c.store.SaveManifest(projectID, manifest); err != nil {
 		c.markManifestSaveFailed(err)

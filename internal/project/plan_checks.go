@@ -1015,7 +1015,12 @@ func checkVoiceover(p *Plan, add func(level, where, format string, a ...any)) {
 				// **哑剧检查**（技能侧生成规范 §6.6 的精确口径）：画面里有人在说，
 				// 却在正文里写了「嘴唇完全闭合」—— 渲出来口型不动，观众看到的是「人在演但没声」。
 				// 反方向（真画外却没写闭嘴句）由 HasVoiceover 那条门管。
-				if strings.Contains(sh.H3Prompt, VoiceoverClauseMarker) {
+				//
+				// 【2026-10-07 修：混合镜不算哑剧】一镜里**既有**画面里的人说话、**又有**画面外
+				// 的人说话（真机第01集大量如此：祁七在画面里、舱内AI 在画面外），
+				// 那句"闭着嘴"是给画外那句写的，合法且必要 —— 原来只看"正文里有没有那个串"
+				// 会把这批镜全报成哑剧。判据补上"本镜有没有画面外的说话人"。
+				if strings.Contains(sh.H3Prompt, VoiceoverClauseMarker) && len(OffScreenSpeakers(p, sh)) == 0 {
 					monologue = append(monologue, fmt.Sprintf("#%d", sh.ID))
 				}
 			}

@@ -285,6 +285,21 @@ type Plan struct {
 	// StrippedPlaceholders 读取时被清掉的**占位台词标签**句数（`<d>…</d>` 里没有真话的那些）。
 	// 单独计数是为了如实播报：用户听到的"怪配音"就是从这些标签来的，清了要说一声。
 	StrippedPlaceholders int `json:"-"`
+	// VoiceRebound 本次装配时被**按权威声线重绑**的台词句数（见 pipeline.BindLineVoices）。
+	//
+	// 【为什么要有这个数】2026-10-07 真机实测：角色卡上写着 voice，提示词里也写着「逐字照抄，
+	// 不得改写」，而 H3 是把那句引述当**音频条件**用的（"rewording it changes the timbre"，
+	// 见 internal/director/prompts/sysH3Format__H3_PROMPT_FORMAT_CRITICAL.md）——
+	// 模型照样每镜改写一遍（真机 13 镜 11 句，卡片原文一次都没出现）⇒ 音色逐镜漂移。
+	// 平台现在在装配点**确定性重绑**（不让模型自觉），重绑了几处要如实说一声。
+	// 与 StrippedPlaceholders 同样**不进 JSON**：它是装配期的诊断量，不是方案的一部分。
+	VoiceRebound int `json:"-"`
+	// VoiceUnresolved 本次装配时**认不出说话人/权威声线**、因而保持原样的台词句数。
+	//
+	// 认不出的情形只有两种：<d> 里的台词与方案里的 dialogue 一个字都对不上（模型改了词），
+	// 或者说话人名两边写法对不上。这两种都**不猜**（宁可留着让模型自由发挥，也不要塞错人的音色），
+	// 但要如实播报 —— 静默保留 = 用户以为"声线都绑好了"。
+	VoiceUnresolved int `json:"-"`
 }
 
 // Asset 参考图资产。

@@ -459,11 +459,24 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 			shot.H3Prompt = strings.TrimRight(shot.H3Prompt, "\n") + clause
 		}
 	}
-	// casting 清单只列**本镜真的会开口的人**(见 ShotSpeakers 的说明):以前这里传的是
-	// `plan.Characters`(全剧角色),于是每个镜头都背着一份 6 人的音色表 —— 含一个 10 岁
-	// 顽童的童声。没有台词的镜头(本集 54 镜里 17 镜)照样收到"这些人要用这些嗓子说话",
-	// 模型就把音频填成人声嘈杂,用户听到的是"全是小孩子乱吵"。
-	return EnsureVoiceInline(EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj)))), plan, ShotSpeakers(plan, shot))
+	// casting 清单只列**本镜真的会开口的人**（见 ShotSpeakers 的说明）：以前这里传的是
+	// `plan.Characters`（全剧角色），于是每个镜头都背着一份 6 人的音色表 —— 含一个 10 岁
+	// 顽童的童声。没有台词的镜头(本集 54 镜里 17 镜)照样收到"这些人要用这些嗓子说话"，
+	// 模型就把音频填成人声嘈杂，用户听到的是"全是小孩子乱吵"。
+	//
+	// 【2026-10-07】ShotCasting = ShotSpeakers + **无卡说话人的平台默认音色**（真机 shot 1
+	// 里唯一说话的「舱内AI」不是角色卡 ⇒ 那份 casting 块整段缺席，一个正在说话的人没有任何
+	// 音色约束）；紧接着 BindLineVoices 把每句台词的引述**逐字绑**成权威声线（卡片 voice /
+	// 平台默认）—— 模型自己改写的那一版会被换掉（H3 拿这段文字当音频条件，措辞一变音色就变）。
+	promptOut := EnsureVoiceInline(EnsureOnScreenTextRule(EnsureChineseDialogue(anchorPrompt(plan, shot, facesOnOf(proj)))), plan, ShotCasting(plan, shot))
+	// 逐句把引述里的声线绑成**权威文本**（卡片 voice / 平台默认）；绑了几处如实计数，
+	// 由渲染阶段播报一次（见 stages_render.go 的 VoiceRebound）。
+	promptOut, nBound, nUnresolved := BindLineVoices(promptOut, plan, shot)
+	if plan != nil {
+		plan.VoiceRebound += nBound
+		plan.VoiceUnresolved += nUnresolved
+	}
+	return promptOut
 }
 
 // ShotSpeakers 本镜**真的会开口的人**:有台词的说话人(台词非空)+ 有旁白/画外音时的旁白者。

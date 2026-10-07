@@ -232,6 +232,14 @@ func FillMissingDialogueTags(plan *Plan) int {
 		if strings.TrimSpace(sh.H3Prompt) == "" {
 			continue
 		}
+		// **句数已经够就不补**（2026-10-07 修）：下面那个逐句循环在"模型把某句**改写**了"时
+		// 会判成"没说"，于是**再追加一句正确文本** —— 同一句台词在正文里出现两次，
+		// 用户听到的就是"重复配音"（2026-09-28 报过的那个症状）。
+		// 句数相等而文本不同的情形属于"台词通道对不上"，交给契约门
+		// （checkSpokenTextMatchesDialogue，fail + 喂回去重写），**不在这里悄悄叠一句**。
+		if shouldSkipDialogueFill(sh) {
+			continue
+		}
 		said := spokenInPrompt(sh.H3Prompt)
 		var lines []string
 		for _, ln := range sh.Dialogue {
@@ -252,6 +260,15 @@ func FillMissingDialogueTags(plan *Plan) int {
 		n++
 	}
 	return n
+}
+
+// shouldSkipDialogueFill 这一镜的正文**句数已经够**（`<d>` 数 ≥ 计划该说的句数）⇒ 不再追加。
+//
+// 只有"真的少说了几句"才需要平台补。改写过词的情形由契约门报出来、喂回去重写 ——
+// 平台在这里再叠一句，只会让同一句被念两遍。
+func shouldSkipDialogueFill(sh *Shot) bool {
+	planned := len(plannedSpokenLines(sh))
+	return planned == 0 || len(spokenInPrompt(sh.H3Prompt)) >= planned
 }
 
 // spokenInPrompt 正文里**已经说过的话**（每个 `<d>…</d>` 的内容，做「去标点 + 小写」归一）。
@@ -385,8 +402,15 @@ type HealResult struct {
 	// 每镜重新发明；名字是已知量，对号这件事平台能确定做对）。
 	PropRefsFilled int
 	Dialogue       int // 补了几镜的台词标签
-	Voiceover      int // 补了几镜的画外演出素材引用
-	MusicNA        int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
+	// AlignTags 把几镜的 `<d>` 文本**对齐到了 dialogue 的原文**（同一位置原本两句不一样）。
+	//
+	// 【为什么是平台做（2026-10-07 用户「配音存在乱配音」）】声音念 `<d>`、字幕烧 dialogue ——
+	// 两条独立通道。模型在 `<d>` 里改一个词，观众就是"听到的跟写着的不一样"。
+	// 逐句位置（第几句）是**已知量**（句数相等时按顺序一一对应），文本来处也是已知量 ⇒
+	// 平台能确定性地对齐，不该留给模型自觉。句数不等时不猜（那是"少说了一句/多说了一句"，报 fail）。
+	AlignTags int
+	Voiceover int // 补了几镜的画外演出素材引用
+	MusicNA   int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
 	// EntityRefs 分镜里的**名字引用**归一成卡片 id 的处数（五步会话输出的是名字，
 	// 见 entity_refs.go）；EntityRefsUnknown 是归一之后仍对不上卡片的引用数。
 	EntityRefs int
@@ -446,8 +470,11 @@ func HealPlan(plan *Plan) HealResult {
 		PropRefs:          RemapPropRefs(plan),
 		PropRefsFilled:    FillMissingPropRefs(plan),
 		Dialogue:          FillMissingDialogueTags(plan),
-		Voiceover:         FillVoiceoverAssets(plan),
-		MusicNA:           EnsureMusicNA(plan),
+		// 台词通道对齐**排在补标签之后**：先补上真的缺的那几句（句数补齐），
+		// 再把逐句文本对齐到 dialogue —— 顺序反了会把"缺一句"的情形也对错位。
+		AlignTags: AlignDialogueTags(plan),
+		Voiceover: FillVoiceoverAssets(plan),
+		MusicNA:   EnsureMusicNA(plan),
 		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
 		// 补上之后 `CutIssues` 那几条（每刀 1.5–4 秒等）才真正开始工作。
 		Cuts: plan.FillCutsFromPrompt(),

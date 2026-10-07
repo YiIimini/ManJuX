@@ -106,9 +106,14 @@ func TestValidatePlanCJKSubtractsSubjectNames(t *testing.T) {
 	p.Shots[0].Characters = []string{"char_" + names[0]}
 	// 夹具照真实形态写：出场角色必须有画面位置（官方分镜表 Character Positions 子字段）
 	p.Shots[0].Positions = map[string]string{"char_" + names[0]: "画面中央、中景、面朝镜头"}
-	// 台词一并清掉：本用例只测汉字门，而样例台词「阿甲」不在我刚换上的角色表里，
+	// 换掉样例台词：本用例只测汉字门，而样例台词「阿甲」不在我刚换上的角色表里，
 	// 会额外报一条无关 warn（说话人不在角色表），把"零 issue"的判据搅浑。
-	p.Shots[0].Dialogue = nil
+	//
+	// 【2026-10-07】原来这里把 Dialogue 整个清空，而正文里的 `<d>[Chinese]我准了。</d>` 留着 ——
+	// 于是出现"正文里说了话、dialogue 里没登记"（字幕里不会有这一句），
+	// 被新门 checkSpokenTextMatchesDialogue 报了一条 warn，同样搅浑零 issue 判据。
+	// 夹具照真实形态写：说出去的那一句在 dialogue 里必须有对应的登记。
+	p.Shots[0].Dialogue = []Line{{Speaker: names[0], Text: "我准了。"}}
 	p.Shots[0].Narration = ""
 	p.Shots[0].H3Prompt = compliantH3(sb.String())
 

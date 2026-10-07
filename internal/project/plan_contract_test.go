@@ -356,6 +356,9 @@ func TestValidatePlanAcceptsProperVoiceover(t *testing.T) {
 	// 内心独白：人就在画面里，但那句话是心里说的 —— 合法，且不算"说话人不在画面"
 	p2 := samplePlan()
 	p2.Shots[0].Dialogue = []Line{{Speaker: "阿甲", Text: "行。", OS: true}}
+	// 夹具照真实形态写：正文里说出去的那一句必须与 dialogue 逐字一致（声音念 `<d>`、
+	// 字幕烧 dialogue 字段）。这一条测的是"内心独白不该被判成哑剧"，不是台词通道对账，
+	p2.Shots[0].H3Prompt = strings.Replace(p2.Shots[0].H3Prompt, "<d>[Chinese] 我准了。</d>", "<d>[Chinese] 行。</d>", 1)
 	for _, it := range PlanFails(ValidatePlan(p2)) {
 		t.Fatalf("内心独白不该 fail：%s", it)
 	}

@@ -200,14 +200,21 @@ func PlanIssuesText(issues []Issue) []string {
 // OffScreenSpeakers 本镜里**说话的人不在画面内**的说话人（去重，保序）。
 //
 // 【2026-09-29 用户：「镜头外的说话声音不应该镜头内人动嘴唇」】
-// `HasVoiceover` 覆盖的是"这一镜本来就是画外演出"（旁白/内心/系统音/os 标记）——
+// `HasVoiceover` 覆盖的是"这一镜本来就是画外演出"（旁白/内心/系统音）——
 // 它**漏掉**了另一种同样常见的情形：台词是**画面外的人**说的（说话人有角色卡，
 // 但这一镜没让他出场）。此时 HasVoiceover 为 false ⇒ 不写闭嘴句 ⇒ H3 只看见一句
 // `<d>[Chinese]…</d>`，就让画面里的角色张嘴把别人的台词念了出来。
 //
 // 判据：逐条台词看说话人是否在**本镜的出场名单**里（名单在方案里是 id，说话人是名字，
 // 所以两边都要能对上：id / 名字 / 去括注的基名）。
-// os 标记与旁白说话人交给 HasVoiceover（那一条已经管了），这里不重复计数。
+//
+// 【2026-10-07 修：不再把 os 行整个甩给 HasVoiceover】原来这里有 `if l.OS … continue`，
+// 理由是"os 标记交给 HasVoiceover 那条路管" —— 而 `HasVoiceover` 在 `vo_kind=speech` 时
+// **直接 return false**（那是 2026-09-29 为治"哑剧"定的：speech 镜里画面里有人在说）。
+// 两者叠起来就是一个洞：真机第01集 12 句「舱内AI」的台词都标着 os=true、说话人不在本镜，
+// 却既不进 HasVoiceover、也不进这里 ⇒ **一句"闭嘴"约束都没有**，全靠模型自己在英文正文里
+// 写一句 off-screen（那一集它写了，但平台不能指望这个）。
+// 现在 os 只是"模型自己标的画外"，**判定权在平台**（说话人在不在出场名单里）。
 func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 	if plan == nil {
 		return nil
@@ -239,8 +246,13 @@ func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 			continue
 		}
 		if l.OS || IsVoiceoverSpeaker(name) {
-			continue // 画外标记 / 旁白说话人：HasVoiceover 那条路管
+			continue // 画外标记 / 旁白/系统音这类标签说话人：交给 HasVoiceover 与逐句声线绑定
 		}
+		// 【2026-10-07 不改这里的原因】曾想把它改成"系统音也算画面外说话人"，
+		// 但那样会把「系统音不在本镜」报成"画面里没这个人"（system_voice_test ⑤ 明确要求不许），
+		// 而真正缺的那一份约束已经由**逐句声线绑定**补上了：
+		// pipeline.BindLineVoices 会把画外那句写成 "<说话人> (Sx) says off-screen in <权威声线>: "，
+		// 逐句、确定性；不依赖 vo_kind 短路后的 HasVoiceover。
 		if onScreen[strings.ToLower(name)] {
 			continue // 他就在画面里，正常对口型
 		}
@@ -396,5 +408,6 @@ func ValidatePlan(p *Plan) []Issue {
 	// **新增的门一律接在最后**：门编号按源码顺序生成（tools/gatecat），插在中间会让
 	// 它后面所有门的编号整体后移 —— 而口头定位（「G014 太严」）与文档引用用的正是编号。
 	checkEntityRefs(p, add)
+	checkSpokenTextMatchesDialogue(p, add)
 	return out
 }
