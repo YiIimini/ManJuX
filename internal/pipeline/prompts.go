@@ -480,6 +480,9 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 	// 写成硬约束。判据来自 ASR 实测：写这一条之前，13 镜里 3 镜把同一句念了 2~3 遍、
 	// 3 镜凭空多出剧本里没有的话（详见 internal/asr/compare.go 的文件头）。
 	promptOut = EnsureSpokenLinesClause(promptOut, shot)
+	// 逐**小镜头**的人声位置（2026-10-08 真机实锤：模型把"每个小镜头都要说点什么"当成规则，
+	// 把台词整体前移一格、还在空出来的那格里自编了一句假中文 —— 见 EnsureSpeechPlacementClause 的文件头）。
+	promptOut = EnsureSpeechPlacementClause(promptOut, shot)
 	return promptOut
 }
 
@@ -621,6 +624,112 @@ func EnsureSpokenLinesClause(prompt string, shot *project.Shot) string {
 			"整镜的人声轨是安静的，只有环境声与动作音。)"
 	}
 	return strings.TrimRight(prompt, "\n") + "\n\n" + spokenLinesMarker + ":\n" + body
+}
+
+// speechPlacementMarker 幂等判据（改文案必须保留这个串，否则会重复叠加）。
+const speechPlacementMarker = "SPEECH PLACEMENT (MANDATORY)"
+
+// reCutMark 定位提示词里的每一刀（`[Shot N] …` 开头那一行）。
+// 时间点用**原文里那一串**（`At 00:02.500`）而不是自己格式化 —— 逐字一致，模型对得上。
+var (
+	reCutMark    = regexp.MustCompile(`(?im)^[ \t]*\[shot\s+\d+\]([^\n]*)`)
+	reCutAtMark  = regexp.MustCompile(`(?i)\bat\s+\d+:\d+(?:\.\d+)?`)
+	reSpeechLang = regexp.MustCompile(`^\s*\[\s*[A-Za-z]+\s*\]\s*`)
+)
+
+// cutSpeech 一刀里有没有人声、念的是什么（从提示词正文里读，不依赖结构字段）。
+type cutSpeech struct {
+	At    string   // 「At 00:02.500」；这一刀没写时间点就是空串
+	Lines []string // 这一刀里的 <d> 台词（已剥语言标签）
+}
+
+// cutSpeechMap 把提示词切成"每一刀 + 那一刀里的台词"。
+//
+// 判据完全来自正文：`[Shot N]` 分刀，`<d>…</d>` 是台词的唯一通道（H3 官方口径）。
+// 结构字段 `shot.cuts` 只用来对账（见 project/cuts.go），这里以**真正发给模型的文本**为准 ——
+// 两处不一致时该改的是它们，不是这条条款。
+func cutSpeechMap(prompt string) []cutSpeech {
+	ms := reCutMark.FindAllStringSubmatchIndex(prompt, -1)
+	out := make([]cutSpeech, 0, len(ms))
+	for i, m := range ms {
+		end := len(prompt)
+		if i+1 < len(ms) {
+			end = ms[i+1][0]
+		}
+		seg := prompt[m[0]:end]
+		cs := cutSpeech{At: reCutAtMark.FindString(prompt[m[2]:m[3]])}
+		for _, d := range reDialogueTag.FindAllStringSubmatch(seg, -1) {
+			if txt := strings.TrimSpace(reSpeechLang.ReplaceAllString(d[1], "")); txt != "" {
+				cs.Lines = append(cs.Lines, txt)
+			}
+		}
+		out = append(out, cs)
+	}
+	return out
+}
+
+// EnsureSpeechPlacementClause 逐**小镜头**写明人声出现在哪一段（幂等）。
+//
+// 【为什么还要一条（2026-10-08 真机第01集镜头 1，ASR 实锤）】`EnsureSpokenLinesClause` 只说"整镜"：
+// 唯一的人声是 <d> 里那几句、其余时间没有人声。但真机这一镜是 3 个小镜头，计划是
+// 「[Shot 1] 无台词 / [Shot 2] At 00:02.500「硬件钢印 U-80001。」/ [Shot 3] At 00:05.000「该编号不存在，予以静默。」」，
+// 实际音轨（ASR medium，从头转写，9.42 s）是**三段**：
+//
+//	[0.00-2.60] 硬件鋼印U-C缠Hi-001   ← 第 1 句被**提前**讲进了没有台词的开场小镜头，编号还念糊了
+//	[2.84-4.72] 黑石逆一幅航旋機     ← 凭空编的假中文（语种自动检测 zh 概率 0.99）
+//	[5.36-7.84] 该编号不存在，予以静默。← 第 2 句正常
+//
+// 也就是说：模型把"每个小镜头里都得说点什么"当成了规则，于是把台词整体前移了一格、并在空出来的
+// 那一格里自己编了一句。当时提示词里**已经有** SPOKEN LINES ONLY 与 MANDATORY 语种条款 ——
+// 它们管的是"整镜范围"，没有逐段点名。这条把每一段点出来：哪几段有人声、念哪一句、哪几段必须安静，
+// 全是计划里的已知量（分刀 + <d> 落在哪一刀）。真机渲染提示词（取自主机 ComfyUI `/history` 实际提交的
+// 工作流文本）里也已经绑好了两句的权威声线，问题不在声线，在**位置**。
+//
+// 【它是否有效，只能由重渲 + ASR 复验来说】（诚实边界）本函数保证的只是这段逐段清单**在**提示词里、
+// 且只出现一次；管不管得住模型要重渲一镜再用 ASR 听（每镜约 9~11 分钟 GPU）。
+func EnsureSpeechPlacementClause(prompt string, shot *project.Shot) string {
+	if shot == nil || strings.Contains(prompt, speechPlacementMarker) {
+		return prompt
+	}
+	cuts := cutSpeechMap(prompt)
+	if len(cuts) < 2 {
+		return prompt // 只有一刀 = 整镜一个时间窗，SPOKEN LINES ONLY 已经覆盖，不重复堆话
+	}
+	speaking := 0
+	var b strings.Builder
+	for _, c := range cuts {
+		if len(c.Lines) > 0 {
+			speaking++
+		}
+	}
+	fmt.Fprintf(&b, "%s:\nthis shot is cut into %d pieces; the human voice is heard in exactly %d of them "+
+		"and in no other piece:\n", speechPlacementMarker, len(cuts), speaking)
+	for _, c := range cuts {
+		where := "the opening of the shot"
+		if c.At != "" {
+			where = "the cut at " + c.At
+		}
+		if len(c.Lines) == 0 {
+			fmt.Fprintf(&b, "- %s — NO speech of any kind: room tone, hum and foley only. "+
+				"No voice, no muttering, no counting, no numbers, no reading of any panel or sign.\n", where)
+			continue
+		}
+		fmt.Fprintf(&b, "- %s — %d line(s), each spoken exactly once inside THIS piece: ", where, len(c.Lines))
+		for i, l := range c.Lines {
+			if i > 0 {
+				b.WriteString(" / ")
+			}
+			fmt.Fprintf(&b, "「%s」", l)
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("Never move a line into another piece, never begin a line before its own piece starts, " +
+		"and keep every piece marked NO speech completely free of human voice.\n" +
+		"(中文对照：本镜切成上面这些小镜头，人声**只**出现在其中 " + fmt.Sprint(speaking) + " 个里 —— " +
+		"标着 NO speech 的那几段**一点人声都没有**（只有环境声、机器声与动作音，不许嘟囔、不许报数、" +
+		"不许念任何面板/招牌上的字）；每段里那句台词只在这一段里念一遍，不许把台词挪到别的小镜头、" +
+		"更不许在它自己那一段开始之前就开念。)")
+	return strings.TrimRight(prompt, "\n") + "\n\n" + b.String()
 }
 
 // facesOnOf 项目开关(未表态 = 开);proj 为 nil 时按开处理。
