@@ -946,10 +946,13 @@ func castFaceIDs(plan *project.Plan, selfID, selfName string) []string {
 		if isSelfCard(selfID, selfName, ch.ID, ch.Name) {
 			continue
 		}
-		d := identityLockExcerpt(ch.ImagePrompt)
-		if d == "" {
-			d = strings.TrimSpace(ch.Description)
-		}
+		// **摘要必须先过英文可读闸**（2026-10-08）：中文 description 被追加块的清汉字一过，
+		// 只剩一个孤零零的省略号 —— 真机提示词里就是 `NOT: … NOT: … NOT: …`（三张卡同一形态）。
+		// 空摘要**不入列**：占位符不但没信息，还会被模型当成画面上要写的字。
+		// 取用顺序走 `englishIdentitySummary`（IDENTITY LOCK → 英文 description → **卡自己的英文
+		// 定妆提示词**）：小说线的卡 description 是中文、英文外形在 image_prompt 里，缺第三档
+		// 就等于对真机那批卡**永远列不出人**（本函数第一版就是这么漏的，`entity_test.go` 当场咬住）。
+		d := englishIdentitySummary(ch)
 		if d == "" {
 			continue
 		}
@@ -1424,17 +1427,24 @@ func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKi
 		return prof.SheetIdentity + "\n" + officialPrefixEssentials
 	}
 	s := strings.ToLower(style)
-	// has3D 只认"明确要 3D CG 虚拟人 / 手办"的写法。
+	// has3D 只认"**明确要手办 / 虚拟人 / 收藏人偶**"的写法。
 	//
-	// **不能用宽泛的 "3d"**(2026-09-27 实测修正):技能侧与平台的国风电影串都写着
-	// "a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces" —— 宽判据把它读成
-	// "要 3D CG 手办",于是往提示词里塞 "next-generation 3D CG character render,
-	// stylized BJD-inspired sculpted forms, … collectible virtual figure look":
-	// **手办/娃娃质感**,与"电影级写实"是两回事。真电影串是 photoreal 的
-	// "photorealistic cinematic portrait + realistic skin texture"那一支。
+	// 【2026-10-08 第三次修正：**"3D CG" 也不能认**（用户：「角色渲染的很丑，你看一下资产库」）】
+	// 前两次修的都是"别把 3d 字面读成手办"，但 `has3D` 里仍留着 `3d render` / `3d cg` 两条 ——
+	// 于是**本项目**的风格「半写实绘画感的东方星海国风**3D CG**」照样命中，平台往提示词里塞了
+	// 「stylized BJD-inspired sculpted forms, **matte powdery skin shading with a dull even finish**,
+	// **collectible virtual figure look**」⇒ 出图就是**手办质感**。
+	// 真机实证（平台自己的 VLM 读那三张定妆照的原话）：
+	//   姜晚舟「皮肤蜡感明显，像次表面散射塑料」「整张脸像塑料壳」；
+	//   小灯「3D 半写实娃娃，偏 BJD 塑料感；皮肤蜡感」；曹锦「皮肤过度平滑匀净，像美颜修图」。
+	// 三张图"最丑的三点"全部指向这一段 —— **就是平台自己写死的词**。
+	// "3D CG / 3D render" 是**媒介**（用什么渲染），不是**材质**（表面长什么样）；
+	// 材质该由风格的写实度决定（半写实 ⇒ 有皮肤纹理的半写实表面）。两者拆开：
+	//   has3D   = 明确要手办/虚拟人 ⇒ 才给 BJD 那一套；
+	//   medium3D = 说了 3D CG ⇒ 只加"3D CG 渲染"这个媒介词，材质另说（见下面 styleIsPhotoreal 支）。
 	has3D := strings.Contains(s, "bjd") || strings.Contains(style, "虚拟人") || strings.Contains(style, "虚拟偶像") ||
-		strings.Contains(s, "virtual figure") || strings.Contains(s, "collectible figure") ||
-		strings.Contains(s, "3d render") || strings.Contains(s, "3d cg")
+		strings.Contains(s, "virtual figure") || strings.Contains(s, "collectible figure")
+	medium3D := strings.Contains(s, "3d render") || strings.Contains(s, "3d cg")
 	hasAnime := strings.Contains(style, "国漫") || strings.Contains(style, "动漫") || strings.Contains(style, "动画") || strings.Contains(s, "anime") || strings.Contains(s, "donghua")
 	hasComic := strings.Contains(style, "美漫") || strings.Contains(s, "comic")
 	hasInk := strings.Contains(style, "水墨") || strings.Contains(style, "国画")
@@ -1458,15 +1468,34 @@ func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKi
 		if kind == KindScene {
 			// 场景不能要"人像 + 真实皮肤质感":摄影机对着的是一块地方。
 			// 沿用同一条守卫语义(写实/3D 由上游说了算),只把落点从人物表面换成环境材质。
-			if has3D {
+			switch {
+			case has3D:
+				// 明确要手办/虚拟人 ⇒ 那套"收藏人偶"的材质词是它自己要的
 				terms = append(terms, "next-generation 3D CG environment render, stylized sculpted forms, "+
 					"matte dull even finish across every surface")
-			} else {
+			case medium3D:
+				terms = append(terms,
+					"next-generation 3D CG environment render, semi-realistic surfaces with real materials "+
+						"and natural light")
+			default:
 				terms = append(terms, "photorealistic cinematic environment and set, realistic materials and natural light")
 			}
 		} else if has3D {
+			// 明确要手办/虚拟人：保留"收藏人偶"材质（那是这类风格的定义）
 			terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
 				"matte powdery skin shading with a dull even finish, collectible virtual figure look")
+		} else if medium3D {
+			// **只说了 3D CG**（本项目就是这种："半写实绘画感的东方星海国风 3D CG"）：
+			// 给**媒介**词（3D CG 渲染）+ **半写实表面**（有皮肤纹理、哑光到缎面），
+			// 不给 BJD / collectible / matte powdery / dull even finish ——
+			// 那四组词合起来就是"手办塑料感"，是这次用户说"丑"的直接来源。
+			// 【2026-10-08 真机 A/B 又咬出一次】原来这里写的是 "semi-realistic **sculpted surfaces**" ——
+			// "sculpted"（雕塑）本身就是手办那一族的词根，真机 A/B 出来的新图仍被判
+			// 「皮肤蜡感磨皮、看不到毛孔」「头大肩窄似立绘」。改成"真人皮肤该有的响应"：
+			// 真实皮肤着色 + 可见皮肤纹理 + 自然面部高光（全是正面词，CFG=1.0 下负面词不参与引导）。
+			terms = append(terms,
+				"next-generation 3D CG character render, realistic skin shading with visible skin texture and "+
+					"natural facial highlights, real materials with visible craft, a matte-to-satin finish")
 		} else {
 			terms = append(terms, "photorealistic cinematic portrait, realistic skin texture")
 		}
@@ -1494,6 +1523,24 @@ func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKi
 		} else {
 			terms = append(terms, "next-generation 3D CG render, stylized sculpted forms, "+
 				"matte dull even finish across every surface, collectible virtual figure look")
+		}
+		if hasAnime {
+			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
+		}
+	case medium3D:
+		// 说了 3D CG 但**没说手办/虚拟人**（也不属于写实那一支 —— 例如"3D CG 卡通"）：
+		// 同一条原则（媒介 ≠ 材质）：只给**媒介**词，材质按"半写实的真实材质"给，
+		// 而且**不许留 "sculpted" 这个手办词根**（人类那支给"真人皮肤该有的响应"，
+		// 场景给真实材质与自然光）。
+		if kind == KindScene {
+			terms = append(terms, "next-generation 3D CG environment and set render, "+
+				"semi-realistic surfaces with real materials and natural light")
+		} else if kind == KindHuman || kind == KindSpiritPet || kind == KindBeast || kind == KindChibi {
+			terms = append(terms, "next-generation 3D CG character render, "+
+				"realistic skin shading with visible skin texture and natural facial highlights, "+
+				"real materials with visible craft")
+		} else {
+			terms = append(terms, "next-generation 3D CG render, semi-realistic forms with real materials and visible craft")
 		}
 		if hasAnime {
 			terms = append(terms, "Chinese donghua animation styling, semi-realistic cel-and-CG hybrid shading")
@@ -1645,6 +1692,12 @@ func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityK
 	var parts []string
 	for _, ch := range plan.Characters {
 		n := strings.TrimSpace(ch.Name)
+		// 【2026-10-08 用户「角色渲染的很丑，你看一下资产库」时查到的第二处】
+		// 摘要原来是"取 IDENTITY LOCK，取不到就退中文 description"，而追加块**统一过一遍
+		// `project.DropHanRunes` 清汉字**（老规矩：防模型把中文说明整段画到画面上）⇒
+		// 那份中文 description 被清成一个**孤零零的省略号**，于是真机三张卡的提示词里都是
+		// `other cast members of this series: ( …); ( …); ( …)`。
+		// 修法：摘要先过"英文可读"闸（清汉字后至少还剩几个字母），否则**不入列**。
 		if n == "" {
 			continue
 		}
@@ -1657,9 +1710,12 @@ func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityK
 		// description 可能整段是剧情 —— 用户报「周廷和主角脸相似」时查到的实况就是
 		// 周廷那条 description 是一段剧情表行（含章号「1／8／31」「被亲父交出顶罪」），
 		// 塞进对比块之后模型读到的是剧情而不是五官，"要跟别人不一样"这句就完全落空了。
-		d := identityLockExcerpt(ch.ImagePrompt)
+		// 取用顺序走 `englishIdentitySummary`：IDENTITY LOCK（技能侧的权威外形句）→ 英文 description
+		// → **卡自己的英文定妆提示词**。第三档是小说线那批卡的**唯一**英文来源（description 是中文，
+		// 清汉字后只剩省略号）—— 本函数第一版漏了它，`entity_test.go` 的器物/人物两条断言当场变红。
+		d := englishIdentitySummary(ch)
 		if d == "" {
-			d = strings.TrimSpace(ch.Description)
+			continue
 		}
 		if r := []rune(d); len(r) > 160 {
 			d = string(r[:160]) + "…"
@@ -1752,13 +1808,7 @@ func composeStyleHint(styles []string, freeHint string) string {
 	return out
 }
 
-// identityLockExcerpt 从一份定妆/提示词里取 **IDENTITY LOCK 那句**（逐项外形：年龄/脸型/
-// 眼型/肤色/记号/发型），供"同剧对比"用；取不到返回空串。
-//
-// 为什么要专挑这句（2026-09-27）：同剧对比要说的是"你**长什么样**，别和这些人一样"，
-// 而 plan 里的 `description` 常常不是外形 —— 实测《求你们骂我》周廷那条是一整段剧情
-// （含章号与"被亲父交出顶罪"）。拿剧情当特征，模型只能退回自己的先验：一张通用帅哥脸。
-// 这正是用户报「周廷和主角脸相似」的两条成因之一（另一条是画风块里的"五官简化"）。
+// identityLockExcerpt 取卡里 `IDENTITY LOCK` 那一句（"这个人长什么样"的权威原句）。
 func identityLockExcerpt(prompt string) string {
 	const marker = "IDENTITY LOCK"
 	i := strings.Index(prompt, marker)
@@ -1797,13 +1847,20 @@ func PortraitFaceIDClause(selfLock string, others []string) string {
 	if selfLock != "" {
 		sb.WriteString("  SELF: " + selfLock + "\n")
 	}
-	for i, o := range others {
-		if i >= 3 {
+	// 空/占位条目一律不写（2026-10-08 真机三张卡都是 `NOT: … ×3` ——
+	// 中文摘要被追加块的"清汉字"一过，只剩一个孤零零的省略号）。
+	real := 0
+	for _, o := range others {
+		if strings.TrimSpace(o) == "" || o == "…" {
+			continue
+		}
+		if real >= 3 {
 			break
 		}
 		sb.WriteString("  NOT: " + o + "\n")
+		real++
 	}
-	if len(others) > 0 {
+	if real > 0 {
 		sb.WriteString("Anyone listed under NOT must be recognisable as a DIFFERENT person in a side-by-side comparison ")
 		sb.WriteString("(different face shape and features, not just different clothes).\n")
 	}
@@ -1823,3 +1880,61 @@ func PortraitFaceIDClause(selfLock string, others []string) string {
 const officialPrefixEssentials = "STRONG CHARACTER DESIGN LANGUAGE (the silhouette and costume read instantly), " +
 	"CLEAN MOTION (clean, readable movement; no smearing, no strobing), ON-BRAND COLOUR PALETTE (the palette stays " +
 	"consistent with the project's approved look)."
+
+// englishSummary 把一段"给模型看的摘要"过一遍**英文可读**闸：清掉汉字之后，
+// 至少还剩 minSummaryLetters 个字母才算可读，否则返回空串（宁可不入列）。
+//
+// 【为什么必须这道闸（2026-10-08 用户「角色渲染的很丑，你看一下资产库」）】追加块统一过
+// `project.DropHanRunes` 清汉字（防模型把中文说明整段画到画面上）。而摘要的来源可能是
+// **中文 description** ⇒ 清完只剩一个省略号，却照样被拼进提示词：
+// 真机三张卡都是 `other cast members of this series: ( …); ( …); ( …)` 与 `NOT: … ×3`。
+// 那几段是**空白约束**（占位符还会被模型当画面上要写的字），既没信息又添乱。
+func englishSummary(s string) string {
+	t := strings.TrimSpace(project.DropHanRunes(s))
+	letters := 0
+	for _, r := range t {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			letters++
+		}
+	}
+	if letters < minSummaryLetters {
+		return ""
+	}
+	return strings.TrimSpace(strings.Trim(t, " ,;、，；。"))
+}
+
+// minSummaryLetters 摘要最少要有几个字母才算"英文可读"（判据取自真机：中文摘要清完只剩
+// 省略号 —— 0 个字母；正常英文外形摘要动辄几十个）。
+const minSummaryLetters = 8
+
+// englishIdentitySummary 从一张卡里取一段**能进提示词的英文外形摘要**（供同剧对比块与身份锁用）。
+//
+// 取用顺序（先精准后兜底）：
+//  1. 卡里的 IDENTITY LOCK 原句（技能侧产物的权威外形句）；
+//  2. description（若本身就是英文）；
+//  3. **卡自己的英文定妆提示词** —— 小说线/平台直出的卡 description 是中文，而 image_prompt
+//     是翻译会话逐项写出来的英文外形（"A woman in her early twenties … lean-toned with a strong
+//     是翻译会话逐项写出来的英文外形（"A woman in her early twenties … lean-toned with a strong
+//     grip"）。没有这一条，那类卡在对比块里就只剩一个省略号（2026-10-08 真机三张卡全是 `( …)`）。
+//     取的时候走平台**已有的**卡正文边界判据 `appearanceExcerpt`（它就是"装配块之前的外观正文"），
+//     并先剥掉平台自己的取景抬头（BUST PORTRAIT …）—— 免得把取景/画风/本块自己（递归）读进来。
+//     不自己写"取第一句"那种启发式：真机那份卡正文里根本没有 `. `（一路逗号分号），
+//     启发式会把整段 5KB 的装配串都吞进来。
+//
+// 全都拿不到就返回空串（调用方据此**不拼这一段**，而不是拼一个占位符）。
+func englishIdentitySummary(ch project.Character) string {
+	if s := englishSummary(identityLockExcerpt(ch.ImagePrompt)); s != "" {
+		return s
+	}
+	if s := englishSummary(ch.Description); s != "" {
+		return s
+	}
+	body := appearanceExcerpt(StripPortraitLeadFraming(strings.TrimSpace(ch.ImagePrompt)))
+	if body == "" {
+		body = appearanceExcerpt(strings.TrimSpace(ch.ImagePrompt))
+	}
+	if r := []rune(body); len(r) > 200 {
+		body = string(r[:200])
+	}
+	return englishSummary(body)
+}

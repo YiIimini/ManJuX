@@ -55,7 +55,33 @@ var fullBodyItemPhrases = []string{
 	// 整身取景短语(半身定妆照里出现即与取景打架)
 	"full body", "full-body",
 	"head to toe", "head-to-toe", "whole body", "whole-body",
+	// 整身取景短语(半身定妆照里出现即与取景打架)
+	"full body", "full-body",
+	"head to toe", "head-to-toe", "whole body", "whole-body",
 }
+
+// 【2026-10-08 用户「角色渲染的很丑，你看一下资产库」—— 为什么**不**把靴子/腰这些词也剥掉】
+//
+// 当时的第一版就是往上面那张表里加 "boots"/"shoes"/"thighs"/"at the waist"…… 立刻被
+// `portrait_framing_lead_test.go` 挡住：「取景是**追加**，不是替换卡里的外貌描述」。
+// 那条纪律的出处就在本文件开头（与取景无关的服装语义不许动）—— 表里的项是**比例/取景口径**，
+// 而"厚底布靴""腰间挂一串铜钥匙"是**服装内容**，剥它改的是技能侧写的东西，收益为零。
+//
+// 那"全身像 + 头占 1/4 ⇒ 四头身童装立绘"（VLM 对姜晚舟那张的原话）是谁的锅？
+// **是平台自己写的那两句取景文案**：
+//   ① 首句 `Keep the head-to-body ratio stated in the brief (… eight-heads-tall …)` +
+//   ② 尾句 `the figure keeps its stated head-to-body ratio (a tall adult stays long-limbed)`
+//   —— 在**胸像**里这两句自相矛盾：要按七头半画，就只好把整身画进来；而"头占画面 1/4"
+//   又被逐字执行 ⇒ 画出来就是四个头高的全身像（正是"头偏大、身偏短、像童装立绘"）。
+// 所以修的是这两句（见 portraitScaleCue / PortraitFramingClause 的注释），卡原文一个字不动。
+
+// portraitCropCue 胸像的**裁切**口径（正面描述画面里有什么，不用否定词 —— 本机出图 CFG=1.0，
+// 负面词不参与引导，这一点与 imageNegative 那条注释同源）。
+//
+// 为什么值得单独一句：真机那张把"头占 1/4"逐字执行成了**全身像**（头 = 画幅高 1/4 ⇒ 四头身）。
+// 只写"cropped at mid-chest"不够 —— 要把**画面下缘落在哪里**写成可执行的构图句。
+const portraitCropCue = "The picture is a CHEST-UP portrait: the bottom edge of the frame cuts the torso at mid-chest, " +
+	"so the head, neck, shoulders and upper chest fill the whole picture and the framing stays this tight."
 
 // faceAnchorWords 脸部/上半身锚点的特征词:含它们的项**不整项删**。
 //
@@ -268,24 +294,103 @@ const (
 	// 实测：只写"裁到胸口"时，模型把**头放大到占满竖幅**（霍延那张头占了画面一半以上，
 	// 碑生那张头约占 1/3），七头半身/八头身的高瘦角色全画成了"大头脑像"。
 	// 取景句必须**同时给出尺度线索**：头在画面里占多大、肩线多宽、头身比照卡片。
+	// 【2026-10-08 用户「角色渲染的很丑，你看一下资产库」】原来这句尾巴还写着
+	// 「Keep the head-to-body ratio stated in the brief (a seven-and-a-half or eight-heads-tall adult reads as
+	// tall and long-limbed, with a proportionate head)」—— 在**胸像**里它与"头占画面 1/4"直接打架：
+	// 要按七头半画就只好把整身画进来。真机那张就是这么出来的（VLM 原话：「全身完整入镜至靴子」
+	// 「头占画面高 1/4…比例近童装立绘」）。头身比是**板子**（多视图）该说的话，胸像里只保留
+	// "头别占满画面"这个尺度线索 + 明确的裁切口径。
 	portraitLeadBust = "BUST PORTRAIT (head, neck and upper chest only - the picture is cropped at mid-chest, " +
 		"pure white seamless backdrop). " +
 		"SCALE (mandatory): the head is about ONE QUARTER of the picture height — the head stays proportionate instead of filling " +
 		"the frame; the shoulders span the full width of the picture and stay WIDER than the head, and the chest and " +
-		"upper arms fill the lower half. Keep the head-to-body ratio stated in the brief (a seven-and-a-half or " +
-		"eight-heads-tall adult reads as tall and long-limbed, with a proportionate head). "
+		"upper arms fill the lower half. " + portraitCropCue + " "
 	portraitLeadHeadShoulders = "HEAD-AND-SHOULDERS PORTRAIT (head and shoulders only, pure white seamless backdrop). " +
 		"SCALE (mandatory): the head is about ONE THIRD of the picture height at most, shoulders wider than the head. "
 )
 
+// platformFramingPhrases 平台**自己写的**取景语汇（判断"这一句是不是平台加的取景声明"）。
+//
+// 为什么要有它：取景声明的措辞会随实测改（这一轮就改了胸像里那句"按卡里的头身比画"），
+// 而**盘上已入库的卡**存的是**当时**那份旧措辞。只按当前字面量判前缀 ⇒ 旧取景声明剥不掉，
+// 会作为"卡正文"残留下来：重装配时又拼一遍，或被当成别人的外形摘要（真机探针当场咬出——
+// 摘要开头是 `BUST PORTRAIT (head, neck …`）。
+var platformFramingPhrases = []string{
+	"BUST PORTRAIT",
+	"cropped at mid-chest",
+	"pure white seamless backdrop",
+	"ONE QUARTER",
+	"ONE THIRD",
+	"head-to-body ratio",
+	"long-limbed",
+	"the framing stays this tight",
+	"WIDER than the head",
+	"fill the lower half",
+	"SCALE (mandatory)",
+	"CHEST-UP PORTRAIT",
+	"HEAD-AND-SHOULDERS PORTRAIT",
+}
+
 // StripPortraitLeadFraming 剥掉定妆照提示词**开头**的取景声明（幂等；没有就原样返回）。
+//
+// 两级判据：① 与当前措辞逐字相符 ⇒ 整段前缀剥掉（快路径）；
+// ② 否则走**形状判据** —— 开头必须是取景抬头（BUST PORTRAIT (…) / HEAD-AND-SHOULDERS PORTRAIT (…)），
+// 之后**逐句**丢掉命中 `platformFramingPhrases` 的句子，遇到第一句不属于取景的就停（最多 6 句，
+// 取景声明本身就 1~3 句 —— 加个上界免得在畸形卡上吃掉正文）。
 func StripPortraitLeadFraming(prompt string) string {
 	for _, lead := range []string{portraitLeadBust, portraitLeadHeadShoulders} {
 		if strings.HasPrefix(prompt, lead) {
 			return strings.TrimSpace(strings.TrimPrefix(prompt, lead))
 		}
 	}
-	return prompt
+	rest := strings.TrimSpace(prompt)
+	if !hasPortraitLeadPrefix(rest) {
+		return prompt
+	}
+	for n := 0; n < 6; n++ {
+		s := strings.TrimSpace(rest)
+		if s == "" {
+			return ""
+		}
+		i := firstSentenceEnd(s)
+		if !hitsFramingPhrase(s[:i]) {
+			break
+		}
+		rest = s[i:]
+	}
+	return strings.TrimSpace(rest)
+}
+
+// hasPortraitLeadPrefix 开头是不是"取景抬头"（形状判据，与措辞解耦）。
+func hasPortraitLeadPrefix(s string) bool {
+	for _, p := range []string{"BUST PORTRAIT (", "HEAD-AND-SHOULDERS PORTRAIT ("} {
+		if strings.HasPrefix(s, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// firstSentenceEnd 返回第一句的结束下标（含标点）：句末". "或换行；都没有就是整串长度。
+func firstSentenceEnd(s string) int {
+	end := len(s)
+	if i := strings.Index(s, ". "); i >= 0 && i+2 < end {
+		end = i + 2
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 && i < end {
+		end = i + 1
+	}
+	return end
+}
+
+// hitsFramingPhrase 这一句里有没有平台自己的取景语汇。
+func hitsFramingPhrase(sentence string) bool {
+	for _, p := range platformFramingPhrases {
+		if strings.Contains(sentence, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // PortraitLeadFraming 人像定妆照**开头**的取景声明（与 PortraitFramingClause 是一对）。
@@ -348,7 +453,7 @@ func PortraitFramingClause(kind EntityKind, width, height int) string {
 			"and squared to the lens with the nose and chin pointing at the camera, the WHOLE head is inside the " +
 			"picture with clear empty space above the hair, the shoulders fully inside the frame and WIDER than the " +
 			"head, and the area below the chest stays a pure white seamless backdrop. The head takes about ONE QUARTER " +
-			"of the picture height, and the figure keeps its stated head-to-body ratio (a tall adult stays long-limbed)."
+			"of the picture height. " + portraitCropCue
 	}
 	return " FRAMING (mandatory): a front-facing head-and-shoulders portrait, shot STRAIGHT-ON from the front — the " +
 		"face looks directly into the camera, both eyes are visible at the same size and symmetric, the head is " +

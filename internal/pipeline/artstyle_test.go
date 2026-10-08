@@ -153,6 +153,54 @@ func TestStyleExpand3DNoLongerAsksForPlasticSkin(t *testing.T) {
 	}
 }
 
+// TestStyleExpand3DCGIsNotAFigurine 说了"3D CG"≠要手办（2026-10-08 用户「角色渲染的很丑，你看一下资产库」）。
+//
+// 真机：本项目的风格是「半写实绘画感的东方星海国风 3D CG」（逐字取自真机 plan.style）。
+// 旧实现把 `3d cg` / `3d render` 也放进 has3D ⇒ 平台往定妆照提示词里塞了
+// 「stylized BJD-inspired sculpted forms, matte powdery skin shading with a dull even finish,
+// collectible virtual figure look」—— 出图就是手办。平台自己的 VLM 读那三张定妆照的原话：
+// 姜晚舟「皮肤蜡感明显，像次表面散射塑料」、小灯「3D 半写实娃娃，偏 BJD 塑料感」、
+// 曹锦「皮肤过度平滑匀净，像美颜修图」。三张图"最丑的三点"全部指向这一段（平台自己写死的词）。
+//
+// 判据：**媒介**（3D CG 渲染）留下；**手办材质**（BJD / collectible figure / matte powdery /
+// dull even finish）不许出现。真的写了 BJD/虚拟人的风格**照旧**给那一套（不误伤，见上一条测试）。
+func TestStyleExpand3DCGIsNotAFigurine(t *testing.T) {
+	const realStyle = "半写实绘画感的东方星海国风 3D CG" // 逐字取自真机 plan.style
+	figurineWords := []string{"bjd", "collectible virtual figure", "matte powdery", "dull even finish", "sculpted"}
+	got := styleExpand(realStyle, false, KindHuman)
+	for _, bad := range figurineWords {
+		if strings.Contains(strings.ToLower(got), bad) {
+			t.Errorf("说了 3D CG 不等于要手办，风格块不许带 %q：\n%s", bad, got)
+		}
+	}
+	if !strings.Contains(got, "3D CG character render") {
+		t.Errorf("媒介词（3D CG 渲染）必须留着：\n%s", got)
+	}
+	if !strings.Contains(got, "visible skin texture") {
+		t.Errorf("半写实 3D CG 必须给出「真人皮肤该有的响应」（可见皮肤纹理）：\n%s", got)
+	}
+	if !strings.Contains(got, "never make a character resemble a real person") {
+		t.Errorf("法务底线任何时候都要留：\n%s", got)
+	}
+	// 场景同理：不许给场景要求"手办表面"（那套词是人物收藏人偶的）
+	sc := styleExpand(realStyle, false, KindScene)
+	for _, bad := range figurineWords {
+		if strings.Contains(strings.ToLower(sc), bad) {
+			t.Errorf("场景版本同样不许手办材质 %q：\n%s", bad, sc)
+		}
+	}
+	// 非写实的 3D CG（没说手办/虚拟人）走同一原则：给媒介词，不给手办材质
+	cartoon := styleExpand("3D CG 卡通渲染", false, KindHuman)
+	if !strings.Contains(cartoon, "3D CG character render") {
+		t.Errorf("非写实 3D CG 也要给媒介词：\n%s", cartoon)
+	}
+	for _, bad := range figurineWords {
+		if strings.Contains(strings.ToLower(cartoon), bad) {
+			t.Errorf("没说手办就不许给手办那一套（%q）：\n%s", bad, cartoon)
+		}
+	}
+}
+
 // TestPhotorealRequested 真人/写实关键词识别(用于把"风格与开关冲突"如实告知用户)。
 func TestPhotorealRequested(t *testing.T) {
 	for _, s := range []string{"真人实拍质感", "写实电影", "photorealistic", "live-action cinematography"} {

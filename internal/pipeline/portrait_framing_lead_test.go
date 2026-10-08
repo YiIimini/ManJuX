@@ -78,10 +78,83 @@ func TestBoardDropsPortraitLeadFraming(t *testing.T) {
 	}
 }
 
+// TestPortraitFramingIsACropNotAProportion 胸像取景不许再自相矛盾
+// （2026-10-08 用户「角色渲染的很丑，你看一下资产库」）。
+//
+// 真机那三张定妆照最丑的一点：**"头占画面 1/4" + "按卡里的头身比画（七头半/八头身 ⇒ 高瘦长腿）"
+// 两条要求并存** ⇒ 模型只好把整身画进来。平台自己的 VLM 原话：「全身完整入镜至靴子」
+// 「含发髻的头约占画面高 1/4，脸本体约 1/8」「头偏大、身偏短，比例近童装立绘」。
+//
+// 修法：**只动平台自己写的那两句取景文案** —— 删掉"按卡里的头身比画"那句，换成可执行的
+// **裁切**口径（画面下缘落在胸口、构图保持这个紧度）。卡原文（含"eight-heads-tall"这类
+// 外貌描述）一个字不动 —— 取景是**追加**，不是替换（见上一条测试）。
+func TestPortraitFramingIsACropNotAProportion(t *testing.T) {
+	for _, lead := range []string{portraitLeadBust, portraitLeadHeadShoulders} {
+		if strings.Contains(lead, "head-to-body ratio") || strings.Contains(lead, "long-limbed") {
+			t.Fatalf("取景声明里不许再要求按卡里的头身比画（胸像里它与\"头占 1/4\"打架，模型只能画全身）：%q", lead)
+		}
+	}
+	if !strings.Contains(portraitLeadBust, portraitCropCue) {
+		t.Fatal("胸像声明必须带上裁切口径（只写 cropped at mid-chest 不够 —— 真机那张就是这么出的全身像）")
+	}
+	clause := PortraitFramingClause(KindHuman, 768, 1344)
+	if strings.Contains(clause, "head-to-body ratio") || strings.Contains(clause, "long-limbed") {
+		t.Fatalf("末尾的取景纪律同样不许提头身比：%q", clause)
+	}
+	if !strings.Contains(clause, portraitCropCue) {
+		t.Fatalf("末尾的取景纪律必须与开头同一套裁切口径：%q", clause)
+	}
+	// 尺度线索（头占画面 1/4）是 2026-09-29 那条实测的产物（没有它，模型把头顶满竖幅：
+	// 霍延那张头占画面一半以上）—— 改裁切口径时**不许连带删掉**。
+	if !strings.Contains(portraitLeadBust, "ONE QUARTER") || !strings.Contains(clause, "ONE QUARTER") {
+		t.Fatal("头占画面 1/4 的尺度线索必须保留（删了模型会把头放大到占满竖幅）")
+	}
+}
+
 func leadHead(s string, n int) string {
 	r := []rune(s)
 	if len(r) <= n {
 		return s
 	}
 	return string(r[:n])
+}
+
+// TestStripPortraitLeadFramingIsShapeBased 存量卡也要剥得掉（2026-10-08 真机探针咬出）。
+//
+// 盘上那些卡的 image_prompt 存的是**当时那份**取景措辞（这一轮把胸像里"按卡里的头身比画"
+// 那句删掉了），只按当前字面量判前缀 ⇒ 旧取景声明剥不掉，会作为"卡正文"残留：
+// 重装配时又拼一遍，或被当成**别人的外形摘要**（真机探针输出里摘要开头就是
+// `BUST PORTRAIT (head, neck …`）。
+func TestStripPortraitLeadFramingIsShapeBased(t *testing.T) {
+	// 逐字取自盘上 asset.json（姜晚舟那张，旧措辞）
+	const stored = "BUST PORTRAIT (head, neck and upper chest only - the picture is cropped at mid-chest, " +
+		"pure white seamless backdrop). SCALE (mandatory): the head is about ONE QUARTER of the picture " +
+		"height — the head stays proportionate instead of filling the frame; the shoulders span the full " +
+		"width of the picture and stay WIDER than the head, and the chest and upper arms fill the lower " +
+		"half. Keep the head-to-body ratio stated in the brief (a seven-and-a-half or eight-heads-tall " +
+		"adult reads as tall and long-limbed, with a proportionate head). A woman in her early twenties, " +
+		"medium height, lean-toned with a strong grip, oval face with a crisp defined jawline."
+	got := StripPortraitLeadFraming(stored)
+	if !strings.HasPrefix(got, "A woman in her early twenties") {
+		t.Fatalf("旧措辞的取景声明必须剥掉，实际开头：%q", leadHead(got, 80))
+	}
+	for _, bad := range []string{"BUST PORTRAIT", "ONE QUARTER", "head-to-body ratio"} {
+		if strings.Contains(got, bad) {
+			t.Fatalf("剥完还残留平台取景语汇 %q：%q", bad, leadHead(got, 120))
+		}
+	}
+	// 幂等：剥过一次再剥不变（装配点会被调用两次）
+	if again := StripPortraitLeadFraming(got); again != got {
+		t.Fatalf("剥取景不是幂等的：%q", leadHead(again, 80))
+	}
+	// 技能侧只写了外貌、没有取景抬头 ⇒ 原样返回
+	const bare = "16-year-old boy, narrow long face, sun-baked dull bronze skin."
+	if StripPortraitLeadFraming(bare) != bare {
+		t.Fatal("没有取景抬头的卡不该被动")
+	}
+	// 抬头在开头、正文第一句不是取景句 ⇒ 只剥取景那几句
+	const mixed = "BUST PORTRAIT (head, neck and upper chest only). A tall woman with a long ponytail."
+	if s := StripPortraitLeadFraming(mixed); s != "A tall woman with a long ponytail." {
+		t.Fatalf("只该剥取景句，实际：%q", s)
+	}
 }
