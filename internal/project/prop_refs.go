@@ -314,7 +314,13 @@ func alreadySpoken(said []string, text string) bool {
 
 // normSpokenText 归一化一句话用于比较：只留汉字/字母/数字，其余（标点、空格、方括号、
 // 破折号等）全部去掉，字母转小写。语言标记里的字母会留下（"chinese…"），子串判据不受影响。
+//
+// 【2026-10-08 起先把**字母编号换成中文读法**】`U-80001` 与它的读法「尤八零零零一」是同一句话的
+// 两种写法：`<d>` 里放读法（模型只需要念中文，见 speech_codes.go），而 `dialogue`（字幕源）保留原编号。
+// 归一化在这一步统一 ⇒ 逐句对账（checkSpokenTextMatchesDialogue）不会把"读音"判成"改了词"、
+// 对齐（AlignDialogueTags）也不会把读法又刷回原编号（那会每读一次方案就来回改一次）。
 func normSpokenText(s string) string {
+	s = PronounceCodesInText(s)
 	var sb strings.Builder
 	for _, r := range strings.ToLower(s) {
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
@@ -432,6 +438,11 @@ type HealResult struct {
 	Voices int
 	// VoiceNames 被补上声线的角色名（要播报"补了谁的嗓子"）。
 	VoiceNames []string
+	// CodeShots / CodeIDs / CodeCount 台词里的**字母编号定了中文读法**的镜数、
+	// 哪几镜、多少处（2026-10-08：`U-80001` → 「尤八零零零一」，见 speech_codes.go）。
+	CodeShots int
+	CodeIDs   []string
+	CodeCount int
 }
 
 // HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
@@ -470,6 +481,14 @@ func HealPlan(plan *Plan) HealResult {
 	// 声线兜底排在并卡之后：并掉的卡不必再补嗓子（不然播报里会多出几个已不存在的名字）。
 	// 它只填空的，已有 voice 的卡一个字不动；同名同声、异名不同声（见 voice_defaults.go）。
 	voices, voiceNames := FillMissingVoices(plan)
+	// 台词通道：补缺标签 → 对齐到 dialogue（顺序不能反，理由见下面 HealResult 的注释）。
+	dialogueFilled := FillMissingDialogueTags(plan)
+	alignTags := AlignDialogueTags(plan)
+	// **编号读法排在补/对齐之后**：那两步决定"这一镜有哪几句、每句的权威文本是什么"，
+	// 若排在它们前面，补出来的那句会带着原样的 `U-80001` 进提示词（等于没做）。
+	// 逐句对账与对齐都走 normSpokenText（它把编号折算成读法），所以读法与 dialogue 原文
+	// 不会被判成"不一致"、也不会被对齐刷回去（见 speech_codes.go）。
+	codeShots, codeIDs, codeCount := NormalizeSpokenCodes(plan)
 	return HealResult{
 		EntityRefs:        entFixed,
 		EntityRefsUnknown: entUnknown,
@@ -477,16 +496,17 @@ func HealPlan(plan *Plan) HealResult {
 		CharDupes:         charDupes,
 		PropRefs:          RemapPropRefs(plan),
 		PropRefsFilled:    FillMissingPropRefs(plan),
-		Dialogue:          FillMissingDialogueTags(plan),
-		// 台词通道对齐**排在补标签之后**：先补上真的缺的那几句（句数补齐），
-		// 再把逐句文本对齐到 dialogue —— 顺序反了会把"缺一句"的情形也对错位。
-		AlignTags: AlignDialogueTags(plan),
-		Voiceover: FillVoiceoverAssets(plan),
-		MusicNA:   EnsureMusicNA(plan),
+		Dialogue:          dialogueFilled,
+		AlignTags:         alignTags,
+		Voiceover:         FillVoiceoverAssets(plan),
+		MusicNA:           EnsureMusicNA(plan),
 		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
 		// 补上之后 `CutIssues` 那几条（每刀 1.5–4 秒等）才真正开始工作。
 		Cuts:       plan.FillCutsFromPrompt(),
 		Voices:     voices,
 		VoiceNames: voiceNames,
+		CodeShots:  codeShots,
+		CodeIDs:    codeIDs,
+		CodeCount:  codeCount,
 	}
 }

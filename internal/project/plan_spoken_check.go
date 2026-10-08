@@ -178,13 +178,24 @@ func plannedLineTexts(sh *Shot) []string {
 	return out
 }
 
-// PlanSpokenTexts 这一镜**计划里该说出去的每一句原文**（按口播顺序：台词在前、旁白最后）。
+// PlanSpokenTexts 这一镜**音轨里应该听到的每一句**（按口播顺序：台词在前、旁白最后）。
 //
-// 【为什么要有导出版】语音核对（internal/qc/speech.go 的 CheckSpeech）要拿它当权威台词：
-// 音轨里念的东西与它逐句对账，才能判「重复念 / 凭空加话 / 整句漏念」。
-// 内部另有一份归一化版（plannedSpokenLines，判 `<d>` 标签是否与计划一致用），
-// 这里要的是**原文** —— 报告里贴给用户看的必须是剧本上那句话，不是归一化产物。
-func PlanSpokenTexts(sh *Shot) []string { return plannedLineTexts(sh) }
+// 【2026-10-08 口径补充】返回的是**可听版**：台词里的字母编号已经折算成中文读法
+// （`硬件钢印 U-80001。` → `硬件钢印 尤八零零零一。`）—— 因为 H3 念的就是 `<d>` 里这一版，
+// 语音核对（qc.CheckSpeech → asr.Compare）拿它当权威才不会把"念的是读法"判成"整句漏念"。
+// **给用户看的字幕文本是另一条通道**：`dialogue[].text`（仍是原编号），两者不是一回事。
+//
+// 为什么要有导出版：语音核对要拿它当权威台词，音轨里念的东西与它逐句对账，
+// 才能判「重复念 / 凭空加话 / 整句漏念」。内部另有一份归一化版（plannedSpokenLines，
+// 判 `<d>` 标签是否与计划一致用），这里要的是**逐句原样**（只折编号读音）。
+func PlanSpokenTexts(sh *Shot) []string {
+	src := plannedLineTexts(sh)
+	out := make([]string, 0, len(src))
+	for _, t := range src {
+		out = append(out, PronounceCodesInText(t))
+	}
+	return out
+}
 
 // normalizedTagBody 去掉语言标签与 [unclear] 之后的标签内容（对齐与对账共用）。
 func normalizedTagBody(body string) string {

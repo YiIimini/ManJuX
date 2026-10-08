@@ -441,6 +441,13 @@ func normalizePlan(plan *project.Plan, opt Options) {
 			opt.OnNote("✔ "+project.VoiceSummary(hr.VoiceNames)+" —— "+
 				"此前这些人（以及无卡说话人）停在**同一句**默认声线，成片里是好几个人一个嗓子", hr.Voices)
 		}
+		if hr.CodeShots > 0 {
+			// 【2026-10-08】`U-80001` 这种字母编号 H3 念不稳（真机镜头 1 的 ASR 是
+			// 「硬件剛印U-C缠Hi-001」）。平台把读法写成汉字进 `<d>`：念的是「尤八零零零一」，
+			// 字幕仍烧 dialogue 原文（两条通道各归各的）。
+			opt.OnNote("✔ "+project.CodeSummary(hr.CodeIDs, hr.CodeCount)+" —— "+
+				"此前混排编号会被念糊（真机实听「硬件剛印U-C缠Hi-001」），现在只需念中文", hr.CodeShots)
+		}
 	}
 }
 

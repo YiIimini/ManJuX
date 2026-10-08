@@ -65,9 +65,14 @@ func TestHealReportTellsTheUserAboutFilledVoices(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := stripCommentLines(string(raw))
-	for _, want := range []string{"hr.Voices", "project.VoiceSummary(hr.VoiceNames)"} {
+	for _, want := range []string{
+		"hr.Voices", "project.VoiceSummary(hr.VoiceNames)",
+		// 【2026-10-08】编号读法（U-80001 → 尤八零零零一）补了也要播报 ——
+		// 用户听到的"念糊"正是靠这一条才知道平台动过手。
+		"hr.CodeShots", "project.CodeSummary(hr.CodeIDs, hr.CodeCount)",
+	} {
 		if !strings.Contains(src, want) {
-			t.Errorf("自愈结果里的声线播报少了 %q —— 补了声线用户却看不到（静默降级）", want)
+			t.Errorf("自愈结果里的播报少了 %q —— 补了用户却看不到（静默降级）", want)
 		}
 	}
 }

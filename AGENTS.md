@@ -98,6 +98,13 @@
 > 时间串照抄原文、单刀镜不加、幂等），挂在 `ShotRenderPrompt` 里 `EnsureSpokenLinesClause` 之后；
 > 判据夹具 = 真机镜头 1 的 h3_prompt 原文，**反向验证 3 处**全红。**有效性待重渲一镜 + ASR 复验**。
 > Description/ImagePrompt），渲染侧 `defaultVoiceFor` 对认不出的说话人返回**同一个常数** ⇒ 苔生/拾叁/回波/关棠/
+>
+> **同一轮的续（2026-10-08，用户拍板第 2 点）：`docs/配音位置-逐小镜头-2026-10-08.md` 第 6 节** ——
+> 编号类台词定中文读法：`U-80001` → 「尤八零零零一」（字母按字母表读音、数字逐位、连字符不进读音），
+> `NormalizeSpokenCodes` 只改 `<d>` 里的台词（`dialogue` 字幕源不动），挂 `HealPlan`
+> （排在"补台词标签→对齐"之后）+ `CodeShots/CodeIDs/CodeCount` 如实播报；
+> `normSpokenText` 统一折算读音（对账不误判、对齐不刷回），`PlanSpokenTexts` 返回**可听版**（免得 ASR 假 fail）。
+> 真机实测 4 镜 4 处逐条对；判据夹具 = 真机那四句，**反向验证 4 处**全红。**有效性待重渲 + ASR 复听**。
 > 剥线刀… 与无卡说话人在成片里**同一个嗓子**。修法：`internal/project/voice_defaults.go`（三池各 12 条 +
 > `DerivedVoice` 按基名散列 = 同名同声 + `PickVoice` 顺延 = 同一份方案内不撞声 + `FillMissingVoices` 只填空的）
 > 挂进 `HealPlan`，`HealResult.Voices/VoiceNames` 由生成日志与 preflight **如实播报**；渲染侧最后一档改成按名字派生。
