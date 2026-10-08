@@ -10,6 +10,32 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## 第三轮 · 补记：兜底正文的**第二个 fatal**（汉字卫生门）—— 真机 preflight 当场抓出来的（2026-10-08）
+
+专题文档：`docs/深度排查-2026-10-08.md` **§8.6**。第一版兜底正文把卡片的中文描述 + 中文走位照抄进了正文，
+真机 `cmd/preflight` 立刻报：
+
+```
+✕ [fail] shots[11](id=12): h3_prompt 里 <d> 外有 236 个**可避免的汉字**（主体名已扣除）
+✕ **先别渲**：有 fail（导入/建项目那一层就该拦住的问题）
+```
+
+—— 等于把「h3_prompt 为空」这个 fatal **换成了**「汉字卫生」这个 fatal（`prompt_cjk.go`：`<d>` 外可避免的汉字
+>60 warn、**>200 fail 拒收**；合法位置只有 `<d>[Chinese]…</d>` 与**主体名**）。
+
+**改法**：兜底正文**只用英文材料** —— `englishClause` 取卡片的英文定妆提示词（`image_prompt`，翻译会话写的）
+而不是中文 `description`；景别走封闭词表映射 `shotSizeEN`；机位/动作/走位含汉字一律不进正文。
+少掉的信息**必须说出来**：新增 `Plan.FilledBodyCJK`，剧本阶段与渲染阶段各播报一遍
+（"那几镜的中文走位/动作描述没能进正文，只能靠参考图与机位兜画，不满意就在故事板里手写这一镜"）；
+`HealResult.BodiesCJK` 同源。
+
+**验证**：真机 `cmd/preflight` ⇒ **契约 fail=0** / warn=24（老问题）；探针 ⇒ `违规=0`、`<d> 条数=2`、
+**`<d>` 外可避免汉字 = 0**、`FilledBodyCJK = 1`。判据新增 `TestAssembledBodyPrefersEnglishMaterial` /
+`TestShotSizeLabelsCoverTheVocabulary` / `TestEnglishOnlyBlocksHan` / `TestBothStagesAnnounceDroppedChineseMaterial`；
+**反向验证 11/11 全红**（含"拿掉汉字过滤"与"景别词表漏一项"两针）。
+
+**教训**：夹具合格 ≠ 生产合格 —— 改完必须拿**真机那份方案**端到端跑一遍入口门（`preflight` / `ValidatePlan`）。
+
 ## 第三轮：用户第二次报「还是报一样的错误」—— 空正文的**根因** + 装配点兜底（2026-10-08）
 
 专题文档：`docs/深度排查-2026-10-08.md` **§8**。**先取证再改**：盘上日志 21:51:17 那次仍是同一个致命门

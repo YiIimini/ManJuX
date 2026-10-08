@@ -451,6 +451,9 @@ type HealResult struct {
 	// 拼过哪几镜由各阶段如实播报，用户不满意就在故事板里改那几镜。
 	Bodies  int
 	BodyIDs []int
+	// BodiesCJK 上面那几镜里，几镜的**中文材料（走位/动作/外形）没能进正文**（汉字卫生门，
+	// 见 prompt_cjk.go 与 empty_body.go）；调用方据此如实播报"那几镜只能靠参考图与机位兜画"。
+	BodiesCJK int
 }
 
 // HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
@@ -530,5 +533,6 @@ func HealPlan(plan *Plan) HealResult {
 		CodeCount:  codeCount,
 		Bodies:     filledBodies,
 		BodyIDs:    filledBodyIDs,
+		BodiesCJK:  plan.FilledBodyCJK,
 	}
 }

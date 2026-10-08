@@ -264,10 +264,18 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	// ② 拼完还有空的（连场次/人物/台词都没有）才点名 —— 那几镜渲染会被致命门拦住；
 	//    方案照常存盘（用户可以在故事板里手改这几镜，资产还能复用）。
 	if n, ids := project.FillEmptyShotBodies(plan); n > 0 {
+		// 少了中文材料这件事必须说出来：兜底正文**只用英文材料**（汉字出现在 <d> 外会被入口的
+		// 汉字卫生门拒收，见 project.empty_body.go），所以中文的走位/动作描述进不去 ——
+		// 那几镜的画面调度只能靠参考图与机位兜，用户有权知道并决定要不要手写这一镜。
+		cjk := ""
+		if plan.FilledBodyCJK > 0 {
+			cjk = fmt.Sprintf("；其中 %d 镜的**中文走位/动作描述没能进正文**（汉字出现在 <d> 外会被入口拒收），"+
+				"那几镜只能靠参考图与机位兜画", plan.FilledBodyCJK)
+		}
 		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
 			"🩹 有 %d 镜的正文是空的、自纠一轮也没写出来（%s）—— 平台已按**这一镜自己的材料**"+
-				"（场次/人物/走位/景别/机位/台词原文）拼了一版最小合规正文，**不是新编内容**；"+
-				"渲染因此可以继续。不满意就在故事板里改这几镜的正文", n, joinShotIDs(ids, 8))
+				"（场次/人物/景别/机位/台词原文 + 卡片的英文外形）拼了一版最小合规正文，**不是新编内容**；"+
+				"渲染因此可以继续%s。不满意就在故事板里改这几镜的正文", n, joinShotIDs(ids, 8), cjk)
 	}
 	if ids := project.EmptyPromptShotIDs(plan); len(ids) > 0 {
 		c.emit(proj.ID, PhaseScript, 0, "warn", 16,

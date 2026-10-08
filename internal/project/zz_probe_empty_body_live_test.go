@@ -41,8 +41,14 @@ func TestZZProbeEmptyBodyOnRealPlan(t *testing.T) {
 		if v := H3FormatViolations(sh.H3Prompt); len(v) > 0 {
 			t.Fatalf("补出来的正文没过格式判据：%v", v)
 		}
-		t.Logf("镜 12 时长=%d 内切=%v 违规=0 <d> 条数=%d 字数=%d",
-			sh.Duration, sh.Cuts, strings.Count(sh.H3Prompt, "<d>"), H3DescriptionWords(sh.H3Prompt))
+		cjk := CJKOutsideDialogue(sh.H3Prompt, subjectNamesOf(plan))
+		t.Logf("镜 12 时长=%d 内切=%v 违规=0 <d> 条数=%d 字数=%d <d> 外可避免汉字=%d（>%d 就该报、>%d 会被入口拒收）",
+			sh.Duration, sh.Cuts, strings.Count(sh.H3Prompt, "<d>"), H3DescriptionWords(sh.H3Prompt),
+			cjk, PlanCJKWarnOutsideDialogue, PlanCJKFailOutsideDialogue)
+		if cjk > PlanCJKWarnOutsideDialogue {
+			t.Errorf("补出来的正文 <d> 外有 %d 个可避免的汉字", cjk)
+		}
+		t.Logf("其中「中文材料没能进正文」的镜数 = %d（FilledBodyCJK，会如实播报）", plan.FilledBodyCJK)
 		// 把补出来的正文落一份到 scratch 供人眼复核（不进仓库）。
 		if out := os.Getenv("PI_SCRATCH_DIR"); out != "" {
 			_ = os.WriteFile(filepath.Join(out, "shot12_filled.txt"), []byte(sh.H3Prompt), 0o644)

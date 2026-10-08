@@ -140,3 +140,17 @@ func TestRenderStageAnnouncesFilledBodies(t *testing.T) {
 		t.Error("渲染阶段没有播报 plan.FilledBodyShots —— 平台替模型补的正文用户无从得知")
 	}
 }
+
+// TestBothStagesAnnounceDroppedChineseMaterial 【真机 preflight 抓出来的第二处】
+//
+// 兜底正文**只能用英文材料**（汉字出现在 `<d>` 外会被入口的汉字卫生门拒收：>200 即 fail）。
+// 于是这一镜的中文走位/动作描述进不去 —— 少了这部分信息**必须说出来**（那几镜只能靠参考图与机位兜画），
+// 两个阶段都要说（剧本阶段决定存盘后的方案；渲染阶段才是用户点下去的那一刻）。
+func TestBothStagesAnnounceDroppedChineseMaterial(t *testing.T) {
+	for _, f := range []string{"stages_script.go", "stages_render.go"} {
+		src := readSrc(t, f)
+		if !strings.Contains(src, "plan.FilledBodyCJK") {
+			t.Errorf("%s 没有播报 plan.FilledBodyCJK —— 中文材料没进正文这件事被静默吞掉了", f)
+		}
+	}
+}

@@ -70,17 +70,19 @@ type emptyBodyLine struct {
 //
 // 返回 (补了几镜, 哪几镜)。补过的镜号同时记在 `Plan.FilledBodyShots` 上 —— 各阶段
 // （剧本阶段 / 渲染阶段）据此如实播报；正文非空的镜**一个字都不碰**。
+// `Plan.FilledBodyCJK` 记下其中几镜有**中文材料没能进正文**（汉字卫生门，见下）。
 func FillEmptyShotBodies(p *Plan) (int, []int) {
 	if p == nil {
 		return 0, nil
 	}
 	var ids []int
+	dropped := 0
 	for i := range p.Shots {
 		sh := &p.Shots[i]
 		if strings.TrimSpace(sh.H3Prompt) != "" {
 			continue
 		}
-		body, ok := assembleMinimalBody(p, sh)
+		body, ok, cjkDropped := assembleMinimalBody(p, sh)
 		if !ok {
 			continue // 材料不够：不硬编（交给渲染入口的致命门如实拦）
 		}
@@ -90,35 +92,67 @@ func FillEmptyShotBodies(p *Plan) (int, []int) {
 			// 而正文里明明有 `[Shot 2] At …`（两边说的不是一件事）。
 			sh.Cuts = minimalCuts(sh.Duration)
 		}
+		if cjkDropped {
+			dropped++
+		}
 		ids = append(ids, sh.ID)
 	}
 	if len(ids) > 0 {
 		p.FilledBodyShots = ids
+		p.FilledBodyCJK = dropped
 	}
 	return len(ids), ids
 }
 
-// assembleMinimalBody 按方案自己的材料拼一版最小合规正文。材料不够时返回 false。
-func assembleMinimalBody(p *Plan, sh *Shot) (string, bool) {
+// assembleMinimalBody 按方案自己的材料拼一版最小合规正文。材料不够时返回 ok=false。
+//
+// 第二个 bool 表示"这一镜有**中文材料**（走位/动作/外形描述）因为汉字卫生门而没能进正文"。
+//
+// 【为什么中文材料一律不进正文（2026-10-08，真机 preflight 当场抓出来的）】
+// 入口有一条 fail 级契约门：`h3_prompt` 里 `<d>` 外**可避免的汉字** > 200 就**拒收**
+// （`prompt_cjk.go`：合法位置只有 `<d>[Chinese]…</d>` 与**主体名**，判据与技能侧同源）。
+// 第一版兜底正文把卡片中文描述 + 中文走位照抄进去 → 那一镜 236 个字 ⇒ **fail**
+// （等于把"空提示词"这个 fatal 换成"汉字卫生"这个 fatal）。所以这里只用**英文材料**：
+// 卡片的英文描述/英文定妆提示词、机位、景别（封闭词表 → 英文）、台词（本来就进 `<d>`），
+// 而**名字**是豁免的（官方要求点名主体）。
+// 中文的走位/动作因此进不去 —— 这一镜少了这部分信息（靠参考图与机位补），**如实记账并播报**。
+func assembleMinimalBody(p *Plan, sh *Shot) (string, bool, bool) {
 	if p == nil || sh == nil {
-		return "", false
+		return "", false, false
 	}
 	sceneName, sceneDesc, hasScene := sceneMaterial(p, sh)
+	dropped := false
 	var subs []emptyBodySubject
 	for _, cid := range sh.Characters {
 		c, ok := charMaterial(p, cid)
 		if !ok || strings.TrimSpace(c.Name) == "" {
 			continue
 		}
-		subs = append(subs, emptyBodySubject{
-			name: strings.TrimSpace(c.Name),
-			desc: firstClause(strings.TrimSpace(c.Description), emptyBodyDescRunes),
-			pos:  posOf(sh, c),
-		})
+		// 外形：中文描述进不了正文（汉字卫生门），但卡片**本来就有英文定妆提示词**（翻译会话写的），
+		// 那一份是逐项照抄的英文外形 —— 用它，身份信息一点没丢 ⇒ **不算"丢了材料"**。
+		// 只有连英文那一份也拿不到时，才记一笔"这镜的外形没能进正文"。
+		desc := englishClause(c.Description, c.ImagePrompt)
+		if CountCJK(c.Description) > 0 && desc == "" {
+			dropped = true
+		}
+		pos := posOf(sh, c)
+		if CountCJK(pos) > 0 {
+			pos = "" // 中文走位进不了提示词，也没有英文替代（方案里走位只有中文这一份）
+			dropped = true
+		}
+		subs = append(subs, emptyBodySubject{name: strings.TrimSpace(c.Name), desc: desc, pos: pos})
+	}
+	sceneDesc = englishClause(sceneDesc, sceneImagePrompt(p, sh.Scene))
+	if sceneDesc == "" && strings.TrimSpace(sh.Scene) != "" {
+		// 场景描述进不去（中文且没有英文定妆提示词）—— 这一镜只剩场景名与参考图。
+		// 只有确实**写了**中文描述才算丢（本来就空的不算）。
+		if sc := sceneByID(p, sh.Scene); sc != nil && CountCJK(sc.Description) > 0 {
+			dropped = true
+		}
 	}
 	lines := shotSpeechLines(sh)
 	if !hasScene && len(subs) == 0 && len(lines) == 0 {
-		return "", false
+		return "", false, false
 	}
 	d := sh.Duration
 	if d <= 0 {
@@ -126,19 +160,22 @@ func assembleMinimalBody(p *Plan, sh *Shot) (string, bool) {
 	}
 	cuts := minimalCuts(d)
 	byCut := distributeLines(lines, len(cuts))
+	if CountCJK(sh.Action) > 0 {
+		dropped = true // 中文动作描述进不了正文
+	}
 
 	var b strings.Builder
 	// ① subject_definitions —— 每个 <Subject N> 对应一张卡（编号连续，官方 §2.1）
 	b.WriteString("subject_definitions:\n")
 	for i, s := range subs {
-		fmt.Fprintf(&b, "<Subject %d> is %s, the character in the first attached pictures: ", i+1, s.name)
+		line := fmt.Sprintf("<Subject %d> is %s, the character in the first attached picture", i+1, s.name)
 		if s.desc != "" {
-			b.WriteString(sentenceDot(s.desc) + " ")
+			line += ": " + sentenceDot(s.desc)
 		}
 		if s.pos != "" {
-			b.WriteString("In this shot: " + s.pos + ".")
+			line += " In this shot: " + sentenceDot(s.pos)
 		}
-		b.WriteString("\n")
+		b.WriteString(sentenceDot(line) + "\n")
 	}
 	if hasScene {
 		line := "The scene is the LAST attached picture: " + sceneName
@@ -178,7 +215,7 @@ func assembleMinimalBody(p *Plan, sh *Shot) (string, bool) {
 	b.WriteString("\noverall_soundscape:\n")
 	b.WriteString(soundscapeLine(subs, hasScene))
 	b.WriteString("\n\nnon_diegetic_music:\nN/A\n")
-	return b.String(), true
+	return b.String(), true, dropped
 }
 
 // summaryLine summary 段的第一句：只写方案自己记着的东西（地点 + 谁在场 + 有几句要说）。
@@ -224,24 +261,25 @@ func speakerNames(subs []emptyBodySubject) string {
 
 // cutParagraph 一刀的正文：镜号（首刀不带时间戳）＋ 景别/机位 ＋ 走位 ＋ 这一刀要念的话。
 //
-// 只写方案里**已有的**东西：景别、机位、走位、台词原文、动作描述（有就照抄）。
-// 不写任何新编的动作/运镜/情绪 —— 那是创作，归编剧与分镜会话。
+// 只写方案里**已有的**东西：景别（词表 → 英文）、机位、走位（仅英文时）、台词原文、动作描述（仅英文时）。
+// **不写任何新编的动作/运镜/情绪** —— 那是创作，归编剧与分镜会话。
+// 中文的动作/走位在这里一律**不进正文**（汉字卫生门，见 assembleMinimalBody 的注释）。
 func cutParagraph(sh *Shot, subs []emptyBodySubject, lines []emptyBodyLine, idx int, at float64) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[Shot %d]", idx+1)
 	if idx > 0 {
 		b.WriteString(" " + cutStamp(at))
 	}
-	if s := strings.TrimSpace(sh.ShotSize); s != "" {
+	if s := shotSizeLabel(sh.ShotSize); s != "" {
 		b.WriteString(" " + s)
 	}
-	if c := strings.TrimSpace(sh.Camera); c != "" {
+	if c := englishOnly(sh.Camera); c != "" {
 		b.WriteString(" " + c)
 	}
 	b.WriteString(": ")
 	var parts []string
 	if idx == 0 {
-		if act := strings.TrimSpace(sh.Action); act != "" {
+		if act := englishOnly(sh.Action); act != "" {
 			parts = append(parts, act)
 		}
 	}
@@ -487,4 +525,71 @@ func sentenceDot(s string) string {
 		return t
 	}
 	return t + "."
+}
+
+// englishOnly 只放行**含零个汉字**的材料（首尾空白修掉）：汉字出现在 `<d>` 外会被入口的
+// 汉字卫生门计数（>200 即拒收），所以兜底正文的每一段材料都要先过这一关。
+func englishOnly(s string) string {
+	t := strings.TrimSpace(s)
+	if t == "" || CountCJK(t) > 0 {
+		return ""
+	}
+	return t
+}
+
+// shotSizeEN 平台自己的景别词表（`PlanShotSizes`，六个值）→ 英文写法。
+//
+// 为什么可以"翻"：这是**封闭词表**，不是自由文本 —— 六个值一一对应，没有解释空间；
+// 而景别是每镜必说的信息，汉字又进不了正文（见 englishOnly）。
+// 词表若新增一项而这里没跟上，`TestShotSizeLabelsCoverTheVocabulary` 会红。
+var shotSizeEN = map[string]string{
+	"远景":  "Extreme wide shot",
+	"全景":  "Wide shot",
+	"中景":  "Medium shot",
+	"中近景": "Medium close shot",
+	"近景":  "Close shot",
+	"特写":  "Close-up",
+}
+
+// shotSizeLabel 景别的中文值 → 英文写法；词表外的值一律返回空（宁可不说，也不编一个）。
+func shotSizeLabel(s string) string {
+	return shotSizeEN[strings.TrimSpace(s)]
+}
+
+// sceneByID 按 id / 名字取场景卡（找不着返回 nil）。
+func sceneByID(p *Plan, key string) *Scene {
+	if p == nil {
+		return nil
+	}
+	k := strings.TrimSpace(key)
+	if k == "" {
+		return nil
+	}
+	for i := range p.Scenes {
+		sc := &p.Scenes[i]
+		if strings.EqualFold(sc.ID, k) || (sc.Name != "" && sc.Name == k) {
+			return sc
+		}
+	}
+	return nil
+}
+
+// englishClause 取一段**能进正文**的外形描述：优先方案的描述，它含汉字时退到英文定妆提示词，
+// 两者都拿不到（或都含汉字）就返回空（宁可不说，也不把中文塞进正文 —— 那是拒收级问题）。
+func englishClause(desc, fallback string) string {
+	if d := firstClause(strings.TrimSpace(desc), emptyBodyDescRunes); d != "" && CountCJK(d) == 0 {
+		return d
+	}
+	if f := firstClause(strings.TrimSpace(fallback), emptyBodyDescRunes); f != "" && CountCJK(f) == 0 {
+		return f
+	}
+	return ""
+}
+
+// sceneImagePrompt 场景卡的英文定妆提示词（找不着返回空串）。
+func sceneImagePrompt(p *Plan, key string) string {
+	if sc := sceneByID(p, key); sc != nil {
+		return sc.ImagePrompt
+	}
+	return ""
 }
