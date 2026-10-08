@@ -6,6 +6,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PipelineBar from '../components/PipelineBar.vue'
 import ShotCard from '../components/ShotCard.vue'
 import LibAssetDialog from '../components/LibAssetDialog.vue'
+// 质检结论（语音对账/音色核对/画面文字）的界面摘要：后端早就在算，**以前界面上不显示**。
+import { qcProblemLines } from '../qcLines'
 
 // ---- 资产详情弹窗（2026-09-29 用户：「点击图片直接弹窗详情页里显示，可以直接使用
 //      资产库里的详细弹窗页面」）----
@@ -611,11 +613,17 @@ const doneShots = computed(() =>
               <div v-if="pj.qc" class="panel p-4">
                 <b class="text-sm">质检报告</b>
                 <div class="mt-2 flex flex-col gap-1 text-xs">
-                  <div v-for="(r, k) in pj.qc" :key="k" class="flex items-center gap-2">
-                    <i class="dot" :class="r.ok ? 'ok' : 'bad'"></i>
-                    <span>镜头 {{ k }}</span>
-                    <span style="color:var(--mx-text2)">{{ r.duration.toFixed(1) }}s · 暗像素 {{ (r.dark_ratio*100).toFixed(0) }}% · {{ r.has_audio ? '有音轨' : '无音轨' }}</span>
-                    <span v-if="!r.ok" style="color:var(--mx-red)">{{ (r.problems||[]).join(';') }}</span>
+                  <div v-for="(r, k) in pj.qc" :key="k" class="flex flex-col gap-0.5">
+                    <div class="flex items-center gap-2">
+                      <i class="dot" :class="r.ok ? 'ok' : 'bad'"></i>
+                      <span>镜头 {{ k }}</span>
+                      <span style="color:var(--mx-text2)">{{ (r.duration ?? 0).toFixed(1) }}s · 暗像素 {{ ((r.dark_ratio ?? 0) * 100).toFixed(0) }}% · {{ r.has_audio ? '有音轨' : '无音轨' }}</span>
+                      <span v-if="!r.ok" style="color:var(--mx-red)">{{ (r.problems||[]).join(';') }}</span>
+                    </div>
+                    <!-- 语音对账 / 音色核对 / 画面文字：这三类结论**以前界面上一律看不到**
+                         （只写在当时的日志流里，重开应用就没了）。判负在前、未验/未判在后，逐条摆出来。 -->
+                    <div v-for="(line, i) in qcProblemLines(r)" :key="'l'+i" style="color:var(--mx-text2)">{{ line }}</div>
+                    <div v-for="(w, i) in (r.warnings||[])" :key="'w'+i" style="color:var(--mx-amber)">⚠ {{ w }}</div>
                   </div>
                 </div>
               </div>

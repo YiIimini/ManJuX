@@ -15,6 +15,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 // splitNovelToProjects 把一本小说拆成"一集一个项目"。
@@ -790,7 +791,14 @@ func (s *Server) fillEpisodeBriefs(_ context.Context, series string, eps []epIte
 			if err != nil {
 				return
 			}
-			src = replaceEpisodeBrief(src, b)
+			var echoed []string
+			src, echoed = replaceEpisodeBrief(src, b)
+			if len(echoed) > 0 {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", ProjectID: epID,
+					Message: fmt.Sprintf("⚠ 第 %d 集《%s》的剧本把**材料抬头**抄了回来（%s）—— 已清掉再回填："+
+						"那几个字留在正文里，读回时会把剧本截断、甚至判成\"没有剧本\"，等于每轮重写整集",
+						ep.Ep, ep.Title, strings.Join(echoed, "、"))})
+			}
 			if i > 0 && briefs[i-1] != "" {
 				src = upsertPrevSummary(src, eps[i-1].Ep, eps[i-1].Title, clampRunes(briefs[i-1], prevSum))
 			}
@@ -841,23 +849,33 @@ func (s *Server) genOneChapterBrief(ctx context.Context, series string, ep epIte
 // 每重写一轮就多堆一份旧剧本，而那些旧正文正是分镜要读的输入
 // （用户"总感觉剧本提取文章内容不是按爆款要求来的"里另一半就是这个：文件里同时躺着两份）。
 // 现在边界取平台自己的节标记（briefSectionEnd），与新稿里有多少空行无关。
-func replaceEpisodeBrief(src, brief string) string {
-	const mark = "【本集剧情】"
-	body := strings.TrimSpace(brief)
-	if i := strings.Index(src, mark); i >= 0 {
+//
+// 【2026-10-08 深度排查补】两条：
+//
+//	① 新稿先过 `project.TrimEchoedSections` —— 模型会把 user 段的抬头（"【本集原文】"）照抄回来，
+//	   写进文件就是"【本集剧情】出现两次 / 正文里夹着行首节标记"⇒ 读回时剧本被判空或被截断，
+//	   于是每轮重跑都重写整集（同 2026-10-07 那条链）。清掉了什么由调用方如实播报。
+//	② 定位旧的【本集剧情】改用 `project.SectionIndex`（只认行首标记）：写入的"从哪儿切"必须与
+//	   读回的边界同一份判据，否则写出去的与读回来的不是同一份。
+//
+// 返回：新文本 + 从新稿里清掉的照抄抬头（空 = 一个字都没改）。
+func replaceEpisodeBrief(src, brief string) (string, []string) {
+	body, echoed := project.TrimEchoedSections(brief)
+	const mark = project.EpisodeBriefSection
+	if i := project.SectionIndex(src, mark); i >= 0 {
 		head := src[:i+len(mark)]
 		rest := src[i+len(mark):]
 		tail := rest[briefSectionEnd(rest):] // 下一个平台节（通常是【本集原文】）；没有则到文末
 		if tail == "" {
-			return head + body
+			return head + body, echoed
 		}
-		return head + body + "\n\n" + tail
+		return head + body + "\n\n" + tail, echoed
 	}
 	// 没有剧情段:插到全局风格行之后
 	if i := strings.Index(src, "\n\n"); i >= 0 {
-		return src[:i] + "\n\n" + mark + body + src[i:]
+		return src[:i] + "\n\n" + mark + body + src[i:], echoed
 	}
-	return src + "\n\n" + mark + body
+	return src + "\n\n" + mark + body, echoed
 }
 
 // upsertPrevSummary 写入/替换该集 source.txt 里的【前情提要】(前情来自上一集 brief)。

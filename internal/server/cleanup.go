@@ -295,12 +295,19 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 		case err != nil:
 			res.Items = append(res.Items, fmt.Sprintf("运行日志清理失败:%v", err))
 		default:
-			label := "运行日志 data/logs/manjux.log(已清空"
-			if archives > 0 {
-				label += fmt.Sprintf(",连同 %d 份归档", archives)
+			// 【2026-10-08】文案与行为一起改：Reset 现在**先把最后一段留成归档**再清空
+			// （原实现连归档一起删，于是"谁在什么时候删了项目"这类痕迹再也查不回来）。
+			// archives = 清理后**留在盘上的**归档份数（正常是 1：那份尾巴；当前日志为空且
+			// 没有归档可留时是 0 —— 那时如实说"没有可留的"）。
+			label := "运行日志 data/logs/manjux.log(已清空，**最后一段已留成归档**)"
+			if archives == 0 {
+				label = "运行日志 data/logs/manjux.log(已清空，**本次没有可留的归档**)"
 			}
-			add(label+")", freed)
+			add(label, freed)
 		}
+	} else {
+		// 日志写入器没注入（日志文件打不开、非桌面模式）⇒ **如实说这一项没做**，不静默跳过。
+		res.Items = append(res.Items, "运行日志未清理:本次会话没拿到日志写入器(日志文件不可用)")
 	}
 
 	// ⑩ 引擎日志:ComfyUI 自己的 logs/comfyui.log —— 它的写句柄在**外部进程**手里,

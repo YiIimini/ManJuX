@@ -108,3 +108,79 @@ func TestEpisodeBriefBoundaryIsNotBlankLine(t *testing.T) {
 		t.Errorf("空行之后的场次头被切掉了（就是真机那次只取回 51 字的原因）：%q", brief)
 	}
 }
+
+// TestSectionMarkerMustBeOnItsOwnLine 【2026-10-08 深度排查发现的真缺陷】
+// 模型会把平台发给它的**抬头原样抄回正文**（novels_jobs.go 的 user 段就是
+// "【本集原文】\n"+原文），于是剧本正文里可能出现"【本集原文】"这几个字。
+// 纯 strings.Index 会就地切断剧本 ⇒ 后半段场次全丢，而盘上留着的是一份完整稿
+// （"写出去的"与"读回来的"不是同一份）。
+// 判据：**只有行首**（前面只有空白）的标记才算节边界。
+func TestSectionMarkerMustBeOnItsOwnLine(t *testing.T) {
+	src := "《名册之外，八万零一号》系列短视频 第01 集《我是代号》\n全局风格:国风写实\n\n" +
+		"【本集剧情】【开场爆点】“重新检测到生命反应。”\n" +
+		"【场 1|归墟环·维护舱|内】\n" +
+		"  钩子:她翻开那本【本集原文】里从没写过的册子。\n" +
+		"【场 2|归墟环·主控廊|内】\n" +
+		"  正文:沈砚抬手要关机。祁七先一步拔了他的权限卡。\n" +
+		"【本集原文】\n第001章 编号之外\n她睁开眼的时候，舱里的灯只亮着右边一排。\n"
+	brief, ok := EpisodeBrief(src)
+	if !ok {
+		t.Fatal("应当取到剧本段")
+	}
+	if strings.Contains(brief, "第001章") {
+		t.Errorf("正文里那句【本集原文】被当成了节边界，剧本被就地切断：%q", brief)
+	}
+	if !strings.Contains(brief, "【场 2|") || !strings.Contains(brief, "从没写过的册子") {
+		t.Errorf("后半段剧本被切掉了（正文里的标记不该当边界）：%q", brief)
+	}
+}
+
+// TestEmptyBriefShellCountsAsNoScript 建集之初就是"标记在、内容空"（拆集无条件写标记，
+// novels_split.go）。这种**空壳**必须判成"没有剧本"：否则同一份提示词里
+// director.sourceRoleClause 说"【本集剧情】是剧本、逐场按它组织"，而剧本阶段说"本集没有剧本"
+// —— 两句话打架，模型拿到空脚本还被禁止用唯一的素材。
+func TestEmptyBriefShellCountsAsNoScript(t *testing.T) {
+	src := "《名册之外，八万零一号》系列短视频 第01 集《我是代号》\n全局风格:国风写实\n\n" +
+		"【本集剧情】\n\n【本集原文】\n第001章 编号之外\n她睁开眼的时候，舱里的灯只亮着右边一排。\n"
+	if brief, ok := EpisodeBrief(src); ok || strings.TrimSpace(brief) != "" {
+		t.Errorf("空壳剧本必须 ok=false，实际 ok=%v brief=%q", ok, brief)
+	}
+	_, orig, hasBrief, hasOrig := EpisodeSourceParts(src)
+	if hasBrief {
+		t.Error("空壳剧本不该算\"有剧本\"（会让提示词里两句话打架）")
+	}
+	if !hasOrig || !strings.Contains(orig, "第001章") {
+		t.Errorf("原文段照样要认得出来：hasOrig=%v orig=%q", hasOrig, orig)
+	}
+}
+
+// TestTrimEchoedSections 回填之前要清掉**照抄回来的抬头**：不清的话文件里【本集剧情】会出现两次、
+// 正文里夹着行首节标记 ⇒ 读回时剧本被判成空/被截断 ⇒ 每轮重跑都重写整集（同 2026-10-07 那条链）。
+func TestTrimEchoedSections(t *testing.T) {
+	in := "【本集剧情】\n【本集原文】\n【开场爆点】“重新检测到生命反应。”\n  正文:祁七把铭牌按在扫描口上。\n【本集原文】\n第001章 不该出现在剧本里\n"
+	got, stripped := TrimEchoedSections(in)
+	if len(stripped) < 3 {
+		t.Errorf("应清掉开头的两个抬头 + 正文里的那个节标记，实际 %v", stripped)
+	}
+	for _, bad := range []string{EpisodeBriefSection, EpisodeSourceSection, "第001章"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("没清干净：仍留着 %q（%q）", bad, got)
+		}
+	}
+	if !strings.HasPrefix(got, "【开场爆点】") {
+		t.Errorf("清过头了，剧本正文应当原样保留：%q", got)
+	}
+}
+
+// TestTrimEchoedSectionsKeepsCleanScript 干净稿只做首尾去空白，一个字都不许改
+// （否则每次回填都算"改动过"，播报里天天冒出"已清掉…"）。
+func TestTrimEchoedSectionsKeepsCleanScript(t *testing.T) {
+	clean := "【开场爆点】“重新检测到生命反应。”\n【场 1|归墟环·维护舱|内】\n  正文:祁七把铭牌按在扫描口上。\n"
+	got, stripped := TrimEchoedSections(clean)
+	if len(stripped) != 0 {
+		t.Errorf("干净稿不该被清任何东西，实际清了 %v", stripped)
+	}
+	if got != strings.TrimSpace(clean) {
+		t.Errorf("干净稿被改动了：\n出 %q\n入 %q", got, clean)
+	}
+}

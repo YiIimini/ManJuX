@@ -175,8 +175,8 @@ func TestBlackFlashStripIsWiredIntoRender(t *testing.T) {
 	src := string(raw)
 	for _, want := range []struct{ needle, why string }{
 		{"compose.StripBlackFlash(ctx, c.ff, res.VideoPath, 0)", "渲染阶段没有调用黑闪切除 —— 已有片段里的黑闪永远留着"},
-		{"plan.BlackFlashShots++", "剪了黑闪要记账"},
-		{"plan.BlackFlashSec += removed", "剪了多少秒要记账"},
+		{"acc.blackFlashShots++", "剪了黑闪要记账（跨重出轮次累加，别再累在每轮重读的 plan 上）"},
+		{"acc.blackFlashSec += removed", "剪了多少秒要记账（同上，跨轮）"},
 		{"黑闪自检没做成", "自检失败要如实播报（不许静默）"},
 		{"共 %d 镜剪掉了片头/片中的**黑闪**", "渲染收尾要汇总播报一次"},
 	} {
@@ -213,12 +213,52 @@ func TestClipPostProcessMarkersExpire(t *testing.T) {
 			t.Errorf("%s(%s) 还在用 os.Stat(marker) 判幂等：只看标记在不在 = 重渲后漏做", c.what, c.file)
 		}
 	}
-	// 判据本身：指纹要来自**文件**（大小 + 修改时间），不能只是个常量。
+	// 判据本身：指纹要来自**文件内容**（大小 + 修改时间 + 首 64KB 哈希），不能只是个常量。
+	//
+	// 【2026-10-08 深度排查加强】原来只要求"大小 + 修改时间"—— 那能被**恰好相同**的覆盖骗过
+	// （FAT/exFAT 的 mtime 只有 2 秒粒度、复制保留时间戳、同长度重渲），标记照样判"有效"、
+	// 后处理照样静默跳过。所以这里钉：指纹里必须有内容哈希。
 	raw, err := os.ReadFile("clipmark.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "clipFingerprint(info.Size(), info.ModTime().UnixNano())") {
-		t.Error("标记指纹必须记下文件的大小与修改时间（否则重渲覆盖后认不出来）")
+	src := string(raw)
+	for _, want := range []struct{ needle, why string }{
+		{"info.Size()", "指纹要带文件大小"},
+		{"info.ModTime().UnixNano()", "指纹要带修改时间"},
+		{"fnv.New64a()", "指纹要带**内容哈希**（只比大小+mtime 会被同尺寸同时间戳的覆盖骗过）"},
+		{"clipFingerprintBytes", "内容哈希要明确只取开头一段（整份读太贵，片段只需区分头 64KB）"},
+	} {
+		if !strings.Contains(src, want.needle) {
+			t.Errorf("标记指纹缺少 %s：%s", want.why, want.needle)
+		}
+	}
+	// 行为夹具：同尺寸、只改一个字节的覆盖，指纹必须变（这正是"同长度重渲"的形态）。
+	dir := t.TempDir()
+	p := filepath.Join(dir, "c.mp4")
+	if err := os.WriteFile(p, []byte("AAAA"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	before, err := clipFingerprint(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("AAAB"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 把 mtime 拨回原值：模拟"大小与时间戳都没变、只有内容变了"（复制保留时间戳/粗粒度 mtime）。
+	if err := os.Chtimes(p, st.ModTime(), st.ModTime()); err != nil {
+		t.Skipf("本平台改不动时间戳，跳过这一条：%v", err)
+	}
+	after, err := clipFingerprint(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Errorf("同大小同时间戳、内容变了一个字节，指纹却没变（%s）—— 标记会误判\"处理过了\"", before)
 	}
 }

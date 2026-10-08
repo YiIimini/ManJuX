@@ -81,7 +81,10 @@ func TestBriefSectionBoundsFollowTheNextSection(t *testing.T) {
 func TestReplaceEpisodeBriefDoesNotKeepTheOldScript(t *testing.T) {
 	src := realEpisodeSource(t)
 	fresh := goodScriptFixture()
-	out := replaceEpisodeBrief(src, fresh)
+	out, echoed := replaceEpisodeBrief(src, fresh)
+	if len(echoed) != 0 {
+		t.Errorf("干净的新稿不该被清任何东西，实际清掉了 %v", echoed)
+	}
 
 	if !strings.Contains(out, fresh) {
 		t.Fatal("回填后找不到新稿 —— 写入本身就错了")
@@ -100,7 +103,7 @@ func TestReplaceEpisodeBriefDoesNotKeepTheOldScript(t *testing.T) {
 		t.Error("旧稿残留在文件里：新稿后面还跟着旧剧本的正文")
 	}
 	// 幂等：再回填一次不会越写越长
-	twice := replaceEpisodeBrief(out, fresh)
+	twice, _ := replaceEpisodeBrief(out, fresh)
 	if twice != out {
 		t.Errorf("回填不幂等：第二次写出的长度 %d ≠ 第一次 %d", len([]rune(twice)), len([]rune(out)))
 	}

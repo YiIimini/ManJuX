@@ -195,8 +195,18 @@ func MeasureVoicePitch(ctx context.Context, f *ff.FF, clip string, lines []Voice
 		rep.Skipped = fmt.Sprintf("人声里的可靠基频只覆盖 %.2f 秒（不足 %.1f 秒），不判音色", rep.VoicedSec, voicePitchMinSec)
 		return rep
 	}
+	// 落在男女重叠带（140–165 Hz）⇒ **不判**，而且必须落成 Checked=false + Skipped 说明。
+	//
+	// 原来这条只写在文件头的注释里：实测（2026-10-08 审查发现）"女卡 + 音轨 150 Hz"得到
+	// Checked=true / Findings 空 / 摘要"音色核对通过：卡上是女声，实测中位基频 151 Hz" ——
+	// **把"其实没判"说成了"验过且相符"**。三态（通过 / 判负 / 不判）在报告里必须分得开，
+	// 否则用户看不出"这一条根本没验"（与 SpeechReport 同一条纪律）。
+	if rep.MedianHz >= VoiceMaleMaxHz && rep.MedianHz < VoiceFemaleMinHz {
+		rep.Skipped = fmt.Sprintf("实测中位基频 %.0f Hz 落在男女重叠带（%.0f–%.0f Hz），不判音色",
+			rep.MedianHz, VoiceMaleMaxHz, VoiceFemaleMinHz)
+		return rep
+	}
 	rep.Checked = true
-
 	switch {
 	case expected == GenderFemale && rep.MedianHz < VoiceMaleMaxHz:
 		rep.Findings = append(rep.Findings, PitchFinding{Kind: "voice-gender", Detail: fmt.Sprintf(

@@ -20,6 +20,13 @@ import "strings"
 // 于是分镜阶段只能把两者当同一份"原文"用（提示词还写着"从原文提炼"），剧本等于没被当作主源。
 // 边界收进 project 之后，server（写剧本的那一侧）与 pipeline（读剧本的那一侧）看的是同一份判据；
 // 它同时是**写入**边界（novels_split.go 回填剧本时按它切旧稿）。
+//
+// 【节标记必须"独占行首"才算边界】（2026-10-08 深度排查发现）
+// 模型会把平台发给它的**抬头原样抄进正文**（`novels_jobs.go` 那条 user 段就是
+// "【本集原文】\n"+原文），于是剧本正文里可能出现"【本集原文】"这几个字。
+// 纯 strings.Index 会就地切断剧本：真机形态实测 brief 只剩前半段；若回显落在开头还
+// 会得到 ok=true 但 brief=""，接着写回把这一版当"新剧本"，文件里标记出现两次、每轮重跑
+// 都重写整集（就是 2026-10-07 那次"51 字"的同一条链）。所以只认**行首**（前面只有空白）的标记。
 const (
 	// EpisodeBriefSection 剧本段的起始标记。
 	EpisodeBriefSection = "【本集剧情】"
@@ -38,7 +45,7 @@ const (
 func EpisodeSectionEnd(rest string) int {
 	end := -1
 	for _, m := range []string{EpisodeSourceSection, EpisodeBriefSection, episodePrevSection} {
-		if i := strings.Index(rest, m); i >= 0 && (end < 0 || i < end) {
+		if i := sectionIndex(rest, m); i >= 0 && (end < 0 || i < end) {
 			end = i
 		}
 	}
@@ -48,14 +55,25 @@ func EpisodeSectionEnd(rest string) int {
 	return end
 }
 
-// EpisodeBrief 取【本集剧情】那一段（= 剧本）。没有这个标记时 ok=false。
+// EpisodeBrief 取【本集剧情】那一段（= 剧本）。没有这个标记、或**标记在但内容是空的**，
+// 都返回 ok=false。
+//
+// "空壳"也判 false 的理由（2026-10-08 深度排查发现）：拆集那一步是无条件写标记的
+// （`novels_split.go`），所以建集之初就是"标记在、内容空"。此前 hasBrief=true 会让
+// director.sourceRoleClause 照样宣称"【本集剧情】是剧本，逐场按它组织、不得用原文替换"，
+// 而 pipeline 的剧本阶段同时判"本集没有剧本" —— **同一份提示词里两句话打架**，模型拿到
+// 空脚本却被禁止用唯一的素材。空壳一律走"没有剧本"那一条。
 func EpisodeBrief(text string) (string, bool) {
-	i := strings.Index(text, EpisodeBriefSection)
+	i := sectionIndex(text, EpisodeBriefSection)
 	if i < 0 {
 		return "", false
 	}
 	rest := text[i+len(EpisodeBriefSection):]
-	return strings.TrimSpace(rest[:EpisodeSectionEnd(rest)]), true
+	brief := strings.TrimSpace(rest[:EpisodeSectionEnd(rest)])
+	if brief == "" {
+		return "", false
+	}
+	return brief, true
 }
 
 // EpisodeOriginal 取【本集原文】那一段（= 小说原文）。没有标记时**退回全文**。
@@ -63,7 +81,7 @@ func EpisodeBrief(text string) (string, bool) {
 // 退回全文是有意的：技能侧导入的包、或裁过的稿子都没有这个标记，那时整份文本就是全部材料 ——
 // 退回全文让"没有标记"退化成本改动之前的行为，不会因为缺标记而把材料读空。
 func EpisodeOriginal(text string) string {
-	i := strings.Index(text, EpisodeSourceSection)
+	i := sectionIndex(text, EpisodeSourceSection)
 	if i < 0 {
 		return text
 	}
@@ -78,12 +96,109 @@ func EpisodeSourceParts(text string) (brief, orig string, hasBrief, hasOrig bool
 	brief, hasBrief = EpisodeBrief(text)
 	orig = EpisodeOriginal(text)
 	_, hasOrig = episodeSectionIndex(text, EpisodeSourceSection)
+	// 标记在、但原文段是空的 ⇒ 当作"没有原文"（否则调用方会以为手上有素材可喂）。
+	hasOrig = hasOrig && orig != ""
 	return brief, orig, hasBrief, hasOrig
 }
 
-// episodeSectionIndex 这个标记在不在文本里（用于 hasOrig —— 注意 EpisodeOriginal 缺标记时退回全文，
-// 所以不能用"返回非空"当判据）。
+// episodeSectionIndex 这个标记（行首的那种）在不在文本里。
+//
+// 用于 hasOrig —— 注意 EpisodeOriginal 缺标记时退回全文，所以不能用"返回非空"当判据。
 func episodeSectionIndex(text, marker string) (int, bool) {
-	i := strings.Index(text, marker)
+	i := sectionIndex(text, marker)
 	return i, i >= 0
 }
+
+// sectionIndex 找标记位置，只认**行首独立成节**的那一次（前面只有空白）；找不到返回 -1。
+//
+// 为什么不是纯 strings.Index：见文件头"节标记必须独占行首才算边界"。
+// 注意"行首"允许前导空白（模型偶尔缩进），但不允许任何可见字符 ——
+// 这正是"模型把标记抄进正文句子中间"与"平台自己写的节标记"之间的确定区别。
+func sectionIndex(text, marker string) int {
+	for from := 0; from < len(text); {
+		i := strings.Index(text[from:], marker)
+		if i < 0 {
+			return -1
+		}
+		at := from + i
+		if atLineStart(text, at) {
+			return at
+		}
+		from = at + len(marker)
+	}
+	return -1
+}
+
+// atLineStart at 处是不是行首（前面只有空白字符）。
+//
+// 注意只认 ASCII 空白：text[i] 是**字节**，全角空格是三个字节，放进 byte 的 case 里编译不过
+// （首版就栽在这）。平台自己写节标记时用的是纯 ASCII 换行 + 空行，所以够用；模型若把标记
+// 缩进成全角空格，按"不是行首"处理 —— 宁可判它"不是节边界"，也不会误切正文。
+func atLineStart(text string, at int) bool {
+	for i := at - 1; i >= 0; i-- {
+		switch text[i] {
+		case '\n':
+			return true
+		case ' ', '\t', '\r':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// TrimEchoedSections 清掉**模型把材料抬头照抄回来**的那几个节标记 —— 回填剧本之前必须过这一道。
+//
+// 【为什么要在写入侧也清】（2026-10-08 深度排查发现，两个后果都实测过）
+// 平台发给编剧会话的 user 段就是 "【本集原文】\n" + 原文（novels_jobs.go），模型偶尔把这行
+// 连带抄回自己的输出里。于是：
+//
+//	① 回填后的文件里 【本集剧情】 出现两次 ⇒ 读回时第一段是空的 ⇒ **剧本被判成"没有"**，
+//	   每一轮都重写整集（就是 2026-10-07 那次"51 字"的同一条链）；
+//	② 正文里夹着行首的 【本集原文】 ⇒ 读回时剧本在那里被就地截断，而盘上留着的是完整稿 ——
+//	   **写出去的与读回来的不是同一份**。
+//
+// 返回清过之后的正文 + 清掉了哪些（调用方如实播报，不静默改字）。
+func TrimEchoedSections(body string) (string, []string) {
+	var stripped []string
+	rest := strings.TrimSpace(body)
+	// ① 开头的标记行：模型把 user 段的抬头原样抄回来。
+	for {
+		head := strings.TrimLeft(rest, " \t\r\n\u3000")
+		hit := ""
+		for _, m := range []string{EpisodeBriefSection, EpisodeSourceSection, episodePrevSection} {
+			if strings.HasPrefix(head, m) {
+				hit = m
+				break
+			}
+		}
+		if hit == "" {
+			break
+		}
+		stripped = append(stripped, hit)
+		rest = head[len(hit):]
+	}
+	// ② 正文里再现（行首的）【本集原文】/【前情提要】 ⇒ 从这里截断（理由见上）。
+	if i := earliestLineStart(rest, EpisodeSourceSection, episodePrevSection); i >= 0 {
+		stripped = append(stripped, "正文中的节标记（其后内容已截掉）")
+		rest = rest[:i]
+	}
+	return strings.TrimSpace(rest), stripped
+}
+
+// earliestLineStart 这几个标记里**行首**出现得最早的那个下标；都没有返回 -1。
+func earliestLineStart(text string, markers ...string) int {
+	best := -1
+	for _, m := range markers {
+		if i := sectionIndex(text, m); i >= 0 && (best < 0 || i < best) {
+			best = i
+		}
+	}
+	return best
+}
+
+// SectionIndex 供 server 侧定位**平台自己写的**节标记（只认行首那种）；找不到返回 -1。
+// 判据与读取侧同一份（sectionIndex）—— 写入侧的"从哪儿切旧稿"必须与读回侧一致，
+// 否则写出去的与读回来的不是同一份（2026-10-08 排查时正是这个形态）。
+func SectionIndex(text, marker string) int { return sectionIndex(text, marker) }

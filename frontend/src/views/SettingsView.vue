@@ -331,7 +331,7 @@ async function testConn(target) {
           <el-form-item label="并行拆集并发数(同时调 LLM 的段数)">
             <el-input-number v-model="form.split.concurrency" :min="1" :max="6" style="width:100%" />
           </el-form-item>
-          <el-form-item label="每集附原文上限(字;附原文给分镜 LLM 看全文改编)">
+          <el-form-item label="每集附原文上限(字;原文只是**素材**，供分镜核实细节；本集主源是【本集剧情】剧本)">
             <el-input-number v-model="form.split.max_orig_chars" :min="3000" :max="20000" :step="1000" style="width:100%" />
           </el-form-item>
           <el-form-item label="前情提要截断(字;给下集的上集剧情摘要长度)">

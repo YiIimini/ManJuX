@@ -179,8 +179,21 @@ func (s *Server) importPackageRoot(w http.ResponseWriter, root string) {
 	}
 
 	for _, st := range stage {
+		// 包名被净化过就**如实播报**（readPackage 过 safeSeries；静默改字会让技能侧"章名即集名"对不上）。
+		if st.man.SanitizeNote != "" {
+			s.opLog("⚠ 包 %s 的 book/episode 名字含路径分隔符或 ASCII 标点，已净化后再落盘（防写到数据根之外）：%s",
+				filepath.Base(st.pkg), st.man.SanitizeNote)
+		}
 		dest := filepath.Join(s.store.Root(), st.man.Book,
 			fmt.Sprintf("%s·%s·%s", st.man.Book, st.man.Episode, orDefault(st.man.EpisodeTitle, "未命名")))
+		// 第二道防线：这条路径后面跟着 copyPackage 与 os.RemoveAll，出界就是数据安全事故。
+		// 名字已过 safeSeries，走到这里说明另有蹊跷（例如根被改过/符号链接）—— 拒绝并说清楚。
+		if !destUnderRoot(s.store.Root(), dest) {
+			rollback()
+			writeErr(w, 400, fmt.Errorf("包 %s 的 book/episode 名字会把项目落到数据根之外，已拒绝导入：%s",
+				filepath.Base(st.pkg), dest))
+			return
+		}
 		if _, serr := os.Stat(dest); os.IsNotExist(serr) {
 			created = append(created, dest)
 		}
@@ -312,6 +325,9 @@ type pkgManifest struct {
 	Episode      string `json:"episode"`
 	EpisodeTitle string `json:"episode_title"`
 	ProducedBy   string `json:"produced_by"`
+	// SanitizeNote 包名过 safeSeries 时**改过哪些字**（""= 一个字都没改）。json:"-" 不进契约：
+	// 它是平台自己的记账（见 readPackage），随导入流程如实播报，不参与包内容校验。
+	SanitizeNote string `json:"-"`
 }
 
 // collectPackages 找出目录下的项目包:自身是一个包,或(系列根)其一级子目录是包。
@@ -407,6 +423,16 @@ func readPackage(pkg string) (pkgManifest, *project.Plan, []project.Issue, error
 	if strings.TrimSpace(man.Book) == "" {
 		return man, nil, nil, fmt.Errorf("manifest 缺 book 字段(不知道该放进哪本书的目录)")
 	}
+	// 【2026-10-08 数据安全】manifest 里的 book/episode/episode_title **必须过 safeSeries**。
+	//
+	// 这三段会被直接拼进落盘路径：`<projects 根>/<book>/<book·episode·title>/`（见 importPackageRoot）。
+	// 此前只判了 book 非空 —— 一个 `book: "..\\..\\x"`（或绝对路径、或 episode 里带 `\\..`）的包就能把
+	// 项目文件写到**数据根之外**，而那次导入失败时回滚的 `os.RemoveAll(dest)` 删的也是数据根之外的目录
+	// （平台自己的口径：这条路上的参数会一路走到写盘，任何一处缺口都可能被构造成写到库外）。
+	//
+	// safeSeries 把 `\\ / . :` 这类**路径分隔与点号一律换成 `·`** 并折叠 ⇒ 拿不出 `..` 与分隔符。
+	// 净化会改字（技能侧本来也只允许全角标点），所以改过就记进 `SanitizeNote`，由导入流程**如实播报**。
+	man.SanitizeNote = sanitizePkgNames(&man)
 	rawPlan, err := os.ReadFile(filepath.Join(pkg, "plan", "plan.json"))
 	if err != nil {
 		return man, nil, nil, fmt.Errorf("读不到 plan/plan.json:%w", err)
@@ -416,6 +442,43 @@ func readPackage(pkg string) (pkgManifest, *project.Plan, []project.Issue, error
 		return man, nil, nil, fmt.Errorf("plan.json 不是合法 JSON:%w", err)
 	}
 	return man, &plan, project.ValidatePlan(&plan), nil
+}
+
+// sanitizePkgNames 把包清单里的三段名字（book/episode/episode_title）过 safeSeries ——
+// 它们会被**直接拼进落盘路径**（`<根>/<book>/<book·episode·title>/`），是本平台唯一一处
+// 让外部文件决定写盘路径的地方，所以判据必须在这里（唯一入口），而不是在调用点各写一遍。
+//
+// 返回"改过字的说明"（""= 一个字都没改）：调用方据此**如实播报**（净化会改字，静默改字是坏习惯 ——
+// 技能侧明确要求书名/章名照原样用，所以改字必须让人看得见）。这也是数据安全的边界：
+// safeSeries 把 `\ / . :` 一律换成 `·` 并折叠 ⇒ `..`、绝对路径、UNC 都拿不出来。
+func sanitizePkgNames(man *pkgManifest) string {
+	if man == nil {
+		return ""
+	}
+	var changed []string
+	fix := func(label, v string) string {
+		orig := strings.TrimSpace(v)
+		got := safeSeries(orig)
+		if got != orig {
+			changed = append(changed, fmt.Sprintf("%s %q→%q", label, orig, got))
+		}
+		return got
+	}
+	man.Book = fix("book", man.Book)
+	man.Episode = fix("episode", man.Episode)
+	man.EpisodeTitle = fix("episode_title", man.EpisodeTitle)
+	return strings.Join(changed, "; ")
+}
+
+// destUnderRoot 落盘路径必须**确实**在项目根之内（判据：清干净的根 + 分隔符是前缀）。
+//
+// 名字已经过 safeSeries（拿不出分隔符），这里是**第二道**：这条路径后面跟着 copyPackage 与
+// os.RemoveAll，一旦出界就是"写到库外/删到库外"的数据安全事故，值得再挡一次。
+func destUnderRoot(root, dest string) bool {
+	r := filepath.Clean(root)
+	d := filepath.Clean(dest)
+	sep := string(filepath.Separator)
+	return strings.HasPrefix(d+sep, r+sep)
 }
 
 // copyPackage 把包拷进项目目录(不含 assets/clips/output —— 那些是平台自己的产物)。

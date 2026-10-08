@@ -71,11 +71,26 @@ func TestTeeWriterResetClearsInPlace(t *testing.T) {
 	if freed <= 0 {
 		t.Errorf("应如实上报释放字节数,实际 %d", freed)
 	}
-	if n != len(archives) {
-		t.Errorf("应删掉全部 %d 份归档,实际 %d", len(archives), n)
+	// 【2026-10-08 深度排查改契约】Reset 不再"连归档一起清干净"：它**先留尾**（把最后一段写成
+	// 一份归档）再删旧归档、再截断。理由是真机吃过一次亏：查"某个项目怎么没了"时，唯一能指认
+	// 现场的那条「🗑 已删除项目」记录被一次「一键清理」连同 5 份归档抹掉了。
+	//
+	// 钉的契约：清完之后**恰好留 1 份归档**，且那份里必须有刚写过的内容 —— 它是"刚刚发生了什么"
+	// 的唯一凭据。留的那份可能是新写的 .tail（当前文件非空），也可能是**最新的旧归档**
+	// （上一次写入正好触发轮转、当前文件是 0 字节时）—— 两种都算合规。
+	if n != 1 {
+		t.Errorf("清完应恰好留 1 份\"尾巴\"（排障现场的唯一凭据），实际上报 %d", n)
 	}
-	if left, _ := filepath.Glob(path + ".*"); len(left) != 0 {
-		t.Errorf("归档没清干净:%v", left)
+	left, _ := filepath.Glob(path + ".*")
+	if len(left) != 1 {
+		t.Fatalf("清完应恰好留下 1 份归档，实际 %v", left)
+	}
+	tail, err := os.ReadFile(left[0])
+	if err != nil {
+		t.Fatalf("读不回尾巴归档: %v", err)
+	}
+	if !strings.Contains(string(tail), strings.Repeat("y", 40)) {
+		t.Errorf("尾巴归档里必须有刚写过的内容，实际 %q", string(tail))
 	}
 	st, err := os.Stat(path)
 	if err != nil {

@@ -5,6 +5,8 @@ import { computed, reactive, watch, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { confirmGpuContention } from '../pipelineBusy'
 import { groupCharFamilies } from '../composables/useCharGroups'
+// 质检结论的界面摘要（语音对账/音色核对/画面文字）：后端一直在算，**以前这里一个都不画**。
+import { qcProblemLines } from '../qcLines'
 
 const visible = computed({
   get: () => !!G.stageDetail,
@@ -311,6 +313,11 @@ function castOf(sh) {
         <div v-if="r.vlm && !r.vlm.pass" class="text-xs mt-1.5 p-2 rounded" style="background:var(--mx-yellow-soft);color:var(--mx-yellow)">
           {{ (r.vlm.issues||[]).join(';') }}<template v-if="r.vlm.advice"> — {{ r.vlm.advice }}</template>
         </div>
+        <!-- 结论：语音对账（ASR）/ 音色核对（基频）/ 画面文字 + 告警。
+             后端一直在算、也一直在下发（GET /api/projects/{id} 的 qc），但这里此前一个都不画
+             —— 于是"女的配男音""同一句念两遍"在界面上看不到，只有当时的日志流里有。 -->
+        <div v-for="(line, i) in qcProblemLines(r)" :key="'qc'+i" class="text-xs mt-1" style="color:var(--mx-text2)">{{ line }}</div>
+        <div v-for="(w, i) in (r.warnings||[])" :key="'wq'+i" class="text-xs mt-0.5" style="color:var(--mx-amber)">⚠ {{ w }}</div>
       </div>
       <el-alert v-if="!qcRep" type="info" :closable="false" title="渲染完成后运行质检阶段生成报告;VLM 智能判分在「质检 ⚙」开启。" />
     </div>

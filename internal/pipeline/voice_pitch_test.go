@@ -174,7 +174,11 @@ func TestVoiceCheckIsWiredAtBothEnds(t *testing.T) {
 		"qc.CheckSpeech(sctx, asrTool, p.ASRModelOr(), clip, project.PlanSpokenTexts(&sh))", // 语音判据接进重出
 		"maxVoiceRetryPasses",
 		"voiceRetryNextSeed(seedOverride, pass)",
-		"c.runRenderPass(ctx, proj, only, engineOverride, seedOverride, 0)",
+		// 入口带着跨轮计数的累加器（2026-10-08：剪黑闪的计数原先累在每轮重读的 plan 上，
+		// 收尾那句"共 N 镜剪掉了黑闪"只反映最后一个 pass —— 少报）。
+		"c.runRenderPass(ctx, proj, only, engineOverride, seedOverride, 0, &renderAccum{})",
+		"acc.blackFlashShots++",
+		"acc.blackFlashSec += removed",
 	} {
 		if !strings.Contains(render, want) {
 			t.Errorf("渲染侧缺少接线：%s", want)

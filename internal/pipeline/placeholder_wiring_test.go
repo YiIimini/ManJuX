@@ -167,3 +167,75 @@ func TestAssembleRejectsPlaceholderWithoutPath(t *testing.T) {
 		t.Error("清单里没有这一镜时必须拒收")
 	}
 }
+
+// ④ 【2026-10-08 深度排查修的 P0】引擎**返回成功但没落盘**时，这一镜也必须写占位、也记进 File 列。
+//
+// 与 ① 是同一件事的另一半：① 覆盖的是"三次都失败"，而这一条覆盖的是引擎侧能返回 nil error
+// 却什么都没写的五种情形（云端 task 状态竞态、本地 ffmpeg 半途失败、产物路径被引擎改写、
+// 下载截断、以及 fake 引擎的 emptyOut）。原来这条分支把 `File` 传了空串就 continue
+// ⇒ 合成阶段第一句 `m.File == ""` 直接拒收整片（用户看到的是"镜头 1 尚未渲染完成"、
+// 重渲又总是同一情况，**整集永远拿不到成片**）—— 只给一条路补占位等于没补。
+func TestNoArtifactShotAlsoGetsPlaceholder(t *testing.T) {
+	c, fe, proj := failLadderFixture(t)
+	// 每次都"成功但什么都不写"
+	fe.withPlan(fakeResult{emptyOut: true}, fakeResult{emptyOut: true}, fakeResult{emptyOut: true})
+	_ = c.runRender(context.Background(), proj, nil, "", 0)
+
+	if n := fe.callCount(); n != 1 {
+		t.Fatalf("\"成功但没产物\"不是可重试的错误，不该走降级阶梯，实际调用 %d 次", n)
+	}
+	m, err := c.store.LoadManifest(proj.ID)
+	if err != nil {
+		t.Fatalf("读清单失败:%v", err)
+	}
+	item, ok := m["1"]
+	if !ok {
+		t.Fatal("清单里没有镜 1 的条目")
+	}
+	if item.Status != project.ShotFailed {
+		t.Fatalf("没有产物的镜必须标 failed（不许当成功），实际 %q", item.Status)
+	}
+	if item.File == "" {
+		t.Fatal("这条路径的占位片段没记进清单的 File 列 —— 合成阶段会在 `m.File == \"\"` 处短路，" +
+			"整集永远拿不到成片（与 2026-10-06 修过的那条路是同一个后果）")
+	}
+	if !strings.HasSuffix(item.File, "_placeholder.mp4") {
+		t.Errorf("占位片段该用独立文件名，实际:%s", item.File)
+	}
+	if !strings.Contains(item.Error, project.PlaceholderMarker) {
+		t.Errorf("说明里必须有官方标记 %q（下游复核靠它认占位），实际:%q", project.PlaceholderMarker, item.Error)
+	}
+	full := filepath.Join(c.store.Dir(proj.ID), filepath.FromSlash(item.File))
+	st, err := os.Stat(full)
+	if err != nil {
+		t.Fatalf("清单指向的占位文件在盘上不存在(%s):%v", full, err)
+	}
+	if st.Size() == 0 {
+		t.Errorf("占位文件是空的:%s", full)
+	}
+	// **用生产判据复核**：合成阶段那道闸就是它。
+	if err := assembleClipReject(item, true); err != nil {
+		t.Errorf("这一镜的占位片段还是进不了合成:%v", err)
+	}
+}
+
+// ⑤ 【2026-10-08 深度排查】没有 ffmpeg 时，质检与合成必须**如实降级**，不许 panic。
+//
+// main.go 在 ffmpeg 不可用时只打一条日志、把 Coordinator.ff 留成 nil 继续跑（设计如此：
+// 平台别的功能不依赖它）。同包别处都判了空（黑闪切除、音频净化、基频核对），只有质检/合成
+// 这两条路没有 —— 用户没装 ffmpeg 或没填路径时，点「质检」得到的是**进程 panic**，
+// 而不是"去设置页填 ffmpeg 路径"。这两条是同一件事的两个入口，必须一起判。
+func TestQCAndAssembleRequireFFmpeg(t *testing.T) {
+	c, _, proj := renderFixture(t, 1)
+	c.ff = nil
+	if err := c.runQC(context.Background(), proj); err == nil {
+		t.Error("没有 ffmpeg 时质检必须返回错误（如实说\"缺 ffmpeg\"），而不是 panic 或被当成通过")
+	} else if !strings.Contains(err.Error(), "ffmpeg") {
+		t.Errorf("错误里要指名缺的是 ffmpeg（用户据此去设置页填路径）：%v", err)
+	}
+	if err := c.runAssemble(context.Background(), proj); err == nil {
+		t.Error("没有 ffmpeg 时合成必须返回错误（如实说\"缺 ffmpeg\"）")
+	} else if !strings.Contains(err.Error(), "ffmpeg") {
+		t.Errorf("错误里要指名缺的是 ffmpeg：%v", err)
+	}
+}

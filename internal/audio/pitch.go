@@ -17,10 +17,15 @@
 // 重叠区（本平台把 140–165 Hz 当作**判不了**，见 qc.GenderOfVoice 的说明）——
 // 只判"明显站错边"的，不判边界上的（不制造假告警是这条判据能上线的前提）。
 //
-// 估计方法：归一化自相关 + **八度纠正**（取"第一个足够强的峰"而不是"最强的峰"）。
-// 为什么必须纠正：自相关在真正的周期整数倍处同样是大峰，直接取最大峰会把 245 Hz
-// 的女声读成 122 Hz 的男声（真机调试时确实出现过）。判据本身要能过合成信号自检，
-// 见 pitch_test.go（95/110/130/190/210/245 Hz 六档误差 ≤6%）。
+// 估计方法：**归一化互相关（NCC，分母取重叠区各自能量）+ 两级八度纠正**：
+//
+//	① 取周期最短的那个"足够强的局部峰"（自相关在整数倍周期处同样是大峰，直接取最大峰
+//	   会把 245 Hz 的女声读成 122 Hz 的男声，真机调试时确实出现过）；
+//	② 再用频域谐波和（HPS）往下查 f/2、f/4 —— 二次谐波比基频强时，上面那一步反而会
+//	   把读数顶高一个八度（实测 110 Hz 被读成 220.9 Hz），只能在频域纠正。
+//
+// 判据本身要能过合成信号自检：见 pitch_test.go（95/110/130/190/210/245 Hz 六档误差 ≤6%）
+// 与 pitch_octave_test.go（强谐波帧不许读高八度、搜索下界端点 400 Hz）。
 //
 // 依赖方向与包内其它文件一致：只依赖 internal/ff。
 package audio
@@ -130,13 +135,24 @@ func frameF0(buf, win []float64, rate, lo, hi int) float64 {
 	if e0 <= 1e-12 || hi <= lo {
 		return 0
 	}
+	// 归一化互相关（NCC）：分母取**两段重叠区各自的能量开方**，而不是整帧能量。
+	//
+	// 【2026-10-08 审查发现的真缺陷】原来是"整帧能量做分母"：汉宁窗把长 lag 的重叠区
+	// 压小，分母却不跟着变小 ⇒ 半周期的峰被系统性抬高。实测（合成信号，见
+	// pitch_octave_test.go）：110 Hz 基频 + 幅度 4 倍的二次谐波，被读成 **220.9 Hz**
+	// （真值 110）—— 男声卡于是被机器判成"念成女声"，闭环据此换种子重出、白烧 GPU。
+	// **判据自己读错一个八度 = 拿假证据做决定**，这一处必须修。
 	ac := make([]float64, hi+1)
 	for lag := 0; lag <= hi; lag++ {
-		var s float64
+		var num, e1, e2 float64
 		for i := lag; i < len(x); i++ {
-			s += x[i] * x[i-lag]
+			num += x[i] * x[i-lag]
+			e1 += x[i] * x[i]
+			e2 += x[i-lag] * x[i-lag]
 		}
-		ac[lag] = s / e0
+		if e1 > 1e-12 && e2 > 1e-12 {
+			ac[lag] = num / math.Sqrt(e1*e2)
+		}
 	}
 	peak := 0.0
 	for lag := lo; lag <= hi; lag++ {
@@ -147,26 +163,38 @@ func frameF0(buf, win []float64, rate, lo, hi int) float64 {
 	if peak < pitchPeakFloor {
 		return 0
 	}
-	// 八度纠正：取**第一个**（周期最短、频率最高）足够强的局部峰。
-	// 真正的周期在整数倍处都有同样高的峰，直接取最大峰会把它读低一个八度。
+	// 八度纠正：取**周期最短**的那个"足够强的局部峰"。
+	// 为什么：真正的周期在整数倍 lag 处都是同样高的峰，直接取最大的那一个会把高音读低
+	// 一个八度（真机调试时 245 Hz 的女声被读成 122 Hz）。
+	//
+	// 光有"第一个强峰"还不够，必须再问一句"这个峰会不会是二次谐波造的假周期"：
+	// 合成夹具（110 Hz 基频 + 幅度 4 倍的二次谐波）实测半周期峰高 0.882×主峰，
+	// 离 0.90 的门只差 2% —— 门限卡在理论值旁边，窗的偏差就能把它推过去（实测确实读成
+	// 220.9 Hz）。所以加一条**结构性**判据：候选 lag 若"两倍周期处明显更相关"
+	// （ac[2L] > ac[L]×1.02），说明真正的周期是 2L、L 只是谐波假象，跳过它继续找。
+	// 真人的周期信号在 2T 处只会等于或略低于 T 处（抖动让它更低），不会被这条误伤。
+	//
+	// 边界处理：扫到 lo（= rate/PitchMaxHz）**含端点**。原来从 lo+1 起扫，等于把恰好
+	// 落在搜索下界的 400 Hz 纯音排除掉，实测被读成 200.3 Hz（低一个八度）。
 	best := -1
-	for lag := lo + 1; lag < hi; lag++ {
-		if ac[lag] >= ac[lag-1] && ac[lag] >= ac[lag+1] && ac[lag] >= 0.90*peak {
-			best = lag
-			break
+	for lag := lo; lag <= hi; lag++ {
+		if ac[lag] < 0.85*peak {
+			continue
 		}
+		if lag > lo && ac[lag] < ac[lag-1] {
+			continue
+		}
+		if lag < hi && ac[lag] < ac[lag+1] {
+			continue
+		}
+		if 2*lag <= hi && ac[2*lag] > ac[lag]*1.02 {
+			continue
+		}
+		best = lag
+		break
 	}
 	if best < 0 {
 		return 0
-	}
-	kmax := lo
-	for lag := lo; lag <= hi; lag++ {
-		if ac[lag] > ac[kmax] {
-			kmax = lag
-		}
-	}
-	if ac[best] < 0.75*ac[kmax] && float64(best)*1.4 < float64(kmax) {
-		best = kmax
 	}
 	lag := float64(best)
 	if best > 0 && best < hi {
@@ -183,7 +211,67 @@ func frameF0(buf, win []float64, rate, lo, hi int) float64 {
 	if f < PitchMinHz*0.9 || f > PitchMaxHz*1.1 {
 		return 0
 	}
+	// 频域校验（HPS）：自相关在"基频比二次谐波弱"的帧上会读**高**一个八度 ——
+	// 合成夹具实录：110 Hz 基频 + 幅度 4 倍的二次谐波，自相关剖面 lag=72（222 Hz）
+	// 得 0.81、lag=145（110 Hz）只 0.72（强谐波把窗内相关主导了，实测见
+	// zz_probe_octave_test.go 的剖面打印）。这一处只能在频域判：
+	// 分别量 f、f/2、f/4 三个候选的**谐波和**（能量落在 k·f0 上的多少），
+	// 只有当低八度候选的分数明显更高（>1.15×）才改判 ⇒ 不是"抽卡"，是有证据才纠正。
+	//
+	// **只往下查，不往上查**：往上查会把"二次谐波强的低音"整体抬高一个八度
+	// （夹具实测：score(220)/score(110)=1.33 > 1.15，翻上去就错到底），
+	// 而自相关本身的"取周期最短的强峰"已经是防低一个八度的那一半。
+	f = correctOctaveUp(x, float64(rate), f)
 	return f
+}
+
+// goertzelMag 单频幅度（帧内，已加窗）。只依赖 math，确定性、无依赖。
+func goertzelMag(x []float64, rate, hz float64) float64 {
+	if hz <= 0 || hz*2 >= rate {
+		return 0
+	}
+	w := 2 * math.Pi * hz / rate
+	c := 2 * math.Cos(w)
+	var s1, s2 float64
+	for _, v := range x {
+		s0 := v + c*s1 - s2
+		s2, s1 = s1, s0
+	}
+	re := s1 - s2*math.Cos(w)
+	im := s2 * math.Sin(w)
+	return math.Hypot(re, im) / float64(len(x))
+}
+
+// harmonicScore 候选基频的谐波和（k=1..4，等权；k·f0 超出奈奎斯特就停）。
+// 等权而不是 1/k 加权：夹具里"110 候选"的分要能压住"220 候选"，
+// 靠的正是把 220 这个**强二次谐波**按整权记进 110 的账上（0.25+1.0 > 1.0）。
+func harmonicScore(x []float64, rate, f0 float64) float64 {
+	var s float64
+	for k := 1; k <= 4; k++ {
+		s += goertzelMag(x, rate, f0*float64(k))
+	}
+	return s
+}
+
+// correctOctaveUp 把"被强谐波顶高了一个八度"的读数拉回真值；没有证据就原样返回。
+func correctOctaveUp(x []float64, rate, f float64) float64 {
+	best, bestScore := f, harmonicScore(x, rate, f)
+	if bestScore <= 0 {
+		return f
+	}
+	for _, div := range []float64{2, 4} {
+		cand := f / div
+		if cand < PitchMinHz {
+			break
+		}
+		if sc := harmonicScore(x, rate, cand); sc > bestScore*1.15 {
+			best, bestScore = cand, sc
+		}
+	}
+	if best < PitchMinHz || best > PitchMaxHz*1.1 {
+		return f
+	}
+	return best
 }
 
 // hann 汉宁窗（避免自相关被帧边界的突变带偏）。

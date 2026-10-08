@@ -465,7 +465,19 @@ func (s *Server) ensureEpisodeBrief(projID string) {
 			}
 		}
 	}
-	if err := os.WriteFile(srcPath, []byte(replaceEpisodeBrief(src, strings.TrimSpace(out))), 0o644); err != nil {
+	// 【2026-10-08 数据安全】改为**原子写**（`store.SaveSource` = 写临时文件 + rename）。
+	//
+	// 原来这里是裸 `os.WriteFile(srcPath, …)`：这一份 source.txt 是**整集材料的唯一副本**
+	// （导入包里它同时装着剧本与原文），写到一半断电/磁盘满/进程被杀 ⇒ 文件半截，原文与剧本一起毁。
+	// 平台其它所有落盘（plan/manifest/assets/meta）都走 fsutil.WriteFileAtomic，这里是漏网的一处。
+	nextSrc, echoed := replaceEpisodeBrief(src, strings.TrimSpace(out))
+	if len(echoed) > 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 编剧会话把**材料抬头**照抄进了剧本（%s）—— 已清掉再回填："+
+				"那几个字留在正文里，读回时会把剧本截断、甚至判成\"没有剧本\"，等于每轮重写整集",
+				strings.Join(echoed, "、"))})
+	}
+	if err := s.store.SaveSource(projID, nextSrc); err != nil {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: "⚠ 剧本回写失败:" + err.Error()})
 		return
 	}

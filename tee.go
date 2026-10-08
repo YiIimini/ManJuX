@@ -118,7 +118,7 @@ func (w *teeWriter) Close() error {
 	return err
 }
 
-// Reset 清空运行日志:删除全部归档,并把当前日志文件**截断到 0**(句柄复用,不删文件、不改名)。
+// Reset 一键清理用:**把最后一段留成归档**,然后清空当前日志文件(句柄复用,不删文件、不改名)。
 //
 // 为什么清日志必须由持有句柄的这里来做:「一键清理」原先在 server 侧直接
 // `os.Rename(manjux.log, manjux.log.1)` 再写一个空文件 —— 而写句柄是**跟着文件走的**,
@@ -126,23 +126,50 @@ func (w *teeWriter) Close() error {
 // 轮转才把这段错位暴露出来。同一类错误还有"直接删掉正在写的文件"(Windows 上要么删不掉,
 // 要么删掉后写入进了一个谁也看不见的孤儿文件)。截断不会转移句柄,写完照旧回到同一个文件。
 //
-// 返回:释放的字节数(含归档)与删除的归档份数。
+// 【2026-10-08 改:不再把现场一起清掉】原实现是"删掉**全部**归档 + 原地截断到 0"。
+// 代价在真机上付过一次:查"某个项目怎么没了"时,唯一一条能指认现场的记录
+// (`🗑 已删除项目「…」`,只写在这个日志里)连同 5 份归档一起被用户点的一次「一键清理」抹掉了 ——
+// 于是那件事永远查不清。现在先**留尾**:把当前文件最后 keepTailBytes 字节落成一份带时间戳的归档,
+// 再删旧归档、再截断。空间照样释放(10MB 的日志只留 ~256KB),但"刚刚发生了什么"永远查得到。
+//
+// 返回:释放的字节数(含旧归档)与保留下来的归档份数。
+const keepTailBytes = 256 << 10
+
 func (w *teeWriter) Reset() (int64, int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
 	var freed int64
-	archives := 0
-	if matches, err := filepath.Glob(w.path + ".*"); err == nil {
-		for _, old := range matches {
-			if st, e := os.Stat(old); e == nil {
-				freed += st.Size()
-			}
-			if os.Remove(old) == nil {
-				archives++
-			}
+	keptCount := 0
+	matches, _ := filepath.Glob(w.path + ".*")
+	sort.Strings(matches) // 时间戳命名 ⇒ 字典序即时间序（与 pruneLocked 同一口径）
+	// ① 先留尾（必须在截断之前）：把当前文件最后一段写成归档。
+	kept := ""
+	if w.f != nil && w.n > 0 {
+		if name, err := w.keepTailLocked(); err == nil {
+			kept = name
+			keptCount = 1
 		}
 	}
+	// ①′ 当前文件是空的（上一次写入正好触发了轮转，内容全在归档里）⇒ 不能把归档全删：
+	// 那样"刚刚发生了什么"还是被抹掉 —— 而这一条正是这次改动的目的。留下**最新的一份归档**当尾巴。
+	if kept == "" && len(matches) > 0 {
+		kept = matches[len(matches)-1]
+		keptCount = 1
+	}
+	// ② 再清旧归档（用户的意图是释放空间）；刚刚留的那一份**不能删**。
+	for _, old := range matches {
+		if kept != "" && old == kept {
+			continue
+		}
+		if st, e := os.Stat(old); e == nil {
+			freed += st.Size()
+		}
+		// 删掉旧归档：释放空间是用户点"清理"的本意。
+		// 删失败（被占用等）不报错 —— 但**也不计入**"保留下来的份数"（那个数只数留在盘上的）。
+		_ = os.Remove(old)
+	}
+	archives := keptCount
 	if w.f == nil {
 		return freed, archives, nil // 日志不可用(启动时就没打开成):归档清了就算清完
 	}
@@ -155,4 +182,25 @@ func (w *teeWriter) Reset() (int64, int, error) {
 	}
 	w.n = 0
 	return freed, archives, nil
+}
+
+// keepTailLocked 把当前日志文件最后 keepTailBytes 字节写成一份归档,返回归档路径。
+// 调用方须持有 w.mu;失败返回错误(调用方据此如实说"这次没留成")。
+func (w *teeWriter) keepTailLocked() (string, error) {
+	if w.f == nil || w.n <= 0 {
+		return "", nil
+	}
+	start := w.n - keepTailBytes
+	if start < 0 {
+		start = 0
+	}
+	buf := make([]byte, w.n-start)
+	if _, err := w.f.ReadAt(buf, start); err != nil {
+		return "", err
+	}
+	name := w.path + "." + time.Now().Format("20060102-150405.000") + ".tail"
+	if err := os.WriteFile(name, buf, 0o644); err != nil {
+		return "", err
+	}
+	return name, nil
 }

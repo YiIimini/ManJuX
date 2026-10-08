@@ -62,7 +62,10 @@ async function maskFix() {
 // 角色卡的 image_prompt 是英文,取开头那段身份描述的前几个词即可(SAM3 只认名词短语)。
 // 取不到就给中性默认值,由用户改 —— 不猜具体目标,猜错会把重绘打到错误的区域。
 function shotCharHint() {
-  const chars = (pj.value.project?.plan?.characters) || []
+  // 后端只在**顶层**下发 plan（handlers_project.go 的 out["plan"]），project 结构里没有 plan 字段 ——
+  // 原来那段从 project 下面取 plan，永远取到 undefined ⇒ 局部重绘的默认目标一直是泛指的
+  // "the character"，从没带上角色名（接线闸门：internal/server/frontend_qc_visibility_test.go）。
+  const chars = (pj.value.plan?.characters) || []
   const ids = props.shot?.characters || []
   for (const id of ids) {
     const c = chars.find(x => x.id === id)

@@ -224,10 +224,23 @@ func TestVoicePitchRefusesToJudge(t *testing.T) {
 		}
 	}
 
-	// 中间重叠带（真机镜 9 的会长 140.6 Hz）：判了但不算负 —— 边界上宁可不判。
+	// 中间重叠带（真机镜 9 的会长 140.6 Hz）：**不判**，而且必须落成 Checked=false + Skipped。
+	//
+	// 【2026-10-08 深度排查补】原来这里只断言 !Bad() —— 那正是它漏掉的形态：实测
+	// "女卡 + 150 Hz" 会得到 Checked=true、Findings 空、摘要"音色核对通过…151 Hz"，
+	// **把"其实没判"说成了"验过且相符"**（与文件头"140–165 一律不判"的声明自相矛盾）。
+	// 三态（通过 / 判负 / 不判）必须在报告里分得开，否则用户看不出这一条根本没验。
 	mid := makeToneClip(t, t.TempDir(), 150, 3)
-	if rep := MeasureVoicePitch(ctx, f, mid, chairmanLine()); rep.Bad() {
-		t.Errorf("150 Hz 落在男女重叠带，不该判负：%+v", rep)
+	midRep := MeasureVoicePitch(ctx, f, mid, chairmanLine())
+	if midRep.Bad() {
+		t.Errorf("150 Hz 落在男女重叠带，不该判负：%+v", midRep)
+	}
+	if midRep.Checked || midRep.Skipped == "" {
+		t.Errorf("重叠带必须落成「不判」（Checked=false + 写清原因），实际 Checked=%v Skipped=%q 摘要=%q",
+			midRep.Checked, midRep.Skipped, VoicePitchSummary(midRep))
+	}
+	if strings.Contains(VoicePitchSummary(midRep), "通过") {
+		t.Errorf("没判的镜头的摘要里不许出现\"通过\"（那会被读成\"验过且相符\"）：%q", VoicePitchSummary(midRep))
 	}
 	// 纯静音：量不到基频 ⇒ 不判（不许当成"通过"）。
 	silent := makeToneClip(t, t.TempDir(), 0, 2)

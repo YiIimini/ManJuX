@@ -14,6 +14,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/compose"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/engine"
+	"github.com/YiIimini/ManJuX/internal/ff"
 	"github.com/YiIimini/ManJuX/internal/fsutil"
 	"github.com/YiIimini/ManJuX/internal/library"
 	"github.com/YiIimini/ManJuX/internal/llm"
@@ -24,6 +25,15 @@ import (
 // ---------- 阶段四:qc ----------
 
 func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
+	// 【2026-10-08 深度排查】没有 ffmpeg 时**如实降级**，不许 panic。
+	//
+	// 质检每一步都要 ffmpeg（探针/抽帧/烧字幕比对）。main.go 在 ffmpeg 不可用时只打一条日志、
+	// 把 c.ff 留成 nil 继续跑（同包别处都判了空：stages_render.go 的黑闪切除与音频净化、
+	// voice_check.go 的基频核对），而 QC/合成这两条路没判 ⇒ 用户没装 ffmpeg（或没填路径）时
+	// 点「质检」得到的是**进程 panic**，而不是"去设置页填 ffmpeg 路径"。
+	if c.ff == nil {
+		return ff.Missing("ffmpeg（质检每一步都要它：探针、抽帧、烧字幕比对）")
+	}
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return project.ErrNoPlan()
@@ -543,6 +553,10 @@ func gradeAutoNote(grade string, autoDowngraded bool) string {
 }
 
 func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) error {
+	// 【2026-10-08 深度排查】没有 ffmpeg 时**如实降级**，不许 panic（拼接/烧字幕/响度归全都靠它）。
+	if c.ff == nil {
+		return ff.Missing("ffmpeg（合成成片要它：拼接、烧字幕、响度归一）")
+	}
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return project.ErrNoPlan()

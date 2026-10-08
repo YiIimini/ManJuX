@@ -2,6 +2,8 @@ package compose
 
 import (
 	"fmt"
+	"hash/fnv"
+	"io"
 	"os"
 	"strings"
 )
@@ -13,14 +15,19 @@ import (
 // 后处理就被静默跳过：真机实测 shot_001.mp4 重渲后盘上留着 2 处 0.125s 黑闪，
 // 而 `.noblack` 标记还在（说明书写过"处理过了"），于是合出来的成片里黑闪照旧。
 //
-// 判据：标记里记下**处理时那份文件的大小与修改时间**；下次先比对，对得上才算处理过。
-// 文件被覆盖（大小或 mtime 变了）⇒ 标记失效 ⇒ 重新做一遍。两个后处理共用这一条。
+// 判据：标记里记下**处理时那份文件的指纹**；下次先比对，对得上才算处理过。
+//
+// 【2026-10-08 深度排查加强：指纹必须有**内容**】原来只记"大小 + 修改时间"，能被
+// **恰好相同**的覆盖骗过：FAT/exFAT 的 mtime 分辨率是 2 秒、复制会保留时间戳、
+// 同长度重渲的产物大小也可能一样 —— 那种情况下标记仍被判"有效"，黑闪切除/音频净化
+// 又被静默跳过，等于原缺陷换了一条触发路径。现在加"首 64KB 的 FNV-1a"：
+// 真机片段是 1 秒以上的视频，头 64KB 覆盖 moov 声明与 mdat 开头，同长的两份片几乎不可能同哈希。
 func clipMarkerValid(marker, path string) bool {
 	raw, err := os.ReadFile(marker)
 	if err != nil {
 		return false
 	}
-	info, err := os.Stat(path)
+	fp, err := clipFingerprint(path)
 	if err != nil {
 		return false
 	}
@@ -29,24 +36,40 @@ func clipMarkerValid(marker, path string) bool {
 	if len(got) == 0 {
 		return false
 	}
-	return got[0] == clipFingerprint(info.Size(), info.ModTime().UnixNano())
+	return got[0] == fp
 }
 
-// writeClipMarker 记下当前文件的指纹（大小 + 修改时间）。
+// writeClipMarker 记下当前文件的指纹（大小 + 修改时间 + 内容哈希）。
 func writeClipMarker(marker, path, note string) error {
-	info, err := os.Stat(path)
+	fp, err := clipFingerprint(path)
 	if err != nil {
 		return err
 	}
-	body := clipFingerprint(info.Size(), info.ModTime().UnixNano()) + " " + note + "\n"
-	return os.WriteFile(marker, []byte(body), 0o644)
+	return os.WriteFile(marker, []byte(fp+" "+note+"\n"), 0o644)
 }
 
-func clipFingerprint(size int64, mtimeUnixNano int64) string {
-	return fmt.Sprintf("%d|%d", size, mtimeUnixNano)
-}
+// clipFingerprintBytes 内容指纹只取开头这么多字节。
+const clipFingerprintBytes = 64 << 10
 
-// staleMarker 拼一句"标记过期"的诊断话（打日志用，别静默）。
-func staleMarker(what, path string) string {
-	return fmt.Sprintf("%s 的标记与片段对不上（片段被重渲/覆盖过），本次重做", what)
+// clipFingerprint 片段指纹：大小 + 修改时间 + 首 clipFingerprintBytes 字节的 FNV-1a。
+// 任一取不到（文件不在/读不了）都返回错误 —— 调用方据此判"标记无效、重做一遍"，不静默放行。
+func clipFingerprint(path string) (string, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	h := fnv.New64a()
+	buf := make([]byte, clipFingerprintBytes)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && n == 0 {
+		// 空文件 / 打不开：不给指纹（标记一律判无效）。
+		return "", err
+	}
+	_, _ = h.Write(buf[:n])
+	return fmt.Sprintf("%d|%d|%016x", info.Size(), info.ModTime().UnixNano(), h.Sum64()), nil
 }

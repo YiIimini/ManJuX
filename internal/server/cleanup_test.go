@@ -333,15 +333,16 @@ func TestCleanupRemovesStageGarbage(t *testing.T) {
 // server 包里用一个假实现就够:这里要钉的是"清理有没有请求写入方去清",不是 tee 本身
 // (tee 的原地截断由 main 包的 TestTeeWriterResetClearsInPlace 覆盖)。
 type fakeRuntimeLog struct {
-	called   int
-	freed    int64
-	archives int
-	err      error
+	called int
+	freed  int64
+	// kept 清理后留在盘上的归档份数（真实现返回 keptCount；见 tee.go Reset）。
+	kept int
+	err  error
 }
 
 func (f *fakeRuntimeLog) Reset() (int64, int, error) {
 	f.called++
-	return f.freed, f.archives, f.err
+	return f.freed, f.kept, f.err
 }
 
 // TestCleanupClearsRuntimeLog 一键清理必须把运行日志也清掉(用户 2026-09-26:
@@ -352,7 +353,7 @@ func (f *fakeRuntimeLog) Reset() (int64, int, error) {
 // ② 释放量与归档份数要如实进结果(不然"清理完成"就成了一句空话)。
 func TestCleanupClearsRuntimeLog(t *testing.T) {
 	s := newTestServer(t)
-	fake := &fakeRuntimeLog{freed: 3 << 20, archives: 2}
+	fake := &fakeRuntimeLog{freed: 3 << 20, kept: 1}
 	s.SetRuntimeLog(fake)
 
 	code, out := doReq(t, s, "POST", "/api/cleanup", map[string]any{})
@@ -372,8 +373,15 @@ func TestCleanupClearsRuntimeLog(t *testing.T) {
 	if hit == "" {
 		t.Fatalf("清理结果里应有一项运行日志:%v", items)
 	}
-	if !strings.Contains(hit, "2 份归档") {
-		t.Errorf("结果要写明连归档一起清了:%s", hit)
+	// 【2026-10-08 深度排查】文案契约升级：Reset 现在**先把最后一段留成归档**再清空 ——
+	// 原实现连归档一起删，于是"谁在什么时候删了项目"这类痕迹再也查不回来（用户 10-08 就
+	// 吃过这个现场被毁的亏：app 日志里那条「🗑 已删除项目」被 20:17 那次一键清理截掉了）。
+	// 所以结果里必须**写明留了尾**，不能只说"已清空"（那会让人以为现场没了）。
+	if !strings.Contains(hit, "已清空") {
+		t.Errorf("结果要说明日志已清空:%s", hit)
+	}
+	if !strings.Contains(hit, "最后一段已留成归档") {
+		t.Errorf("结果必须写明**最后一段留成归档**（否则用户以为排障现场被清光了）:%s", hit)
 	}
 	if mb, _ := out["freedMB"].(float64); mb < 3 {
 		t.Errorf("运行日志的释放量应计入 freedMB,实际 %.2f", mb)

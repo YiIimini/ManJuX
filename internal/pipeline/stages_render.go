@@ -19,14 +19,29 @@ import (
 )
 
 func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64) error {
-	return c.runRenderPass(ctx, proj, only, engineOverride, seedOverride, 0)
+	return c.runRenderPass(ctx, proj, only, engineOverride, seedOverride, 0, &renderAccum{})
+}
+
+// renderAccum 跨**重出轮次**的计数。
+//
+// 为什么需要它（2026-10-08 深度排查）：音色的有界重出会给同一次渲染请求跑最多 3 个 pass
+// （pass=0 + 最多 2 轮重出），而每个 pass 都 `store.LoadPlan` 重新读一份 plan —— 剪黑闪的
+// 计数原先累在 plan 上，于是**收尾那句"共 N 镜剪掉了黑闪"只反映最后一个 pass**：前面剪掉的
+// 那些被少报（渲染阶段从不 SavePlan，那些数也不落盘，事后也无从核对）。
+type renderAccum struct {
+	blackFlashShots int
+	blackFlashSec   float64
 }
 
 // runRenderPass 一次渲染 pass。pass>0 = **音色的有界重出**（见 voice_check.go）：
 // 真机证明"声线绑成角色卡原文"也拦不住 H3 念错性别（镜 5 卡上女声念成 130 Hz 男声、
 // 镜 6 卡上男声念成 204 Hz 女声），所以判负就换种子重出这一轮，最多 maxVoiceRetryPasses 轮；
 // 轮次用满仍在错误的镜**如实摆出来**（不无限烧 GPU）。
-func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64, pass int) error {
+func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64, pass int, acc *renderAccum) error {
+	// acc 跨轮累计（每轮都会重新 LoadPlan，计数留在 plan 上会让收尾"只报最后一轮"）。
+	if acc == nil {
+		acc = &renderAccum{}
+	}
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return project.ErrNoPlan()
@@ -542,7 +557,24 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 			msg := fmt.Sprintf("引擎返回成功但没有产物文件(%s)", filepath.Base(res.VideoPath))
 			c.emit(proj.ID, PhaseRender, shot.ID, "error", base,
 				"✕ 镜头 %d %s —— 不能算完成，否则成片里这一段是黑的", shot.ID, msg)
-			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, "", inputFP, msg)
+			// 【2026-10-08 深度排查修：这条路径也要写占位】
+			// 原来这里 `File` 传空串就直接 continue —— 而合成阶段的第一句判据就是
+			// `m.File == ""`（见 assembleClipReject）⇒ **一镜走到这里，整集成片就永远合不出来**
+			// （合成反复报"镜头 N 尚未渲染完成"，而重渲又总是遇到同一情况）。
+			// 这正是 2026-10-06 给"渲染失败"那条路补占位时修过的同一件事，只是当时漏了这一条
+			// —— 引擎侧能返回 nil error 却不落盘的情形有五种（云端状态竞态、本地 ffmpeg 半途失败、
+			// 路径被改写、下载截断、fake 引擎），只补一半等于没补。
+			placeholderPath := filepath.Join(clipsDir, PlaceholderName(outName))
+			placeholderRel := ""
+			if perr := writePlaceholderClip(ctx, c.ff, placeholderPath, shot.Duration); perr != nil {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+					"⚠ 镜头 %d 占位片段写入失败(这一镜进不了成片，后面的画面/字幕会整体前移，注意对位):%v", shot.ID, perr)
+			} else if rel, rerr := filepath.Rel(c.store.Dir(proj.ID), placeholderPath); rerr == nil {
+				placeholderRel = filepath.ToSlash(rel)
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "%s", PlaceholderNote(shot.ID, shot.Duration, msg))
+			}
+			c.setShotStatus(proj.ID, manifest, shot.ID, project.ShotFailed, engName, placeholderRel, inputFP,
+				project.PlaceholderMarker+" —— "+msg)
 			failed++
 			continue
 		}
@@ -566,8 +598,8 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
 					"⚠ 镜头 %d 的黑闪自检没做成(%v) —— 片段保持原样（质检仍会按原样判暗度）", shot.ID, stripErr)
 			} else if removed > 0 {
-				plan.BlackFlashShots++
-				plan.BlackFlashSec += removed
+				acc.blackFlashShots++
+				acc.blackFlashSec += removed
 				c.emit(proj.ID, PhaseRender, shot.ID, "info", base,
 					"🧹 镜头 %d 剪掉 %d 段**黑闪**（共 %.3fs 全黑帧）—— 这是引擎吐的，不是剧情，剪掉后画面不再无故一黑", shot.ID, n, removed)
 			}
@@ -641,7 +673,7 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 				c.emit(proj.ID, PhaseRender, 0, "warn", 100, "%s",
 					qualityRetryNote(pass+1, maxVoiceRetryPasses, bad))
 				return c.runRenderPass(ctx, proj, bad, engineOverride,
-					voiceRetryNextSeed(seedOverride, pass), pass+1)
+					voiceRetryNextSeed(seedOverride, pass), pass+1, acc)
 			}
 			c.emit(proj.ID, PhaseRender, 0, "warn", 100,
 				"🎙 已换种子重出 %d 轮，仍有 %d 镜的音色与角色卡不符（%s）—— 保留最后一次的产物。"+
@@ -669,10 +701,10 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 	}
 	// 【2026-10-07】声线重绑与"认不出"的句数也在这里一并播报（与清单失败同一个收尾处；
 	// 【2026-10-08】剪掉黑闪的汇总（逐镜已经在行内报过；这里给一次总数，免得逐镜信息被刷掉）。
-	if plan != nil && plan.BlackFlashShots > 0 {
+	if acc != nil && acc.blackFlashShots > 0 {
 		c.emit(proj.ID, PhaseRender, 0, "info", 100,
-			"🧹 共 %d 镜剪掉了片头/片中的**黑闪**（合计 %.3fs 全黑帧）—— 这是引擎偶发吐黑，不是剧情；"+
-				"剪掉后成片不会无故一黑，质检也不会再被这几十毫秒的全黑帧带偏", plan.BlackFlashShots, plan.BlackFlashSec)
+			"🧹 共 %d 镜剪掉了片头/片中的**黑闪**（合计 %.3fs 全黑帧，**跨全部重出轮次**）—— 这是引擎偶发吐黑，不是剧情；"+
+				"剪掉后成片不会无故一黑，质检也不会再被这几十毫秒的全黑帧带偏", acc.blackFlashShots, acc.blackFlashSec)
 	}
 	// 逐镜播报会刷屏）。计数由 pipeline.BindLineVoices 在装配每一镜时累加。
 	if plan != nil && (plan.VoiceRebound > 0 || plan.VoiceUnresolved > 0) {
