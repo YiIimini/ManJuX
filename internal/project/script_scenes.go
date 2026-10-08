@@ -118,7 +118,9 @@ func SceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []string {
 // briefHasNight 剧本场次表里有没有夜场。
 func briefHasNight(scenes []ScriptScene) bool {
 	for _, sc := range scenes {
-		if isNightLight(sc.Time) || strings.Contains(sc.Time, "夜") {
+		// 判据只有一处（isNightLight → project.LightTierOf）：脚本时段里"夜"这个字
+		// 已经在那张表里，再叠一个 Contains 只会多一条不一致的路径。
+		if isNightLight(sc.Time) {
 			return true
 		}
 	}
@@ -142,14 +144,6 @@ func planUsesNightScene(plan *Plan, perScene map[string]int, byID, byName map[st
 	return false
 }
 
-// isNightLight 光态/时段里是不是夜（中英都认）。与 pipeline 的同名判据同一套词表 ——
-// 那边判镜头提示词，这边判场景卡与剧本时段，两处必须一致（否则一处说"夜"、一处说"日"）。
-func isNightLight(s string) bool {
-	l := strings.ToLower(strings.TrimSpace(s))
-	for _, w := range []string{"夜", "night", "月", "moon", "烛", "candle", "灯", "lamp", "lantern"} {
-		if strings.Contains(l, w) {
-			return true
-		}
-	}
-	return false
-}
+// isNightLight 光态/时段里是不是**夜**。判据只有一处实现：project.LightTierOf
+// （见 light_tier.go —— 灯/烛/月**不是时间词**，2026-10-08 真机为此把 5 个白天场景渲成了夜景）。
+func isNightLight(s string) bool { return IsNightLight(s) }

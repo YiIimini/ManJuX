@@ -222,6 +222,18 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 							kindLabel(kind), name, why, iw, ih)
 					}
 				}
+				// **场景图曝光自检**（2026-10-08 真机《顺其自然》）：场景图是这一场每一镜的光照来源，
+				// 一张白天场景的暗图会把整场渲黑（实测那一集 7 张图里 3 张白天场景只有 58/66/77，
+				// 成片 4 镜被判黑屏、台词整镜没念）。确定性判据：量像素平均亮度，不调模型。
+				if kind == "scenes" {
+					if luma, ok := imageMeanLuma(path); ok {
+						if sc, found := sceneCardFor(plan, id); found {
+							if why := sceneExposureVerdict(sc, luma); why != "" {
+								c.emit(proj.ID, PhaseAssets, 0, "warn", 0, "⚠ 场景「%s」%s", name, why)
+							}
+						}
+					}
+				}
 				// 定妆照出图后立刻做一次比例自检(见 checkProportion 的说明):
 				// 早发现早重出,别等到成片里才看出"脸被拉长/眼距失衡"。
 				// 同一份自检里也量**朝向**(构图项):定妆照是全片身份的权威参考图,
