@@ -29,6 +29,11 @@ func TestEnsureSpokenLinesClauseReachesTheRenderedPrompt(t *testing.T) {
 		"exactly once",   // 每句只念一遍（镜 4/6/7 的"念了两三遍"）
 		"NO human voice", // 其余时间没有人声（镜 3/1/11 的"凭空多出话"）
 		"<d>",            // 只认标签里的台词
+		// 【2026-10-08 真机《顺其自然》】"每句只念一遍"管不住的是**假起手**：
+		// 镜 5 把「他就拆开,一张都不超过一万」先念糊一遍、再念一遍；
+		// 镜 1 把「十一月底」连着说了两遍。所以单独写死一条：念砸了接着往下念，不许回头重念。
+		"No false starts and no re-reading",
+		"不许把同一句重新起头",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("条款里缺少 %q —— 少了这一句就管不住对应的那类问题", want)

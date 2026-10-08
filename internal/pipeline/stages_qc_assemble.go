@@ -94,6 +94,10 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 		}
 	}
 	speechFlagged := 0 // 语音与剧本对不上的镜数（只标记、不自动重渲、不拦批次）
+	// voiceFlagged 音色与角色卡不符的镜数（2026-10-08，见 qc/pitch.go 与 voice_check.go）：
+	// 它是**量出来的**（基频），所以比"听出来的"语音结论更硬 —— 但仍然只标记、不拦批次
+	// （真机重出由渲染阶段的有界重出负责，这里负责让用户看得见）。
+	voiceFlagged := 0
 
 	for _, shot := range plan.Shots {
 		if ctx.Err() != nil {
@@ -224,6 +228,28 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 				}
 			}
 		}
+		// 音色核对（基频）：与语音核对**同一位置、同一份镜级原始产物**上做 —— 合成会把片段
+		// 拼成整片、还要铺 BGM，那时音轨已经混过。它与语音核对的分工：
+		// 语音核对判「念的是不是那句台词」（要 ASR 工具），这里判「是不是这个人在念」
+		// （只解码音轨量基频，不需要任何模型/工具）。
+		//
+		// 处置与语音核对一致：**只标记、不拦批次**（判据本身刻意保守 —— 中性声线/同镜男女
+		// 混合/人声太短一律"不判"，见 qc.MeasureVoicePitch 的说明）。真正的返工由渲染阶段的
+		// **有界重出**负责（见 voice_check.go）；存量镜头的音色问题在这里被摆出来。
+		if !r.OK {
+			r.Voice = qc.VoicePitchSkipped("机械质检未通过（这一镜的画面本身就不合格，音色另说）")
+		} else {
+			r.Voice = voicePitchForQC(ctx, c, proj, plan, &shot, full)
+			if r.Voice != nil && r.Voice.Error != "" {
+				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+					"镜头 %d 音色核对失败(未判定,不当作通过):%s", shot.ID, r.Voice.Error)
+			} else if r.Voice.Bad() {
+				voiceFlagged++
+				for _, f := range r.Voice.Findings {
+					r.Warnings = append(r.Warnings, qc.VoicePitchWarnText(f))
+				}
+			}
+		}
 		reports[key] = *r
 		pct := checked * 100 / max(1, len(plan.Shots))
 		if r.OK {
@@ -231,8 +257,8 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			if r.VLM != nil {
 				score = fmt.Sprintf(",VLM %d 分", r.VLM.Score)
 			}
-			c.emit(proj.ID, PhaseQC, shot.ID, "info", pct, "镜头 %d 通过(暗像素 %.0f%%,%.1fs,音轨%v%s%s)",
-				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio), score, speechLabel(r.Speech))
+			c.emit(proj.ID, PhaseQC, shot.ID, "info", pct, "镜头 %d 通过(暗像素 %.0f%%,%.1fs,音轨%v%s%s%s)",
+				shot.ID, r.DarkRatio*100, r.Duration, audioLabel(r.HasAudio), score, speechLabel(r.Speech), voiceLabel(r.Voice))
 		} else {
 			failed++
 			c.emit(proj.ID, PhaseQC, shot.ID, "error", pct, "✕ 镜头 %d 不合格:%s", shot.ID, strings.Join(r.Problems, ";"))
@@ -270,7 +296,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	// 预算：最多 3 个角色 × 每人最多 3 帧，一次 Python 调用（模型加载约 5 秒），不随镜头数线性膨胀。
 	c.measureFaceConsistency(ctx, proj, plan, manifest)
 
-	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, textAlert)
+	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, voiceFlagged, textAlert)
 	if v.Msg != "" {
 		c.emit(proj.ID, PhaseQC, 0, v.Level, 100, "%s", v.Msg)
 	}
@@ -298,7 +324,9 @@ type qcVerdict struct {
 // "以为已经解决了"),而要转成点名命中镜号的 warn。它**不升级为 error**:
 // 这一步是监控,单镜误报本来就允许(场景招牌),且 error 会让批产线整集停住、
 // 逼人逐镜复核 —— 重渲与否应当由人看着命中镜号来定(与 VLM 审片同一处置原则)。
-func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speechFlagged int, textAlert *qc.TextAlert) qcVerdict {
+// voiceFlagged（2026-10-08）是音色核对（基频）判负的镜数：与 speechFlagged 同一处置
+// （只标记、不拦批次），但它的判据是**量出来的**，不是听出来的。
+func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speechFlagged, voiceFlagged int, textAlert *qc.TextAlert) qcVerdict {
 	missing := len(notChecked)
 	switch {
 	case checked == 0:
@@ -314,7 +342,7 @@ func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speec
 		msg := fmt.Sprintf("质检只覆盖 %d/%d 镜:%d 镜尚无可用产物(未质检:%s)请先「渲染出片」补齐后再质检/合成",
 			checked, total, missing, shotIDList(notChecked))
 		return qcVerdict{Level: "error", Msg: msg, Err: fmt.Errorf("%s", msg)}
-	case vlmFlagged > 0 || speechFlagged > 0 || textAlert != nil:
+	case vlmFlagged > 0 || speechFlagged > 0 || voiceFlagged > 0 || textAlert != nil:
 		// 只标记、不自动重渲:同一 prompt 同一 seed 重跑大概率复现同样结果,
 		// 真正的返工要改提示词或换 seed,由用户看过标记后自行决定(2026-09-11 定调)。
 		//
@@ -327,6 +355,10 @@ func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speec
 		}
 		if speechFlagged > 0 {
 			parts = append(parts, fmt.Sprintf("%d 镜语音与剧本对不上(重复念/加话/漏念,镜号与 ASR 原文见 output/qc_report.json)", speechFlagged))
+		}
+		if voiceFlagged > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜音色与角色卡不符(卡上是男/女声、念出来却是另一种；"+
+				"已换种子重出过，仍未通过；镜号与实测基频见 output/qc_report.json)", voiceFlagged))
 		}
 		if textAlert != nil {
 			parts = append(parts, textAlert.Msg)
@@ -429,6 +461,27 @@ func speechLabel(s *qc.SpeechReport) string {
 		return fmt.Sprintf(",语音✗%d 处", len(s.Findings))
 	default:
 		return ",语音✔"
+	}
+}
+
+// voiceLabel 通过行里的音色标记（判过 / 判负 / 没判）。
+//
+// 与 speechLabel 同一目的：把"这一镜的音色到底验过没有"打在每镜的通过行上 ——
+// "没判"（中性声线/同镜男女混合/人声太短）与"判过且相符"必须分得开，
+// 否则报告会让人以为"每一镜的音色都验过了"。
+func voiceLabel(v *qc.VoicePitchReport) string {
+	if v == nil {
+		return ""
+	}
+	switch {
+	case v.Error != "":
+		return ",音色未验(量不出基频)"
+	case v.Skipped != "":
+		return ",音色未判"
+	case len(v.Findings) > 0:
+		return fmt.Sprintf(",音色✗%d 处", len(v.Findings))
+	default:
+		return ",音色✔"
 	}
 }
 

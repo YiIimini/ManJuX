@@ -35,12 +35,19 @@ import (
 // voiceBindKey 幂等判据(改文案必须保留这个串)。
 const voiceBindKey = "VOICE CASTING (authoritative"
 
-// narratorVoiceDefault 旁白的默认音色。
+// narratorVoiceDefault 旁白/内心音的默认音色。
 //
 // 为什么由平台给:小说技能端的角色卡**只有角色的 voice,没有旁白的** —— 真机 23 个镜头的
 // 旁白句一个音色都没有,全靠模型现编(用户听到的"配音垃圾")。旁白是全片最稳的那条声线,
 // 必须有一个**跨镜、跨集一致**的默认值;技能端一旦自己给了旁白音色,这里就按它的走。
-const narratorVoiceDefault = "a warm, low-pitched adult male narrator voice, calm and cinematic, " +
+//
+// 【2026-10-08 改：男声 → 中性】原来写的是 "a warm, low-pitched adult **male** narrator voice"。
+// 用户报「**女的配男音**」—— 本片的旁白其实是女主韩沿的**内心音**（镜 11/12，`vo_kind=inner`），
+// 一句女主的心里话被配成男声解说。平台**没有任何依据假定旁白是男性**（与
+// `project.FillMissingVoices` 的"不许按名字猜性别"同一条纪律），所以默认改成中性：
+// 要男声/女声就请把旁白说话人写成**角色卡上的那个人**（`BindLineVoices` 会按卡上的 voice 逐字绑），
+// 或在 `dialogue` 里点名说话人。
+const narratorVoiceDefault = "an androgynous adult narrator voice, mid-range pitch, warm and even, " +
 	"steady pacing with clear Mandarin broadcast delivery"
 
 // reNarratorSays 旁白引述(官方要求音色写在冒号前)。

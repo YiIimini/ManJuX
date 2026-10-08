@@ -612,10 +612,18 @@ func EnsureSpokenLinesClause(prompt string, shot *project.Shot) string {
 			"panel text. For every remaining moment of this shot there is NO human voice at all: keep the audio to " +
 			"the ambient soundscape, room tone and physical foley of the scene. A silent stretch is correct — " +
 			"filling it with speech is a defect." + "\n" +
+			// 【2026-10-08 真机】"每句只念一遍"这条写在上面了，但真机里出现的是**另一种**重复：
+			// 同一句先念糊一遍、再念一遍（镜 5「它是千燃百开﹔一张画有不超过万语」+ 正确那句；
+			// 镜 1 把「十一月底」连说两遍）—— 那是"起手没起好就重来"的**假起手**，
+			// 与"重复念"是两种毛病。所以单独写死一条：念砸了**接着往下念**，绝不回头重念。
+			"No false starts and no re-reading: do not stutter, do not restart a line, and never say a word or " +
+			"phrase twice in a row. If the articulation slips, keep going from where you are — starting the line " +
+			"over is a defect, and a short hesitation is not." + "\n" +
 			"(中文对照：本镜**唯一**的人声就是 <d>…</d> 里的那几句台词 —— 逐字、按顺序、**每句只念一遍**，" +
 			"不许重复、不许改写、不许续说、不许自行应答，也不许加入任何不在 <d> 标签里的话（包括念招牌、" +
 			"念编号、报数、自言自语）；其余时间**没有任何人声**，只有场景的环境声与动作音。留白是对的，" +
-			"拿话把留白填满是缺陷。)"
+			"拿话把留白填满是缺陷。)**起手也别重来**：不许磕巴、不许把同一句重新起头、不许同一个词连着说" +
+			"两遍 —— 念得不利索就**接着往下念**，回头重念算缺陷（短暂停顿不算）。)"
 	} else {
 		body = "this shot has NO spoken dialogue at all — there is no <d> tag and no narration in it. Do NOT invent " +
 			"any human speech, muttering, counting or crowd chatter; the human voice track stays silent for the whole " +

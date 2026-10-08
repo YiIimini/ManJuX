@@ -78,10 +78,20 @@ var (
 // 表里既收"声线形容词"，也收"谁在说话/什么音源"这类**说话人描述词**
 // （the android girl with a clear, cool young voice / the bay's overhead speaker voice）——
 // 它们属于引述的一部分，重绑时一起换掉才对（换掉后由平台子句重新写明说话人与音色）。
+//
+// 【2026-10-08 真机：漏词就是"女的配男音"的来源】镜 4 实际提交的引述是
+// `Off-screen left, young woman's light, eager, 实习生 (S2) says in Bright high young male voice, …`
+// —— 左扩在 `eager` 处停下（它不在表里），于是模型自己写的 **"young woman's"** 留在了
+// **卡上的男声**左边，H3 同时听见两个互相矛盾的性别描述（用户报的正是这个）。
+// 补词：常见"说话方式"形容词 + 所有格写法（woman's / man's / girl's / boy's）+
+// 与 reSayTail 同一批**说话动词**（answers/replied/shouts…；漏一个就会让左扩中途停下，
+// 真机镜 3 的 `She says, in a woman's forties voice` 就是被 `answers in steady` 卡住留下的）。
 var voiceClauseWords = func() map[string]bool {
 	m := map[string]bool{}
 	for _, w := range strings.Fields(`
 		in a an the with and then or as of to at from is are was were her his their its it
+		answered answers replied replies shouts shouted murmurs whispered adds added
+		continues continued sang sings hums mutters insists insisted
 		she he they his her own same all both very quite just still so but
 		voice voices vocal timbre tone says say saying asked asks speaks speaking spoke
 		whisper whispers murmured murmurs breath breathy
@@ -94,15 +104,121 @@ var voiceClauseWords = func() map[string]bool {
 		girl boy man woman lady figure self version speaker overhead bay announcer
 		computer machine broadcast terminal system robot ai q
 		breathless raspy husky gravelly lilting melodic monotone singsong terse spoken
+		eager gently gentle friendly curious matter-of-fact bemused amused wry dryly plainly
+		woman's man's girl's boy's lady's child's
+		middle-aged mid-range low-pitched high-pitched softly quietly slowly quickly
 	`) {
 		m[w] = true
 	}
 	return m
 }()
 
-// voiceFor 这个说话人该用的**权威声线**：优先角色卡上的 voice（逐字），否则平台默认。
+// voiceStats 一次装配里"顺手清掉了什么"的账（用来如实播报，不参与任何判据）。
+type voiceStats struct {
+	// strippedGender 清掉"与权威声线冲突的性别/年龄描述"的句数。
+	//
+	// 【为什么单记一笔】真机镜 4：卡上是男声，模型自己写了 "young woman's light, eager"，
+	// 两者同时留在同一句里 ⇒ 用户听到的正是「女的配男音」那一类。清掉要说一声。
+	strippedGender int
+}
+
+// reGenderAge 性别/年龄词：权威声线**左边不许残留**它们。
 //
+// 为什么单列一条：权威声线来自角色卡（作者口径），而模型每镜自己写的性别词**会与卡冲突**
+// （真机镜 4 卡上是男声、模型写 "young woman's"；镜 3 卡上是女声、模型又写 "in a woman's forties voice"；
+// 镜 1 无卡说话人被配中性声、模型写 "a man's brisk"）。H3 把这段文字当音频条件，
+// 两个矛盾的性别描述同时在场时，出来的是哪一种没有保证 —— 用户报的「女的配男音」就是这一类。
+var reGenderAge = regexp.MustCompile(`(?i)\b(woman|woman's|women|girl|girl's|female|feminine|` +
+	`man|man's|men|boy|boy's|male|masculine|lady|lady's|child's|` +
+	`she|he|his|her|hers|young|old|elderly|middle-aged|teen|teenager|` +
+	`twenty|thirty|forty|fifty|sixty|seventy|twenties|thirties|forties|fifties|sixties|seventies)\b`)
+
+// pictureWords 画面名词：出现它们的段**一个字都不许删**（那是画面内容，不是声线描述）。
+//
+// 刻意**不收** light/low/high/dry 这些与声线共享的形容语义词 —— 收了就会把 "young woman's light"
+// 这种性别描述保护下来，等于没修。
+var pictureWords = map[string]bool{
+	"hand": true, "hands": true, "palm": true, "palms": true, "face": true, "faces": true,
+	"eye": true, "eyes": true, "lip": true, "lips": true, "head": true, "chin": true,
+	"cheek": true, "cheeks": true, "hair": true, "shoulder": true, "shoulders": true,
+	"arm": true, "arms": true, "finger": true, "fingers": true, "wrist": true, "throat": true,
+	"brow": true, "brows": true, "knee": true, "foot": true, "feet": true, "back": true,
+	"envelope": true, "envelopes": true, "counter": true, "desk": true, "screen": true,
+	"lamp": true, "box": true, "slip": true, "slips": true, "paper": true, "papers": true,
+	"page": true, "pages": true, "cabinet": true, "wall": true, "floor": true, "glass": true,
+	"tray": true, "cup": true, "coat": true, "collar": true, "sleeve": true, "stair": true,
+	"stairs": true, "snow": true, "sleet": true, "branch": true, "branches": true,
+	"window": true, "door": true, "step": true, "steps": true, "table": true, "badge": true,
+	"form": true, "trolley": true, "lid": true, "pad": true, "seam": true, "grid": true,
+}
+
+// voiceOrGenderWords 这一段能不能整段吃掉（判据见下，宁可不删也不删画面）：
+//   - 含**画面名词** ⇒ 不吃（画面内容一个字都不动）；
+//   - 含**性别/年龄词** ⇒ 吃（它就是"模型自己写的性别描述"，与权威声线冲突的正是它）；
+//   - 其余 ⇒ 必须是**纯声线词**才吃。
+func voiceOrGenderWords(seg string) bool {
+	words := strings.Fields(strings.Trim(seg, " \t,;、，"))
+	if len(words) == 0 {
+		return false
+	}
+	hasGender := false
+	for _, w := range words {
+		lw := strings.ToLower(strings.Trim(w, ".,;:!?()[]\"'"))
+		if pictureWords[lw] {
+			return false
+		}
+		if reGenderAge.MatchString(lw) {
+			hasGender = true
+		}
+	}
+	if hasGender {
+		return true
+	}
+	for _, w := range words {
+		if voiceClauseWords[strings.ToLower(w)] {
+			continue
+		}
+		if reGenderAge.MatchString(w) {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// stripGenderTail 从 head 尾部往前吃掉"纯声线/性别描述"的段，直到遇到画面描述为止。
+// 返回（新 head, 是否吃掉了带性别词的段）。
+func stripGenderTail(head string) (string, bool) {
+	parts, starts := splitByPause(head)
+	cut := len(parts)
+	hitGender := false
+	for cut > 0 {
+		p := strings.TrimSpace(parts[cut-1])
+		if p == "" {
+			// head 末尾常常只剩一个分隔符（真机镜 3 的 head 就是 "… voice, "）——
+			// 空段不算一段，跳过；不跳的话循环第一步就停，性别残留永远清不掉。
+			cut--
+			continue
+		}
+		if !voiceOrGenderWords(p) {
+			break
+		}
+		if reGenderAge.MatchString(p) {
+			hitGender = true
+		}
+		cut--
+	}
+	if cut == len(parts) {
+		return head, false
+	}
+	if cut == 0 {
+		return "", hitGender
+	}
+	return strings.TrimRight(head[:starts[cut]], " \t,;、，"), hitGender
+}
+
 // 平台默认也必须有：真机那个「舱内AI」不是角色卡（全片反复出现的说话人），
+//
 // 每镜现编的结果是同一个 AI 在 13 镜里有 4 种措辞 —— 正是"乱配音"的一种。
 func voiceFor(plan *project.Plan, speaker string) (string, bool) {
 	name := strings.TrimSpace(speaker)
@@ -227,11 +343,23 @@ func ShotCasting(plan *project.Plan, shot *project.Shot) []project.Character {
 // 任何一步对不上就**不动那一句**（宁可留着让模型自由发挥，也不要塞错人的音色），并计入 unresolved。
 //
 // 幂等：绑过之后引述里已经含那句权威声线 ⇒ 再调用一次不再改写（bound=0）。
+// BindLineVoices 把正文里每一句台词的引述换成**权威声线**（幂等：已绑过的不会被重复叠）。
+//
+// 【2026-10-08 修：旁白/内心音也要绑】此前本函数开头是 `len(shot.Dialogue) == 0 → 直接返回`，
+// 于是**台词只写在 `narration` 里的镜**（`vo_kind=inner` 的内心音，真机镜 11/12）一句声线都不绑：
+// 模型自己写的那句引述成了音频条件，而它**会把性别词丢掉** —— 真机镜 12 提交的原文是
+// `韩沿's off-screen inner voice, the same steady, matter-of-fact forties voice (S3), says:`，
+// 「a woman in her forties」在镜 11 里有、到镜 12 就没了 ⇒ 用户报的「**女的配男音**」。
+// 现在：认不出说话人的台词先按"谁在想/谁在说"解析（见 innerSpeakerOf），
+// 认不出才落旁白默认，并**如实计入 unresolved**（此前是静默跳过）。
 func BindLineVoices(prompt string, plan *project.Plan, shot *project.Shot) (string, int, int) {
-	if shot == nil || len(shot.Dialogue) == 0 || !strings.Contains(prompt, "<d>") {
+	// 顺手清掉的"性别/年龄描述残留"记进 plan（不改进/出参：报账走既有通道）。
+	st := &voiceStats{}
+	if shot == nil || !strings.Contains(prompt, "<d>") {
 		return prompt, 0, 0
 	}
 	speaker := speakerByLine(shot)
+	narrKey := normSpoken(strings.TrimSpace(shot.Narration))
 	out := prompt
 	bound, unresolved := 0, 0
 	ms := reDialogueTag.FindAllStringSubmatchIndex(out, -1)
@@ -241,7 +369,19 @@ func BindLineVoices(prompt string, plan *project.Plan, shot *project.Shot) (stri
 		if !hasSpokenText(content) {
 			continue // 空标签 / 省略号 / 「无」这类占位，以及规则文本里的示例标签
 		}
-		sp := speaker[normSpoken(content)]
+		key := normSpoken(content)
+		sp := speaker[key]
+		if strings.TrimSpace(sp) == "" {
+			if name, ok := innerSpeakerOf(out, ms[i][0], plan, shot, narrKey, key); ok {
+				sp = name
+			}
+		}
+		if strings.TrimSpace(sp) == "" && narrKey != "" && isNarrationLine(narrKey, key) {
+			// 认不出"谁在想/谁在念"的旁白或内心音：**不能留着模型自己那句引述**
+			//（真机就是那么把女主的内心音配成男声的）。统一落到平台的旁白标签 ⇒
+			// `defaultVoiceFor` 给一个**跨镜一致的默认音色**（现在是中性；系统镜走合成音）。
+			sp = narrationLabel(shot.VoKind)
+		}
 		if strings.TrimSpace(sp) == "" {
 			unresolved++
 			continue
@@ -252,13 +392,95 @@ func BindLineVoices(prompt string, plan *project.Plan, shot *project.Shot) (stri
 			continue
 		}
 		clause := voiceClause(sp, voice, offScreenFor(plan, shot, sp))
-		next, changed := replaceVoiceClause(out, ms[i][0], voice, clause)
+		next, changed := replaceVoiceClause(out, ms[i][0], voice, clause, st)
 		if changed {
 			bound++
 		}
 		out = next
 	}
+	if plan != nil {
+		plan.VoiceClashStripped += st.strippedGender
+	}
 	return out, bound, unresolved
+}
+
+// innerSpeakerOf 这一句"没有对话记录"的台词（旁白 / 内心音）到底是谁在说。
+//
+// 判据（**宁可认不出，也不许猜错人**）：
+//  1. 这一句必须与本镜 `narration` 是同一句（归一化后一致或互相包含）；
+//  2. 本镜的 `vo_kind` 必须是 `inner` / `narration`（speech 镜却没有对话记录属于异常，交给 unresolved 记账）；
+//  3. 在那句引述所在的**同一行**里找计划里的角色名，必须**恰好命中一个** —— 命中两个以上就放弃
+//     （"她看着他" 这种句子会同时提到别人）；命中时那行里还得有"说话/声音"类词；
+//  4. 命中即用它 —— 真机镜 12 的引述里写着 `韩沿's off-screen inner voice` ⇒ 绑韩沿卡上的女声。
+func innerSpeakerOf(prompt string, dIdx int, plan *project.Plan, shot *project.Shot, narrKey, lineKey string) (string, bool) {
+	if plan == nil || shot == nil || narrKey == "" {
+		return "", false
+	}
+	if lineKey != narrKey && !strings.Contains(lineKey, narrKey) && !strings.Contains(narrKey, lineKey) {
+		return "", false
+	}
+	switch strings.ToLower(strings.TrimSpace(shot.VoKind)) {
+	case "inner", "narration":
+	default:
+		return "", false
+	}
+	head := voiceClauseHead(prompt, dIdx)
+	if !hasVoiceWord(head) {
+		return "", false
+	}
+	hit, n := "", 0
+	for i := range plan.Characters {
+		name := strings.TrimSpace(plan.Characters[i].Name)
+		if name == "" {
+			continue
+		}
+		if strings.Contains(head, name) {
+			hit, n = name, n+1
+		}
+	}
+	if n != 1 {
+		return "", false
+	}
+	return hit, true
+}
+
+// isNarrationLine 这一句 `<d>` 是不是本镜的旁白/内心音原文（归一化后一致或互相包含）。
+func isNarrationLine(narrKey, lineKey string) bool {
+	if narrKey == "" || lineKey == "" {
+		return false
+	}
+	return lineKey == narrKey || strings.Contains(lineKey, narrKey) || strings.Contains(narrKey, lineKey)
+}
+
+// narrationLabel 认不出"谁在想/谁在念"时用的说话人标签：系统镜给系统音，其余给旁白。
+// 两个标签都是平台词表里的（见 project.VoiceoverSpeakers），`defaultVoiceFor` 按它们给
+// **跨镜一致**的默认音色（旁白＝中性，系统＝合成声）。
+func narrationLabel(voKind string) string {
+	if strings.EqualFold(strings.TrimSpace(voKind), "system") {
+		return "系统"
+	}
+	return "旁白"
+}
+
+// voiceClauseHead 取 `<d>` 之前**同一行**的那段引述文字（与 replaceVoiceClause 同一套切点）。
+func voiceClauseHead(prompt string, dIdx int) string {
+	if dIdx <= 0 || dIdx > len(prompt) {
+		return ""
+	}
+	lineStart := strings.LastIndex(prompt[:dIdx], "\n") + 1
+	return prompt[lineStart:dIdx]
+}
+
+// hasVoiceWord 这段引述里有没有"说话/声音"类词（避免把纯画面描述当引述）。
+func hasVoiceWord(head string) bool {
+	low := strings.ToLower(head)
+	for _, w := range []string{"voice", "says", "said", "voiceover", "narration", "narrator",
+		"内心", "旁白", "画外", "声音", "说"} {
+		if strings.Contains(low, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // speakerByLine 归一化台词文本 → 说话人名（<d> 与 dialogue 逐字对上时才算认得出）。
@@ -334,7 +556,7 @@ func embedVoice(v string) string {
 //  3. 往左扩：只要前一段的每个词都在声线词汇表里，就一起吃进来
 //     （这样 "She asks, in a clear, cool young voice …" 整段都会被换掉，而不是留下 "in a clear,"）；
 //  4. 扩到"画面描述"（nameplate/palm/chin lifts…）就停 —— 那些是画面内容，一个字都不许删。
-func replaceVoiceClause(prompt string, dIdx int, voice, clause string) (string, bool) {
+func replaceVoiceClause(prompt string, dIdx int, voice, clause string, st *voiceStats) (string, bool) {
 	lineStart := strings.LastIndex(prompt[:dIdx], "\n") + 1
 	seg := prompt[lineStart:dIdx]
 	if seg == "" {
@@ -388,10 +610,20 @@ func replaceVoiceClause(prompt string, dIdx int, voice, clause string) (string, 
 	}
 	cutAbs := floor + starts[cut]
 	head := trimmed[:cutAbs]
+	// **性别/年龄描述残留**：权威声线来自角色卡，模型自己写的性别词一旦与卡冲突，
+	// H3 会同时听见两个矛盾的性别（真机镜 4：`young woman's light, eager, … says in Bright high
+	// young male voice`）。只吃"整段都是声线/性别词"的段 —— 画面描述一个字都不动。
+	if h, hit := stripGenderTail(head); hit {
+		head = h
+		if st != nil {
+			st.strippedGender++
+		}
+	}
 	// 引述头里残留的说话动词：尾部（"…and she says, "）与**头部**（"She says, without turning
 	// her head, "）都要清掉 —— 新子句自己带 "says in"，留着就会出现两个 says。
 	head = stripVoiceVerbTail(head)
 	head = stripVoiceVerbHead(head)
+	var _ = head
 	// 模型自己写的说话人 id（(S2)）**保留**：官方靠它把同一个说话人跨镜串起来。
 	idPart := ""
 	if id := reSpeakerID.FindString(trimmed[cutAbs:]); id != "" {

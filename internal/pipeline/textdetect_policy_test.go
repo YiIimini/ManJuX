@@ -64,7 +64,7 @@ func TestQCTextDetectIsWired(t *testing.T) {
 		"qc.DetectOnScreenText(",      // 真的去抽帧 + 调视觉模型
 		"qc.TextWarnText(",            // 命中 → 逐镜 warn
 		"qc.TextHitAlert(",            // 集级命中率判据
-		"qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, textAlert)", // 告警并进结论
+		"qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, voiceFlagged, textAlert)", // 告警并进结论
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("质检阶段缺少接线 %q —— 开关/告警会变成「接了但没生效」", want)

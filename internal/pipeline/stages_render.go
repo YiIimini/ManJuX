@@ -19,6 +19,14 @@ import (
 )
 
 func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64) error {
+	return c.runRenderPass(ctx, proj, only, engineOverride, seedOverride, 0)
+}
+
+// runRenderPass 一次渲染 pass。pass>0 = **音色的有界重出**（见 voice_check.go）：
+// 真机证明"声线绑成角色卡原文"也拦不住 H3 念错性别（镜 5 卡上女声念成 130 Hz 男声、
+// 镜 6 卡上男声念成 204 Hz 女声），所以判负就换种子重出这一轮，最多 maxVoiceRetryPasses 轮；
+// 轮次用满仍在错误的镜**如实摆出来**（不无限烧 GPU）。
+func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, only []int, engineOverride string, seedOverride int64, pass int) error {
 	plan, err := c.store.LoadPlan(proj.ID)
 	if err != nil {
 		return project.ErrNoPlan()
@@ -620,6 +628,28 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	if err := c.store.SaveManifest(proj.ID, manifest); err != nil {
 		return err
 	}
+	// 【2026-10-08】音色核对 → **有界重出**（判据与理由见 voice_check.go 的文件头）。
+	//
+	// 为什么放在"清单落盘之后、收尾播报之前"：
+	//   - 清单必须先落盘，重出那一轮的起点（哪些镜已是 done）才是真的；
+	//   - 只在**本轮没有失败镜**时重出：有失败镜时收尾要报失败明细，重出会把那份明细吃掉
+	//     （失败镜本来也判不了音色）；
+	//   - 逐镜的判负文案由 qualityRetryTargets 逐条 emit（说清哪一镜、卡上是什么、实测多少 Hz / 音轨里多念了什么）。
+	if failed == 0 && ctx.Err() == nil {
+		if bad := c.qualityRetryTargets(ctx, proj, plan, shots, manifest); len(bad) > 0 {
+			if pass < maxVoiceRetryPasses {
+				c.emit(proj.ID, PhaseRender, 0, "warn", 100, "%s",
+					qualityRetryNote(pass+1, maxVoiceRetryPasses, bad))
+				return c.runRenderPass(ctx, proj, bad, engineOverride,
+					voiceRetryNextSeed(seedOverride, pass), pass+1)
+			}
+			c.emit(proj.ID, PhaseRender, 0, "warn", 100,
+				"🎙 已换种子重出 %d 轮，仍有 %d 镜的音色与角色卡不符（%s）—— 保留最后一次的产物。"+
+					"提示词里的声线是逐字写对的（是 H3 没照做），再试请在故事板勾选这几镜重渲；"+
+					"实测基频见 output/qc_report.json",
+				maxVoiceRetryPasses, len(bad), shotIDList(bad))
+		}
+	}
 	_ = g
 	if failed > 0 {
 		// 有失败:报告但不抛错(qc/assemble 自行处理缺失);全失败才视为阶段失败
@@ -630,6 +660,13 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		return nil
 	}
 	c.emit(proj.ID, PhaseRender, 0, "success", 100, "✔ 渲染完成:新出 %d 镜,跳过 %d 镜", done, skipped)
+	// 【2026-10-08】"清掉模型自己写的性别描述"的句数：这是平台替模型改的措辞，要说一声 ——
+	// 用户报的「女的配男音」就是卡上的权威声线跟模型自己那句（"young woman's…voice"）打架。
+	if plan != nil && plan.VoiceClashStripped > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "info", 100,
+			"🔊 另有 %d 句台词**清掉了模型自己写的性别/年龄描述**（它可能与角色卡上的权威声线冲突 —— "+
+				"真机就是这么出现「画面是女的、声音是男的」的）；权威声线一律以角色卡为准", plan.VoiceClashStripped)
+	}
 	// 【2026-10-07】声线重绑与"认不出"的句数也在这里一并播报（与清单失败同一个收尾处；
 	// 【2026-10-08】剪掉黑闪的汇总（逐镜已经在行内报过；这里给一次总数，免得逐镜信息被刷掉）。
 	if plan != nil && plan.BlackFlashShots > 0 {

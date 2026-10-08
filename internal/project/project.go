@@ -309,6 +309,13 @@ type Plan struct {
 	// 并在这里计数、由渲染收尾处如实播报（不加 = 少一条约束，用户有权知道）。
 	SpeechPlacementSkipped int `json:"-"`
 
+	// VoiceClashStripped 本次装配时**清掉的"性别/年龄描述残留"句数**（见 pipeline.replaceVoiceClause）。
+	//
+	// 【真机代价（2026-10-08）】镜 4 实际提交的引述是
+	// `Off-screen left, young woman's light, eager, 实习生 (S2) says in Bright high young male voice …`
+	// —— 模型自己写的 **"young woman's"** 与**卡上的男声**同时留在同一句里（重绑只换掉了后半截），
+	// 用户报的「女的配男音」正是这一类。清掉要说一声：这是平台替模型改的措辞。
+	VoiceClashStripped int `json:"-"`
 	// BlackFlashShots / BlackFlashSec 本次渲染**剪掉黑闪**的镜数与秒数。
 	//
 	// 【为什么记账】引擎偶发吐几十毫秒全黑（真机那一集：镜 1/8 片头 0.208s、镜 6 第 4.46s、

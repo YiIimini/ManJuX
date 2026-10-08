@@ -25,7 +25,9 @@ func TestEnsureVoiceInlineBindsNarratorVoice(t *testing.T) {
 	}}
 	got := EnsureVoiceInline(line, plan, plan.Characters)
 
-	if !strings.Contains(got, "off-screen voiceover in a warm, low-pitched adult male narrator voice") {
+	// 判据用**常量**而不是硬编码的句子：2026-10-08 把旁白默认从"adult male"改成中性，
+	// 硬编码的断言当场失效（正是它该失效的时候 —— 那次改的就是这句音色）。
+	if !strings.Contains(got, "off-screen voiceover in "+narratorVoiceDefault) {
 		t.Fatalf("旁白音色必须写进引述里(否则模型每镜现编):\n%s", got)
 	}
 	if !strings.Contains(got, voiceBindKey) {
@@ -34,12 +36,16 @@ func TestEnsureVoiceInlineBindsNarratorVoice(t *testing.T) {
 	if !strings.Contains(got, "沈砚 speaks with a teenage boy's voice, light and quick") {
 		t.Errorf("角色音色应进 casting 段:\n%s", got)
 	}
+	// 旁白默认**不许**假定性别（用户 2026-10-08 报「女的配男音」：本片旁白其实是女主内心音）。
+	if strings.Contains(strings.ToLower(narratorVoiceDefault), "male") {
+		t.Errorf("旁白默认音色不许写 male（要指定性别请把旁白说话人写成角色卡）:%s", narratorVoiceDefault)
+	}
 	// 幂等:反复调用不得叠加
 	if n := strings.Count(EnsureVoiceInline(got, plan, plan.Characters), voiceBindKey); n != 1 {
 		t.Errorf("声线绑定必须幂等,实际 %d 个 casting 段", n)
 	}
-	if n := strings.Count(EnsureVoiceInline(got, plan, plan.Characters), "in a warm, low-pitched"); n != 1 {
-		t.Errorf("音色插进引述也只能插一次,实际 %d 次", n)
+	if n := strings.Count(EnsureVoiceInline(got, plan, plan.Characters), narratorVoiceDefault); n != 2 {
+		t.Errorf("音色插进引述也只能插一次(引述 + casting 各一处),实际 %d 次", n)
 	}
 }
 

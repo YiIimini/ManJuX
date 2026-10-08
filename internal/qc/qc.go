@@ -49,6 +49,10 @@ type Report struct {
 	// 判「念的是不是那句台词」(重复/自造/漏念)。它是**听出来的**结论,只标 warn 不拦批次;
 	// 没装 ASR 时 Skipped 里如实写"没验过"。
 	Speech *SpeechReport `json:"speech,omitempty"`
+	// Voice 音色核对（可选，见 pitch.go）：把"角色卡上写的男声/女声"与"音轨里实际念出来的
+	// 基频"对一遍 —— 判「谁在说、什么嗓子」。它是**量出来的**结论（不依赖 ASR 工具），
+	// 判负只 warn 不拦批次；声线文本没写性别/同镜男女混合/人声太短时 Skipped 里如实写"没判"。
+	Voice *VoicePitchReport `json:"voice,omitempty"`
 }
 
 // Params 质检阈值。

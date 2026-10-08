@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +12,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
-// zz_probe_speech_live_test.go 探针：拿真机片段跑一遍 ASR + 与计划台词对账（`go test -run TestZZProbeSpeechLive -v`）。
+// zz_probe_speech_live_test.go 探针：拿真机片段逐镜转写 + 与计划台词对账（带时间点）。
 // 只在有那份真机项目 + 本机装了 ASR 时跑；否则跳过（不假装验过）。
 func TestZZProbeSpeechLive(t *testing.T) {
 	tool := asr.Locate()
@@ -36,9 +35,6 @@ func TestZZProbeSpeechLive(t *testing.T) {
 	}
 	for i := range plan.Shots {
 		sh := plan.Shots[i]
-		if sh.ID != 1 && sh.ID != 5 {
-			continue
-		}
 		clip := filepath.Join(dir, "clips", fmt.Sprintf("shot_%03d.mp4", sh.ID))
 		if _, err := os.Stat(clip); err != nil {
 			continue
@@ -52,14 +48,12 @@ func TestZZProbeSpeechLive(t *testing.T) {
 		}
 		rep := asr.Compare(project.PlanSpokenTexts(&sh), res)
 		cancel()
-		t.Logf("镜头 %d 计划台词=%v", sh.ID, project.PlanSpokenTexts(&sh))
-		var texts []string
+		t.Logf("=== 镜头 %d  计划=%v", sh.ID, project.PlanSpokenTexts(&sh))
 		for _, sg := range res.Segments {
-			texts = append(texts, sg.Text)
+			t.Logf("    [%.2f-%.2f] %s", sg.Start, sg.End, sg.Text)
 		}
-		t.Logf("    ASR 合并文本: %s", strings.Join(texts, " "))
 		for _, l := range rep.Lines {
-			t.Logf("    对账: %q sim=%.2f times=%d", l.Line, l.Sim, l.Times)
+			t.Logf("    对账 %q sim=%.2f times=%d", l.Line, l.Sim, l.Times)
 		}
 		for _, f := range rep.Findings {
 			t.Logf("    ⚠ %s: %s", f.Kind, f.Detail)
