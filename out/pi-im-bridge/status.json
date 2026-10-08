@@ -1,0 +1,1541 @@
+{
+  "plugin": {
+    "id": "local.pi-im-bridge",
+    "version": "0.3.0"
+  },
+  "service": {
+    "id": "im-bridge",
+    "started": false,
+    "registered": true
+  },
+  "channels": {
+    "weixin": {
+      "id": "weixin",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "telegram": {
+      "id": "telegram",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "wecom": {
+      "id": "wecom",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "discord": {
+      "id": "discord",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "slack": {
+      "id": "slack",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "matrix": {
+      "id": "matrix",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "qq": {
+      "id": "qq",
+      "status": "idle",
+      "mode": "inbound+outbound",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    },
+    "webhook": {
+      "id": "webhook",
+      "status": "idle",
+      "mode": "outbound-only",
+      "configured": false,
+      "polls": 0,
+      "replies": 0,
+      "errors": 0,
+      "lastError": "",
+      "lastActivityAt": "",
+      "updatedAt": "2026-10-08T12:26:40.518Z"
+    }
+  },
+  "events": [
+    {
+      "at": "2026-10-08T12:18:24.727Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:24.728Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:29.734Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:29.734Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:34.742Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:34.742Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:39.755Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:39.755Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:44.763Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:44.763Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:49.775Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:49.776Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:54.784Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:54.784Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:18:59.792Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:18:59.793Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:04.803Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:04.804Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:09.805Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:09.806Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:14.812Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:14.812Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:19.825Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:19.826Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:24.830Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:24.831Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:29.834Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:29.835Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:34.849Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:34.849Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:39.851Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:39.852Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:44.866Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:44.866Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:49.870Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:49.870Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:54.885Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:54.885Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:19:59.897Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:19:59.897Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:04.899Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:04.900Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:09.906Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:09.906Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:14.919Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:14.920Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:19.922Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:19.922Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:24.931Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:24.931Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:29.935Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:29.936Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:34.948Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:34.948Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:39.953Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:39.954Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:44.968Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:44.968Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:49.975Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:49.976Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:54.988Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:54.988Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:20:59.998Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:20:59.998Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:05.008Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:05.008Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:10.015Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:10.016Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:15.027Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:15.027Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:20.033Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:20.033Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:25.033Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:25.033Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:30.041Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:30.041Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:35.045Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:35.045Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:40.056Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:40.056Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:45.061Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:45.061Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:50.072Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:50.072Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:21:55.085Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:21:55.086Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:00.088Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:00.088Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:05.090Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:05.090Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:10.091Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:10.091Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:15.101Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:15.102Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:20.111Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:20.112Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:25.115Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:25.115Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:30.124Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:30.124Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:35.139Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:35.139Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:40.146Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:40.146Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:45.154Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:45.154Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:50.166Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:50.166Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:22:55.176Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:22:55.176Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:00.188Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:00.189Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:05.200Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:05.200Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:10.208Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:10.209Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:15.216Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:15.216Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:20.217Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:20.217Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:25.218Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:25.219Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:30.223Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:30.224Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:35.234Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:35.235Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:40.245Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:40.245Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:45.248Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:45.249Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:50.248Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:50.249Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:23:55.249Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:23:55.250Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:00.254Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:00.254Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:05.266Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:05.266Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:10.268Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:10.269Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:15.283Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:15.283Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:20.298Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:20.298Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:25.307Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:25.307Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:30.320Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:30.320Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:35.323Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:35.323Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:40.324Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:40.324Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:45.338Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:45.338Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:50.383Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:50.384Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:24:55.385Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:24:55.385Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:00.387Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:00.387Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:05.388Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:05.388Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:10.390Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:10.391Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:15.393Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:15.394Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:20.409Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:20.409Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:25.408Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:25.409Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:30.413Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:30.414Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:35.427Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:35.427Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:40.435Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:40.435Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:45.444Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:45.444Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:50.448Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:50.448Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:25:55.457Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:25:55.457Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:00.462Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:00.462Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:05.463Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:05.463Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:10.474Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:10.474Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:15.485Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:15.485Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:20.492Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:20.492Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:25.497Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:25.497Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:30.504Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:30.505Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:35.514Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:35.515Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    },
+    {
+      "at": "2026-10-08T12:26:40.518Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-enabled",
+      "message": "面板请求启动：正在启动通道"
+    },
+    {
+      "at": "2026-10-08T12:26:40.518Z",
+      "level": "info",
+      "channel": "core",
+      "type": "service-idle",
+      "message": "没有任何通道配置 token/webhook，服务保持 idle（这不是错误）"
+    }
+  ],
+  "sessions": 0,
+  "sessionMap": [],
+  "operationCount": 0,
+  "transportStatuses": {},
+  "connections": [],
+  "operationsError": "missing permission: desktop.control",
+  "settingsSummary": {
+    "weixinToken": "(未配置)",
+    "weixinBaseUrl": "https://ilinkai.weixin.qq.com/",
+    "telegramToken": "(未配置)",
+    "wecomBotId": "(未配置)",
+    "wecomSecret": "(未配置)",
+    "wecomWsUrl": "(SDK 默认 openws.work.weixin.qq.com)",
+    "discordBotToken": "(未配置)",
+    "discordIntents": 37377,
+    "slackBotToken": "(未配置)",
+    "slackAppToken": "(未配置)",
+    "matrixHomeserverUrl": "(未配置)",
+    "matrixAccessToken": "(未配置)",
+    "matrixUserId": "(自动 whoami)",
+    "qqOneBotUrl": "(未配置)",
+    "qqAccessToken": "(无)",
+    "webhookUrl": "(未配置)",
+    "allowedUsers": "(空 → 拒绝所有人)",
+    "pollTimeoutMs": 30000,
+    "maxReplyChars": 1800,
+    "replyTimeoutMs": 180000,
+    "dataPath": "C:\\Users\\Administrator\\.pi-desktop\\plugins\\data\\local.pi-im-bridge"
+  },
+  "updatedAt": "2026-10-08T12:26:40.673Z"
+}

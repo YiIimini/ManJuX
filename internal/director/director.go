@@ -515,13 +515,60 @@ func buildSingleUserPrompt(sourceText string, opt Options, contentDriven, second
 	return fmt.Sprintf(contentDrivenPromptFmt, sourceText, target, hint)
 }
 
-// withSettingBrief 把设定集摘要拼在正文**之前**（空摘要原样返回，行为与从前一致）。
+// withSettingBrief 组装**给模型的材料块**：设定集（硬锚，放最前）+ 主源分工（平台口径）+ 本集材料（原样）。
+//
+// 【2026-10-08 修：不再把整份材料改标成【本集原文】】原来返回的是
+//
+//	b + "\n\n【本集原文】\n" + sourceText
+//
+// 而 sourceText 里**同时**含【本集剧情】(剧本) 与【本集原文】(小说原文) —— 贴上那个标签之后，模型
+// 看到的只有"一份原文"，剧本/素材的分工信息被抹掉；再配合当年的"从原文提炼"提示，就变成了用户说的
+// 「去要求原文内容怎样怎样」。现在材料**原样保留**（两个节标记都在），分工由 sourceRoleClause 说清。
+//
+// 四条生成路径（单批内容驱动 / 单批指定镜数 / 规划轮 p1 / p2）都从这里过，所以分工只写这一处。
 func withSettingBrief(sourceText, brief string) string {
 	b := strings.TrimSpace(brief)
-	if b == "" {
-		return sourceText
+	clause := sourceRoleClause(sourceText)
+	var parts []string
+	if b != "" {
+		parts = append(parts, b)
 	}
-	return b + "\n\n【本集原文】\n" + sourceText
+	if clause != "" {
+		parts = append(parts, clause)
+	}
+	parts = append(parts, sourceText)
+	return strings.Join(parts, "\n\n")
+}
+
+// sourceRoleClause 本集材料的**主源分工**（2026-10-08 用户：「文章内容转剧本，需要的是 LLM 提取内容
+// 分析总结后输出爽文爆点剧本（根据剧本内容再完善输出分镜脚本），**而不是去要求原文内容怎样怎样**」）。
+//
+// 为什么必须写明：模型看到的是一大团中文材料（抬头 + 剧本 + 小说原文）。不写清"哪一份是剧本、哪一份
+// 只是素材"，它就会（真机实测）围着**小说原文的段落顺序**排镜头 —— 剧本里的场次/爽点/钩子等于白写，
+// 分镜也就退化成"把原文搬上画面"。这一条是**平台口径**，不是给用户的注记：有剧本就必须以剧本为主源。
+//
+// 三种情形分别说明（宁可直说"没有剧本"，也不要让模型自己猜哪份是剧本）：
+//
+//	① 剧本 + 原文都在（正常情形） ② 只有剧本 ③ 没有剧本（材料里连【本集剧情】都找不到）
+//
+// 两个标记都没有（技能侧导入的包 / 裁过的稿子）⇒ 返回空串，不往提示词里塞噪音。
+func sourceRoleClause(sourceText string) string {
+	_, _, hasBrief, hasOrig := project.EpisodeSourceParts(sourceText)
+	switch {
+	case hasBrief && hasOrig:
+		return "本集材料分两份,角色不同(必须遵守):\n" +
+			"- 【本集剧情】是**剧本**(专职编剧已完成提取/分析/总结:含【开场爆点】与逐场的「目的/冲突/转折/爽点/钩子」):" +
+			"分镜**逐场**按它组织 —— 第 1 镜拍【开场爆点】那一下、台词逐字取自它、每个大爽点都要有对应镜头。\n" +
+			"- 【本集原文】只是**参考素材**:仅用于补细节与核实;**不得**用它替换、重排或稀释剧本的场次/爽点/钩子。"
+	case hasBrief:
+		return "本集材料就是【本集剧情】(剧本,专职编剧已完成提取/分析/总结):分镜**逐场**按它组织 —— " +
+			"第 1 镜拍【开场爆点】那一下、台词逐字取自它、每个大爽点都要有对应镜头。"
+	case hasOrig:
+		return "本集材料**没有剧本**(材料里找不到【本集剧情】)—— 只能按【本集原文】组织分镜:" +
+			"先提炼核心冲突与 2-3 个大爽点,砍冗余、允许跳段与合并,不要围着原文段落顺序排镜头。"
+	default:
+		return ""
+	}
 }
 
 func generateSingle(ctx context.Context, client *llm.Client, sourceText string, opt Options, contentDriven, secondsGiven bool) (*project.Plan, error) {

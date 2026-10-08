@@ -18,6 +18,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/fsutil"
 	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/pipeline"
+	"github.com/YiIimini/ManJuX/internal/project"
 )
 
 type novelJob struct {
@@ -594,64 +595,18 @@ func missingBriefSections(brief string) []string {
 	return missing
 }
 
-// briefEndMarkers 剧情段在 source.txt 里的**终止标记**（平台自己写在这一段之后的节）。
+// 下面三个函数**统一委托给 project**（2026-10-08）：剧本与原文的分工要同时被 server（写剧本的一侧）
+// 与 pipeline（读剧本的一侧）看见，判据只能有一份 —— 判据本体在 `project/source_sections.go`，
+// 那里记着"为什么不能用空行当边界"那次真机教训（只取回 51 字 ⇒ 剧本被每轮重写、写回还堆旧稿）。
 //
-// 【为什么不能用"第一个空行"当边界】（2026-10-07 真机实测，代价最大的一处）
-// 原实现是 `strings.Index(rest, "\n\n")` —— 而**模型写的剧本本来就有空行**：
-// 真机第01集 source.txt 的【本集剧情】下面是
-//
-//	【本集剧情】【开场爆点】“重新检测到生命反应。”——灰纪元第八万年，…
-//	                      ← 这里就有一个空行
-//	【场 1|归墟环·维护舱|灰纪元第八万年·第三千四百六十二标准日|内】
-//
-// 于是 episodeBriefOf 只取回 **51 字**（那一句爆点），而整段剧本是 2090 字。三件事一起发生：
-//
-//	① 完整性判据 `briefIsUsable` 永远判"这份剧本不可用"（字数与结构都按 51 字那一段算）；
-//	② 于是**每跑一次这一集都重新调 LLM 改编剧本**、把上一次的稿子覆盖掉；
-//	③ 连备份都轮不到 —— 备份分支的门槛里写着 `len(brief) >= epScriptMinRunes`，51 字过不去，
-//	   所以是**静默覆盖**（用户"总感觉剧本提取文章内容不是按爆款要求来的"里有一半是这个：
-//	   每轮都是新编的，内容当然飘；而且写回时同样按"第一个空行"切，旧稿会残留在文件里）。
-//
-// 现在的边界取**平台自己写的节标记**（拆集那一步写的是 `\n\n【本集原文】(素材：…)`），
-// 与"模型爱在哪里空行"无关。
-// 标记**不带换行符**：读的时候落在【上、由 TrimSpace 收尾；写回时由调用方补一个空行，
-// 免得吃掉原来那一行分隔。
-var briefEndMarkers = []string{"【本集原文】", "【本集剧情】", "【前情提要】"}
+// 保留这三个名字是因为调用点很密（生成 / 跳过判据 / 写回 / 预检都在用），改名的收益不抵噪音。
+func briefSectionEnd(rest string) int { return project.EpisodeSectionEnd(rest) }
 
-// briefSectionEnd 剧情段在 src[from:] 里的结束下标（不含终止标记）；无标记 ⇒ 到文末。
-func briefSectionEnd(rest string) int {
-	end := -1
-	for _, m := range briefEndMarkers {
-		if i := strings.Index(rest, m); i >= 0 && (end < 0 || i < end) {
-			end = i
-		}
-	}
-	if end < 0 {
-		return len(rest)
-	}
-	return end
-}
-
-// episodeBriefOf 取 source.txt 里【本集剧情】那一段（到下一个平台节标记为止）。
-func episodeBriefOf(src string) (string, bool) {
-	const mark = "【本集剧情】"
-	i := strings.Index(src, mark)
-	if i < 0 {
-		return "", false
-	}
-	rest := src[i+len(mark):]
-	return strings.TrimSpace(rest[:briefSectionEnd(rest)]), true
-}
+// episodeBriefOf 取 source.txt 里【本集剧情】那一段（= 剧本；到下一个平台节标记为止）。
+func episodeBriefOf(src string) (string, bool) { return project.EpisodeBrief(src) }
 
 // episodeOrigOf 取 source.txt 里【本集原文】那一段（没有标记时退回全文）。
-func episodeOrigOf(src string) string {
-	const mark = "【本集原文】"
-	i := strings.Index(src, mark)
-	if i < 0 {
-		return src
-	}
-	return strings.TrimSpace(src[i+len(mark):])
-}
+func episodeOrigOf(src string) string { return project.EpisodeOriginal(src) }
 
 // splitNovelToProjects 拆集核心(与 /api/novel-split 共用):返回(系列名, 子项目列表)。
 // artStyle 来自立项.json 的 art_style 字段(空=由 LLM 自定风格)。
