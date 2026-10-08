@@ -46,8 +46,8 @@ func NormalizeClipAudio(ctx context.Context, f *ff.FF, path string, p Params) er
 		return err
 	}
 	marker := path + ".audnorm"
-	if _, err := os.Stat(marker); err == nil {
-		return nil // 已经处理过
+	if clipMarkerValid(marker, path) {
+		return nil // 已经处理过（且片段没被重渲覆盖）
 	}
 	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".audnorm.tmp.mp4")
 	af := denoiseChain() + "," + peakBaseFilter(p.Loudness, peakDBTP(p.Peak))
@@ -66,5 +66,5 @@ func NormalizeClipAudio(ctx context.Context, f *ff.FF, path string, p Params) er
 		os.Remove(tmp)
 		return err
 	}
-	return os.WriteFile(marker, []byte("clip audio normalised\n"), 0o644)
+	return writeClipMarker(marker, path, "clip audio normalised")
 }

@@ -15,7 +15,9 @@ import (
 // `clips/shot_0NN.mp4`（H3 原始音轨）⇒ 用户听到的就是没处理过的那个。
 //
 // 判据（不依赖真的跑 ffmpeg）：
-//   - **幂等**：已有 `.audnorm` 标记时直接返回，不重复处理（反复 loudnorm 会把动态压没）；
+//   - **幂等**：标记与片段对得上时直接返回，不重复处理（反复 loudnorm 会把动态压没）；
+//   - **标记过期就重做**（2026-10-08 真机踩到）：片段被重渲覆盖后，旧标记必须失效 ——
+//     否则"处理过了"是假的，重渲出来的原始音轨照样进成片；
 //   - 片段不存在时报错（调用方只 warn，不当致命）；
 //   - 参数为 nil / 空路径时安全返回。
 func TestNormalizeClipAudioIsIdempotent(t *testing.T) {
@@ -24,12 +26,20 @@ func TestNormalizeClipAudioIsIdempotent(t *testing.T) {
 	if err := os.WriteFile(clip, []byte("fake"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// 标记存在 ⇒ 跳过（拿不到 ffmpeg 也不该报错：根本不会去调它）
-	if err := os.WriteFile(clip+".audnorm", []byte("done\n"), 0o644); err != nil {
+	// 标记与当前文件对得上 ⇒ 跳过（拿不到 ffmpeg 也不该报错：根本不会去调它）
+	if err := writeClipMarker(clip+".audnorm", clip, "clip audio normalised"); err != nil {
 		t.Fatal(err)
 	}
 	if err := NormalizeClipAudio(t.Context(), &ff.FF{Ffmpeg: "definitely-not-ffmpeg"}, clip, Params{Loudness: -16}); err != nil {
-		t.Fatalf("已有标记时应当直接跳过，实得 %v", err)
+		t.Fatalf("标记与片段一致时应当直接跳过，实得 %v", err)
+	}
+	// **标记过期**（片段被重渲覆盖了）⇒ 不能再跳过：这里 ffmpeg 是假的，所以必然报错 ——
+	// 报错本身就是"它真的去重做了"的证据（真机那一集的 `.noblack` 就是因为没做这件事而漏剪的）。
+	if err := os.WriteFile(clip, []byte("fake but re-rendered, different length"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := NormalizeClipAudio(t.Context(), &ff.FF{Ffmpeg: "definitely-not-ffmpeg"}, clip, Params{}); err == nil {
+		t.Error("片段被覆盖后旧标记必须失效、必须重做（否则新音轨永远不净化）")
 	}
 	// 片段不存在 ⇒ 报错（让调用方如实播报）
 	missing := filepath.Join(dir, "nope.mp4")

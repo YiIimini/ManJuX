@@ -482,7 +482,7 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 	promptOut = EnsureSpokenLinesClause(promptOut, shot)
 	// 逐**小镜头**的人声位置（2026-10-08 真机实锤：模型把"每个小镜头都要说点什么"当成规则，
 	// 把台词整体前移一格、还在空出来的那格里自编了一句假中文 —— 见 EnsureSpeechPlacementClause 的文件头）。
-	promptOut = EnsureSpeechPlacementClause(promptOut, shot)
+	promptOut = EnsureSpeechPlacementClause(promptOut, shot, plan)
 	return promptOut
 }
 
@@ -648,6 +648,12 @@ type cutSpeech struct {
 // 判据完全来自正文：`[Shot N]` 分刀，`<d>…</d>` 是台词的唯一通道（H3 官方口径）。
 // 结构字段 `shot.cuts` 只用来对账（见 project/cuts.go），这里以**真正发给模型的文本**为准 ——
 // 两处不一致时该改的是它们，不是这条条款。
+//
+// **占位/示例标签不算台词**（2026-10-08 真机实锤，见 project.IsPlaceholderSpoken）：
+// 装配点自己追加的条款正文里也写着 `<d>…</d>` 当例子（`enclosed in <d>…</d> tags`、
+// `就是 <d>…</d> 里的那几句台词`、`matching the [Chinese] tag inside each <d>…</d>`），
+// 它们全都落在**最后一刀**那一段里 ⇒ 逐刀清单写成「这一刀 4 行，每行念一遍」而真实只有 1 行
+// ⇒ 模型把空出来的格子填满：镜 1「又是那个人?」念了两遍、镜 5 凭空多出一句「或是血」（ASR 实锤）。
 func cutSpeechMap(prompt string) []cutSpeech {
 	ms := reCutMark.FindAllStringSubmatchIndex(prompt, -1)
 	out := make([]cutSpeech, 0, len(ms))
@@ -659,9 +665,11 @@ func cutSpeechMap(prompt string) []cutSpeech {
 		seg := prompt[m[0]:end]
 		cs := cutSpeech{At: reCutAtMark.FindString(prompt[m[2]:m[3]])}
 		for _, d := range reDialogueTag.FindAllStringSubmatch(seg, -1) {
-			if txt := strings.TrimSpace(reSpeechLang.ReplaceAllString(d[1], "")); txt != "" {
-				cs.Lines = append(cs.Lines, txt)
+			txt := strings.TrimSpace(reSpeechLang.ReplaceAllString(d[1], ""))
+			if txt == "" || project.IsPlaceholderSpoken(txt) {
+				continue
 			}
+			cs.Lines = append(cs.Lines, txt)
 		}
 		out = append(out, cs)
 	}
@@ -687,13 +695,28 @@ func cutSpeechMap(prompt string) []cutSpeech {
 //
 // 【它是否有效，只能由重渲 + ASR 复验来说】（诚实边界）本函数保证的只是这段逐段清单**在**提示词里、
 // 且只出现一次；管不管得住模型要重渲一镜再用 ASR 听（每镜约 9~11 分钟 GPU）。
-func EnsureSpeechPlacementClause(prompt string, shot *project.Shot) string {
+//
+// 【安全阀（2026-10-08 追加）】这条清单等于在向模型**许愿**「这一刀要念这几句」—— 数错了比不加更糟：
+// 真机就是这么错的（清单写「这一刀 4 行」，真实只有 1 行 ⇒ 模型把空出来的格子填满）。
+// 所以先与计划对账：清单里的真句数必须等于 `project.PlanSpokenTexts(shot)` 的条数；
+// 对不上就**不加这条**（宁可不逐段点名），并如实计数 `plan.SpeechPlacementSkipped` 由渲染收尾处播报。
+func EnsureSpeechPlacementClause(prompt string, shot *project.Shot, plan *project.Plan) string {
 	if shot == nil || strings.Contains(prompt, speechPlacementMarker) {
 		return prompt
 	}
 	cuts := cutSpeechMap(prompt)
 	if len(cuts) < 2 {
 		return prompt // 只有一刀 = 整镜一个时间窗，SPOKEN LINES ONLY 已经覆盖，不重复堆话
+	}
+	listed := 0
+	for _, c := range cuts {
+		listed += len(c.Lines)
+	}
+	if want := len(project.PlanSpokenTexts(shot)); listed != want {
+		if plan != nil {
+			plan.SpeechPlacementSkipped++
+		}
+		return prompt
 	}
 	speaking := 0
 	var b strings.Builder

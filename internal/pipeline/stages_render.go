@@ -546,6 +546,29 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 		//
 		// 原来只有合成整片时净化，工作台试听的片段是 H3 原始音轨：电流音在、响度接近满刻度。
 		// 失败不致命（合成整片时还有一次净化兜底），只报一条 warn。
+		// **黑闪切除**（2026-10-08 真机《顺其自然》第01集：用户「视频看的莫名其妙的」）。
+		// 引擎偶发吐几十毫秒全黑（那片子里 镜 1/8 片头 0.208s、镜 6 第 4.46s、镜 13 第 2.42s），
+		// 观众看到"画面无故一黑"，质检的最暗采样帧也会正好压在上面把整镜判成"疑似黑屏"。
+		// 判据是确定性的（ffmpeg blackdetect + 只切"短"段），且**排在指纹/清单记账之前** ——
+		// 处理完的才是最终文件（与下面那条音频净化同一理由）。长黑段不碰（那是质检该报的）。
+		if c.ff != nil {
+			// fps 传 0 ＝ 用平台默认 24（合成侧也强制 fps=24，见 stages_qc_assemble.go 的说明）
+			removed, n, longRuns, stripErr := compose.StripBlackFlash(ctx, c.ff, res.VideoPath, 0)
+			if stripErr != nil {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+					"⚠ 镜头 %d 的黑闪自检没做成(%v) —— 片段保持原样（质检仍会按原样判暗度）", shot.ID, stripErr)
+			} else if removed > 0 {
+				plan.BlackFlashShots++
+				plan.BlackFlashSec += removed
+				c.emit(proj.ID, PhaseRender, shot.ID, "info", base,
+					"🧹 镜头 %d 剪掉 %d 段**黑闪**（共 %.3fs 全黑帧）—— 这是引擎吐的，不是剧情，剪掉后画面不再无故一黑", shot.ID, n, removed)
+			}
+			for _, r := range longRuns {
+				c.emit(proj.ID, PhaseRender, shot.ID, "warn", base,
+					"⚠ 镜头 %d 有 %.2fs 的连续黑场（%.2fs 起）—— **太长，没敢剪**：那要么是计划里就写明的暗场，要么是这一镜真的渲坏了，"+
+						"请核对后决定（质检报告里这一镜的暗度也会标出来）", shot.ID, r.Dur(), r.Start)
+			}
+		}
 		if c.ff != nil {
 			if err := compose.NormalizeClipAudio(ctx, c.ff, res.VideoPath, compose.Params{
 				Loudness: proj.Config.Params.Assemble.Loudness, Peak: proj.Config.Params.Assemble.Peak,
@@ -608,6 +631,12 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 	}
 	c.emit(proj.ID, PhaseRender, 0, "success", 100, "✔ 渲染完成:新出 %d 镜,跳过 %d 镜", done, skipped)
 	// 【2026-10-07】声线重绑与"认不出"的句数也在这里一并播报（与清单失败同一个收尾处；
+	// 【2026-10-08】剪掉黑闪的汇总（逐镜已经在行内报过；这里给一次总数，免得逐镜信息被刷掉）。
+	if plan != nil && plan.BlackFlashShots > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "info", 100,
+			"🧹 共 %d 镜剪掉了片头/片中的**黑闪**（合计 %.3fs 全黑帧）—— 这是引擎偶发吐黑，不是剧情；"+
+				"剪掉后成片不会无故一黑，质检也不会再被这几十毫秒的全黑帧带偏", plan.BlackFlashShots, plan.BlackFlashSec)
+	}
 	// 逐镜播报会刷屏）。计数由 pipeline.BindLineVoices 在装配每一镜时累加。
 	if plan != nil && (plan.VoiceRebound > 0 || plan.VoiceUnresolved > 0) {
 		if plan.VoiceRebound > 0 {
@@ -621,6 +650,14 @@ func (c *Coordinator) runRender(ctx context.Context, proj *project.Project, only
 				"⚠ 另有 %d 句台词**认不出说话人/权威声线**（`<d>` 里的文本与 dialogue 对不上，或说话人名两边写法不同）—— "+
 					"这几句保持原样（宁可让模型自由发挥，也不塞错人的音色）；要根治请让这几句的 `<d>` 与 dialogue 逐字一致",
 				plan.VoiceUnresolved)
+		}
+		// 【2026-10-08】逐刀人声清单"没加上"的镜头数：这条清单少一镜就等于那一镜少一层人声约束
+		//（模型可能把空出来的小镜头填满人声），必须说出来而不是静默。
+		if plan != nil && plan.SpeechPlacementSkipped > 0 {
+			c.emit(proj.ID, PhaseRender, 0, "warn", 100,
+				"⚠ 有 %d 镜**没加上逐刀人声清单**（清单里数出的真句数与方案的台词条数对不上）—— "+
+					"这几镜只剩「只说 <d> 里那几句」的整镜约束，人声可能落在没台词的小镜头里；"+
+					"根因通常是提示词正文里混进了不该有的 `<d>` 标签，请对这几镜点「单镜重渲」并核对提示词", plan.SpeechPlacementSkipped)
 		}
 	}
 	// 【2026-09-28 审计 A12 的收尾】清单落盘失败在这里**统一报一次**（逐镜报会刷屏，

@@ -39,8 +39,13 @@ N/A
 // TestSpeechPlacementClauseMarksTheSilentCut 真机那一镜：**没有台词的开场刀必须被点名**，
 // 两句台词必须各自绑在它自己那一刀上（时间串与原文逐字一致）。
 func TestSpeechPlacementClauseMarksTheSilentCut(t *testing.T) {
-	shot := &project.Shot{ID: 1, Duration: 9, H3Prompt: realShot1Prompt}
-	got := EnsureSpeechPlacementClause(realShot1Prompt, shot)
+	// Dialogue 也要照真机填上：这一镜计划里就是两句（`plan.json` 的 shots[0].dialogue），
+	// 装配时逐刀清单要拿它当对账的权威（见 EnsureSpeechPlacementClause 的安全阀）。
+	shot := &project.Shot{ID: 1, Duration: 9, H3Prompt: realShot1Prompt, Dialogue: []project.Line{
+		{Speaker: "舱内系统", Text: "硬件钢印 U-80001。"},
+		{Speaker: "舱内系统", Text: "该编号不存在，予以静默。"},
+	}}
+	got := EnsureSpeechPlacementClause(realShot1Prompt, shot, nil)
 	if !strings.Contains(got, speechPlacementMarker) {
 		t.Fatal("逐刀的人声位置条款没进提示词")
 	}
@@ -72,7 +77,7 @@ func TestSpeechPlacementClauseMarksTheSilentCut(t *testing.T) {
 		t.Error("两句台词被写到同一刀里了")
 	}
 	// 幂等：装配点会被调用两次（渲染 + 2K/重绘/音频驱动）。
-	twice := EnsureSpeechPlacementClause(got, shot)
+	twice := EnsureSpeechPlacementClause(got, shot, nil)
 	if twice != got {
 		t.Error("已含条款的提示词应原样返回（幂等）")
 	}
@@ -83,7 +88,7 @@ func TestSpeechPlacementClauseMarksTheSilentCut(t *testing.T) {
 func TestSpeechPlacementClauseSkipsSingleCut(t *testing.T) {
 	single := "detailed_description:\nCold 3D CG.\n\n[Shot 1] At 00:00.000 the shot opens. 舱内系统 says: <d>[Chinese]读我的钢印。</d>\n"
 	shot := &project.Shot{ID: 1, Duration: 5, H3Prompt: single}
-	if got := EnsureSpeechPlacementClause(single, shot); got != single {
+	if got := EnsureSpeechPlacementClause(single, shot, nil); got != single {
 		t.Errorf("单刀镜不该加逐刀清单，实得：\n%s", tailOf(got, 1400))
 	}
 }
@@ -93,7 +98,7 @@ func TestSpeechPlacementClauseAllSilent(t *testing.T) {
 	silent := "detailed_description:\nCold 3D CG.\n\n[Shot 1] At 00:00.000 the bay stands empty. Static Shot.\n\n" +
 		"[Shot 2] At 00:03.000 the camera drifts left. Slow Pan.\n"
 	shot := &project.Shot{ID: 2, Duration: 7, H3Prompt: silent}
-	got := EnsureSpeechPlacementClause(silent, shot)
+	got := EnsureSpeechPlacementClause(silent, shot, nil)
 	if !strings.Contains(got, "heard in exactly 0") {
 		t.Errorf("没有台词的镜应写明 0 段有人声：\n%s", tailOf(got, 1400))
 	}
@@ -118,5 +123,86 @@ func TestSpeechPlacementClauseReachesTheRenderedPrompt(t *testing.T) {
 	}
 	if !strings.Contains(got, "the cut at At 00:00.000 — NO speech of any kind") {
 		t.Errorf("开场那一刀（无台词）没被点名：\n%s", tailOf(got, 1400))
+	}
+}
+
+// realShot1LastCutWithClauses 真机第 01 集**镜头 1 实际提交给模型**的那一段（2026-10-08 12:06
+// 那一轮渲染，取自本机 ComfyUI `/history` 的工作流文本，逐字照抄；只把中段与音频段省掉）：
+//
+//	① 第四刀正文（`[Shot 4] At 00:06.800 …`）里只有**一句**真台词；
+//	② 后面跟着装配点自己加的条款，条款正文里**引用 `<d>…</d>` 当例子** ——
+//	   就是这三处引用把逐刀清单数成了「这一刀 4 行」。
+const realShot1LastCutWithClauses = `[Shot 4] At 00:06.800 camera holds on 周 as she answers without turning, early-thirties ` +
+	`woman's voice, 周 (S2) says in Light, low-pitched young female voice, unhurried and clipped, with a soft Ningbo ` +
+	`accent and very little upward inflection: <d>[Chinese]十一月底,还能是谁。</d> Outside, fine sleet strikes bare ` +
+	`plane-tree branches and melts on wet bark. No other text appears in frame; no watermarks, no logos, no subtitles.` + "\n\n" +
+	`SCENE LIGHTING (scene-level, mandatory): every shot in "老城邮局营业厅" shares ONE light state — 清晨七点四十,内景.` + "\n\n" +
+	`MANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), ` +
+	`matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech.` + "\n\n" +
+	`SPOKEN LINES ONLY (MANDATORY):` + "\n" +
+	`the ONLY human speech in this shot is the line or lines enclosed in <d>…</d> tags. Say each of them exactly once, ` +
+	`verbatim, in the order written.` + "\n" +
+	`(中文对照：本镜**唯一**的人声就是 <d>…</d> 里的那几句台词 —— 逐字、按顺序、**每句只念一遍**。)` + "\n"
+
+// realShot1HeadWithCuts 同一镜的前三刀（真机原文：开场刀无台词，第二、三刀各一句）。
+const realShot1HeadWithCuts = `[Shot 1] Ultra-wide deep establishing shot, 07:40, whole service hall: long counter near left to ` +
+	`far right, green mail slots and round clock on back wall. 周 stands behind the counter. Static Shot.` + "\n" +
+	`[Shot 2] At 00:02.500 cut to close-up: envelope corner flat on counter, red seal impression slightly smeared.` + "\n" +
+	`[Shot 3] At 00:05.000 cut to medium close-up from counter's right. 邮局同事 (S1) says in a neutral, androgynous ` +
+	`voice, even-paced and calm: <d>[Chinese]又是那个人?</d>` + "\n"
+
+// TestSpeechPlacementCountsOnlyRealLines 逐刀清单**只数真台词**：条款正文里引用的 `<d>…</d>`（示例）不算。
+//
+// 【真机代价（2026-10-08）】这一镜实际提交的清单写着
+// 「the cut at At 00:06.800 — 4 line(s), each spoken exactly once inside THIS piece:「十一月底,还能是谁。」/「…」/「…」/「…」」
+// —— 真实只有 1 行。ASR 的实测结果就是模型把空出来的格子填满：镜 1「又是那个人?」念了两遍、
+// 镜 5 凭空多出一句「或是血」（镜 5 的清单同样写着「5 line(s)」而真实只有 2 行）。
+func TestSpeechPlacementCountsOnlyRealLines(t *testing.T) {
+	shot := &project.Shot{ID: 1, Duration: 9, Dialogue: []project.Line{
+		{Speaker: "邮局同事", Text: "又是那个人?"},
+		{Speaker: "周", Text: "十一月底,还能是谁。"},
+	}}
+	got := EnsureSpeechPlacementClause(realShot1HeadWithCuts+realShot1LastCutWithClauses, shot, nil)
+	if !strings.Contains(got, speechPlacementMarker) {
+		t.Fatal("逐刀清单没进提示词")
+	}
+	if strings.Contains(got, "「…」") {
+		t.Errorf("清单里把 `<d>…</d>` 这种**示例标签**当成台词了 —— 模型会去填这些空格子：\n%s", tailOf(got, 1200))
+	}
+	last := got[strings.Index(got, "the cut at At 00:06.800"):]
+	if !strings.Contains(last, "1 line(s)") {
+		t.Errorf("最后一刀应写明 1 行（真实只有「十一月底,还能是谁。」一句）：\n%s", tailOf(last, 600))
+	}
+	if strings.Contains(last, "4 line(s)") || strings.Contains(last, "2 line(s)") {
+		t.Errorf("最后一刀的行数被数多了（含示例标签）：\n%s", tailOf(last, 600))
+	}
+	if n := strings.Count(got, "heard in exactly 2"); n != 1 {
+		t.Errorf("三刀里只有两刀有人声（开场刀安静）：实得 %d 处「heard in exactly 2」", n)
+	}
+}
+
+// TestSpeechPlacementSafetyValve 清单数出来的真句数与方案**对不上**时宁可不加 ——
+// 数错比不写更糟（真机就是被写错的那一版坑的）；不加要如实计数，由渲染收尾处播报。
+func TestSpeechPlacementSafetyValve(t *testing.T) {
+	// 提示词里有 2 句 <d>，而方案的 dialogue 只有 1 句 ⇒ 对不上。
+	prompt := "[Shot 1] At 00:00.000 opening. Static Shot.\n" +
+		"[Shot 2] At 00:02.500 a. 沈砚 (S1) says: <d>[Chinese]读我的钢印。</d>\n" +
+		"[Shot 3] At 00:05.000 b. 沈砚 (S1) says: <d>[Chinese]这句不在方案里。</d>\n"
+	shot := &project.Shot{ID: 1, Duration: 9, Dialogue: []project.Line{{Speaker: "沈砚", Text: "读我的钢印。"}}}
+	plan := &project.Plan{}
+	if got := EnsureSpeechPlacementClause(prompt, shot, plan); got != prompt {
+		t.Errorf("对账不上时不该加逐刀清单，实得：\n%s", tailOf(got, 800))
+	}
+	if plan.SpeechPlacementSkipped != 1 {
+		t.Errorf("跳过的镜数要如实计数（SpeechPlacementSkipped），实得 %d", plan.SpeechPlacementSkipped)
+	}
+	// 对得上时必须加（把第二句补进计划）。
+	shot.Dialogue = append(shot.Dialogue, project.Line{Speaker: "沈砚", Text: "这句不在方案里。"})
+	plan2 := &project.Plan{}
+	if got := EnsureSpeechPlacementClause(prompt, shot, plan2); !strings.Contains(got, speechPlacementMarker) {
+		t.Error("对账对得上时应该加清单（安全阀不能把正常路径也堵死）")
+	}
+	if plan2.SpeechPlacementSkipped != 0 {
+		t.Error("正常路径不该记跳过")
 	}
 }

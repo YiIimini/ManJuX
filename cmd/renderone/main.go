@@ -8,6 +8,14 @@
 //
 //	go run ./cmd/renderone -project "<项目 id>" -shots 20,22
 //	-project 省略时用 -settings 里 DataDir/projects 下最近修改的那个项目。
+//
+// -phase 也支持 qc / assemble：重渲几镜之后不必开应用，直接
+//
+//	go run ./cmd/renderone -project "<项目 id>" -phase qc
+//	go run ./cmd/renderone -project "<项目 id>" -phase assemble
+//
+// 就能把质检（含 ASR 语音核对）与合成走完 —— 2026-10-08 用这条路把《顺其自然（真实事迹短片）》
+// 第 01 集补渲 + 复验 + 重合成，全程无头。
 package main
 
 import (
@@ -32,22 +40,30 @@ func main() {
 	settings := flag.String("settings", filepath.Join("data", "settings.json"), "settings.json 路径")
 	exeDir := flag.String("exedir", ".", "exe 目录")
 	projID := flag.String("project", "", "项目 id;空 = projects 目录下最近修改的一个")
-	shots := flag.String("shots", "", "要重渲的镜头号,逗号分隔(必填)")
+	shots := flag.String("shots", "", "要重渲的镜头号,逗号分隔(-phase render 时必填)")
 	engineOverride := flag.String("engine", "comfy", "引擎:comfy / auto")
+	phase := flag.String("phase", pipeline.PhaseRender, "阶段:render / qc / assemble(后两个不需要 -shots)")
+	// -seed 显式换种子：同一 prompt 同一 seed 重跑大概率复现同样结果，而"这一镜渲得不对"
+	// （比如白天戏渲成一片黑）换个种子就是另一次抽卡 —— 0 = 不覆盖（照方案里的口径）。
+	seed := flag.Int64("seed", 0, "覆盖随机种子(0=不覆盖)；用于同一镜换一次抽卡重试")
 	timeout := flag.Duration("timeout", 60*time.Minute, "整体超时")
 	flag.Parse()
-	if strings.TrimSpace(*shots) == "" {
+	// 质检与合成不需要镜头号（它们本来就是整集粒度）——但**渲染**必须点名要渲哪几镜,
+	// 否则就成了"整集重渲"，那是另一个动作（用应用里的「渲染」按钮）。
+	if *phase == pipeline.PhaseRender && strings.TrimSpace(*shots) == "" {
 		fmt.Fprintln(os.Stderr, "-shots 必填,例如 -shots 20,22")
 		os.Exit(2)
 	}
 	var only []int
-	for _, p := range strings.Split(*shots, ",") {
-		n, err := strconv.Atoi(strings.TrimSpace(p))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "镜头号不合法: %q\n", p)
-			os.Exit(2)
+	if strings.TrimSpace(*shots) != "" {
+		for _, p := range strings.Split(*shots, ",") {
+			n, err := strconv.Atoi(strings.TrimSpace(p))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "镜头号不合法: %q\n", p)
+				os.Exit(2)
+			}
+			only = append(only, n)
 		}
-		only = append(only, n)
 	}
 
 	mgr, err := config.NewManager(*settings, *exeDir)
@@ -69,7 +85,7 @@ func main() {
 	if _, ok := store.Get(id); !ok {
 		fatal("项目不存在: %s", id)
 	}
-	fmt.Printf("项目 %s\n重渲镜头 %v\n", id, only)
+	fmt.Printf("项目 %s\n阶段 %s\n重渲镜头 %v\n", id, *phase, only)
 
 	f, err := ff.New(g.FF.FFmpegPath, g.FF.FFprobePath)
 	if err != nil {
@@ -93,8 +109,8 @@ func main() {
 	coord := pipeline.New(store, mgr, reg, f, bus, lib)
 
 	started := time.Now()
-	if err := coord.Start(id, pipeline.PhaseRender, only, *engineOverride, 0); err != nil {
-		fatal("启动渲染失败: %v", err)
+	if err := coord.Start(id, *phase, only, *engineOverride, *seed); err != nil {
+		fatal("启动失败: %v", err)
 	}
 	deadline := time.Now().Add(*timeout)
 	for coord.Running(id) != nil {

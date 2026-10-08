@@ -157,6 +157,15 @@ func isPlaceholderDialogue(s string) bool {
 	return false
 }
 
+// IsPlaceholderSpoken 标签内容是不是"没有真话可说"的占位（空 / 纯标点省略号 / 无 / N-A）。
+//
+// 【为什么导出】pipeline 的**逐刀人声清单**（cutSpeechMap）必须与这里用**同一条**判据：
+// 2026-10-08 真机实测，条款正文里引用 `<d>…</d>` 当例子（`enclosed in <d>…</d> tags`、
+// `就是 <d>…</d> 里的那几句台词`），按字面扫就把 3 个**示例**当成 3 句台词 ⇒ 逐刀清单写
+// 「这一刀 4 行，每行念一遍」而真实只有 1 行 ⇒ 模型把空出来的格子填满（镜 1 重复念、
+// 镜 5 凭空多一句「或是血」）。判据只有一处实现，两处共用。
+func IsPlaceholderSpoken(s string) bool { return isPlaceholderDialogue(s) }
+
 // HasPlaceholderDialogue 提示词里有没有占位台词标签（契约门用）。
 func HasPlaceholderDialogue(prompt string) bool {
 	for _, m := range placeholderDialogueRe.FindAllStringSubmatch(prompt, -1) {
