@@ -78,11 +78,20 @@ type Shot struct {
 	ShotSize  string            `json:"shot_size"` // 景别:远景/全景/中景/近景/特写
 	Camera    string            `json:"camera"`    // 运镜描述
 	Action    string            `json:"action"`    // 画面动作概述(中文)
-	Dialogue  []Line            `json:"dialogue"`  // 台词(逐字保留进 H3 提示词)
-	Narration string            `json:"narration"` // 旁白(画外音)
-	Duration  int               `json:"duration"`  // 秒(4-10)
-	Mode      string            `json:"mode"`      // ref2va(有参考图) / t2va(纯文生)
-	H3Prompt  string            `json:"h3_prompt"` // 完整六段式/三段式提示词(LLM 直出)
+	// ActionEN 这一镜「画面动作」的**英文**版（由专职翻译会话在剧本阶段补，见 pipeline.TranslateShotStaging）。
+	//
+	// 【为什么要有它（2026-10-08 用户问「还没做/边界，给我留着吗？」）】分镜的动作/走位原本**只有中文**，
+	// 而兜底正文（empty_body.go）**只能放英文**（汉字出现在 `<d>` 外 >200 即被入口拒收）。
+	// 于是"模型没写出来"的那几镜，画面调度只能靠参考图与机位兜 —— 那是我把缺口留给了用户。
+	// 现在由平台自己的翻译会话把它翻成英文写在这里，兜底正文用英文那一份，信息就不丢了。
+	ActionEN string `json:"action_en,omitempty"`
+	// PositionsEN 这一镜人物走位的**英文**版（键与 `positions` 同：角色 id 或名字）。
+	PositionsEN map[string]string `json:"positions_en,omitempty"`
+	Dialogue    []Line            `json:"dialogue"`  // 台词(逐字保留进 H3 提示词)
+	Narration   string            `json:"narration"` // 旁白(画外音)
+	Duration    int               `json:"duration"`  // 秒(4-10)
+	Mode        string            `json:"mode"`      // ref2va(有参考图) / t2va(纯文生)
+	H3Prompt    string            `json:"h3_prompt"` // 完整六段式/三段式提示词(LLM 直出)
 
 	// View 本镜的**主视角/机位角度**(英文,逐字来自官方 9 视角词表,见 view_vocab.go)。
 	//

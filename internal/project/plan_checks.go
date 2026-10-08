@@ -142,8 +142,19 @@ func checkPlanBasics(p *Plan, add func(level, where, format string, a ...any)) {
 				sh.Duration, PlanRecommendedShotSeconds, PlanMaxShotSeconds)
 		}
 		if strings.TrimSpace(sh.H3Prompt) == "" {
+			// 【为什么要把"缺什么"写出来（2026-10-08 用户：「还没做/边界，给我留着吗？」）】
+			// 平台对空正文会**先自己兜一手**（按这一镜的场次/人物/景别/机位/台词拼一版最小合规正文，
+			// 见 empty_body.go）；能走到这条 fatal 的，是**连场次/人物/台词都没有**的镜 ——
+			// 那时平台拼不出正文（拼出来等于替编剧新编一镜）。旧文案只说"重跑剧本分镜补上这一镜"，
+			// 用户不知道该补什么；这里把缺的那几项点名。
+			miss := MissingBodyMaterial(p, &sh)
+			extra := ""
+			if len(miss) > 0 {
+				extra = fmt.Sprintf("（平台也拼不出它：这一镜连 %s 都没有 —— 补上任意一项就有材料可拼）",
+					strings.Join(miss, "、"))
+			}
 			add("fatal", where, "h3_prompt 为空 —— 该镜没有可提交的提示词（引擎收到空提示词会出一帧近全黑，"+
-				"实测第 02 集镜 15 达 94%）；重跑剧本分镜补上这一镜，或在故事板里手改")
+				"实测第 02 集镜 15 达 94%%）%s；重跑剧本分镜补上这一镜，或在故事板里手改", extra)
 		}
 		switch sh.Mode {
 		case "ref2va", "t2va", "":

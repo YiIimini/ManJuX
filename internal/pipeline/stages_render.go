@@ -14,6 +14,7 @@ import (
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/engine/comfyengine"
+	"github.com/YiIimini/ManJuX/internal/llm"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/sysmon"
 )
@@ -76,6 +77,22 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 	// 场次/人物/景别/机位/台词原文（+ 卡片的英文外形）拼的（不是新编内容）—— 静默补上等于骗人。
 	// 兜底正文**只用英文材料**（汉字出现在 `<d>` 外会被入口的汉字卫生门拒收），所以中文的
 	// 走位/动作描述进不去 —— 那几镜只能靠参考图与机位兜画，这一句同样要如实说。
+	// **给这几镜补上英文走位/动作，然后重拼正文**（2026-10-08 用户：「还没做/边界，给我留着吗？」）。
+	//
+	// 补写发生在**读取边界**（`LoadPlan → HealPlan`），那一刻手上没有 LLM ⇒ 中文的走位/动作
+	// 进不了正文。已经躺在盘上的方案（这一份就是）正好卡在这里：脚本阶段早跑完了，没人再给它翻。
+	// 渲染阶段有 LLM 客户端，于是这里补齐：先清空这几镜的正文 → 翻英文 → 重拼一次。
+	// 翻不出来也不比原来差（重拼是同一份材料的确定性结果），失败**如实说**。
+	if refillTargets(plan) != nil {
+		if n, err := RefillPlatformBodiesWithStaging(ctx, llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout), plan); err != nil {
+			c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+				"⚠ 这几镜的中文动作/走位翻英文失败(%v) —— 正文仍按英文材料拼，画面调度少一份（靠参考图与机位兜画）", err)
+		} else if n > 0 {
+			c.emit(proj.ID, PhaseRender, 0, "info", 0,
+				"✔ 已把这几镜的中文动作/走位翻成英文并重拼正文（%s）—— 信息不再少一份",
+				joinShotIDs(plan.FilledBodyShots, 8))
+		}
+	}
 	if n := len(plan.FilledBodyShots); n > 0 {
 		cjk := ""
 		if plan.FilledBodyCJK > 0 {

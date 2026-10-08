@@ -263,6 +263,21 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	//    「能确定性做到的事不要让模型自觉」（见 project.empty_body.go）。
 	// ② 拼完还有空的（连场次/人物/台词都没有）才点名 —— 那几镜渲染会被致命门拦住；
 	//    方案照常存盘（用户可以在故事板里手改这几镜，资产还能复用）。
+	// **兜底正文要用的英文材料**（2026-10-08 用户：「还没做/边界，给我留着吗？」）。
+	//
+	// 分镜的 `action` / `positions` 原本**只有中文**，而兜底正文只能放英文（汉字出现在 <d> 外
+	// 会被入口拒收）⇒ 那几镜的画面调度就只剩参考图与机位可依 —— 那等于把缺口留给用户。
+	// 这里用平台自己的专职翻译会话（与卡片翻译同一套做法）把它们翻成英文写进
+	// `action_en` / `positions_en`；**只在"正文为空 + 材料是中文 + 还没翻过"的镜上花这次调用**。
+	// 必须排在 FillEmptyShotBodies **之前**（兜底正文要消费这份英文）。
+	if n, err := TranslateShotStaging(ctx, client, plan); err != nil {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"⚠ 空正文那几镜的中文动作/走位翻英文失败(%v) —— 兜底正文只能按英文材料拼，"+
+				"那几镜的画面调度会少一份（只能靠参考图与机位兜画）", err)
+	} else if n > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "info", 16,
+			"✔ 已把 %d 镜的中文动作/走位翻成英文（专职翻译会话）—— 兜底正文会用英文那一份，信息不丢", n)
+	}
 	if n, ids := project.FillEmptyShotBodies(plan); n > 0 {
 		// 少了中文材料这件事必须说出来：兜底正文**只用英文材料**（汉字出现在 <d> 外会被入口的
 		// 汉字卫生门拒收，见 project.empty_body.go），所以中文的走位/动作描述进不去 ——

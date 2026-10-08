@@ -306,3 +306,71 @@ func TestEnglishOnlyBlocksHan(t *testing.T) {
 		}
 	}
 }
+
+// TestAssembledBodyUsesTranslatedStaging 【关掉"把缺口留给用户"那一条】——
+// 分镜的动作/走位由专职翻译会话补的英文版（`action_en` / `positions_en`）必须**真的被用上**，
+// 用上之后这一镜就不再算"少了材料"（`FilledBodyCJK` 归零），播报里也就不会说"只能靠参考图与机位兜"。
+func TestAssembledBodyUsesTranslatedStaging(t *testing.T) {
+	p := realBodyPlan()
+	p.Shots[1].ActionEN = "the bird is pinned between them and no one moves"
+	// 注意：**三个人的走位都翻到**才不算少材料 —— 只翻两个（漏了阿糖）时那一份中文走位仍进不去，
+	// `FilledBodyCJK` 要如实记 1（这条在下面单独钉住）。
+	p.Shots[1].PositionsEN = map[string]string{
+		"姜晚舟": "left third of frame, foreground, facing lower right, the white fur ball in her arms",
+		"小灯":  "right third of frame, foreground, facing left, the carved wooden bird held up",
+		"阿糖":  "centre of frame, foreground, the white fur ball in the arm pinning the bird",
+	}
+	n, _ := FillEmptyShotBodies(p)
+	if n != 1 {
+		t.Fatalf("该补镜 12，实得 %d", n)
+	}
+	body := p.Shots[1].H3Prompt
+	for _, want := range []string{
+		"the bird is pinned between them and no one moves",
+		"left third of frame, foreground, facing lower right",
+		"right third of frame, foreground, facing left",
+		"centre of frame, foreground",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("翻译会话补的英文走位/动作必须进正文，缺 %q", want)
+		}
+	}
+	if p.FilledBodyCJK != 0 {
+		t.Errorf("三个人的英文走位都到齐了就不该再报\"少了材料\"，实得 FilledBodyCJK=%d", p.FilledBodyCJK)
+	}
+	if n := CJKOutsideDialogue(body, subjectNamesOf(p)); n > 0 {
+		t.Errorf("<d> 外仍有 %d 个汉字", n)
+	}
+
+	// 只翻到两个人（漏了阿糖）⇒ 那一个人的中文走位仍进不去 ⇒ **如实记一笔**（不许当成都齐了）。
+	p2 := realBodyPlan()
+	p2.Shots[1].PositionsEN = map[string]string{
+		"姜晚舟": "left third of frame, foreground",
+		"小灯":  "right third of frame, foreground",
+	}
+	if _, _ = FillEmptyShotBodies(p2); p2.FilledBodyCJK != 1 {
+		t.Errorf("部分翻译（漏了一人）仍算\"少了材料\"，实得 FilledBodyCJK=%d", p2.FilledBodyCJK)
+	}
+}
+
+// TestMissingBodyMaterialNamesWhatIsMissing 致命门要能说清"为什么平台没兜这一手"：
+// 只有连场次/人物/台词都没有的镜才拼不出正文，缺哪几项要点名（用户据此才知道补什么）。
+func TestMissingBodyMaterialNamesWhatIsMissing(t *testing.T) {
+	p := realBodyPlan()
+	if miss := MissingBodyMaterial(p, &p.Shots[1]); len(miss) != 0 {
+		t.Errorf("真机镜 12 的材料是齐的，不该报缺：%v", miss)
+	}
+	empty := p.Shots[2] // 镜 13：什么都没有
+	miss := MissingBodyMaterial(p, &empty)
+	for _, want := range []string{"场次", "出场人物", "台词/旁白"} {
+		found := false
+		for _, m := range miss {
+			if m == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("该点名缺 %q，实得 %v", want, miss)
+		}
+	}
+}

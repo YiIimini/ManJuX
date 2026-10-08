@@ -154,3 +154,56 @@ func TestBothStagesAnnounceDroppedChineseMaterial(t *testing.T) {
 		}
 	}
 }
+
+// TestScriptStageTranslatesStagingBeforeFilling 【关掉"把缺口留给用户"那一条】
+//
+// 兜底正文只能放英文（汉字卫生门），而分镜的动作/走位只有中文 ⇒ 那几镜的画面调度就只剩
+// 参考图与机位可依。脚本阶段必须**先**让专职翻译会话把它们翻成英文（`action_en`/`positions_en`），
+// **再**拼兜底正文 —— 顺序反了等于这份英文没人用（白花一次 LLM 调用，缺口还在）。
+func TestScriptStageTranslatesStagingBeforeFilling(t *testing.T) {
+	src := readSrc(t, "stages_script.go")
+	iTr := strings.Index(src, "TranslateShotStaging(ctx, client, plan)")
+	iFill := strings.Index(src, "project.FillEmptyShotBodies(plan)")
+	if iTr < 0 {
+		t.Fatal("脚本阶段没有调 TranslateShotStaging —— 空正文那几镜的中文走位/动作永远进不了正文")
+	}
+	if iFill < 0 {
+		t.Fatal("脚本阶段没有调 project.FillEmptyShotBodies")
+	}
+	if iTr > iFill {
+		t.Error("顺序反了：翻译必须排在兜底拼正文**之前**（兜底正文要消费 action_en/positions_en）")
+	}
+}
+
+// TestRenderStageRefillsStagingBeforeAnnouncing 【老项目那条缺口】
+//
+// **再**播报"平台拼了正文"—— 顺序反了会让播报告诉用户"这几镜少了材料"，而三秒后正文里其实有了。
+func TestRenderStageRefillsStagingBeforeAnnouncing(t *testing.T) {
+	src := readSrc(t, "stages_render.go")
+	iRefill := strings.Index(src, "RefillPlatformBodiesWithStaging(")
+	iAnnounce := strings.Index(src, "if n := len(plan.FilledBodyShots); n > 0 {")
+	if iRefill < 0 || !refillCallIsExecutable(src, "RefillPlatformBodiesWithStaging(") {
+		t.Fatal("渲染阶段没有**可执行的** RefillPlatformBodiesWithStaging 调用 —— 盘上那些方案的中文走位/动作永远进不了正文")
+	}
+	if iAnnounce < 0 {
+		t.Fatal("渲染阶段的「平台补了正文」播报不见了")
+	}
+	if iRefill > iAnnounce {
+		t.Error("顺序反了：补翻 + 重拼必须排在播报**之前**（否则播报说的是过期状态）")
+	}
+}
+
+// refillCallIsExecutable 源码里 `RefillPlatformBodiesWithStaging(` 那次出现**不是注释里的**。
+//
+// 【为什么要这一条（2026-10-08 反向验证抓出来的）】只比 strings.Index 顺序时，
+// **把调用注释掉**也能"排在播报之前" ⇒ 门照样绿（摆设守卫）。所以要确认那次出现
+// 前面（同一行内）没有注释符。
+func refillCallIsExecutable(src, call string) bool {
+	i := strings.Index(src, call)
+	if i < 0 {
+		return false
+	}
+	lineStart := strings.LastIndex(src[:i], "\n") + 1
+	head := src[lineStart:i]
+	return !strings.Contains(head, "//")
+}

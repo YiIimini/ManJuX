@@ -135,9 +135,14 @@ func assembleMinimalBody(p *Plan, sh *Shot) (string, bool, bool) {
 		if CountCJK(c.Description) > 0 && desc == "" {
 			dropped = true
 		}
-		pos := posOf(sh, c)
-		if CountCJK(pos) > 0 {
-			pos = "" // 中文走位进不了提示词，也没有英文替代（方案里走位只有中文这一份）
+		// 走位：优先用**英文版**（专职翻译会话补的 `positions_en`），其次用方案里那份（本来就是英文时）。
+		// 两样都拿不到才记一笔"这一镜的走位没能进正文" —— 那是真的少了信息（只能靠参考图与机位兜）。
+		zhPos := posOf(sh, c)
+		pos := englishOnly(posENOf(sh, c))
+		if pos == "" {
+			pos = englishOnly(zhPos)
+		}
+		if pos == "" && CountCJK(zhPos) > 0 {
 			dropped = true
 		}
 		subs = append(subs, emptyBodySubject{name: strings.TrimSpace(c.Name), desc: desc, pos: pos})
@@ -160,8 +165,10 @@ func assembleMinimalBody(p *Plan, sh *Shot) (string, bool, bool) {
 	}
 	cuts := minimalCuts(d)
 	byCut := distributeLines(lines, len(cuts))
-	if CountCJK(sh.Action) > 0 {
-		dropped = true // 中文动作描述进不了正文
+	// 动作：同理 —— 英文版（`action_en`，翻译会话补的）优先，其次方案里那份（本来就是英文时）；
+	// 两者都拿不到而原字段是中文，才记一笔"这一镜的动作没能进正文"。
+	if actionOf(sh) == "" && CountCJK(sh.Action) > 0 {
+		dropped = true
 	}
 
 	var b strings.Builder
@@ -279,7 +286,7 @@ func cutParagraph(sh *Shot, subs []emptyBodySubject, lines []emptyBodyLine, idx 
 	b.WriteString(": ")
 	var parts []string
 	if idx == 0 {
-		if act := englishOnly(sh.Action); act != "" {
+		if act := actionOf(sh); act != "" {
 			parts = append(parts, act)
 		}
 	}
@@ -592,4 +599,60 @@ func sceneImagePrompt(p *Plan, key string) string {
 		return sc.ImagePrompt
 	}
 	return ""
+}
+
+// posENOf 这一镜这个人的**英文**走位（专职翻译会话补的 `positions_en`；没有就返回空串）。
+// 键可能是 id、也可能是名字（与 `positions` 同一套）。
+func posENOf(sh *Shot, c Character) string {
+	if sh == nil || len(sh.PositionsEN) == 0 {
+		return ""
+	}
+	for _, k := range []string{c.ID, c.Name} {
+		if k == "" {
+			continue
+		}
+		if v := strings.TrimSpace(sh.PositionsEN[k]); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// actionOf 这一镜动作的**英文**写法：英文版（翻译会话补的 `action_en`）优先，其次原字段（本来就是英文时）。
+func actionOf(sh *Shot) string {
+	if sh == nil {
+		return ""
+	}
+	if a := englishOnly(sh.ActionEN); a != "" {
+		return a
+	}
+	return englishOnly(sh.Action)
+}
+
+// MissingBodyMaterial 这一镜**缺哪些**拼正文必需的材料（空 = 材料够）。
+//
+// 判据与 `assembleMinimalBody` 的可用性判据**同源**：场次、出场人物、要念的台词，三者一个都没有
+// 才拼不出来（那时平台替它写正文就等于替编剧新编一镜）。渲染入口的致命门用它把
+// "为什么平台没兜这一手"讲清楚（此前只说"重跑剧本分镜补上这一镜"，用户不知道该补什么）。
+func MissingBodyMaterial(p *Plan, sh *Shot) []string {
+	if sh == nil {
+		return []string{"镜头本身"}
+	}
+	var miss []string
+	if _, _, ok := sceneMaterial(p, sh); !ok {
+		miss = append(miss, "场次")
+	}
+	chars := 0
+	for _, cid := range sh.Characters {
+		if c, ok := charMaterial(p, cid); ok && strings.TrimSpace(c.Name) != "" {
+			chars++
+		}
+	}
+	if chars == 0 {
+		miss = append(miss, "出场人物")
+	}
+	if len(shotSpeechLines(sh)) == 0 {
+		miss = append(miss, "台词/旁白")
+	}
+	return miss
 }
