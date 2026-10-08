@@ -1704,3 +1704,22 @@ func checkEntityRefs(p *Plan, add func(level, where, format string, a ...any)) {
 				"修法：把场景补成场景卡，或把引用改成卡片里的写法", scenes)
 	}
 }
+
+// EmptyPromptShotIDs 哪些镜的 `h3_prompt` 是空的（渲染会被致命门拦住的那几镜）。
+//
+// 【为什么要单独有个查询】这条缺陷此前只在**渲染阶段**才以 fatal 出现 —— 而那一集
+// 15 件资产已经全部生成完（真机《外卖员写了七千封回信》第01集镜头 8，2026-10-08），
+// 用户看到的是"跑了一大段然后整条产线中止"。剧本阶段在存盘前用它**点名**，
+// 让用户在资产阶段之前就知道是哪几镜、该怎么办（脚本阶段自己会先尝试自纠一轮补写）。
+func EmptyPromptShotIDs(p *Plan) []int {
+	if p == nil {
+		return nil
+	}
+	var out []int
+	for i := range p.Shots {
+		if strings.TrimSpace(p.Shots[i].H3Prompt) == "" {
+			out = append(out, p.Shots[i].ID)
+		}
+	}
+	return out
+}

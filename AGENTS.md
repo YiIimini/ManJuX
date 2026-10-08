@@ -105,6 +105,15 @@
 > （排在"补台词标签→对齐"之后）+ `CodeShots/CodeIDs/CodeCount` 如实播报；
 > `normSpokenText` 统一折算读音（对账不误判、对齐不刷回），`PlanSpokenTexts` 返回**可听版**（免得 ASR 假 fail）。
 > 真机实测 4 镜 4 处逐条对；判据夹具 = 真机那四句，**反向验证 4 处**全红。**有效性待重渲 + ASR 复听**。
+>
+> **最新一轮（2026-10-08，"短篇不能正常渲染" → 空提示词的自纠安全阀）：`docs/空提示词与自纠安全阀-2026-10-08.md`** ——
+> 真机《外卖员写了七千封回信》第01集：资产 15/15 生成完之后，渲染被致命门 `shots[7](id=8): h3_prompt 为空` 拦住、
+> 产线中止。真因是**平台自己的自纠**：`collectRepairable` 确实点名了空镜、指令是"把整镜写出来"，
+> 而采纳闸门 `adoptRepaired` 的"台词条数不许变"把**正确的修复**判成"改坏了"（空原文 0 条 → 合格修复必然 2 条 ⇒ 退回）。
+> 修法：① 空原文例外（允许补到 `PlanSpokenTexts` 那几句，仍不许凭空多出台词；原文有条数时行为不变）
+> ② 剧本阶段在 SavePlan 之前用 `project.EmptyPromptShotIDs` **点名**（此前只会在资产白跑完之后才报）。
+> 夹具 = 真机第 8 镜形态 + 合规六段式产物，**反向验证 3 处**全红。**存量那份 plan 的第 8 镜仍是空的**，
+> 要重跑「剧本分镜」或手写那一镜才补得上。
 > 剥线刀… 与无卡说话人在成片里**同一个嗓子**。修法：`internal/project/voice_defaults.go`（三池各 12 条 +
 > `DerivedVoice` 按基名散列 = 同名同声 + `PickVoice` 顺延 = 同一份方案内不撞声 + `FillMissingVoices` 只填空的）
 > 挂进 `HealPlan`，`HealResult.Voices/VoiceNames` 由生成日志与 preflight **如实播报**；渲染侧最后一档改成按名字派生。

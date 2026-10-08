@@ -202,7 +202,21 @@ func adoptRepaired(sh *project.Shot, got string) bool {
 	if afterBad > beforeBad {
 		return false // 格式变差：退回原文
 	}
-	if afterLines != beforeLines {
+	// 台词条数：**原文有 `<d>` 时不许增删**（台词是内容，不是格式）。
+	//
+	// 【原文没有 `<d>` 是例外（2026-10-08 真机《外卖员写了七千封回信》第01集镜头 8 现场）】
+	// 那一镜的 `h3_prompt` 是**空的**，修复指令写的是"把整镜写出来"—— 而写出来就**必然**要补台词
+	// （0 → 计划里那两句）。原来这条闸门一律要求 `afterLines == beforeLines`（0），于是把
+	// **正确的修复**判成"台词被增删"、退回原文（原文就是空的）⇒ 那一镜永远补不上 ⇒
+	// 渲染阶段被致命门「h3_prompt 为空」拦住、整条产线中止（真机现场：15 件资产全生成完
+	// 之后才拦，白跑一整段资产阶段；短篇那一本正是这么卡住的）。
+	// 所以原文没有 `<d>` 时，允许补到**计划里那几句**（`PlanSpokenTexts`，含旁白），
+	// 但仍不许凭空多出计划外的台词 —— 安全阀的本意（"台词是内容"）不丢。
+	wantLines := beforeLines
+	if beforeLines == 0 {
+		wantLines = len(project.PlanSpokenTexts(sh))
+	}
+	if afterLines != wantLines {
 		return false // 台词被增删：退回原文（台词是内容，不是格式）
 	}
 	if afterCuts <= beforeCuts && project.H3DescriptionWords(got) >= project.H3DescriptionWords(sh.H3Prompt) {

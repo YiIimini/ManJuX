@@ -234,6 +234,23 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 			"⚠ 【人物外形锚表】里这些小节被剧本正文截断了（源文本本身不全，只能照抄到断点）：%s —— "+
 				"补全源文本后重跑本阶段，这些人的外形才能逐项照抄", strings.Join(cut, "、"))
 	}
+	// **空提示词点名**（2026-10-08 真机《外卖员写了七千封回信》第01集镜头 8）：自纠一轮补写之后
+	// 仍然空的镜，渲染阶段会被致命门拦住不让启动 —— 而那一刻资产阶段常常已经白跑完
+	// （真机现场：15 件资产全生成完才拦、整条产线中止）。这里在存盘前把"是哪几镜"说清楚；
+	// 方案照常存盘（用户可以在故事板里手改这几镜的正文，资产还能复用）。
+	if ids := project.EmptyPromptShotIDs(plan); len(ids) > 0 {
+		var b strings.Builder
+		for i, id := range ids {
+			if i > 0 {
+				b.WriteString("、")
+			}
+			fmt.Fprintf(&b, "#%d", id)
+		}
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"⚠ 有 %d 镜的正文是**空的**（%s）—— 渲染会被致命门拦住不启动（空提示词只会出一帧近全黑，"+
+				"实测第 02 集镜 15 达 94%%）。剧本阶段的自纠一轮已经试过补写仍没成。"+
+				"改法：重跑本阶段补写，或在故事板里手改这几镜的正文", len(ids), b.String())
+	}
 	if err := c.store.SavePlan(proj.ID, plan); err != nil {
 		return err
 	}
