@@ -127,3 +127,75 @@ func TestEmptyPromptShotIDsPointsAtTheRealShot(t *testing.T) {
 		t.Errorf("该点名 [#8 #9]，实得 %v", ids)
 	}
 }
+
+// realShot12 真机《我捡的团子，暖了三千人的船》第01集镜 12（2026-10-08 现场，照 plan.json 抄）：
+// **材料齐全、只有 `action` 与 `h3_prompt` 是空的** —— 用户第二次报「还是报一样的错误」就是这一镜。
+// 与上面那个夹具的区别正在 action：那一个写着动作，这一个**连动作都是空的**，
+// 而旧指令只把「时长 + 动作」给模型 ⇒ 模型手上没有任何具体内容（哪几句要说都不知道）。
+var realShot12 = project.Shot{
+	ID:         12,
+	Duration:   4,
+	Scene:      "scene_old_hold",
+	ShotSize:   "近景",
+	Characters: []string{"char_jiangwanzhou", "char_xiaodeng", "char_atang"},
+	Positions: map[string]string{
+		"姜晚舟": "画面左三分之一、前景、面朝右下，双手圈着怀里的白绒团",
+		"小灯":  "画面右三分之一、前景、面朝左，双手举着木鸟",
+	},
+	Camera: "Static Shot with small amplitude at slow speed; a slight push in as the bird is pinned",
+	Action: "",
+	Dialogue: []project.Line{
+		{Speaker: "小灯", Text: "师姐，她叫什么？", OS: true},
+		{Speaker: "姜晚舟", Text: "没名。", OS: true},
+	},
+	VoKind: "speech",
+}
+
+// realShot12Plan 与镜 12 同集的人物/场景卡（照 plan.json 抄，名字与 id 都写上：
+// 指令里要能认出来，走位表的键是名字、characters 里是 id）。
+func realShot12Plan() *project.Plan {
+	return &project.Plan{
+		Characters: []project.Character{
+			{ID: "char_jiangwanzhou", Name: "姜晚舟"},
+			{ID: "char_xiaodeng", Name: "小灯"},
+			{ID: "char_atang", Name: "阿糖"},
+		},
+		Scenes: []project.Scene{{ID: "scene_old_hold", Name: "冰星老舱·青铜玉炉厅"}},
+		Shots:  []project.Shot{realShot12},
+	}
+}
+
+// TestEmptyShotFixCarriesTheShotMaterial 【本轮根因】空提示词的修复指令必须把这一镜**自己的材料**
+// 全给模型：要说哪几句（逐字）、谁在说、在哪个场景、什么景别机位、走位在哪。
+//
+// 旧指令只写「时长 + 动作」，而真机镜 12 的动作**本身也是空的** ⇒ 模型没有内容可写 ⇒
+// 它写出来的正文里不会有计划里那两句 `<d>` ⇒ 采纳闸门（台词条数必须等于计划里的句数）
+// 把正确修复判成改坏了、退回原文（原文是空的）⇒ 这一镜永远补不上
+// ⇒ 渲染入口的致命门「h3_prompt 为空」拦住整条产线（48 集停在第 1 集）。
+func TestEmptyShotFixCarriesTheShotMaterial(t *testing.T) {
+	plan := realShot12Plan()
+	got := collectRepairable(plan)
+	if len(got) != 1 || got[0].shotID != 12 {
+		t.Fatalf("该点名 #12，实际 %+v", got)
+	}
+	fix := got[0].fix
+	for _, want := range []string{
+		"EXACTLY 2 line(s)", // 句数（采纳闸门就按它数）
+		"师姐，她叫什么？",          // 台词逐字（原文）
+		"没名。",               // 第二句
+		"小灯",                // 谁在说
+		"姜晚舟",               // 谁在说
+		"off-screen",        // os:true ⇒ 画外（画面里的人不许动嘴）
+		"scene_old_hold",    // 场次 id
+		"冰星老舱·青铜玉炉厅",        // 场次名
+		"近景",                // 景别
+		"Static Shot",       // 机位
+		"画面左三分之一、前景、面朝右下，双手圈着怀里的白绒团", // 走位原文
+		"NO other <d> line",             // 不许凭空多出台词
+		"not written in the storyboard", // 动作是空的这件事要说出来，不许让模型自己编
+	} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("修复指令里缺 %q —— 模型手上没有它，就写不出计划里那两句：\n%s", want, fix)
+		}
+	}
+}

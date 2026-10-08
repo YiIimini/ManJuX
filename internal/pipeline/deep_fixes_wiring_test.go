@@ -112,3 +112,31 @@ func TestRenderPrologueRunsOnlyOnFirstPass(t *testing.T) {
 		t.Error("显存释放被一起关掉了？它必须在 pass==0 守卫**之后**照常执行")
 	}
 }
+
+// TestScriptStageFillsEmptyBodiesBeforeNaming 【2026-10-08 用户第二次报「还是报一样的错误」】
+//
+// 剧本阶段的顺序：**先**按这一镜自己的材料拼最小正文（平台兜底），**再**点名仍然为空的镜。
+// 顺序反了就变成"先吓用户一跳、再默默修好"（而真正的效果是渲染能继续了）。
+func TestScriptStageFillsEmptyBodiesBeforeNaming(t *testing.T) {
+	src := readSrc(t, "stages_script.go")
+	iFill := strings.Index(src, "project.FillEmptyShotBodies(plan)")
+	iName := strings.Index(src, "project.EmptyPromptShotIDs(plan)")
+	if iFill < 0 {
+		t.Fatal("剧本阶段没有调 project.FillEmptyShotBodies —— 空正文的镜会一路走到渲染入口的致命门，48 集产线停在第 1 集")
+	}
+	if iName < 0 {
+		t.Fatal("剧本阶段的空正文点名不见了（没材料的镜必须说出来）")
+	}
+	if iFill > iName {
+		t.Error("顺序反了：必须**先**兜底拼正文、**再**点名仍然为空的镜")
+	}
+}
+
+// TestRenderStageAnnouncesFilledBodies 渲染阶段必须如实播报"这几镜的正文是平台拼的"
+// （静默补上等于骗人：用户以为那是模型写的）。
+func TestRenderStageAnnouncesFilledBodies(t *testing.T) {
+	src := readSrc(t, "stages_render.go")
+	if !strings.Contains(src, "plan.FilledBodyShots") {
+		t.Error("渲染阶段没有播报 plan.FilledBodyShots —— 平台替模型补的正文用户无从得知")
+	}
+}

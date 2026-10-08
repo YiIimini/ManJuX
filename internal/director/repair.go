@@ -60,13 +60,7 @@ func collectRepairable(plan *project.Plan) []repairableIssue {
 			out = append(out, repairableIssue{
 				shotID: sh.ID,
 				note:   fmt.Sprintf("#%d(提示词是空的)", sh.ID),
-				fix: fmt.Sprintf("This %d-second shot has NO prompt text at all — write the whole thing now. "+
-					"Follow the official six-section form used by the other shots: the shot list (one "+
-					"`[Shot 1]` opening, plus `[Shot 2] At 00:0X.XXX, …` cuts so that every cut lasts 1.5-4 s "+
-					"and the cuts add up to %d seconds), the subject definitions with the characters named "+
-					"exactly as in the brief, the retention/consistency markers, the lighting sentence, and "+
-					"The dialogue must go inside <d>[Chinese]…</d> tags with the words written out verbatim. "+
-					"Action of this shot per the plan: %s", sh.Duration, sh.Duration, orDash(sh.Action)),
+				fix:    emptyShotFix(plan, sh),
 			})
 			continue
 		}
@@ -256,4 +250,132 @@ func orDash(s string) string {
 		return "(the plan gives no action text for this shot — infer it from the episode brief)"
 	}
 	return s
+}
+
+// emptyShotFix 空提示词的修复指令：**必须把这一镜已有的材料全给模型**。
+//
+// 【2026-10-08 真机《我捡的团子，暖了三千人的船》第01集镜 12 —— 用户第二次报「还是报一样的错误」】
+// 这条指令原来只写了「时长 + 动作」，而那一镜的 `action` **本身也是空的**（`orDash` 成了
+// 「(the plan gives no action text — infer it from the episode brief)」）：模型手上没有任何**具体**
+// 内容（哪几句要说、谁在说、在哪儿、什么景别都不知道），写出来的正文里自然没有计划里那两句
+// `<d>` ⇒ `adoptRepaired` 的「台词条数必须等于计划里那两句」把它判成改坏了、退回原文
+// （原文是空的）⇒ **这一镜永远补不上** ⇒ 渲染入口的致命门「h3_prompt 为空」不让启动
+// ⇒ 48 集的批量产线停在第 1 集。**点名生效、修复不生效**就是这么来的。
+//
+// 台词、人物、场次、景别、机位本来就是**已知量**，交给模型就是了 —— 这也是「能确定性做到的事，
+// 不要让模型自觉」。逐句清单同时给了模型一个**可机检的靶子**（`adoptRepaired` 就按它数台词）。
+func emptyShotFix(plan *project.Plan, sh project.Shot) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "This %d-second shot has NO prompt text at all — write the whole thing now. ", sh.Duration)
+	b.WriteString("Everything you need is listed below; do not invent new beats, new lines or new people.\n")
+	if sc := strings.TrimSpace(sh.Scene); sc != "" {
+		fmt.Fprintf(&b, "- Scene (the LAST attached picture): %s\n", sceneLabel(plan, sc))
+	}
+	if len(sh.Characters) > 0 {
+		fmt.Fprintf(&b, "- People in this shot (their front sheets are attached, in this order): %s\n",
+			charLabels(plan, sh, sh.Characters))
+	}
+	if sz := strings.TrimSpace(sh.ShotSize); sz != "" {
+		fmt.Fprintf(&b, "- Shot size: %s\n", sz)
+	}
+	if cam := strings.TrimSpace(sh.Camera); cam != "" {
+		fmt.Fprintf(&b, "- Camera: %s\n", cam)
+	}
+	if act := strings.TrimSpace(sh.Action); act != "" {
+		fmt.Fprintf(&b, "- The beat of this shot: %s\n", act)
+	} else {
+		b.WriteString("- The beat of this shot is not written in the storyboard: keep the staging above " +
+			"and let the lines below play. Do NOT invent new action, and do NOT add lines.\n")
+	}
+	lines := fixSpokenLines(sh)
+	if len(lines) > 0 {
+		fmt.Fprintf(&b, "- Spoken lines: this shot has EXACTLY %d line(s), each spoken once, word for word:\n",
+			len(lines))
+		for i, l := range lines {
+			who := strings.TrimSpace(l.Speaker)
+			if who == "" {
+				who = "旁白"
+			}
+			osTag := ""
+			if l.OS {
+				osTag = " (off-screen: the lips of anyone in frame stay closed)"
+			}
+			fmt.Fprintf(&b, "  %d. %s%s: %s\n", i+1, who, osTag, l.Text)
+		}
+		b.WriteString("Put each of them inside its own <d>[Chinese]…</d> tag, copied verbatim, and put " +
+			"NO other <d> line anywhere in the prompt.\n")
+	} else {
+		b.WriteString("- Spoken lines: none — this shot has no dialogue, so the clip carries no voice at all " +
+			"(ambient sound only).\n")
+	}
+	b.WriteString("Use the same official six-section form as the other shots: subject_definitions " +
+		"(one <Subject N> per attached front sheet, numbered from 1, plus the scene line), " +
+		"summary (starting with [reference generation]), retention_analysis (official retention words " +
+		"only — no (Sx) speaker tags in that section), detailed_description (the style sentence first, " +
+		"then the shot list: one [Shot 1] with NO timestamp plus [Shot N] At MM:SS.mmm cuts so that every " +
+		"cut lasts 1.5-4 s and the cuts add up to the full duration, then the brightness guard and the " +
+		"exclusions sentence), overall_soundscape and non_diegetic_music. " +
+		"Change NOTHING about the other shots — reply with this one shot's prompt text only.")
+	return b.String()
+}
+
+// sceneLabel 场景的"id(名字)"写法，给模型看的材料里用它（两个都写，改过名字也不会错位）。
+func sceneLabel(plan *project.Plan, id string) string {
+	if plan != nil {
+		for i := range plan.Scenes {
+			if strings.EqualFold(plan.Scenes[i].ID, id) || plan.Scenes[i].Name == id {
+				if n := strings.TrimSpace(plan.Scenes[i].Name); n != "" && n != id {
+					return id + " (" + n + ")"
+				}
+				break
+			}
+		}
+	}
+	return id
+}
+
+// charLabels 人物清单（名字 + 本镜走位）；按 id/名字都能查到卡（存量方案两种写法都有）。
+func charLabels(plan *project.Plan, sh project.Shot, ids []string) string {
+	var parts []string
+	for _, id := range ids {
+		name := id
+		if plan != nil {
+			for i := range plan.Characters {
+				c := plan.Characters[i]
+				if strings.EqualFold(c.ID, id) || c.Name == id {
+					if n := strings.TrimSpace(c.Name); n != "" {
+						name = n
+					}
+					break
+				}
+			}
+		}
+		// 走位表的键**两种形态都有**：新方案按 id 写，存量/技能侧产物按**名字**写
+		//（真机镜 12 就是名字：{"姜晚舟": "画面左三分之一…"}）—— 只按 id 查会静默丢掉走位，
+		// 而"人物在画面哪儿"正是模型写这一镜最需要的信息。两个键都试。
+		pos := strings.TrimSpace(sh.Positions[id])
+		if pos == "" {
+			pos = strings.TrimSpace(sh.Positions[name])
+		}
+		if pos != "" {
+			name += " (" + pos + ")"
+		}
+		parts = append(parts, name)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// fixSpokenLines 这一镜要说的话（台词在前、旁白最后，与 project.PlanSpokenTexts 同序）。
+// 它与装配侧是**同一条判据**：模型照这份清单写，`adoptRepaired` 就数得对。
+func fixSpokenLines(sh project.Shot) []project.Line {
+	var out []project.Line
+	for _, l := range sh.Dialogue {
+		if strings.TrimSpace(l.Text) != "" {
+			out = append(out, l)
+		}
+	}
+	if n := strings.TrimSpace(sh.Narration); n != "" {
+		out = append(out, project.Line{Speaker: "旁白", Text: n, OS: true})
+	}
+	return out
 }

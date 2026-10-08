@@ -70,6 +70,16 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 				"模型不会拿到「这里要说点什么」的空标签（否则它会自己编台词或发怪声）；"+
 				"这是平台自动处理，无需你做什么", plan.StrippedPlaceholders)
 	}
+	// **平台替模型补写的空正文**（2026-10-08 用户第二次报「还是报一样的错误」）：镜 12 那种
+	// "材料齐全、正文是空的"镜，由装配点按方案自己的材料拼一版最小合规正文（见 project.empty_body.go）。
+	// 这件事**必须说出来**：用户看到的那一镜正文不是模型写的，而是平台照这一镜的
+	// 场次/人物/走位/景别/机位/台词原文拼的（不是新编内容）—— 静默补上等于骗人。
+	if n := len(plan.FilledBodyShots); n > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+			"🩹 有 %d 镜的正文是空的（模型没写出来），平台已按**这一镜自己的材料**"+
+				"（场次/人物/走位/景别/机位/台词原文）拼了一版最小合规正文（%s）—— **不是新编内容**；"+
+				"渲染因此可以继续。不满意就在故事板里改这几镜的正文", n, joinShotIDs(plan.FilledBodyShots, 8))
+	}
 	// 单镜渲染超时取自设置页(全局),此前该配置项被引擎写死忽略 —— 用户怎么改
 	// 都不生效,只能吃 45 分钟硬编码。现在经 Job.Timeout 透传给各引擎。
 	shotTimeout := time.Duration(g.Render.ShotTimeout) * time.Minute

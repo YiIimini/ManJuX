@@ -443,6 +443,14 @@ type HealResult struct {
 	CodeShots int
 	CodeIDs   []string
 	CodeCount int
+	// Bodies / BodyIDs **平台替模型补写的空正文**镜数与镜号（见 empty_body.go）。
+	//
+	// 【为什么由平台兜（2026-10-08 用户第二次报「还是报一样的错误」）】真机镜 12 的材料齐全、
+	// 只有正文是空的，模型在自纠一轮里补不出来 ⇒ 渲染入口的致命门不让启动 ⇒ 48 集的批量产线
+	// 停在第 1 集。材料是已知量 ⇒ 平台按方案自己的材料拼一版最小合规正文（**不是新编内容**），
+	// 拼过哪几镜由各阶段如实播报，用户不满意就在故事板里改那几镜。
+	Bodies  int
+	BodyIDs []int
 }
 
 // HealPlan **自愈各件**的唯一入口（幂等）：器物引用对号、分镜人物/场景引用归一、
@@ -489,6 +497,18 @@ func HealPlan(plan *Plan) HealResult {
 	// 逐句对账与对齐都走 normSpokenText（它把编号折算成读法），所以读法与 dialogue 原文
 	// 不会被判成"不一致"、也不会被对齐刷回去（见 speech_codes.go）。
 	codeShots, codeIDs, codeCount := NormalizeSpokenCodes(plan)
+	// **空正文的装配点兜底**（2026-10-08 用户第二次报「还是报一样的错误」）：材料齐全、正文为空的镜
+	// 由平台按方案自己的材料拼一版最小合规正文（见 empty_body.go）。
+	//
+	// 为什么排在**这里**（补台词标签之后、小镜头回填之前）：
+	// ・补台词标签/编号读法要先跑 —— 它们决定"这一镜有哪几句、每句的权威文本是什么"，
+	//   排在前面，拼正文时拿到的就是**已经补全、已经折成中文读法**的那几句；
+	// ・小镜头回填（FillCutsFromPrompt）要后跑 —— 它给**结构字段为空**的镜从正文里读回小镜头；
+	//   拼出来的正文本身带内切，结构字段也由兜底一并写好了，所以顺序不影响结果，但"先有正文、
+	//   再统一回填"这条读起来不会骗人。
+	//
+	// 只在**唯一读取边界**调用，所以预检 / 渲染 / 人审三个消费方看到的是同一份（2026-09-28 的教训）。
+	filledBodies, filledBodyIDs := FillEmptyShotBodies(plan)
 	return HealResult{
 		EntityRefs:        entFixed,
 		EntityRefsUnknown: entUnknown,
@@ -508,5 +528,7 @@ func HealPlan(plan *Plan) HealResult {
 		CodeShots:  codeShots,
 		CodeIDs:    codeIDs,
 		CodeCount:  codeCount,
+		Bodies:     filledBodies,
+		BodyIDs:    filledBodyIDs,
 	}
 }
