@@ -69,6 +69,10 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ② 项目内失败合成现场(compose-*failed)与截帧预览(_frames)
+	//
+	// 【2026-10-08 深度排查】这一整段原来都是 `_ = os.RemoveAll(...)` + **无条件**计数：
+	// Windows 上文件被占用（资源管理器开着、引擎还握着）时删不掉，结果照样报
+	// "已清理 N 个 / X MB" —— **虚报释放量**。现在只在真删掉时计数，失败进 Skipped。
 	var failedCount, frameCount int
 	var failedSize int64
 	for _, p := range s.store.List() {
@@ -77,18 +81,26 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 			for _, e := range ents {
 				if e.IsDir() && strings.HasPrefix(e.Name(), "compose-") && strings.HasSuffix(e.Name(), "-failed") {
 					full := filepath.Join(outDir, e.Name())
+					var sz int64
 					if st, _ := e.Info(); st != nil {
-						failedSize += st.Size()
+						sz = st.Size()
 					}
+					if rerr := os.RemoveAll(full); rerr != nil {
+						res.Skipped = append(res.Skipped, fmt.Sprintf("失败合成现场「%s」：删不掉(%v)", e.Name(), rerr))
+						continue
+					}
+					failedSize += sz
 					failedCount++
-					_ = os.RemoveAll(full)
 				}
 			}
 		}
 		frames := filepath.Join(s.store.Dir(p.ID), "clips", "_frames")
 		if st, err := os.Stat(frames); err == nil && st.IsDir() {
-			_ = os.RemoveAll(frames)
-			frameCount++
+			if rerr := os.RemoveAll(frames); rerr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf("截帧预览缓存 clips/_frames：删不掉(%v)", rerr))
+			} else {
+				frameCount++
+			}
 		}
 	}
 	if failedCount > 0 {
@@ -126,7 +138,10 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 					}
 					return nil
 				})
-				_ = os.RemoveAll(full)
+				if rerr := os.RemoveAll(full); rerr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("孤儿条件缓存「%s」：删不掉(%v)", projID, rerr))
+					continue
+				}
 				add(fmt.Sprintf("孤儿条件缓存「%s」", projID), size)
 			}
 		}
@@ -235,11 +250,16 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 			name := e.Name()
 			if strings.HasPrefix(name, "mx-") || strings.HasPrefix(name, "mx_") {
 				full := filepath.Join(tmpDir, name)
+				var sz int64
 				if st, _ := e.Info(); st != nil {
-					tmpSize += st.Size()
+					sz = st.Size()
 				}
+				if rerr := os.RemoveAll(full); rerr != nil {
+					res.Skipped = append(res.Skipped, fmt.Sprintf("系统临时文件 %s：删不掉(%v)", name, rerr))
+					continue
+				}
+				tmpSize += sz
 				tmpCount++
-				_ = os.RemoveAll(full)
 			}
 		}
 		if tmpCount > 0 {
@@ -256,15 +276,28 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	// ⑦ 资产阶段的转身视频中间产物(<base>_views/ 目录):抽帧后视频本身不再作参考,
 	// 单个 5-30MB(2026-09-12 实测)。**只删视频与目录**,同目录的
 	// <base>_view_*.png / <base>_turnaround.png 是渲染真正要用的参考图,必须保留。
+	//
+	// 【2026-10-08 深度排查】加 busy 判据（与 ④ mx-* 同一条）：资产阶段正在跑时，
+	// `<base>_views/turnaround.mp4` 可能**正被抽帧读着** —— 删了就只报一句
+	// "多视角生成失败(不影响定妆照)"，该角色少一组参考图（用户看到的是"这角色怎么老是同角度"）。
 	var viewDirs int
 	var viewSize int64
-	for _, p := range s.store.List() {
-		pat := filepath.Join(s.store.Dir(p.ID), "assets", "characters", "*_views")
-		for _, d := range globOrEmpty(pat) {
-			if st, err := os.Stat(d); err == nil && st.IsDir() {
-				viewSize += dirSize(d)
-				viewDirs++
-				_ = os.RemoveAll(d)
+	if busy {
+		res.Skipped = append(res.Skipped,
+			"转身视频中间目录（*_views）：**本机还有管线在跑**，那里可能有正在抽帧的视频 —— 等它跑完再清")
+	} else {
+		for _, p := range s.store.List() {
+			pat := filepath.Join(s.store.Dir(p.ID), "assets", "characters", "*_views")
+			for _, d := range globOrEmpty(pat) {
+				if st, err := os.Stat(d); err == nil && st.IsDir() {
+					sz := dirSize(d)
+					if rerr := os.RemoveAll(d); rerr != nil {
+						res.Skipped = append(res.Skipped, fmt.Sprintf("转身视频中间目录 %s：删不掉(%v)", filepath.Base(d), rerr))
+						continue
+					}
+					viewSize += sz
+					viewDirs++
+				}
 			}
 		}
 	}
@@ -273,15 +306,21 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ⑧ 本次迭代留下的临时对照目录与诊断日志(应用自身产物)
-	if st, err := os.Stat(filepath.Join(s.dataDir(), "_scratch")); err == nil && st.IsDir() {
-		sz := dirSize(filepath.Join(s.dataDir(), "_scratch"))
-		_ = os.RemoveAll(filepath.Join(s.dataDir(), "_scratch"))
-		add("临时对照目录 data/_scratch", sz)
-	}
-	if st, err := os.Stat(filepath.Join(s.dataDir(), "_sb_build")); err == nil && st.IsDir() {
-		sz := dirSize(filepath.Join(s.dataDir(), "_sb_build"))
-		_ = os.RemoveAll(filepath.Join(s.dataDir(), "_sb_build"))
-		add("临时构建目录 data/_sb_build", sz)
+	for _, d := range []struct{ path, label string }{
+		{filepath.Join(s.dataDir(), "_scratch"), "临时对照目录 data/_scratch"},
+		{filepath.Join(s.dataDir(), "_sb_build"), "临时构建目录 data/_sb_build"},
+	} {
+		st, err := os.Stat(d.path)
+		if err != nil || !st.IsDir() {
+			continue
+		}
+		sz := dirSize(d.path)
+		// 删不掉就别报"已清理"（虚报释放量会让用户以为空间回来了）。
+		if rerr := os.RemoveAll(d.path); rerr != nil {
+			res.Skipped = append(res.Skipped, fmt.Sprintf("%s：删不掉(%v)", d.label, rerr))
+			continue
+		}
+		add(d.label, sz)
 	}
 
 	// ⑨ 运行日志(用户 2026-09-26:「右上角一键清理也需要清理掉运行日志」)。
@@ -311,13 +350,21 @@ func (s *Server) handleCleanup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// ⑩ 引擎日志:ComfyUI 自己的 logs/comfyui.log —— 它的写句柄在**外部进程**手里,
-	// 我们只有路径,所以既不删也不改名,只在超过 8MB 时原地截断(失败就跳过:那是引擎的
-	// 日志,不该让本应用的清理报错)。刻意不无条件清空:引擎日志是渲染排障的第一现场。
+	// 我们只有路径,所以既不删也不断句柄,只在超过 8MB 时**归档**。
+	//
+	// 【2026-10-08 深度排查】原来直接 `os.Truncate(comfyLog, 0)`：**原地截断、什么都不留**，
+	// 而注释自己写着"引擎日志是渲染排障的第一现场" —— 排障现场被清理动作毁掉，与运行日志那次
+	// 事故（`🗑 已删除项目` 被一键清理截掉）是同一类。现在先 rename 成带时间戳的归档
+	// （引擎下次写入会在原路径重建文件；句柄不归我们，改名不影响它继续写新的）。
 	if root := strings.TrimSpace(g.Comfy.RootDir); root != "" {
 		comfyLog := filepath.Join(root, "logs", "comfyui.log")
 		if st, err := os.Stat(comfyLog); err == nil && st.Size() >= 8<<20 {
-			if os.Truncate(comfyLog, 0) == nil {
-				add(fmt.Sprintf("引擎日志 logs/comfyui.log 截断(%.1fMB)", float64(st.Size())/1024/1024), 0)
+			archive := comfyLog + "." + time.Now().Format("20060102-150405")
+			if rerr := os.Rename(comfyLog, archive); rerr != nil {
+				res.Skipped = append(res.Skipped, fmt.Sprintf(
+					"引擎日志 logs/comfyui.log 归档失败(%v) —— **没动它**（引擎正在写时可能被占用，等它跑完再清）", rerr))
+			} else {
+				add(fmt.Sprintf("引擎日志 logs/comfyui.log 已归档(%.1fMB，存档 %s)", float64(st.Size())/1024/1024, filepath.Base(archive)), 0)
 			}
 		}
 	}

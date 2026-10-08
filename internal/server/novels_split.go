@@ -139,6 +139,9 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 	if s.novelProduced(name) {
 		var okFill bool
 		text, gapStartEp, gapPrev, gapStyle, okFill = s.autoGapFillTrim(name, text)
+		// okFill=false 绝大多数情况是**正常**的：没有中间缺章要补（函数第一句就返回）。
+		// 真正需要用户知道的两种失败（删集删不掉 / 一个都没删掉）由 autoGapFillTrim 内部
+		// **自己播报**（2026-10-08 深度排查补齐）—— 这里不再吞掉那个 bool 了之。
 		_ = okFill
 	}
 
@@ -697,21 +700,37 @@ func (s *Server) autoGapFillTrim(name, text string) (string, int, epItem, string
 		}
 	}
 	// 删除插入点起的分集
+	//
+	// 【2026-10-08 深度排查】原来 `if err := s.store.Delete(c.id); err == nil { removed++ ... }` ——
+	// 删不掉就**什么都不说**，后面 `removed == 0` 静默 return false，而调用方把这个 bool 丢掉
+	// ⇒ 流程照旧报"✔ 拆集完成"，**缺章仍在、一行日志都没有**。现在逐个点名；一个都没删掉时
+	// 明说"本次自动补缺没做成"（缺章还在），不再让那句"拆集完成"骗人。
 	removed := 0
+	var stubborn []string
 	for _, c := range covs {
 		if c.num < cut {
 			continue
 		}
-		if err := s.store.Delete(c.id); err == nil {
-			removed++
-			if eng, err := s.reg.Get("comfy"); err == nil {
-				if ce, ok := eng.(*comfyengine.Engine); ok {
-					ce.CleanupProjectCache(c.id)
-				}
+		if err := s.store.Delete(c.id); err != nil {
+			stubborn = append(stubborn, fmt.Sprintf("%s(%v)", c.id, err))
+			continue
+		}
+		removed++
+		if eng, err := s.reg.Get("comfy"); err == nil {
+			if ce, ok := eng.(*comfyengine.Engine); ok {
+				ce.CleanupProjectCache(c.id)
 			}
 		}
 	}
+	if len(stubborn) > 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 自动补缺：有 %d 个分集**删不掉**（%s）—— 它们会与新拆的分集并存（同一段内容两集），"+
+				"请确认这几个目录没有被占用/锁定后重试", len(stubborn), strings.Join(stubborn, "; "))})
+	}
 	if removed == 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 检出缺章 第 %v 章，但插入点（第 %d 集）起的分集**一个都没删掉** ⇒ "+
+				"**本次自动补缺没做成**（缺章仍在，这次不会重拆）", missing, cut)})
 		return text, 0, epItem{}, "", false
 	}
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",

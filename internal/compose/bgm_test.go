@@ -35,7 +35,11 @@ func TestMixBGMBedRealFFmpeg(t *testing.T) {
 	// BGM：6 秒连续音
 	mk("-f", "lavfi", "-i", "sine=frequency=220:duration=6", bgm)
 
-	got, note := mixBGMBed(context.Background(), f, voice, bgm, 6, out)
+	// 第三个返回值 = **有没有真的用上混音轨**（2026-10-08：原来靠播报文案前缀判断，改文案就静默丢 BGM）。
+	got, note, ok1 := mixBGMBed(context.Background(), f, voice, bgm, 6, out)
+	if !ok1 {
+		t.Fatalf("混音应当用上混音轨（ok=false 就是静默丢掉 BGM）")
+	}
 	if got != out {
 		t.Fatalf("应返回混好的母轨，实际 %q（note=%s）", got, note)
 	}
@@ -51,12 +55,15 @@ func TestMixBGMBedRealFFmpeg(t *testing.T) {
 		t.Errorf("配乐不该改变成片时长，期望≈6s，实际 %.2fs", info.Duration)
 	}
 	// 读不到 BGM 时：回退原母轨 + 一句实话，不因此失败
-	got2, note2 := mixBGMBed(context.Background(), f, voice, filepath.Join(dir, "nope.wav"), 6, out+".2")
+	got2, note2, ok2 := mixBGMBed(context.Background(), f, voice, filepath.Join(dir, "nope.wav"), 6, out+".2")
 	if got2 != voice || note2 == "" {
 		t.Errorf("BGM 缺失时应回退原母轨并播报，实际 (%q, %q)", got2, note2)
 	}
+	if ok2 {
+		t.Error("BGM 读不到时不许说\"用上了混音轨\"（否则合成会换成一份不存在的音轨）")
+	}
 	// 没设 BGM：完全不动
-	if got3, note3 := mixBGMBed(context.Background(), f, voice, "", 6, out+".3"); got3 != voice || note3 != "" {
+	if got3, note3, ok3 := mixBGMBed(context.Background(), f, voice, "", 6, out+".3"); got3 != voice || note3 != "" || ok3 {
 		t.Errorf("没设 BGM 时应原样返回，实际 (%q, %q)", got3, note3)
 	}
 }

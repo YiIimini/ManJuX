@@ -103,7 +103,7 @@ func TestQCSpeechIsWired(t *testing.T) {
 		"qc.SpeechBudget(",                        // 逐镜限时（ASR 卡住不该拖死质检）
 		"speechLabel(r.Speech)",                   // "验过且干净"与"没验过"在日志里分得开
 		// 告警必须并进阶段结论（否则用户只看得到一句"质检通过"）
-		"qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, voiceFlagged, textAlert)",
+		"qcVerdictOf(qcCounts{",
 	} {
 		if !strings.Contains(src, want) {
 			t.Errorf("质检阶段缺少接线 %q —— 语音核对会变成「接了但没生效」", want)

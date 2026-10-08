@@ -92,7 +92,10 @@ func TestQCVerdictNeverSaysAllPassWhenShotsAreMissing(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := qcVerdictOf(tc.total, tc.checked, tc.failed, tc.notChecked, tc.vlmFlagged, tc.speechFlag, tc.voiceFlag, tc.textAlert)
+			v := qcVerdictOf(qcCounts{
+				Total: tc.total, Checked: tc.checked, Failed: tc.failed, NotChecked: tc.notChecked,
+				VLMFlagged: tc.vlmFlagged, SpeechFlagged: tc.speechFlag, VoiceFlagged: tc.voiceFlag,
+			}, tc.textAlert)
 			if v.Level != tc.wantLevel {
 				t.Errorf("结论级别 = %s,期望 %s(文案:%s)", v.Level, tc.wantLevel, v.Msg)
 			}

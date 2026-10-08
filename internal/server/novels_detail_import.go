@@ -337,18 +337,33 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 	// 这一段带**回滚**：任何一个项目建不出来，就把**本次**建出来的删掉再报错。
 	// 理由是平台一贯的政策 —— "半导入状态更难查"（校验那一遍已经是整批拒收了，
 	// 这一遍是防"建到一半失败"：2026-09-27 实测过一次半批，见上面名字校验的注释）。
+	// rollback 删掉**本次新建**的项目，并**如实说**哪些没删掉。
+	//
+	// 【2026-10-08 深度排查】原来这里是 `for _, id := range createdIDs { _ = s.store.Delete(id) }`
+	// 紧跟一句"已回滚本次新建的 N 个项目,不留半批" —— 删不掉（目录被占用/权限）时那句话就是**假的**：
+	// 盘上实际留着半批，用户看到的却是"不留半批"。（与 handlers_project.go 那条"逐条报删不掉"同一口径。）
 	var createdIDs []string
+	rollback := func(why string) {
+		var stubborn []string
+		for _, id := range createdIDs {
+			if err := s.store.Delete(id); err != nil {
+				stubborn = append(stubborn, fmt.Sprintf("%s(%v)", id, err))
+			}
+		}
+		if len(stubborn) == 0 {
+			s.opLog("↩ %s：已回滚本次新建的 %d 个项目（盘上不留半批）", why, len(createdIDs))
+			return
+		}
+		s.opLog("⚠ %s：回滚时**有 %d 个项目删不掉**（盘上会留下半批，请手动确认）：%s",
+			why, len(stubborn), strings.Join(stubborn, "; "))
+	}
 	for _, st := range stage {
 		if _, ok := s.store.Get(st.name); ok {
 			continue // 已存在 = 重新导入，不算本次新建，也不参与回滚
 		}
 		if _, err := s.store.Create(st.name, s.projectConfigDefault()); err != nil {
-			for _, id := range createdIDs {
-				_ = s.store.Delete(id)
-			}
-			s.opLog("⛔ 建项目失败(%s),已回滚本次新建的 %d 个项目,不留半批", st.name, len(createdIDs))
-			writeErr(w, 500, fmt.Errorf("建项目 %s 失败:%w（已回滚本次新建的 %d 个，盘上不会留半批）",
-				st.name, err, len(createdIDs)))
+			rollback("建项目 " + st.name + " 失败")
+			writeErr(w, 500, fmt.Errorf("建项目 %s 失败:%w（回滚明细见运行日志：删不掉的会点名）", st.name, err))
 			return true
 		}
 		createdIDs = append(createdIDs, st.name)
@@ -370,7 +385,11 @@ func (s *Server) importNovelDetail(w http.ResponseWriter, book string, d *novelD
 		details, overflow := s.planPostProcess(st.name, st.plan)
 		nMode := st.plan.NormalizeShotModes()
 		if err := s.store.SavePlan(st.name, st.plan); err != nil {
-			writeErr(w, 500, err)
+			// 【2026-10-08 深度排查】这里原来直接 500 返回、**不回滚**（与上面"不留半批"的政策相反）
+			// ⇒ 作品库里多出 N 个"没有方案"的空集，而响应里一个 id 都不说（用户只能自己一个个删）。
+			rollback("写入方案失败：" + err.Error())
+			writeErr(w, 500, fmt.Errorf("第%02d集《%s》写入方案失败:%w（本次新建 %d 集：%s）",
+				st.no, st.display, err, len(createdIDs), strings.Join(createdIDs, "、")))
 			return true
 		}
 		results = append(results, result{

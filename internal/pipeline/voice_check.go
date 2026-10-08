@@ -172,7 +172,9 @@ func (c *Coordinator) qualityRetryTargets(ctx context.Context, proj *project.Pro
 			continue // 没产物/占位片段：交给失败链路，不是"质量重出"的事
 		}
 		reasons := 0
-		if c.ff != nil {
+		// 音色核对（基频）也受 `qc.enable_pitch` 管：关掉它连**重出**都不该发生
+		//（否则用户关了核对，渲染阶段照样为它换种子重出、白烧 GPU）。
+		if c.ff != nil && p.PitchOn() {
 			rep := qc.MeasureVoicePitch(ctx, c.ff, clip, submittedVoiceLines(proj, plan, &sh))
 			if rep != nil && rep.Bad() {
 				reasons++

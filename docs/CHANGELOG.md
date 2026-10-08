@@ -10,6 +10,40 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## 第二轮：§5 点名的 11 条**全部处理掉**（2026-10-08 用户：「处理啊」）
+
+专题文档：`docs/深度排查-2026-10-08.md` **§7**。上一轮点名"没修"的清单被用户要求逐条处理，
+于是这一轮把它们全部修完，**每条配机器守卫**，**反向验证 11/11 全红**。
+
+**"报错却生效 / 静默半成品"这一类（最要紧的三条）**：
+1. `internal/fsutil/fsutil.go` —— 写盘临时文件原来用**固定名** `<path>.tmp`：同一份 `plan.json`
+   有两个写者（用户在工作台改镜头 ↔ 管线落盘）时会互相顶掉，先 rename 成功、后 rename 拿到
+   ENOENT ⇒ **用户看到"保存失败"，其实内容已经写进去了**（报错却生效）。改 `os.CreateTemp` 唯一名 +
+   **per-path 互斥锁**（Windows 上并发 rename 抢同一目标还会报 "Access is denied"）。
+2. `internal/server/novels_detail_import.go` —— 建集失败的回滚删不掉时仍写"不留半批"（盘上留了半批）；
+   `SavePlan` 失败**直接 500 不回滚** ⇒ 作品库多出 N 个"没有方案"的空集。改：回滚收成一个
+   `rollback(why)` 入口，删不掉的**逐条点名**，`SavePlan` 失败也回滚并把 id 列表写进响应。
+3. `internal/server/cleanup.go` —— ① ⑦ 转身视频中间目录没有 `busy` 判据（资产阶段正在抽帧时删掉它
+   ⇒ 该角色少一组参考图）② 各点 `_ = os.RemoveAll(...)` 后**无条件计数** ⇒ **虚报释放量**
+   ③ 引擎日志 `comfyui.log` **原地截断**（把"渲染排障第一现场"毁掉）⇒ 改成先归档。
+
+**"没验过"必须看得见（三态纪律的最后两处）**：
+4. `internal/qc/landmark.go` + `stages_qc_assemble.go` —— 空间锚点核查四个"没验"出口全都没有报告字段
+   ⇒ 新增 `qc.LandmarkReport`（checked/skipped/error + Summary），核查收成 `checkLandmark` 一个入口。
+5. `stages_qc_assemble.go` 集级结论 —— 整集 ASR 挂了、音色一律未判、空间锚点一次没核查时，
+   原来仍然报「✔ 质检通过:13/13 镜全部合格」（"都验过且干净"的语义）⇒ 新增 `qcCounts`
+   （SpeechUnverified/VoiceUnjudged/LandmarkUnchecked/TextUnchecked）+ "没验过"也转 warn 的新分支。
+
+**其余**：质检的视觉调用接上 `vlm_guard`（`qcVLMBudget` + `VLMResetBudgetN` + 三个调用点都过
+`vlmSkipReason`，被闸住时留痕）；重出轮次不再重跑"资产补齐 + 播报"前戏（`pass == 0` 守卫，
+**显存释放不在此列**）；音色核对新增 `qc.enable_pitch`（默认开，关掉后质检与有界重出都不跑它，
+界面加了开关）；BGM 是否铺上改用**显式返回值**判断（原来解析播报文案前缀 🎵 —— 改一次措辞就静默丢 BGM）；
+`novels_split.go` 补缺删集失败逐条点名、一个都没删掉时明说"补缺没做成"；
+`comfyengine` 条件缓存删不掉时打日志并尽力清掉 `.ok`（否则下次渲染命中坏缓存、报节点错误）；
+director 那句"被镜头数上限收窄…丢了 N 镜"补上 `⚠`（它按首字符判级别，此前被当普通 info 显示）。
+
+**没做**：`docs/门目录.md` 还没重跑 `gatecat`；引擎日志归档不自动清理旧归档（要先定策略）。
+
 ## 深度排查：三条 P0 级「静默出错」+ 十三处守卫补强（2026-10-08）
 
 用户口径：「**好好再深度检查排查问题，别总是我在使用的时候让我发现啊**」。

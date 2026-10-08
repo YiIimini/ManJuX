@@ -79,3 +79,22 @@ func TestQcConclusionsAreVisibleInUI(t *testing.T) {
 		}
 	}
 }
+
+// TestPitchSwitchIsVisibleInSettings 音色核对必须有**能点到的开关**（2026-10-08 深度排查）。
+//
+// 后端有 `qc.enable_pitch`（默认开，关掉之后质检与有界重出都不跑它），界面上却没有控件
+// ⇒ 用户想省一次重出的 GPU 时间也无处可点。判据：参数面板里那个开关必须接在
+// `form.qc.enable_pitch` 上（不是一段写着"无开关"的说明文字）。
+func TestPitchSwitchIsVisibleInSettings(t *testing.T) {
+	src := frontendSources(t)
+	p, ok := src["components/ParamsDrawer.vue"]
+	if !ok {
+		t.Fatal("找不到 ParamsDrawer.vue")
+	}
+	if !strings.Contains(p, "form.qc.enable_pitch") {
+		t.Error("ParamsDrawer 里没有音色核对的开关（后端有 qc.enable_pitch，界面上点不到）")
+	}
+	if strings.Contains(p, "无开关") {
+		t.Error("文案还写着\"无开关\"，但后端已经有 qc.enable_pitch 了 —— 界面与行为对不上")
+	}
+}

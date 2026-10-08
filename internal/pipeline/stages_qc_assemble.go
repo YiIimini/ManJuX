@@ -42,6 +42,10 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	if err != nil {
 		return err
 	}
+	// 质检阶段的视觉调用**预算**（2026-10-08 深度排查）：此前质检完全绕开 vlm_guard 那道闸，
+	// 限流时一集照打十几次、用户看到一屏 429，紧接着的资产阶段继续被拒（同一个 key 的全局限流）。
+	// 这里按镜数给预算（每镜最多两次：VLM 判分 + 画面文字；外加场景建立镜的空间锚点）。
+	c.VLMResetBudgetN(qcVLMBudget(len(plan.Shots)))
 	p := proj.Config.Params.QC
 	if !p.Enabled {
 		c.emit(proj.ID, PhaseQC, 0, "info", 100, "质检已关闭,跳过")
@@ -108,6 +112,13 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	// 它是**量出来的**（基频），所以比"听出来的"语音结论更硬 —— 但仍然只标记、不拦批次
 	// （真机重出由渲染阶段的有界重出负责，这里负责让用户看得见）。
 	voiceFlagged := 0
+	// 下面四个是"三态里的第三态"（**没验过**，不是"验过且干净"）—— 集级结论必须把它们说出来，
+	// 否则"整集 ASR 挂了 / 音色一律未判"时，用户看到的还是「✔ 质检通过:13/13 镜全部合格」
+	// （2026-10-08 深度排查）。
+	speechUnverified := 0 // 语音核对**失败**（ASR 挂了/超时）—— 想验没验成
+	voiceUnjudged := 0    // 音色**未判**（没有台词/人声太短/中性声线/同镜男女混合）
+	landmarkUnchecked := 0
+	textUnchecked := 0
 
 	for _, shot := range plan.Shots {
 		if ctx.Err() != nil {
@@ -145,8 +156,14 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			ExpectFPS:        24, // 渲染帧数口径即 shot.Duration*24,见 stages_render.go 的 shotFrames
 		})
 		if vlmClient != nil && r.OK {
-			brief := qcShotBrief(plan, shot, sc, hasScene)
-			if vr, verr := qc.VLMJudge(ctx, vlmClient, c.ff.Ffmpeg, full, brief); verr == nil {
+			// 【2026-10-08 深度排查】原来这里只看 `vlmClient != nil`，既不看限流静默期、
+			// 也不计预算（质检阶段完全绕开了 vlm_guard 那道闸）⇒ 限流时一集照打 13 次、
+			// 用户看到 13 条 429，而紧接着的资产阶段继续被拒。现在同样过 vlmSkipReason：
+			// 被闸住就**留痕**（报告里写 skipped），不当作通过。
+			if skip := c.vlmSkipReason(proj); skip != "" {
+				r.VLM = &qc.VLMReport{Skipped: skip}
+			} else if vr, verr := qc.VLMJudge(ctx, vlmClient, c.ff.Ffmpeg, full,
+				qcShotBrief(plan, shot, sc, hasScene)); verr == nil {
 				r.VLM = vr
 				if !vr.Pass {
 					vlmFlagged++
@@ -154,6 +171,7 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 						"镜头 %d VLM 判分 %d(%s)建议:%s", shot.ID, vr.Score, strings.Join(vr.Issues, ";"), vr.Advice)
 				}
 			} else {
+				c.vlmNote(proj, verr) // 429 ⇒ 进静默期（质检以前不进）
 				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0, "镜头 %d VLM 审片失败:%v(不影响机械质检)", shot.ID, verr)
 			}
 		}
@@ -165,25 +183,17 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 		//
 		// 只查**每个场景的建立镜**：地标是在那一镜定下来的（后续镜头多半只拍局部、看不到全部地标），
 		// 查它既最有效、又把视觉模型预算压到"一集几个场景就几次"。
-		if vlmClient != nil && r.OK {
-			if sc, ok := sceneByID(plan, shot.Scene); ok && strings.TrimSpace(sc.Landmarks) != "" &&
-				shotEstablishesScene(plan, shot) {
-				at := r.Duration / 2
-				if at < 0.4 {
-					at = 0.4
-				}
-				tmp := filepath.Join(c.store.Dir(proj.ID), "qc", "frames")
-				if frame, ferr := qc.SampleFrameAt(ctx, c.ff, full, at, tmp, fmt.Sprintf("landmark-%d.jpg", shot.ID)); ferr != nil {
-					c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
-						"镜头 %d 空间锚点未核查(抽帧失败,不当作通过):%v", shot.ID, ferr)
-				} else if v, verr := qc.DetectLandmarks(ctx, vlmClient, frame, sc.Landmarks); verr != nil {
-					c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
-						"镜头 %d 空间锚点未核查(不当作通过):%v", shot.ID, verr)
-				} else if v != nil && len(v.Missing) > 0 {
-					landmarkFlagged++
-					c.emit(proj.ID, PhaseQC, shot.ID, "warn", checked*100/max(1, len(plan.Shots)),
-						"%s", qc.LandmarkWarnText(shot.ID, sc.Name, sc.Landmarks, v))
-				}
+		if r.OK {
+			lm, warn := c.checkLandmark(ctx, proj, plan, shot, full, r, vlmClient)
+			r.Landmark = lm
+			if warn != "" {
+				landmarkFlagged++
+				c.emit(proj.ID, PhaseQC, shot.ID, "warn", checked*100/max(1, len(plan.Shots)), "%s", warn)
+			}
+			if lm != nil && !lm.Checked {
+				// 没验（未配模型/场景没写地标/非建立镜/被限流预算闸住）或失败（抽帧/模型错）
+				// —— 都**不是**"验过且干净"，集级结论要能看见这一条。
+				landmarkUnchecked++
 			}
 		}
 		// 画面文字检测(清单 §3.1a):必须在**镜级原始产物**上做 —— 合成会按 BurnSubtitles
@@ -195,7 +205,12 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			// 必须留痕 —— 那是"没验过",不是"验过且干净"。
 			if pl.Skipped != "" {
 				r.TextDetect = qc.TextDetectSkipped(pl.Skipped)
+				textUnchecked++
 			}
+		} else if skip := c.vlmSkipReason(proj); skip != "" {
+			// 被限流/预算闸住 ⇒ 留痕（不当作通过），并计入集级"未测"。
+			r.TextDetect = qc.TextDetectSkipped(skip)
+			textUnchecked++
 		} else {
 			tr, terr := qc.DetectOnScreenText(ctx, vlmClient, c.ff, full, r.Duration, qc.TextDetectOptions{})
 			if terr != nil {
@@ -228,6 +243,8 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			cancel()
 			r.Speech = rep
 			if rep.Error != "" {
+				// 想验没验成（ASR 挂了/超时）：这**不是**"验过且干净"，集级结论要说出来。
+				speechUnverified++
 				c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
 					"镜头 %d 语音核对失败(未判定,不当作通过):%s", shot.ID, rep.Error)
 			}
@@ -246,7 +263,10 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 		// 处置与语音核对一致：**只标记、不拦批次**（判据本身刻意保守 —— 中性声线/同镜男女
 		// 混合/人声太短一律"不判"，见 qc.MeasureVoicePitch 的说明）。真正的返工由渲染阶段的
 		// **有界重出**负责（见 voice_check.go）；存量镜头的音色问题在这里被摆出来。
-		if !r.OK {
+		if !p.PitchOn() {
+			// 用户关掉了音色核对 ⇒ **连条目都不写**（报告里看起来就是"没这项"），
+			// 与画面文字检测/语音核对的"关掉不留痕"同一口径。
+		} else if !r.OK {
 			r.Voice = qc.VoicePitchSkipped("机械质检未通过（这一镜的画面本身就不合格，音色另说）")
 		} else {
 			r.Voice = voicePitchForQC(ctx, c, proj, plan, &shot, full)
@@ -258,6 +278,9 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 				for _, f := range r.Voice.Findings {
 					r.Warnings = append(r.Warnings, qc.VoicePitchWarnText(f))
 				}
+			} else if r.Voice != nil && !r.Voice.Checked {
+				// **未判**（没有台词/人声太短/中性声线/同镜男女混合）—— 不是"验过且干净"。
+				voiceUnjudged++
 			}
 		}
 		reports[key] = *r
@@ -306,7 +329,12 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 	// 预算：最多 3 个角色 × 每人最多 3 帧，一次 Python 调用（模型加载约 5 秒），不随镜头数线性膨胀。
 	c.measureFaceConsistency(ctx, proj, plan, manifest)
 
-	v := qcVerdictOf(len(plan.Shots), checked, failed, notChecked, vlmFlagged, speechFlagged, voiceFlagged, textAlert)
+	v := qcVerdictOf(qcCounts{
+		Total: len(plan.Shots), Checked: checked, Failed: failed, NotChecked: notChecked,
+		VLMFlagged: vlmFlagged, SpeechFlagged: speechFlagged, VoiceFlagged: voiceFlagged,
+		SpeechUnverified: speechUnverified, VoiceUnjudged: voiceUnjudged,
+		LandmarkUnchecked: landmarkUnchecked, TextUnchecked: textUnchecked,
+	}, textAlert)
 	if v.Msg != "" {
 		c.emit(proj.ID, PhaseQC, 0, v.Level, 100, "%s", v.Msg)
 	}
@@ -336,7 +364,33 @@ type qcVerdict struct {
 // 逼人逐镜复核 —— 重渲与否应当由人看着命中镜号来定(与 VLM 审片同一处置原则)。
 // voiceFlagged（2026-10-08）是音色核对（基频）判负的镜数：与 speechFlagged 同一处置
 // （只标记、不拦批次），但它的判据是**量出来的**，不是听出来的。
-func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speechFlagged, voiceFlagged int, textAlert *qc.TextAlert) qcVerdict {
+// qcCounts 一集质检的计数（2026-10-08 深度排查：把**第三态**也收进来）。
+//
+// 为什么需要把"没验过"单列：原来的判据只看"判负数"，于是
+// ① 整集 ASR 挂了（每镜 `speech.Error` 非空）② 音色一律"未判"（没有台词/人声太短）
+// ③ 空间锚点一次没核查（未配视觉模型）—— 用户看到的仍然是「✔ 质检通过:13/13 镜全部合格」，
+// 而这句话的语义是"这些项都验过且干净"。三态里的第三态必须说出来（与 qc.Report 的三态同口径）。
+type qcCounts struct {
+	Total, Checked, Failed int
+	NotChecked             []int
+	VLMFlagged             int
+	SpeechFlagged          int
+	VoiceFlagged           int
+	// 未验 / 未判（**不是**"验过且干净"）
+	SpeechUnverified  int
+	VoiceUnjudged     int
+	LandmarkUnchecked int
+	TextUnchecked     int
+}
+
+// unverified 本集有没有"该验而没验成 / 不判"的项。
+func (c qcCounts) unverified() bool {
+	return c.SpeechUnverified > 0 || c.VoiceUnjudged > 0 || c.LandmarkUnchecked > 0 || c.TextUnchecked > 0
+}
+
+func qcVerdictOf(c qcCounts, textAlert *qc.TextAlert) qcVerdict {
+	total, checked, failed, notChecked := c.Total, c.Checked, c.Failed, c.NotChecked
+	vlmFlagged, speechFlagged, voiceFlagged := c.VLMFlagged, c.SpeechFlagged, c.VoiceFlagged
 	missing := len(notChecked)
 	switch {
 	case checked == 0:
@@ -376,6 +430,25 @@ func qcVerdictOf(total, checked, failed int, notChecked []int, vlmFlagged, speec
 		return qcVerdict{Level: "warn", Msg: fmt.Sprintf(
 			"⚠ 质检完成:%d 镜机械指标合格,但%s(详情见 output/qc_report.json 或阶段详情),未自动重渲",
 			checked, strings.Join(parts, ";"))}
+	case c.unverified():
+		// 【2026-10-08 深度排查】还有"没验过"的项时，**不许**打「✔ 质检通过:N/N 镜全部合格」——
+		// 那句话的语义是"这些项都验过且干净"。这里如实分开说：哪些是判负、哪些只是没验。
+		var parts []string
+		if c.SpeechUnverified > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜语音核对**失败**(未判定，不当作通过；多为 ASR 卡住/超时，见 speech.error)", c.SpeechUnverified))
+		}
+		if c.VoiceUnjudged > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜音色**未判**(多为没有台词/人声太短/中性声线/同镜男女混合，逐镜原因见 voice.skipped)", c.VoiceUnjudged))
+		}
+		if c.LandmarkUnchecked > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜空间锚点**未核查**(未配视觉模型/场景没写地标/非建立镜/被限流或预算闸住，见 landmark.skipped)", c.LandmarkUnchecked))
+		}
+		if c.TextUnchecked > 0 {
+			parts = append(parts, fmt.Sprintf("%d 镜画面文字**未测**(未配视觉模型/该镜机械质检未通过)", c.TextUnchecked))
+		}
+		return qcVerdict{Level: "warn", Msg: fmt.Sprintf(
+			"⚠ 质检完成:%d 镜机械指标合格，但%s —— 这几项**没验过**(不等于验过且干净；详情见 output/qc_report.json)",
+			checked, strings.Join(parts, "；"))}
 	default:
 		return qcVerdict{Level: "success", Msg: fmt.Sprintf("✔ 质检通过:%d/%d 镜全部合格", checked, total)}
 	}
@@ -1084,4 +1157,58 @@ func qcShotBrief(plan *project.Plan, shot project.Shot, sc project.Scene, hasSce
 			"请只判「暗部细节是否完全丢失、主体是否还看得清」，不要把「暗」本身当成缺陷"
 	}
 	return brief
+}
+
+// checkLandmark 空间锚点核查（官方 qc-checklist STEP 9 第 2 条；fallback-policy 对应
+// "Fix spatial anchor drift across clips"）。返回**永远非 nil** 的三态结论 + 一句给人看的告警。
+//
+// 【为什么抽成函数】（2026-10-08 深度排查）原来这段是内联的 `if vlmClient != nil && r.OK { … }`，
+// 四个"没验"的出口都是**零输出**：未配视觉模型 / 场景卡没写地标 / 这一镜不是建立镜 /
+// 抽帧或模型失败。报告里于是分不清"验过且干净"与"根本没验"（与 SpeechReport 同一条纪律）。
+// 现在每个出口都写清理由，并且**同样过 vlmSkipReason 那道闸**（限流/预算）。
+func (c *Coordinator) checkLandmark(ctx context.Context, proj *project.Project, plan *project.Plan,
+	shot project.Shot, full string, r *qc.Report, vlmClient qc.VisionClient) (*qc.LandmarkReport, string) {
+	if vlmClient == nil {
+		return qc.LandmarkSkipped("未配置视觉模型"), ""
+	}
+	sc, ok := sceneByID(plan, shot.Scene)
+	if !ok {
+		return qc.LandmarkSkipped("这一镜的场景不在方案里，取不到地标"), ""
+	}
+	if strings.TrimSpace(sc.Landmarks) == "" {
+		return qc.LandmarkSkipped("场景卡没有写 landmarks（地标位置），无从核对"), ""
+	}
+	// 只查**每个场景的建立镜**：地标是在那一镜定下来的（后续镜头多半只拍局部、看不到全部地标）。
+	if !shotEstablishesScene(plan, shot) {
+		return qc.LandmarkSkipped("非建立镜（地标在建立镜上核对，这一镜只拍局部）"), ""
+	}
+	if skip := c.vlmSkipReason(proj); skip != "" {
+		return qc.LandmarkSkipped(skip), ""
+	}
+	at := r.Duration / 2
+	if at < 0.4 {
+		at = 0.4
+	}
+	tmp := filepath.Join(c.store.Dir(proj.ID), "qc", "frames")
+	frame, ferr := qc.SampleFrameAt(ctx, c.ff, full, at, tmp, fmt.Sprintf("landmark-%d.jpg", shot.ID))
+	if ferr != nil {
+		c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+			"镜头 %d 空间锚点未核查(抽帧失败,不当作通过):%v", shot.ID, ferr)
+		return qc.LandmarkFailed(ferr), ""
+	}
+	v, verr := qc.DetectLandmarks(ctx, vlmClient, frame, sc.Landmarks)
+	if verr != nil {
+		c.vlmNote(proj, verr) // 429 ⇒ 进静默期（质检以前不进这道闸）
+		c.emit(proj.ID, PhaseQC, shot.ID, "warn", 0,
+			"镜头 %d 空间锚点未核查(不当作通过):%v", shot.ID, verr)
+		return qc.LandmarkFailed(verr), ""
+	}
+	if v == nil {
+		return qc.LandmarkSkipped("模型没有给出可判读的答复（不当作通过）"), ""
+	}
+	rep := qc.LandmarkChecked(v)
+	if rep.Bad() {
+		return rep, qc.LandmarkWarnText(shot.ID, sc.Name, sc.Landmarks, v)
+	}
+	return rep, ""
 }

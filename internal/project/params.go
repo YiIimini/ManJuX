@@ -165,7 +165,21 @@ type QCParams struct {
 	// ASRModel 转写模型档(tiny/base/small/medium/large-v3);空 = medium。
 	// 更大的档更准也更慢,与渲染显存无关(ASR 固定走 CPU)。
 	ASRModel string `json:"asr_model,omitempty"`
+	// EnablePitch 音色核对(2026-10-08,用户「女的配男音」):量每镜音轨的**中位基频**,
+	// 与角色卡上那段权威声线对一遍 —— 判「是不是这个人在念」。
+	//
+	// 【为什么默认开】它不做任何模型调用(只解码音轨 + 自相关),代价几乎为零,而它是
+	// 这条链上唯一能看见"声线配错了"的机器判据(提示词写对了 H3 也可能不照做 —— 真机实测)。
+	// 判负的处置与 ASR 一致:只标记、不拦批次;渲染阶段还会据此**换种子有界重出**(见 voice_check.go)。
+	// 与 EnableTextDetect 同一套三态语义(默认开,缺键不能读成"显式关闭")。
+	// 与 EnableASR 一样**不带 omitempty**：字段必须在 API 响应里始终出现，
+	// 否则前端那个开关会因为"键不存在"显示成关，而后端把 nil 当**开** —— 界面与行为对不上。
+	EnablePitch *bool `json:"enable_pitch"`
 }
+
+// PitchOn 音色核对是否生效:未表态(nil)按开处理(理由与 ASROn 相同)。
+// 关掉它连报告条目都不写 —— "关掉"看起来就是"没这项",而不是"每镜都验过且干净"。
+func (q QCParams) PitchOn() bool { return q.EnablePitch == nil || *q.EnablePitch }
 
 // ASROn 语音核对是否生效:未表态(nil)按开处理(理由与 TextDetectOn 相同)。
 // 关掉它连报告条目都不写(见 pipeline.planSpeechCheck)——"关掉"看起来就是"没这项",
@@ -428,6 +442,10 @@ func DefaultStageParams() StageParams {
 			// 机器判据,代价是每镜 10~15 秒 CPU(不与 ComfyUI 抢显存)。没装 ASR 的机器上
 			// 如实播报"跳过",不假装验过、也不当作不合格。
 			EnableASR: Bool(true),
+			// 音色核对默认开(2026-10-08,用户「女的配男音」):量每镜音轨的**中位基频**与角色卡上
+			// 那段权威声线对账 —— 不做任何模型调用,代价几乎为零,却是这条链上唯一能看见
+			// "声线配错了"的机器判据(提示词写对了 H3 也可能不照做)。判负只标记、不拦批次。
+			EnablePitch: Bool(true),
 		},
 		Assemble: AssembleParams{
 			// 默认叠化过渡(分镜间画面变化大,硬切生硬;需要快节奏硬切可切 cut)

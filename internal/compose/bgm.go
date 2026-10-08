@@ -44,15 +44,20 @@ const BGMNote = "🎵 成片未铺 BGM（项目参数 audio.bgm 未设置）—�
 //
 // 参数：master=已处理的母轨（wav/flac 等）、bgm=音乐文件、dur=成片时长（秒）。
 // 失败时**返回原母轨**（配乐是加分项，不该让整集成片失败）。
-func mixBGMBed(ctx context.Context, f *ff.FF, master, bgm string, dur float64, out string) (string, string) {
+// 返回 (混音后的音轨, 给人看的说明, 是否真的用上了混音轨)。
+//
+// 【2026-10-08 深度排查】第三位是**显式**的成功标志：原来调用方靠"说明是不是以 🎵 开头"判断，
+// 等于把行为挂在播报文案上 —— 改一次文案就会静默丢掉整条 BGM（master 不换、日志还说铺上了）。
+// 失败时**返回原母轨**（配乐是加分项，不该让整集成片失败）。
+func mixBGMBed(ctx context.Context, f *ff.FF, master, bgm string, dur float64, out string) (string, string, bool) {
 	if f == nil || strings.TrimSpace(bgm) == "" {
-		return master, ""
+		return master, "", false
 	}
 	if st, err := os.Stat(bgm); err != nil || st.IsDir() {
-		return master, fmt.Sprintf("⚠ 设了 audio.bgm 但读不到文件（%s）：这条 BGM 被跳过，成片无配乐", bgm)
+		return master, fmt.Sprintf("⚠ 设了 audio.bgm 但读不到文件（%s）：这条 BGM 被跳过，成片无配乐", bgm), false
 	}
 	if dur <= 0 {
-		return master, ""
+		return master, "", false
 	}
 	// ① BGM 裁/循环到片长 → 压到床底音量；② 用母轨当侧链，人声一出就把 BGM 压下去。
 	filter := fmt.Sprintf(
@@ -65,11 +70,11 @@ func mixBGMBed(ctx context.Context, f *ff.FF, master, bgm string, dur float64, o
 	args := []string{"-y", "-i", master, "-i", bgm,
 		"-filter_complex", filter, "-map", "[out]", "-c:a", "pcm_s16le", out}
 	if _, err := f.Run(ctx, args...); err != nil {
-		return master, fmt.Sprintf("⚠ BGM 铺底失败（%v）：成片按无配乐输出", err)
+		return master, fmt.Sprintf("⚠ BGM 铺底失败（%v）：成片按无配乐输出", err), false
 	}
 	if st, err := os.Stat(out); err != nil || st.Size() == 0 {
-		return master, "⚠ BGM 铺底产物为空：成片按无配乐输出"
+		return master, "⚠ BGM 铺底产物为空：成片按无配乐输出", false
 	}
 	return out, fmt.Sprintf("🎵 已铺单条 BGM 并做**人声闪避**（床底音量 %.2f，闪避比例 %d）—— "+
-		"官方要求成片是一条连续 BGM，而不是每镜各带一段", bgmBedVolume, bgmDuckRatio)
+		"官方要求成片是一条连续 BGM，而不是每镜各带一段", bgmBedVolume, bgmDuckRatio), true
 }

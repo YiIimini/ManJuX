@@ -53,6 +53,10 @@ type Report struct {
 	// 基频"对一遍 —— 判「谁在说、什么嗓子」。它是**量出来的**结论（不依赖 ASR 工具），
 	// 判负只 warn 不拦批次；声线文本没写性别/同镜男女混合/人声太短时 Skipped 里如实写"没判"。
 	Voice *VoicePitchReport `json:"voice,omitempty"`
+	// Landmark 空间锚点核查（可选，见 landmark.go 的 LandmarkReport）：**三态**留痕 ——
+	// 验过 / 没验（未配视觉模型、场景卡没写地标、非建立镜、限流或预算） / 想验但失败。
+	// 此前这一步零输出，报告里分不清"验过且干净"与"根本没验"（2026-10-08 深度排查）。
+	Landmark *LandmarkReport `json:"landmark,omitempty"`
 }
 
 // Params 质检阈值。

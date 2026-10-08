@@ -634,7 +634,20 @@ func (e *Engine) CleanupProjectCache(projectID string) {
 		}
 	}
 
+	// 【2026-10-08 深度排查】删不掉要**如实说**，而且必须把 .ok 记账清掉。
+	//
+	// 原来这里 `return` 什么都不说，而调用方（删项目时）照样报"条件缓存一并移除"。
+	// 后果：`.pt` 数据在前面已经删掉了、`.ok` 还留着 ⇒ 下次渲染 `condExists` 命中
+	// **坏缓存**，报出来的是 ComfyUI 的节点错误（用户完全看不懂，也想不到是清理留下的）。
 	if err := os.RemoveAll(sidecar); err != nil {
+		failedOK := 0
+		for _, cache := range caches {
+			if rerr := os.Remove(filepath.Join(sidecar, cache+".ok")); rerr != nil {
+				failedOK++
+			}
+		}
+		log.Printf("[comfy] ⚠ 项目条件缓存的记账目录删不掉:%s(%v)—— 已尽力清掉 .ok 记账(仍剩 %d 个)："+
+			"请在引擎空闲时手动清空它，否则下次渲染可能命中已失效的缓存并报节点错误", sidecar, err, failedOK)
 		return
 	}
 	switch {

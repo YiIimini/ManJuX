@@ -28,6 +28,12 @@ type VLMReport struct {
 	// 于是**只看到一帧照样给分**，而报告里没有任何地方写着这件事 —— 用户拿分数决定
 	// 这一镜要不要重渲，却不知道结论只基于一秒处的画面。
 	FramesSeen int `json:"frames_seen"`
+	// Skipped 没跑成的原因（**空 = 跑过了**）：「限流静默期」「本轮视觉调用预算用完」。
+	//
+	// 【2026-10-08 深度排查】质检阶段的视觉调用此前**既不受预算约束、也不进静默期**
+	// ⇒ 限流时每镜照打、用户看到 13 条 429，而资产阶段随后继续被拒。现在同样过
+	// `vlmSkipReason` 那道闸；被闸住时在这里留痕（不当作通过）。
+	Skipped string `json:"skipped,omitempty"`
 }
 
 const vlmSystem = `You are a strict AI short-video shot reviewer. Given frames from one generated shot, judge:

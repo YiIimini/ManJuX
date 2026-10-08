@@ -175,3 +175,64 @@ func SampleFrameAt(ctx context.Context, f *ff.FF, video string, at float64, outD
 	}
 	return out, nil
 }
+
+// LandmarkReport 一镜的**空间锚点核查**结论（官方 qc-checklist STEP 9 第 2 条：
+// 终检要核对"地标是否落在表上写的位置"；fallback-policy 对应 "Fix spatial anchor drift across clips"）。
+//
+// 【2026-10-08 深度排查】此前这一步**没有任何报告字段**：未配视觉模型、场景卡没写 landmarks、
+// 这一镜不是建立镜、抽帧失败、模型报错 —— 全都是"零输出"，于是报告里**分不清"验过且干净"
+// 与"根本没验"**（与 SpeechReport/TextDetectReport 同一条纪律：三态必须留痕）。
+type LandmarkReport struct {
+	Checked bool   `json:"checked"`
+	Skipped string `json:"skipped,omitempty"` // 没验 + 为什么（未配模型/场景没写地标/非建立镜/限流预算）
+	Error   string `json:"error,omitempty"`   // 想验但没验成（抽帧失败/模型错误）—— 不当作通过
+	// Missing 明确缺失的地标；Seen 明确在场的；Note 模型的一句话说明。
+	Missing []string `json:"missing,omitempty"`
+	Seen    []string `json:"seen,omitempty"`
+	Note    string   `json:"note,omitempty"`
+}
+
+// LandmarkSkipped 构造"没验"的结论（写清原因）。
+func LandmarkSkipped(reason string) *LandmarkReport {
+	return &LandmarkReport{Skipped: reason}
+}
+
+// LandmarkFailed 构造"想验但失败"的结论（同样不当作通过）。
+func LandmarkFailed(err error) *LandmarkReport {
+	msg := "未知错误"
+	if err != nil {
+		msg = err.Error()
+	}
+	return &LandmarkReport{Error: msg}
+}
+
+// LandmarkChecked 构造"验过"的结论。
+func LandmarkChecked(v *LandmarkVerdict) *LandmarkReport {
+	rep := &LandmarkReport{Checked: true}
+	if v != nil {
+		rep.Missing = v.Missing
+		rep.Seen = v.Seen
+		rep.Note = v.Note
+	}
+	return rep
+}
+
+// Bad 判负（有明确缺失的地标）。
+func (r *LandmarkReport) Bad() bool { return r != nil && len(r.Missing) > 0 }
+
+// LandmarkSummary 一行摘要（通过行/阶段详情用）。没验就如实说没验。
+func LandmarkSummary(r *LandmarkReport) string {
+	if r == nil {
+		return ""
+	}
+	switch {
+	case r.Error != "":
+		return "空间锚点未核查(失败,不当作通过):" + r.Error
+	case r.Skipped != "":
+		return "空间锚点未核查:" + r.Skipped
+	}
+	if len(r.Missing) > 0 {
+		return fmt.Sprintf("空间锚点 ✗ %d 处缺失:%s", len(r.Missing), strings.Join(r.Missing, "、"))
+	}
+	return fmt.Sprintf("空间锚点 ✔（明确在场 %d 个地标）", len(r.Seen))
+}

@@ -43,7 +43,12 @@ func TestBGMIsAudibleAndDuckedUnderDialogue(t *testing.T) {
 	}
 	// 注意：note 是**成功时的播报**（"已铺单条 BGM 并做人声闪避…"），不是错误 ——
 	// 只有"回退原母轨"那种才算没铺上（返回值不等于 mixed 时）
-	got, note := mixBGMBed(context.Background(), f, voiceOnly, bgm, 6, mixed)
+	// 【2026-10-08】第三个返回值是**显式**的"有没有真的用上混音轨"（原来调用方靠文案前缀 🎵 判断，
+	// 改一次措辞就会静默丢掉整条 BGM）。
+	got, note, mixedOK := mixBGMBed(context.Background(), f, voiceOnly, bgm, 6, mixed)
+	if !mixedOK {
+		t.Fatalf("混音应当**用上**混音轨（第三个返回值=false 就是在静默丢掉 BGM）；播报:%s", note)
+	}
 	if got != mixed {
 		t.Fatalf("混音应产出新母轨，实际 %q（播报:%s）", got, note)
 	}

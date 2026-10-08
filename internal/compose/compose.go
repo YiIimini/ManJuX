@@ -325,12 +325,15 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	// 单条 BGM 铺底 + 人声闪避（官方 qc-checklist STEP 8：成片一条连续 BGM，片段里不各带配乐）。
 	// 独立成一步、只在设了 audio.bgm 时参与：没设就完全走原路（零风险）。
 	if strings.TrimSpace(p.BGM) != "" {
-		if mixed, bnote := mixBGMBed(ctx, f, master, p.BGM, total, master+".bgm.wav"); bnote != "" {
+		// 【2026-10-08 深度排查】原来这里用 `strings.HasPrefix(bnote, "🎵")` 判"要不要换成混音轨"
+		// —— **行为挂在播报文案上**：谁把 bgm.go 里那句的 🎵 去掉，就会静默丢掉整条 BGM
+		// （master 不换成混音轨，日志照样说"已铺单条 BGM"）。改为显式 ok。
+		if mixed, bnote, mok := mixBGMBed(ctx, f, master, p.BGM, total, master+".bgm.wav"); bnote != "" {
 			res.AudioNotes = append(res.AudioNotes, bnote)
 			if onProgress != nil {
 				onProgress(90, bnote)
 			}
-			if strings.HasPrefix(bnote, "🎵") {
+			if mok {
 				master = mixed
 			}
 		}

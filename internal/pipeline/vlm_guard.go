@@ -127,3 +127,34 @@ func (c *Coordinator) vlmSkipReason(proj *project.Project) string {
 	}
 	return ""
 }
+
+// maxVLMCallsPerQC 质检阶段的视觉调用预算上限。
+//
+// 【2026-10-08 深度排查】质检阶段此前**完全不走** vlm_guard 那道闸：既不看限流静默期、
+// 也不计预算 —— 一集 13 镜就是 13×(判分) + 若干次画面文字/地标，限流时照样一路打下去，
+// 用户看到 13 条 429，而紧接着的资产阶段（走闸）继续被拒。现在质检也有自己的预算，
+// 而且按镜数放量（每镜最多两次：判分 + 画面文字；再加每个场景一次的建立镜空间锚点）；
+// 被闸住时**留痕**（报告里写 skipped），不当作通过。
+func qcVLMBudget(shots int) int {
+	n := shots*2 + 5
+	if n > 120 {
+		n = 120
+	}
+	if n < 12 {
+		n = 12
+	}
+	return n
+}
+
+// VLMResetBudgetN 把预算设成 n（并清掉"已播报"标记）。n<=0 时退回默认预算。
+func (c *Coordinator) VLMResetBudgetN(n int) {
+	if n <= 0 {
+		n = maxVLMCallsPerRun
+	}
+	g := &c.vlm
+	g.mu.Lock()
+	g.budget = n
+	g.notified = false
+	g.budgetNotified = false
+	g.mu.Unlock()
+}
