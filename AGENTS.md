@@ -111,8 +111,10 @@
 > ③ 提示词补 `CAMERA VARIETY`（官方 12 条点名、整集至少四种）；④ `director/repair.go` 运镜单调**有界自纠**
 > （`repairMaxCameraRewrites = 4`、只改运镜那一句、**追加在真缺陷之后**、与门**共用同一判据**；
 > 关键：这一段必须在**逐镜循环之外** —— 循环里三条判据各自 `continue`，写在里面会被它们跳过）。
-> **反向验证 9/9 全红**（`scratch/reverse_verify_scene_cam.ps1`），过程中又咬出我**自己一处摆设守卫**
-> （拿 `cam == repairMaxCameraRewrites` 当预期值，常量改成 0 两边一起变）。**永久边界**：违反配额**不自动重排**
+> **反向验证 10/10 全红**（`scratch/reverse_verify_scene_cam.ps1`），过程中咬出我**自己两处**问题：一处摆设守卫
+> （拿 `cam == repairMaxCameraRewrites` 当预期值，常量改成 0 两边一起变）、一处**口径漏洞**（`perScene[sh.Scene]++`
+> 把**空串也当成"用到的场景"** ⇒ "剧本 4 场、只用到 3 个场景"被空串撑成 4、**漏报**；已改成空 scene 不计入，
+> 新增 `TestSceneCoverageIgnoresEmptyScene`）。**永久边界**：违反配额**不自动重排**
 > （改判场景会让画面与场景卡对不上、参考图挂错）；运镜最多撬 4 镜；认不出的运镜既不计种类也不计样本。
 > **存量**：老方案没有 `brief_scenes` ⇒ 不判；已生成的分镜不会自动变（重跑「剧本分镜」）。
 >

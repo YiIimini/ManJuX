@@ -128,7 +128,15 @@ func sceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []SceneCoverageI
 	}
 	perScene := map[string]int{}
 	for _, sh := range plan.Shots {
-		perScene[sh.Scene]++
+		// **空场景不算"用到了一个场景"**（2026-10-09：接渲染前门时发现的口径漏洞）。
+		//
+		// `Shot.Scene` 完全由模型自由写，空着就空着（"未指定 scene" 自有另一条门 warn）。
+		// 但这里若把空串也当一个 key，`len(perScene)` 会被空串撑大 1 ⇒
+		// 「剧本列了 4 场、分镜只用到 3 个场景」这种真问题会被**漏报**。
+		// 分母仍是**全集镜数**：口径是"一场戏不许占全集镜数的 40% 以上"，与空镜无关。
+		if k := strings.TrimSpace(sh.Scene); k != "" {
+			perScene[k]++
+		}
 	}
 	total := len(plan.Shots)
 	keys := make([]string, 0, len(perScene))

@@ -158,3 +158,51 @@ func TestSceneCoverageOnRenderFrontGate(t *testing.T) {
 		t.Errorf("没有场次表的方案不该在渲染前门被报：%v", PlanIssuesText(ValidatePlan(old)))
 	}
 }
+
+// 空 scene 的镜**不算"用到了一个场景"**（2026-10-09：接渲染前门时抓出来的口径漏洞）。
+//
+// `Shot.Scene` 由模型自由写，空着就空着；若把空串也当成一个 key，"剧本 4 场、分镜只用到 3 个场景"
+// 会被空串撑成 4 ⇒ 真正"有场次整段没被拍"的问题**反而漏报**（另一条门只 warn "未指定 scene"，
+// 不会告诉你"所以有一场戏没人拍"）。
+func TestSceneCoverageIgnoresEmptyScene(t *testing.T) {
+	brief := "【场 1|甲|晨|外】\n【场 2|乙|午|外】\n【场 3|丙|暮|外】\n【场 4|丁|夜|外】\n"
+	plan := &Plan{
+		Scenes: []Scene{{ID: "scene_a", Name: "甲"}, {ID: "scene_b", Name: "乙"}, {ID: "scene_c", Name: "丙"}},
+	}
+	add := func(n int, scene string) {
+		for i := 0; i < n; i++ {
+			plan.Shots = append(plan.Shots, Shot{ID: len(plan.Shots) + 1, Scene: scene})
+		}
+	}
+	add(4, "scene_a")
+	add(4, "scene_b")
+	add(4, "scene_c")
+	add(3, "") // 3 镜压根没写场景 —— 它们不是一个"场景"
+	plan.BriefScenes = ParseScriptScenes(brief)
+
+	var missing []SceneCoverageIssue
+	var emptyName []SceneCoverageIssue
+	for _, it := range SceneCoveragePlanIssues(plan) {
+		if it.Kind == SceneMissing {
+			missing = append(missing, it)
+		}
+		if it.Kind == SceneShareOverCap && strings.TrimSpace(it.Scene) == "" {
+			emptyName = append(emptyName, it)
+		}
+	}
+	if len(missing) != 1 {
+		t.Fatalf("空场景把 \u201c用到的场景数\u201d撑大了：该报一条\u201c有场次没被拍\u201d，实际 %d 条（全部问题 %+v）",
+			len(missing), SceneCoveragePlanIssues(plan))
+	}
+	if missing[0].Brief != 4 || missing[0].Used != 3 {
+		t.Errorf("这条要说清\u201c剧本 4 场 / 只用到 3 个场景\u201d，实际 brief=%d used=%d",
+			missing[0].Brief, missing[0].Used)
+	}
+	if len(emptyName) != 0 {
+		t.Errorf("空场景本身不该被当成一场戏来报\u201c占比过高\u201d（另有门报\u201c未指定 scene\u201d）：%+v", emptyName)
+	}
+	// 渲染前门也要说到同一件事（不是只在剧本阶段那一句播报里）
+	if !hasIssue(ValidatePlan(plan), "warn", "分镜只用到 3 个场景") {
+		t.Errorf("渲染前门该报\u201c分镜只用到 3 个场景\u201d：%v", PlanIssuesText(ValidatePlan(plan)))
+	}
+}
