@@ -23,7 +23,7 @@ import (
 // sheet 是技能侧写的「人物外形锚表」(可为空):它由 createSeg 拼进**每一集**的 source.txt ——
 // 脚本阶段读什么,锚表就得在什么里面(见 episodeSourceWithSheet 的真机实证说明)。
 // 传空串 = 本书没有锚表,行为与接入之前完全一致。
-func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, artStyle, sheet string, onEps func(series string, newEps []string)) (string, []string, error) {
+func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, max int, style importStyle, sheet string, onEps func(series string, newEps []string)) (string, []string, error) {
 	g := s.cfg.Get()
 	client := llm.New(g.LLM.BaseURL, g.LLM.APIKey, g.LLM.Model, g.LLM.Timeout)
 	// 拆集参数从设置读取(0=默认值;2026-09-11 用户定调:灵活配置)
@@ -187,7 +187,16 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 				lastEp = ep
 				continue
 			}
-			if _, err := s.store.Create(epName, s.projectConfigDefault()); err != nil {
+			// 【2026-10-09】把用户在导入时选的渲染风格**写进每一集的项目参数**：
+			// ① 项目参数抽屉里能看见（否则"我选过"这件事在界面上没有痕迹）；
+			// ② 之后重跑「剧本分镜」时，那次会话的 hint 与导入时一致（不会又退回默认）。
+			// 用户没选（style.Styles 为空）时**不动默认值** —— 行为与改动前完全一致。
+			cfg := s.projectConfigDefault()
+			if len(style.Styles) > 0 {
+				cfg.Params.Script.Styles = style.Styles
+				cfg.Params.Script.StyleHint = style.Hint
+			}
+			if _, err := s.store.Create(epName, cfg); err != nil {
 				createFail++
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
 					Message: fmt.Sprintf("⚠ 分集 %d 创建失败(%v),已跳过", ep.Ep, err)})
@@ -402,11 +411,17 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		}
 		if ci == 0 {
 			fixSeries(res.book)
-			// art_style 优先(立项.json 指定的渲染风格);无则用 LLM 首段生成的风格
-			if artStyle != "" {
-				globalStyle = artStyle
+			// 风格来源两档（见 novels_style.go 的 importStyle）：**用户在导入时选的** 优先，
+			// 其次才是立项.json 的 art_style（老行为）；都没有才用 LLM 首段生成的风格。
+			// 播报必须说清**是哪一档** —— 说成"立项 art_style"而实际是用户选的，就是假播报。
+			if style.Style != "" {
+				globalStyle = style.Style
+				label := "🎨 视频渲染风格锁定(立项.json art_style):"
+				if style.From == "user" {
+					label = fmt.Sprintf("🎨 视频渲染风格锁定(你在导入时选的 %s):", style.presetNames())
+				}
 				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-					Message: "🎨 视频渲染风格锁定(立项.json art_style):" + clampRunes(artStyle, 80)})
+					Message: label + clampRunes(style.Style, 80)})
 			} else if gapStyle != "" {
 				// 自动补缺:风格沿用保留集,防重拆尾部风格漂移
 				globalStyle = gapStyle

@@ -76,7 +76,9 @@ func (s *Server) handleNovelSplit(w http.ResponseWriter, r *http.Request) {
 		name = safeSeries(name)
 		// 这条入口(手工粘贴文本拆集)拿不到小说目录,取不到外形锚表 —— 传空串,
 		// 行为与本轮改动之前一致(锚表只走"从小说库生产"那条有目录可查的路)。
-		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, "", "", nil)
+		// 风格：这条入口没有"导入时选择"（它连小说目录都没有），传零值 importStyle{}
+		// ⇒ Source="" 走老路（globalStyle 由 LLM 首段自定），行为与本轮改动之前一致。
+		series, _, err := s.splitNovelToProjects(context.Background(), name, in.Text, in.Max, importStyle{}, "", nil)
 		if err != nil {
 			jobSet(name, "failed", 0, "拆集失败:"+err.Error())
 		}

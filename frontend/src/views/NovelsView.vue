@@ -275,17 +275,56 @@ async function openDeliverable(d) {
   } catch (e) { ElMessage.error(e.message) } finally { readBusy.value = false }
 }
 
-// 一键视频创作(带重复验证,后端 409)
 const producing = ref(false)
-async function produce(n) {
+// 风格选择框（「视频制作」那一步）：presets 多选 + 自由文本附加要求。
+// 清单来自 G.metaStyles（后端 /api/meta 是单一真源）；后端没就绪时只留自由文本可用。
+const produceDlg = ref(null)   // { novel }
+const producePicks = ref([])   // 勾选的风格 key
+const produceHint = ref('')    // 风格附加要求（自由文本）
+
+// 一键视频创作(带重复验证,后端 409)
+//
+// 【2026-10-09 用户：「小说库导入视频制作时，用户需要选择对应的渲染风格，目前所有视频渲染风格
+// 都是一样的」】这一步原来是"确认框 → 直接开跑"，风格**写死**取小说目录 立项.json 的 art_style。
+// 现在先弹一个风格选择框（预设多选 + 自由文本），选择的串会由后端写进每集输入的
+// 「全局风格:」行（= 全片/跨集的权威风格，不是"提示模型"）；不选则保持老行为。
+function openProduce(n) {
+  produceDlg.value = { novel: n }
+  producePicks.value = []
+  produceHint.value = ''
+}
+
+
+// toggleProduceStyle 勾选/取消一个风格预设（多选组合，与项目参数抽屉同一语义）。
+function toggleProduceStyle(key) {
+  const i = producePicks.value.indexOf(key)
+  if (i >= 0) producePicks.value.splice(i, 1)
+  else producePicks.value.push(key)
+}
+// styleOptions 风格清单以后端 /api/meta 为**单一真源**（这里不再抄一份预设表，免得两边漂移）。
+const styleOptions = computed(() => G.metaStyles || [])
+
+async function confirmProduce() {
+  const n = produceDlg.value && produceDlg.value.novel
+  if (!n) return
+  const picks = producePicks.value.slice()
+  const hint = produceHint.value
+  produceDlg.value = null
+  await produce(n, picks, hint)
+}
+
+async function produce(n, styles, styleHint) {
+  const picked = (styles || []).length
+    ? `\n\n渲染风格：已选 ${styles.length} 项预设` + (styleHint ? ' + 附加要求' : '')
+    : '\n\n渲染风格：沿用原书/立项的风格串（不覆盖）'
   try {
     await ElMessageBox.confirm(
-      `将《${n.name}》整本拆集成多集短视频并自动开始批量产线?(拆集 2-6 分钟,日志有实时心跳)`,
+      `将《${n.name}》整本拆集成多集短视频并自动开始批量产线?(拆集 2-6 分钟,日志有实时心跳)` + picked,
       '一键视频创作', { confirmButtonText: '开始创作', cancelButtonText: '取消', type: 'info' })
   } catch { return }
   producing.value = true
   try {
-    const r = await api.novelProduce(n.path, 0)
+    const r = await api.novelProduce(n.path, 0, styles || [], styleHint || '')
     ElMessage.success(r.message || '已开始创作')
     dlg.value = null
     await refresh()
@@ -452,7 +491,7 @@ function viewCover(n) {
 // (`script` 分支 2026-09-27 先随入口隐藏而移除,同日按用户要求随入口一起回归。)
 function onCardCmd(cmd, n) {
   if (cmd === 'script') return produceScript(n)
-  if (cmd === 'produce') return produce(n)
+  if (cmd === 'produce') return openProduce(n)
   if (cmd === 'cover') return openCoverDialog(n)
   if (cmd === 'hide') return toggleHidden(n)
   if (cmd === 'remove') return removeNovel(n)
@@ -877,13 +916,49 @@ function onCardCmd(cmd, n) {
         <el-button @click="dlg = null">关闭</el-button>
         <el-tooltip content="整本拆集成多集短视频项目并自动批量产线(拆集 2-6 分钟)" placement="top">
         <el-button type="primary" :loading="producing" :disabled="dlg && dlg.novel.produced"
-                   @click="dlg && produce(dlg.novel)">
+                   @click="dlg && openProduce(dlg.novel)">
           {{ dlg && dlg.novel.produced ? '已创作(勿重复)' : '一键视频创作' }}
         </el-button>
         </el-tooltip>
       </template>
       <!-- 右下角拖动柄:改弹窗宽高(受窗口边界约束) -->
       <div class="novel-dlg-grip" :class="{ on: resizing }" title="拖动调整弹窗大小" @mousedown="startResize"></div>
+    </el-dialog>
+
+    <!-- 视频制作的**渲染风格选择**（2026-10-09 用户：「小说库导入视频制作时，用户需要选择对应的
+         渲染风格，目前所有视频渲染风格都是一样的」）。勾选的预设 + 附加要求会拼成一条权威风格串，
+         由后端写进每集输入的「全局风格:」行（全片/跨集一致），**不选 = 沿用原书/立项的风格串**。 -->
+    <el-dialog :model-value="!!produceDlg"
+               :title="produceDlg ? `视频制作 ·《${produceDlg.novel.name}》` : '视频制作'"
+               width="640px" top="8vh" append-to-body @close="produceDlg = null">
+      <div class="flex flex-col gap-3">
+        <div class="text-xs" style="color:var(--mx-text3)">
+          渲染风格决定**全片视觉基调**（角色定妆照与每一镜都按它渲染）。
+          不勾选 = 沿用这本书自带的风格串（改动前的行为）。
+        </div>
+        <div v-if="styleOptions.length" class="flex flex-wrap gap-2">
+          <el-button v-for="st in styleOptions" :key="st.key" size="small"
+                     :type="producePicks.includes(st.key) ? 'primary' : ''"
+                     @click="toggleProduceStyle(st.key)">{{ st.name }}</el-button>
+        </div>
+        <div v-else class="text-xs" style="color:var(--mx-text3)">
+          风格清单未就绪（后端 /api/meta 没返回预设）：可以先不选，或只用下面的附加要求描述风格。
+        </div>
+        <div class="flex flex-col gap-1">
+          <div class="text-xs">风格附加要求（自由文本，与上方预设叠加）</div>
+          <el-input v-model="produceHint" type="textarea" :rows="3"
+                    placeholder="例：冷暖对比要克制；夜景不要霓虹；皮肤要有真实纹理" />
+        </div>
+        <div class="text-xs" style="color:var(--mx-text3)">
+          已选 {{ producePicks.length }} 项预设{{ produceHint ? ' + 附加要求' : '' }}。
+          生成的风格串会写进每集输入的「全局风格:」行 —— 那是全片/跨集一致的**权威风格**，
+          不是"给模型的一句提示"。日志里会如实播报最终用的串。
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="produceDlg = null">取消</el-button>
+        <el-button type="primary" :loading="producing" @click="confirmProduce">开始创作</el-button>
+      </template>
     </el-dialog>
 
     <!-- 封面对比:左旧右新(挑封面就是做 A/B 判断,见 CoverCompare.vue)。

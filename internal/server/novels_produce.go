@@ -21,6 +21,11 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Path string `json:"path"`
 		Max  int    `json:"max_episodes"`
+		// 【2026-10-09】导入制作时的**渲染风格选择**（前端「视频制作」对话框）：
+		// 勾了预设/写了附加要求 ⇒ 它成为本剧的权威风格串（覆盖立项 art_style）；
+		// 都不给 ⇒ 保持老行为（立项 art_style 优先，其次由分镜会话自定）。
+		Styles    []string `json:"styles"`
+		StyleHint string   `json:"style_hint"`
 	}
 	if err := readBody(r, &in); err != nil || strings.TrimSpace(in.Path) == "" {
 		writeErr(w, 400, fmt.Errorf("请提供小说路径"))
@@ -143,6 +148,17 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// 【2026-10-09 用户：「小说库导入视频制作时，用户需要选择对应的渲染风格，目前所有视频渲染风格
+	// 都是一样的」】这一步原来**没有选择入口**：风格写死取立项 art_style。现在用户在「视频制作」
+	// 对话框里勾的预设/附加要求**优先**，而且是**确定性**的 —— 见 novels_style.go：
+	// 拼成权威串 → 写进每集输入的平台自有行「全局风格:」→ director.enforceStyleLock 逐镜覆写
+	// plan.Style。也就是说"选了风格"不会只当提示词里的一句话交给模型自觉。
+	style := resolveImportStyle(artStyle, in.Styles, in.StyleHint)
+	if len(style.Unknown) > 0 {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 你选的渲染风格里有平台不认的项(%s):已忽略,其余照选",
+				strings.Join(style.Unknown, "、"))})
+	}
 	// 查重:同书系列/同名项目已存在
 	if s.novelProduced(name) {
 		// 已有系列:放行进入补缺模式——重拆按集号去重,已有分集不动,只建缺失;
@@ -187,7 +203,7 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		_, _, err := s.splitNovelToProjects(splitCtx, name, text, maxEp, artStyle, sheet, func(series string, newEps []string) {
+		_, _, err := s.splitNovelToProjects(splitCtx, name, text, maxEp, style, sheet, func(series string, newEps []string) {
 			seriesFinal = series
 			if prodP == nil {
 				prodP = prodStart(series, splitCancel) // 注册生产者(含 cancel:停止按钮可中断拆集)

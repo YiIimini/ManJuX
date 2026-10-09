@@ -1808,6 +1808,40 @@ func composeStyleHint(styles []string, freeHint string) string {
 	return out
 }
 
+// ComposeStyleHint 导出给 server 层用（2026-10-09 用户：「小说库导入视频制作时，用户需要选择
+// 对应的渲染风格，目前所有视频渲染风格都是一样的」）。
+//
+// 语义与内部一致：把用户勾选的风格预设（可多选组合）+ 自由文本，拼成一条**确定的风格串** ——
+// 这条串会写进每集输入的平台自有行「全局风格:」，再由 director.enforceStyleLock 逐镜覆写 plan.Style。
+// 也就是说：**用户的选择是权威，不是"提示模型"**（AGENTS.md：能确定性做到的事不要让模型自觉）。
+func ComposeStyleHint(styles []string, freeHint string) string {
+	return composeStyleHint(styles, freeHint)
+}
+
+// UnknownStyleKeys 返回 styles 里平台不认的 key（供如实点名；不静默吞掉用户的选择）。
+func UnknownStyleKeys(styles []string) []string {
+	var out []string
+	for _, k := range styles {
+		if _, ok := StylePresets[k]; !ok {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// StylePresetNames 把 key 译成中文显示名（播报用；未知 key 原样返回）。
+func StylePresetNames(styles []string) []string {
+	var out []string
+	for _, k := range styles {
+		if p, ok := StylePresets[k]; ok {
+			out = append(out, p.Name)
+			continue
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
 // identityLockExcerpt 取卡里 `IDENTITY LOCK` 那一句（"这个人长什么样"的权威原句）。
 func identityLockExcerpt(prompt string) string {
 	const marker = "IDENTITY LOCK"

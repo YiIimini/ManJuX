@@ -145,7 +145,11 @@ export const api = {
   importPlan: (id, plan) => req('POST', `/api/projects/${encodeURIComponent(id)}/import-plan`, { plan }),
   // 角色卡编辑(目前用于改**实体类型**:人/物/灵宠/妖兽/无实体/Q版 —— 决定走哪套渲染方法)
   putCharacter: (id, payload) => req('PUT', `/api/projects/${encodeURIComponent(id)}/character`, payload),
-  novelProduce: (path, max) => req('POST', '/api/novels/produce', { path, max_episodes: max }),
+  // styles/styleHint：导入制作时选的渲染风格（预设 key 多选 + 自由文本）。
+  // 后端据此拼出**权威风格串**写进每集输入的「全局风格:」行；空数组 = 沿用原书/立项的风格串。
+  novelProduce: (path, max, styles, styleHint) => req('POST', '/api/novels/produce', {
+    path, max_episodes: max, styles: styles || [], style_hint: styleHint || '',
+  }),
   novelProduceScript: (path) => req('POST', '/api/novels/produce-script', { path }),
   // 封面重做(可配置):config 取初始值 → redo 出 N 张**候选** → apply 挑定后才落盘
   novelCoverConfig: (path) => req('GET', '/api/novels/cover-config?path=' + encodeURIComponent(path)),

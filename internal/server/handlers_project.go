@@ -888,6 +888,11 @@ func (s *Server) putParams(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, err)
 		return
 	}
+	// 【2026-10-09 用户：「所有视频渲染风格都是一样的」】用户在项目参数里显式选了渲染风格 ⇒
+	// 必须让它**真的生效**：分镜阶段每轮都按输入里那行「全局风格:」代码级覆写 plan.Style
+	// （`director.enforceStyleLock`）—— 不同步这一行，用户的选择会被旧串压回去。
+	// 这一行是**平台自己写的**（建集时写的），不是用户的正文/剧本。详见 novels_style.go。
+	s.syncGlobalStyleFromParams(id, in)
 	writeJSON(w, 200, p.Config.Params)
 }
 
