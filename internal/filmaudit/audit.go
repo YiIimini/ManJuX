@@ -160,19 +160,31 @@ func Audit(in Input) []Finding {
 	out = append(out, seamFindings(p, in)...)
 
 	// ── D. 结构：把既有判据汇总进同一份报告 ────────────────────────────────────
-	warns := 0
+	//
+	// 【2026-10-09 修：`fail` 不许被截掉】第一版把非 info 的结论**一刀切留前 12 条**，
+	// 而列表顺序是 `ValidatePlan` 的产出顺序 —— 真机上就出现了 ⛔ 被 12 条 ⚠ 挤到窗口之外：
+	// 体检跑出来 ⛔ 少了一条，用户看到的"必须处理"比实际少。现在分两遍：
+	// **⛔ 一条不少**，只对 ⚠ 截断（并在 info 里如实说少了几条）。
+	var hardFails, softWarns []Finding
 	for _, it := range project.ValidatePlan(p) {
-		if it.Level == "info" {
+		switch it.Level {
+		case "info":
 			continue
-		}
-		warns++
-		if warns <= 12 {
-			out = append(out, Finding{Level: it.Level, Where: it.Where, Msg: it.Msg})
+		case "fail":
+			hardFails = append(hardFails, Finding{Level: it.Level, Where: it.Where, Msg: it.Msg})
+		default:
+			softWarns = append(softWarns, Finding{Level: it.Level, Where: it.Where, Msg: it.Msg})
 		}
 	}
-	if warns > 12 {
+	out = append(out, hardFails...)
+	const maxSoftWarns = 12
+	if len(softWarns) > maxSoftWarns {
+		out = append(out, softWarns[:maxSoftWarns]...)
 		out = append(out, Finding{Level: "info", Where: "plan",
-			Msg: fmt.Sprintf("另有 %d 条契约判据结论（同类聚合见「剧本分镜」阶段的播报）", warns-12)})
+			Msg: fmt.Sprintf("另有 %d 条契约判据结论（同类聚合见「剧本分镜」阶段的播报）",
+				len(softWarns)-maxSoftWarns)})
+	} else {
+		out = append(out, softWarns...)
 	}
 	sortFindings(out)
 	return out

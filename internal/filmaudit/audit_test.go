@@ -211,3 +211,39 @@ func TestCountInFrameMarkedOffscreenOnRealPlan(t *testing.T) {
 		t.Error("镜 5 的说话人不在本镜 ⇒ 必须仍被认成画外音")
 	}
 }
+
+// ⛔ 一条都不许被截掉（2026-10-09，这条缺陷是**体检咬出我自己**的）。
+//
+// 第一版把 `ValidatePlan` 的非 info 结论**一刀切留前 12 条**，而顺序是它的产出顺序 ——
+// 真机上就出现了 ⛔ 被 12 条 ⚠ 挤出窗口：体检报的“必须处理”比实际少。判据直接用
+// “体检报的 ⛔ 数 == 契约门报的 ⛔ 数”，并先确认这一份夹具真的会触发截断（否则是空断言）。
+func TestAuditNeverTruncatesFails(t *testing.T) {
+	// 15 镜、每镜时长 0 秒（⇒ 每镜一条 fail「超出 H3 合法区间」），字段大量留空（⇒ 一堆 warn）。
+	p := &project.Plan{Title: "T", Style: "x", Scenes: []project.Scene{{ID: "scene_a", Name: "走廊"}}}
+	for i := 1; i <= 15; i++ {
+		p.Shots = append(p.Shots, project.Shot{
+			ID: i, Scene: "scene_a", Duration: 0,
+			H3Prompt: "[Shot 1] A girl stands at a window.",
+		})
+	}
+	wantFail, wantWarn := 0, 0
+	for _, it := range project.ValidatePlan(p) {
+		switch it.Level {
+		case "fail":
+			wantFail++
+		case "warn":
+			wantWarn++
+		}
+	}
+	if wantFail == 0 || wantWarn <= 12 {
+		t.Fatalf("夹具没触发截断（fail=%d warn=%d）—— 这条判据就成了空断言，先修夹具", wantFail, wantWarn)
+	}
+	fail, warn, _ := CountLevels(Audit(Input{Plan: p}))
+	if fail != wantFail {
+		t.Errorf("体检报的 ⛔ 是 %d 条，契约门是 %d 条 —— **⛔ 一条都不许被截掉**（用户看到的必须是一致的）",
+			fail, wantFail)
+	}
+	if warn > wantWarn {
+		t.Errorf("体检报的 ⚠ 比契约门还多？(%d > %d)", warn, wantWarn)
+	}
+}
