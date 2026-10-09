@@ -1,8 +1,11 @@
 package compose
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -66,7 +69,7 @@ func TestClampFadeSecBounds(t *testing.T) {
 // 旧实现只在字幕那边判 `d > fd`,画面与音轨各按各的走 —— 短镜接缝上三者彻底分家。
 func TestSeamFadesNeverExceedShots(t *testing.T) {
 	durations := []float64{4, 0.6, 6, 0.3}
-	fades := seamFades(transFade, durations, 2.0)
+	fades := seamFades(transFade, durations, 2.0, nil)
 	if len(fades) != len(durations) {
 		t.Fatalf("fades 应与 durations 等长(便于三处按下标取用),实际 %d vs %d", len(fades), len(durations))
 	}
@@ -83,17 +86,17 @@ func TestSeamFadesNeverExceedShots(t *testing.T) {
 		t.Errorf("接缝 0 应被 0.6s 的短镜压到 0.3,实际 %.3f", fades[0])
 	}
 	// 正常参数(0.5s 转场、≥4s 镜头)必须与旧行为逐字一致:min 那一项不生效
-	normal := seamFades(transFade, []float64{4, 4, 4}, 0.5)
+	normal := seamFades(transFade, []float64{4, 4, 4}, 0.5, nil)
 	for i := 0; i < 2; i++ {
 		if math.Abs(normal[i]-0.5) > 1e-9 {
 			t.Errorf("常规参数下接缝 %d 应原样 0.5,实际 %.3f", i, normal[i])
 		}
 	}
-	if got := seamFades(transCut, durations, 2.0); got[0] != 0 || got[1] != 0 {
+	if got := seamFades(transCut, durations, 2.0, nil); got[0] != 0 || got[1] != 0 {
 		t.Errorf("硬切路径一个接缝都不该让出重叠,实际 %v", got)
 	}
 	// 退化源片(时长≈0)时下限不能反超可用的一半,否则 starts 会倒退
-	degen := seamFades(transFade, []float64{0.02, 0.02}, 1.0)
+	degen := seamFades(transFade, []float64{0.02, 0.02}, 1.0, nil)
 	if degen[0] > 0.01+1e-9 {
 		t.Errorf("退化源片(0.02s)的重叠 %.4f 超过了可用的一半", degen[0])
 	}
@@ -107,7 +110,7 @@ func TestSeamFadesNeverExceedShots(t *testing.T) {
 func TestShotStartsMatchPictureOverlap(t *testing.T) {
 	durations := []float64{4, 0.6, 6, 3.3}
 	for _, fd := range []float64{0.1, 0.5, 2.0, 3.0} {
-		fades := seamFades(transFade, durations, fd)
+		fades := seamFades(transFade, durations, fd, nil)
 		starts := shotStarts(durations, fades)
 		var sumD, sumF float64
 		for i := range durations {
@@ -141,7 +144,7 @@ func TestShotStartsMatchPictureOverlap(t *testing.T) {
 // 音轨比画面长,且越往后累积越多,全程还不报错。
 func TestSeamAudioWindowsMatchPictureOverlap(t *testing.T) {
 	durations := []float64{4, 0.6, 6}
-	fades := seamFades(transFade, durations, 1.0)
+	fades := seamFades(transFade, durations, 1.0, nil)
 	cuts := []float64{fades[0] / 3, fades[1] / 2, 0}
 	heads, tails := seamAudioWindows(durations, fades, cuts)
 	for i := 0; i+1 < len(durations); i++ {
@@ -300,3 +303,92 @@ func assSeconds(s string) float64 {
 }
 
 var errNoCue = fmt.Errorf("字幕里没有可解析的时间轴")
+
+// 叠化只用在**换场**处：同一场次内部的接缝一律硬切（2026-10-09 用户：「分镜直接拼接画面很明显」）。
+//
+// 真机取证：那一集 11 镜只有 2 个场次（镜 1–5 冰舱、镜 6–11 舱门），10 处接缝**全叠化** ——
+// 同场两镜是同一时刻的连续动作，叠化把两帧不同姿态的人像糊成重影，比硬切显眼得多；
+// 而平台自己的口径就写着「不同场景之间用渐隐渐显」（transition.go / 分镜规则）。
+func TestSeamFadesOnlyBetweenScenes(t *testing.T) {
+	durations := []float64{8, 8, 8, 8}
+	same := []bool{true, true, false} // 前两处同场、最后一处换场
+	fades := seamFades(transFade, durations, 0.5, same)
+	if fades[0] > minSeamFade+1e-9 || fades[1] > minSeamFade+1e-9 {
+		t.Errorf("同一场次内部的接缝不许有可见叠化（只留 1 帧 %.4fs），实际 %v", minSeamFade, fades)
+	}
+	if math.Abs(fades[2]-0.5) > 1e-9 {
+		t.Errorf("换场处的接缝该叠化 0.5s，实际 %v", fades)
+	}
+	// 缺场景信息（nil）⇒ 保持旧行为（全叠化）：不拿猜出来的东西去改画面
+	if got := seamFades(transFade, durations, 0.5, nil); got[0] != 0.5 || got[1] != 0.5 {
+		t.Errorf("没有场景信息时该保持旧行为（全叠化），实际 %v", got)
+	}
+	if got := seamFades(transCut, durations, 0.5, same); got[2] != 0 {
+		t.Errorf("转场=cut 时任何接缝都不许有重叠，实际 %v", got)
+	}
+
+	// 场次判定只吃方案自己的 `scene` 字段（同场 / 换场 / 缺场景不猜）
+	p := &project.Plan{Shots: []project.Shot{
+		{ID: 1, Scene: "scene_ice_hold"}, {ID: 2, Scene: "scene_ice_hold"},
+		{ID: 3, Scene: "scene_hold_door"}, {ID: 4, Scene: ""},
+	}}
+	flags := sceneSeamFlags(p)
+	want := []bool{true, false, false}
+	if len(flags) != len(want) {
+		t.Fatalf("接缝数该是 %d，实际 %v", len(want), flags)
+	}
+	for i := range want {
+		if flags[i] != want[i] {
+			t.Errorf("第 %d 处接缝该是 同场=%v，实际 %v（全部 %v）", i+1, want[i], flags[i], flags)
+		}
+	}
+	if n := countSameSceneSeams(flags); n != 1 {
+		t.Errorf("同场接缝该是 1 处，实际 %d", n)
+	}
+	if got := sceneSeamFlags(&project.Plan{Shots: []project.Shot{{ID: 1}, {ID: 2}}}); got[0] {
+		t.Error("两镜都没写场景时不许判成同场（那是猜）")
+	}
+	if got := sceneSeamFlags(nil); got != nil {
+		t.Errorf("没有方案时该返回 nil，实际 %v", got)
+	}
+}
+
+// 真机场景边界（夹具 = 盘上那份 plan.json 逐字拷进 project/testdata）：
+// 11 镜只有 2 个场次（镜 1–5 冰舱 / 镜 6–11 舱门）⇒ **8 处同场接缝该硬切**、只有 1 处换场叠化
+// （另外两处是首镜前后，不构成接缝）。这正是用户报「分镜直接拼接画面很明显」的地方。
+func TestSceneSeamsOnRealPlan(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "project", "testdata", "plan_real_voiceover.json"))
+	if err != nil {
+		t.Fatalf("读不到真机夹具：%v", err)
+	}
+	var p project.Plan
+	if err := json.Unmarshal(raw, &p); err != nil {
+		t.Fatalf("真机夹具不是合法方案：%v", err)
+	}
+	if len(p.Shots) != 11 {
+		t.Fatalf("真机夹具该是 11 镜，实际 %d", len(p.Shots))
+	}
+	flags := sceneSeamFlags(&p)
+	if len(flags) != 10 {
+		t.Fatalf("11 镜该有 10 处接缝，实际 %d", len(flags))
+	}
+	if n := countSameSceneSeams(flags); n != 9 {
+		t.Errorf("真机只换了一次场（镜 5→6）⇒ 同场接缝该是 9 处，实际 %d", n)
+	}
+	fades := seamFades(transFade, []float64{8, 8, 8, 8, 8, 8, 8, 8, 8, 8, 8}, 0.5, flags)
+	fadeCount := 0
+	for _, f := range fades {
+		if f > minSeamFade*2 { // 只有换场那处有"看得见"的叠化
+			fadeCount++
+		}
+	}
+	if fadeCount != 1 {
+		t.Errorf("整片只该在换场那处叠化一次，实际 %d 处：%v", fadeCount, fades)
+	}
+	if fades[4] <= 0 {
+		t.Errorf("第 5 处接缝（镜 5→6）是换场，必须叠化，实际 %v", fades)
+	}
+	if fades[0] > minSeamFade+1e-9 || fades[9] > minSeamFade+1e-9 {
+		t.Errorf("同场接缝不许有可见叠化（1 帧内），实际 %v", fades)
+	}
+}

@@ -227,8 +227,20 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	// 字幕 starts / 音轨接缝)全部读下面这一份 fades,判据分裂无处可生。
 	trans := effectiveTransition(p.Transition)
 	fd, fadeClamped := clampFadeSec(p.FadeSec)
-	fades := seamFades(trans, durations, fd)
+	// **同一场次内部的接缝一律硬切**（2026-10-09 用户：「分镜直接拼接画面很明显」）：
+	// 叠化是"换场"的语言（平台自己的口径就写在 transition.go 与分镜规则里：「不同场景之间用渐隐渐显」），
+	// 同场之内两镜是同一时刻的连续动作 —— 给它们叠化，等于把两帧不同姿态的人像**糊在一起**
+	// （观众看到的是"重影/闪烁"，比硬切显眼得多）。真机那一集 11 镜只有 2 个场次，
+	// 10 处接缝全叠化：同一场里那 9 处本该硬切的地方都在糊。
+	sceneSeams := sceneSeamFlags(plan)
+	fades := seamFades(trans, durations, fd, sceneSeams)
 	starts := shotStarts(durations, fades)
+	// 同场硬切了几处如实播报（否则用户按"全片叠化"去理解画面，会以为自己参数没生效）。
+	if n := countSameSceneSeams(sceneSeams); n > 0 && trans == transFade && onProgress != nil {
+		onProgress(3, fmt.Sprintf("同场次内部 %d 处接缝按**硬切**（叠化只用在换场处）—— "+
+			"同场两镜是同一时刻的连续动作，叠化会把两帧不同姿态的人像糊成重影、比硬切显眼得多。"+
+			"这条行为按平台口径固定（叠化=换场的语言），没有开关", n))
+	}
 	// 参数被改写就如实播报:静默改参数与"参数不生效"是同一类缺陷的两面。
 	for _, note := range transitionNotes(p.Transition, p.FadeSec, fd, fadeClamped) {
 		if onProgress != nil {
@@ -300,7 +312,16 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 				tracks[i].Env = envs[i]
 			}
 		}
-		cp := planCues(plan, starts, durations, tracks)
+		// 第二个证据源：逐镜 **ASR 转写**（质检那一步就写在剪辑旁 `<clip>.asr.txt`），
+		// 里面是**实测的发声时间**。真机那一集包络这一档对每镜都退化，字幕因此按整镜铺开
+		// （镜 1 挂 6.2 秒、真实发声只有 1 秒）—— 用户报的「字幕显示存在延迟」就是它。
+		asrSpans := make([][]cueSpan, len(clips))
+		for i := range asrSpans {
+			if i < len(clips) {
+				asrSpans[i] = asrSpansOf(clips[i])
+			}
+		}
+		cp := planCues(plan, starts, durations, tracks, asrSpans)
 		cues = &cp
 		res.AudioNotes = append(res.AudioNotes, cp.notes...)
 	}
@@ -539,14 +560,26 @@ func transitionNotes(rawTrans string, rawSec, fd float64, clamped bool) []string
 //
 // 正常参数(fd ≤ 0.5s、镜长 ≥ 4s)下 min(一半) 恒等于 fd,行为与旧实现一致;
 // 只有病态参数(转场长于半镜)才会被压下来。
-func seamFades(trans string, durations []float64, fd float64) []float64 {
+func seamFades(trans string, durations []float64, fd float64, sameScene []bool) []float64 {
 	fades := make([]float64, len(durations))
 	if trans != transFade {
 		return fades
 	}
 	for i := 0; i+1 < len(durations); i++ {
+		// **同一场次内部的接缝不给可见的叠化**（2026-10-09 用户：「分镜直接拼接画面很明显」）。
+		//
+		// 叠化是"换场"的语言：同场两镜是同一时刻的连续动作，给它们叠化就是把两帧不同姿态的
+		// 人像糊成重影 —— 观众看到的"拼接痕迹"恰恰是叠化**造出来**的，硬切反而看不见。
+		//
+		// 【为什么是 1 帧而不是 0】xfade **不接受 0 时长**（`minSeamFade` 的存在就是这个原因：
+		// 0 会让它报错）。1/24 秒里两幅画面各半 —— 肉眼看就是硬切，而拼接链的几何一个字都不用改
+		// （xfade 的 offset、字幕起点、音轨窗口读的还是同一份 fades）。
+		use := fd
+		if i < len(sameScene) && sameScene[i] {
+			use = minSeamFade
+		}
 		half := math.Min(durations[i], durations[i+1]) / 2
-		f := math.Min(fd, half)
+		f := math.Min(use, half)
 		if f < minSeamFade {
 			// 连一帧的叠化都排不出来:只能给到可用的一半 —— 绝不能超过它,
 			// 否则 starts 会倒退、xfade 的 offset 会变成负数。
@@ -555,6 +588,34 @@ func seamFades(trans string, durations []float64, fd float64) []float64 {
 		fades[i] = f
 	}
 	return fades
+}
+
+// sceneSeamFlags 逐接缝判"这两镜是不是**同一个场次**"（true = 同场 ⇒ 硬切）。
+//
+// 缺方案 / 缺场景标注（老包、空 scene）时一律 false —— 那种情况下没有依据说"这是同场连续动作"，
+// 就保持原有行为（叠化），不拿猜出来的东西去改画面。
+func sceneSeamFlags(plan *project.Plan) []bool {
+	if plan == nil || len(plan.Shots) < 2 {
+		return nil
+	}
+	out := make([]bool, 0, len(plan.Shots)-1)
+	for i := 0; i+1 < len(plan.Shots); i++ {
+		a := strings.TrimSpace(plan.Shots[i].Scene)
+		b := strings.TrimSpace(plan.Shots[i+1].Scene)
+		out = append(out, a != "" && strings.EqualFold(a, b))
+	}
+	return out
+}
+
+// countSameSceneSeams 数有几处接缝是"同场次"（播报用）。
+func countSameSceneSeams(flags []bool) int {
+	n := 0
+	for _, f := range flags {
+		if f {
+			n++
+		}
+	}
+	return n
 }
 
 // shotStarts 每镜在成片时间轴上的真实起点 —— 字幕必须直接吃这个数组。

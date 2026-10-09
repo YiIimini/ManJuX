@@ -536,8 +536,8 @@ func TestComposeAlignsSubtitleToRealSpeech(t *testing.T) {
 		t.Fatalf("合成失败: %v", err)
 	}
 	notes := strings.Join(res.AudioNotes, "|")
-	if !strings.Contains(notes, "1/1 镜按真实人声对齐") {
-		t.Errorf("应如实回显「按真实人声对齐」,实际播报:%q", notes)
+	if !strings.Contains(notes, "1/1 镜按**人声包络**逐句对齐") {
+		t.Errorf("应如实回显「按人声包络逐句对齐」,实际播报:%q", notes)
 	}
 
 	raw, err := os.ReadFile(res.SRTPath)

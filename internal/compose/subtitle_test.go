@@ -2,6 +2,8 @@ package compose
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,9 +36,9 @@ func TestAlignCuesUsesRealSpeech(t *testing.T) {
 	spans := []cueSpan{{Start: 1.0, End: 2.0}, {Start: 4.0, End: 5.5}, {Start: 7.5, End: 8.5}}
 	tr := speechTrack{Env: synthEnv(d, spans), From: 0, To: d}
 
-	got, ok := alignCues(0, d, tr, 3)
-	if !ok {
-		t.Fatal("三句台词对三个发声段,必须判为已对齐")
+	got, src := alignCues(0, d, tr, nil, nil, 3)
+	if src != cueEnvelope {
+		t.Fatalf("三句台词对三个发声段,必须判为按人声包络对齐,实际 %v", src)
 	}
 	if len(got) != 3 {
 		t.Fatalf("应给出 3 条落点,实际 %d", len(got))
@@ -67,9 +69,9 @@ func TestAlignCuesUsesRealSpeech(t *testing.T) {
 func TestAlignCuesFallsBackOnCountMismatch(t *testing.T) {
 	const d = 10.0
 	tr := speechTrack{Env: synthEnv(d, []cueSpan{{Start: 1, End: 2}, {Start: 5, End: 6}}), From: 0, To: d}
-	got, ok := alignCues(0, d, tr, 3)
-	if ok {
-		t.Fatal("两段人声对三句台词必须判为未对齐")
+	got, src := alignCues(0, d, tr, nil, nil, 3)
+	if src != cueShotWindow {
+		t.Fatal("两段人声对三句台词、且没有 ASR 可依时必须判为未对齐")
 	}
 	want := fallbackCues(0, d, 3)
 	for i := range want {
@@ -84,9 +86,9 @@ func TestAlignCuesFallsBackOnCountMismatch(t *testing.T) {
 func TestAlignCuesFallsBackWithoutEnvelope(t *testing.T) {
 	const d = 8.0
 	for _, tr := range []speechTrack{{From: 0, To: d}, {Env: &audio.Envelope{Hop: audio.Hop}, From: 0, To: d}} {
-		got, ok := alignCues(2.0, d, tr, 2)
-		if ok {
-			t.Fatal("没有可用包络时不能声称已对齐")
+		got, src := alignCues(2.0, d, tr, nil, nil, 2)
+		if src != cueShotWindow {
+			t.Fatal("没有可用包络、也没有 ASR 时不能声称已对齐")
 		}
 		want := fallbackCues(2.0, d, 2)
 		if math.Abs(got[0].Start-want[0].Start) > 1e-9 || math.Abs(got[1].Start-want[1].Start) > 1e-9 {
@@ -135,15 +137,15 @@ func TestPlanCuesNotes(t *testing.T) {
 		// 第 3 镜:包络解不出来 → 回退
 		{From: 0, To: 10},
 	}
-	cp := planCues(plan, starts, durations, tracks)
+	cp := planCues(plan, starts, durations, tracks, nil)
 	notes := strings.Join(cp.notes, "|")
-	if !strings.Contains(notes, "1/3 镜按真实人声对齐") {
+	if !strings.Contains(notes, "1/3 镜按**人声包络**逐句对齐") {
 		t.Errorf("应如实回显对齐比例,实际 %q", notes)
 	}
 	if !strings.Contains(notes, "第 2 镜的人声段落数与台词句数不符") {
 		t.Errorf("条数不符要单独点名,实际 %q", notes)
 	}
-	if !strings.Contains(notes, "第 3 镜没有可用的人声包络") {
+	if !strings.Contains(notes, "第 3 镜") || !strings.Contains(notes, "ASR 也没转出任何段落") {
 		t.Errorf("包络缺失要单独点名,实际 %q", notes)
 	}
 	// 第 1 镜的落点确实吃到了人声(而不是镜内均分的 1.0)
@@ -169,8 +171,8 @@ func TestCuePlanDrivesBothSubtitles(t *testing.T) {
 	starts := []float64{0}
 	durations := []float64{10}
 	tracks := []speechTrack{{Env: synthEnv(10, []cueSpan{{Start: 4, End: 5}}), From: 0, To: 10}}
-	cp := planCues(plan, starts, durations, tracks)
-	if !strings.Contains(strings.Join(cp.notes, "|"), "1/1 镜按真实人声对齐") {
+	cp := planCues(plan, starts, durations, tracks, nil)
+	if !strings.Contains(strings.Join(cp.notes, "|"), "1/1 镜按**人声包络**逐句对齐") {
 		t.Fatalf("测试前提没成立(没对齐):%v", cp.notes)
 	}
 
@@ -235,5 +237,61 @@ func TestSceneCaptionEvents(t *testing.T) {
 	}
 	if !strings.Contains(ass, "Style: Caption,") {
 		t.Error("ASS 里要有 Caption 样式")
+	}
+}
+
+// 字幕落点第二档：**ASR 转写段落**（2026-10-09 用户：「对话的字幕显示存在延迟」）。
+//
+// 夹具数字取真机《我捡的团子·第01集》：镜 1 的 ASR 只转出一段 `[3.50-4.50] 活的。`（1 秒），
+// 而旧行为把**整镜**（7.9 秒）当窗口 ⇒ 字幕挂 0.84–7.04（**6.2 秒**），观众看到的就是
+// "字幕一直挂在那儿、那句话早就说完了"。
+func TestAlignCuesUsesASRSegments(t *testing.T) {
+	const d = 7.9
+	tr := speechTrack{From: 0, To: d} // 真机那一集：包络这一档对每镜都退化了
+	asr := []cueSpan{{Start: 3.50, End: 4.50}}
+	got, src := alignCues(0, d, tr, asr, []int{4}, 1)
+	if src != cueASR {
+		t.Fatalf("一段 ASR 对一句台词 ⇒ 必须判为按 ASR 对齐，实际 %v", src)
+	}
+	if math.Abs(got[0].Start-3.42) > 0.06 || math.Abs(got[0].End-4.65) > 0.06 {
+		t.Errorf("字幕该贴在 3.50–4.50 上（前后留白各 %.2f/%.2f），实际 %.2f–%.2f",
+			cueLead, cueTrail, got[0].Start, got[0].End)
+	}
+	old := fallbackCues(0, d, 1)
+	if math.Abs(got[0].End-old[0].End) < 1 {
+		t.Errorf("落点仍与镜头级窗口重合（说明没吃 ASR）：新 %.2f vs 旧 %.2f", got[0].End, old[0].End)
+	}
+
+	// 条数不符（真机镜 10：两句台词、ASR 只转出一段 0.18–9.27）⇒ 只把窗口收进人声区间、句内按字数推。
+	asrLong := []cueSpan{{Start: 0.18, End: 9.27}}
+	weights := cueWeights([]string{"那叫糖球吧。", "行。但得记着，船上剩的暖不够三天。"})
+	got2, src2 := alignCues(0, 9.2, speechTrack{From: 0, To: 9.2}, asrLong, weights, 2)
+	if src2 != cueASRWindow {
+		t.Fatalf("条数不符但有 ASR ⇒ 该走「只收窗口」那一档，实际 %v", src2)
+	}
+	if got2[0].Start < 0.18-1e-9 || got2[1].End > 9.27+1e-9 {
+		t.Errorf("字幕不许越出 ASR 的人声区间：%+v", got2)
+	}
+	if got2[0].End-got2[0].Start >= got2[1].End-got2[1].Start {
+		t.Errorf("句内该按**字数**推：第一句 6 字该比第二句 17 字短，实际 %+v", got2)
+	}
+}
+
+// asrSpansOf 从剪辑旁的 `<clip>.asr.txt` 读（质检那一步写的就是它）。
+// 读不到 ⇒ nil（"没有证据"，不是"这一镜没台词"）。
+func TestASRSpansFromClipSidecar(t *testing.T) {
+	dir := t.TempDir()
+	clip := filepath.Join(dir, "shot_001.mp4")
+	sidecar := strings.TrimSuffix(clip, ".mp4") + ".asr.txt"
+	body := "# shot_001.mp4\n# model=medium lang=zh prob=1.00 dur=7.9s segs=1\n[  3.50-  4.50] 活的。\n"
+	if err := os.WriteFile(sidecar, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	spans := asrSpansOf(clip)
+	if len(spans) != 1 || math.Abs(spans[0].Start-3.5) > 1e-9 || math.Abs(spans[0].End-4.5) > 1e-9 {
+		t.Errorf("该从 <clip>.asr.txt 读出 [3.50,4.50]，实得 %+v", spans)
+	}
+	if got := asrSpansOf(filepath.Join(dir, "nope.mp4")); got != nil {
+		t.Errorf("没有转写文件时该返回 nil（没有证据 ≠ 没台词），实得 %+v", got)
 	}
 }

@@ -680,6 +680,32 @@ func checkCoverage(p *Plan, add func(level, where, format string, a ...any)) {
 						"（实测第 02 集：唯一的夜戏整场丢掉，整集八成镜头挤在同一个户外白日场景里）")
 			}
 		}
+		// ── 说话人绑定：整集**一句画内台词都没有**（2026-10-09 用户：「旁白说话角色未对齐
+		// （另一人说话，其它角色动嘴）」）────────────────────────────────────────────
+		//
+		// 逐句的"画外音"已在装配点按出场名单归一（project.markOffscreenSpeakers /
+		// OffScreenSpeakers）。这里只判**整集级形态**：一句"画面里的人在说"都没有 ⇒
+		// 观众整集看不到谁在开口，声音与口型必然对不上。
+		// 真机那一版正是这个形态：19 句台词**全被模型标成 os=true**（其中 18 句的说话人
+		// 就在本镜出场名单里）—— 只要平台还按模型的自述走，这一集就会稳定长成这样。
+		spoken, inFrame := 0, 0
+		for _, sh := range p.Shots {
+			for _, l := range sh.Dialogue {
+				if strings.TrimSpace(l.Text) == "" || IsVoiceoverSpeaker(l.Speaker) {
+					continue
+				}
+				spoken++
+				if !l.OS {
+					inFrame++
+				}
+			}
+		}
+		if spoken >= 3 && inFrame == 0 {
+			add("warn", "plan.shots",
+				"整集 %d 句台词**全是画外音**，没有一句是画面里的人在说 —— 观众一直看不到谁在开口，"+
+					"声音与口型必然对不上（模型把画内台词也标成画外音时就是这个形态；"+
+					"真机那一集 19 句全被标成 os=true）。至少要有一批镜让角色**在画面里**把话说完", spoken)
+		}
 
 		// H3 官方格式（§1.5 的可机检三条）：聚合报一次，附前几条人话说明
 		var fmtHits []string

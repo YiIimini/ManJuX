@@ -3,8 +3,10 @@ package compose
 import (
 	"fmt"
 	"math"
+	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/asr"
 	"github.com/YiIimini/ManJuX/internal/audio"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/project"
@@ -111,28 +113,140 @@ func fallbackCues(filmStart, d float64, count int) []cueSpan {
 	return out
 }
 
-// alignCues 求某镜 count 条字幕的落点(相对成片起点,秒);第二个返回值表示是否真的
-// 落在了真实人声上(false = 已回退镜头级窗口)。
+// ── 字幕落点的四档来源（2026-10-09 用户：「对话的字幕显示存在延迟」）──────────────
 //
-// 为什么条数不符时不"按比例摊":把 3 句台词摊到 2 个人声段上,落点看着合理、实际每句
-// 都错位,而且不会有人发现。宁可回退到与旧版一致的窗口,并把退化播报出来。
-func alignCues(filmStart, d float64, tr speechTrack, count int) ([]cueSpan, bool) {
+// 【真机取证】《我捡的团子·第01集》的 final.srt：镜 1 的真实发声是 ASR 量到的
+// `[3.50-4.50] 活的。`（1 秒），而字幕挂的是 `00:00,837 → 00:07,037` —— **6.2 秒**，
+// 整镜铺满。原因是只用"人声包络"这一档，包络不可用（或段数不匹配）时**整镜**当窗口。
+// 而平台**本来就有**逐镜 ASR 转写（质检那一步跑的就是它，文件就在剪辑旁 `<clip>.asr.txt`），
+// 里面是**实测的发声时间**。于是补上第二档：
+//
+//	① 人声包络段落 == 句数 ⇒ 逐句精确对应（原有的一档，最准）
+//	② ASR 段落 == 句数     ⇒ 逐句精确对应（新增；ASR 就是量出来的发声时间）
+//	③ ASR 有段落但条数不符 ⇒ 字幕**只压在 ASR 的人声区间内**、句内按字数推（新增）
+//	④ 两条都没有证据       ⇒ 镜头级窗口（与旧版一致）+ 如实说是哪几镜
+//
+// ③ 是刻意保守后的中间档：**不说"对齐了"**（条数不符就是没对齐），但至少不让字幕铺满整个镜头
+// ——观众看到的是"话在人声区间里"，而不是"字幕挂了一整镜、声音早就没了"。
+
+// cueSource 一条字幕落点的来源（播报要如实说清用了哪一档）。
+type cueSource int
+
+const (
+	cueEnvelope   cueSource = iota // ① 人声包络（逐句精确）
+	cueASR                         // ② ASR 段落（逐句精确）
+	cueASRWindow                   // ③ 只用 ASR 的人声区间、句内按字数推
+	cueShotWindow                  // ④ 镜头级窗口（没有可用的发声证据）
+)
+
+// asrSpansOf 读某镜的 ASR 转写（`<clip>.asr.txt`），把段落换算成**相对镜头起点**的秒区间。
+//
+// 读不到 / 解析失败一律返回 nil —— 那是"没有证据"，不是"这一镜没台词"（后者由 QC 的
+// 语音对账负责播报）；没有证据就退回④，不许用空结果去猜。
+func asrSpansOf(clipPath string) []cueSpan {
+	if strings.TrimSpace(clipPath) == "" {
+		return nil
+	}
+	base := strings.TrimSuffix(clipPath, filepath.Ext(clipPath))
+	r, err := asr.Parse(base + ".asr.txt")
+	if err != nil || r == nil {
+		return nil
+	}
+	var out []cueSpan
+	for _, s := range r.Segments {
+		if s.End-s.Start < minSpeechSpan {
+			continue
+		}
+		out = append(out, cueSpan{Start: s.Start, End: s.End})
+	}
+	return out
+}
+
+// cueWeights 每句字幕的**字数**（用于③里"句内按时长推"）。没有字数信息时一律给 1（等分）。
+func cueWeights(parts []string) []int {
+	w := make([]int, len(parts))
+	for i, p := range parts {
+		n := len([]rune(strings.TrimSpace(p)))
+		if n < 1 {
+			n = 1
+		}
+		w[i] = n
+	}
+	return w
+}
+
+// splitWindowCues 把 count 条字幕铺在 [lo,hi] 里，按 weights 比例分（缺权重就等分）。
+// 这是③那一档的实现：位置是**推**的，所以调用方必须把它标成 cueASRWindow 并播报。
+func splitWindowCues(lo, hi float64, weights []int, count int) []cueSpan {
+	out := make([]cueSpan, count)
+	if count <= 0 || hi <= lo {
+		return out
+	}
+	den := 0
+	for j := 0; j < count; j++ {
+		if j < len(weights) && weights[j] > 0 {
+			den += weights[j]
+		} else {
+			den++
+		}
+	}
+	if den <= 0 {
+		den = count
+	}
+	cur := lo
+	for j := 0; j < count; j++ {
+		w := 1
+		if j < len(weights) && weights[j] > 0 {
+			w = weights[j]
+		}
+		span := (hi - lo) * float64(w) / float64(den)
+		out[j] = cueSpan{Start: cur, End: math.Min(cur+span, hi)}
+		cur += span
+	}
+	return out
+}
+
+// alignCues 求某镜 count 条字幕的落点(相对成片起点,秒),并说明用的是**哪一档来源**。
+//
+// 为什么条数不符时不"按比例摊"到人声段上:把 3 句台词摊到 2 个人声段上,落点看着合理、
+// 实际每句都错位,而且不会有人发现。所以③那一档只做一件事:**把窗口收进人声区间**
+// （句内位置是推的,会标成 cueASRWindow 如实说明),而不是假装逐句对齐。
+func alignCues(filmStart, d float64, tr speechTrack, asrSpans []cueSpan, weights []int, count int) ([]cueSpan, cueSource) {
 	if count <= 0 {
-		return nil, false
+		return nil, cueShotWindow
 	}
-	spans := speechSpans(tr.Env, tr.From, tr.To)
-	if len(spans) != count {
-		return fallbackCues(filmStart, d, count), false
-	}
-	// 可听区间(相对成片):字幕不许越出这段 —— 越出去的那部分是静音或已被接缝切掉。
 	lo, hi := filmStart+tr.From, filmStart+tr.To
 	if hi <= lo {
-		return fallbackCues(filmStart, d, count), false
+		lo, hi = filmStart, filmStart+d
 	}
 	if lim := filmStart + d; hi > lim {
 		hi = lim
 	}
-	out := make([]cueSpan, count)
+	// ① 人声包络：逐句精确（原有那一档，最准）
+	if spans := speechSpans(tr.Env, tr.From, tr.To); len(spans) == count {
+		return clampCues(filmStart, lo, hi, spans), cueEnvelope
+	}
+	// ②③ ASR：实测的发声时间。段数与句数相等 ⇒ 逐句精确；不等 ⇒ 只收窗口、句内按时长推。
+	if len(asrSpans) > 0 {
+		if len(asrSpans) == count {
+			return clampCues(filmStart, lo, hi, asrSpans), cueASR
+		}
+		from := math.Max(lo, filmStart+asrSpans[0].Start)
+		to := math.Min(hi, filmStart+asrSpans[len(asrSpans)-1].End)
+		if to-from >= minCueSpan {
+			return splitWindowCues(from, to, weights, count), cueASRWindow
+		}
+	}
+	// ④ 没有可用的发声证据：与旧版一致的镜头级窗口（调用方会如实播报是哪几镜）。
+	return fallbackCues(filmStart, d, count), cueShotWindow
+}
+
+// clampCues 把逐条人声段落夹进可听区间 [lo,hi]，带上前后留白与最短显示时长。
+//
+// 为什么夹：叠化转场会让每镜让出一点音频，被让出的那段在成片里**根本听不到** ——
+// 按它排字幕，等于给观众看一段没有声音的字。
+func clampCues(filmStart, lo, hi float64, spans []cueSpan) []cueSpan {
+	out := make([]cueSpan, len(spans))
 	for j, sp := range spans {
 		s := filmStart + sp.Start - cueLead
 		e := filmStart + sp.End + cueTrail
@@ -156,7 +270,7 @@ func alignCues(filmStart, d float64, tr speechTrack, count int) ([]cueSpan, bool
 			out[j].End = math.Max(out[j].Start+0.05, out[j+1].Start-0.02)
 		}
 	}
-	return out, true
+	return out
 }
 
 // shotSpans 取某镜的落点:有对齐计划且条数吻合就用计划,否则回退镜头级窗口。
@@ -170,17 +284,22 @@ func (cp *cuePlan) shotSpans(i int, filmStart, d float64, count int) []cueSpan {
 	return fallbackCues(filmStart, d, count)
 }
 
-// planCues 依人声落点排全片字幕。tracks 与 plan.Shots 同序;缺项按"无包络"处理。
-func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTrack) cuePlan {
+// planCues 依人声落点排全片字幕。tracks / asrSpans 与 plan.Shots 同序;缺项按"没有证据"处理。
+//
+// 两个证据源（人声包络、逐镜 ASR 转写）都要用上：包络量的是**这一镜自己的音轨**，ASR 量的是
+// **实际念出来的话与时间** —— 真机那一集正是只有 ASR 可用（包络这一档对每镜都退化了），
+// 而字幕因此按整镜铺开（镜 1 挂 6.2 秒、真实发声只有 1 秒），用户看到的就是"字幕与声音对不上"。
+func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTrack, asrSpans [][]cueSpan) cuePlan {
 	var cp cuePlan
 	if plan == nil {
 		return cp
 	}
 	cp.byShot = make([][]cueSpan, len(plan.Shots))
-	var noEnv, mismatch []int
-	total, aligned := 0, 0
+	var noEvidence, asrWindow, mismatch []int
+	total, byEnvelope, byASR := 0, 0, 0
 	for i, shot := range plan.Shots {
-		count := len(director.ShotSubtitleParts(shot))
+		parts := director.ShotSubtitleParts(shot)
+		count := len(parts)
 		if count == 0 {
 			continue // 该镜没有字幕,不需要落点
 		}
@@ -196,30 +315,50 @@ func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTr
 		if i < len(tracks) {
 			tr = tracks[i]
 		}
-		spans, ok := alignCues(t, d, tr, count)
+		var asr []cueSpan
+		if i < len(asrSpans) {
+			asr = asrSpans[i]
+		}
+		spans, src := alignCues(t, d, tr, asr, cueWeights(parts), count)
 		cp.byShot[i] = spans
 		total++
-		if ok {
-			aligned++
-			continue
-		}
-		if tr.Env == nil {
-			noEnv = append(noEnv, i+1)
-		} else {
-			mismatch = append(mismatch, i+1)
+		switch src {
+		case cueEnvelope:
+			byEnvelope++
+		case cueASR:
+			byASR++
+		case cueASRWindow:
+			asrWindow = append(asrWindow, i+1)
+		default:
+			if tr.Env != nil {
+				mismatch = append(mismatch, i+1)
+			} else {
+				noEvidence = append(noEvidence, i+1)
+			}
 		}
 	}
-	if aligned > 0 {
+	if byEnvelope > 0 {
 		cp.notes = append(cp.notes, fmt.Sprintf(
-			"字幕落点:%d/%d 镜按真实人声对齐(其余按镜头级窗口铺排)", aligned, total))
+			"字幕落点:%d/%d 镜按**人声包络**逐句对齐", byEnvelope, total))
+	}
+	if byASR > 0 {
+		cp.notes = append(cp.notes, fmt.Sprintf(
+			"字幕落点:%d/%d 镜按 **ASR 转写段落**逐句对齐（实测发声时间）", byASR, total))
+	}
+	if len(asrWindow) > 0 {
+		cp.notes = append(cp.notes, fmt.Sprintf(
+			"⚠ 第 %s 镜的 ASR 段落数与台词句数不符,字幕**只压在人声区间内**、句内位置按字数推"+
+				"（没假装对齐 —— 条数不符就是没对齐)", joinInts(asrWindow)))
 	}
 	if len(mismatch) > 0 {
 		cp.notes = append(cp.notes, fmt.Sprintf(
-			"⚠ 第 %s 镜的人声段落数与台词句数不符,字幕已回退镜头级窗口(镜内均分)", joinInts(mismatch)))
+			"⚠ 第 %s 镜的人声段落数与台词句数不符,且没有 ASR 可依,字幕已回退镜头级窗口(镜内均分)",
+			joinInts(mismatch)))
 	}
-	if len(noEnv) > 0 {
+	if len(noEvidence) > 0 {
 		cp.notes = append(cp.notes, fmt.Sprintf(
-			"⚠ 第 %s 镜没有可用的人声包络,字幕已回退镜头级窗口", joinInts(noEnv)))
+			"⚠ 第 %s 镜**既没有可用的人声包络、ASR 也没转出任何段落** —— 字幕按镜头级窗口铺,"+
+				"这几句很可能**根本没被念出来**（语音对账那份报告里同样会点名）", joinInts(noEvidence)))
 	}
 	return cp
 }

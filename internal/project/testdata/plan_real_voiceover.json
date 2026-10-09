@@ -1,0 +1,690 @@
+{
+  "title": "",
+  "logline": "",
+  "style": "半写实绘画感东方星海风：Cinematic, 3D CG，冷霜蓝白与暖铜炉光对峙，眉骨有阴影、眼尾有光、皮肤有暗部，霜尘在空气里飘。",
+  "characters": [
+    {
+      "id": "char_atang",
+      "name": "阿糖",
+      "kind": "beast",
+      "description": "兽形玉兽幼崽，母，巴掌大、四足短腿、圆滚一团，抱起来比看上去更沉。圆脸短吻，吻头一点淡青；圆眼，瞳色豆青，眼尾一圈浅绒；鼻头小巧湿润、常皱起，嘴角天生向下，总像有点委屈。白绒厚软，绒下透出青玉色；爪垫粉白。独特记号：眉心一道霜纹（亮白＝暖足／淡蓝＝在冷／深蓝＝危险／碎角＝重伤），尾尖分两叉。毛发三要素：全身白绒厚软、短毛覆体；颈后一小撮绒用灰绳扎成一束；额前一层绒旋。首套服装：无衣着（兽形），出门时被塞进铜匣，匣口搭一块旧棉。气质：呆、憨、黏人，冷的时候整团往里缩。",
+      "image_prompt": "a palm-sized four-legged jade beast cub, round rolling body, four short legs, round face with a short muzzle tipped in faint pale green, round bean-green pupils with a ring of fine down at the eye corners, small moist nose, mouth corners turned down, pinkish-white paw pads, a frost-pattern mark on the brow, tail tip split into two forks; dense short soft white fur over the whole body with jade-green showing beneath the coat, a small tuft behind the neck tied into one bundle with a grey cord, a swirl of downy fur on the forehead, no clothing, in cinematic Chinese guofeng period-film look, photoreal 3D surface, real materials with visible craft, soft motivated key light, matte finish, natural film grain, shallow depth of field, 8K, extreme detail, plain background.",
+      "board_prompt": "character turnaround board of a palm-sized jade beast cub: three orthographic full-body views (front, strict side, back) plus six head angles (front, three-quarter, profile, low, high, back) plus six detail close-ups (brow frost mark, round bean-green eye, short muzzle, neck tuft with grey cord, paw pads, forked tail tip), even soft frontal light, thin grey layout lines, no text labels, cinematic Chinese guofeng period-film look, photoreal 3D surface, real materials with visible craft, soft motivated key light, matte finish, natural film grain, 8K, extreme detail, plain background.",
+      "voice": "Tiny breathy squeaks and a soft rolling purr, no words, a high trill when warm and a thin shiver when cold."
+    },
+    {
+      "id": "char_jiangwanzhou",
+      "name": "姜晚舟",
+      "kind": "human",
+      "description": "女，二十出头（锚表记为十九岁，卡面按合规口径写二十出头），中等身量，手劲比同龄人大，右肩比左肩低一点，七头半身。鹅蛋脸，下颌线利落；杏眼，瞳色深褐，眼尾有光，抬眉时眉峰挑得高；鼻梁直、鼻头小巧，唇薄，说话时嘴角往一边扯。麦色皮肤，鼻梁上有淡雀斑，右手背一道旧烫疤（浅粉、边缘发白）。独特记号：右手背旧烫疤，左上臂一道洗不掉的机油印。毛发三要素：脑后高马尾用麻绳束住，长度过肩，额前碎发用一枚铜夹别在左边。首套服装：油布围裙套灰工装，袖口卷到肘上，腰间挂一串铜钥匙，脚上厚底布靴。气质：嘴硬心软，手上总在忙。",
+      "image_prompt": "a young woman in her early twenties, seven and a half heads tall, medium build, lean and straight-backed with the right shoulder a little lower than the left, oval face with a clean defined jawline, wheat-toned skin with faint freckles across the bridge of the nose and an old pale-pink burn scar with white edges on the back of her right hand, apricot-shaped eyes with deep-brown pupils and a bright glint at the outer corners, naturally high arched brows, straight nose with a small tip, thin lips pulled to one side, a faint engine-oil stain on her upper left arm; hair: a high ponytail at the back of the head tied with a hemp cord, length past the shoulders, the loose strands at the left of the forehead pinned back with a copper clip; costume: an oil-cloth apron over grey work overalls, sleeves rolled to the elbows, a string of brass keys hanging at her waist, thick-soled cloth boots, in cinematic Chinese guofeng period-film look, photoreal 3D surface with idealised semi-stylised facial structure, real materials with visible craft, soft motivated key light, matte finish, natural film grain, shallow depth of field, 8K, extreme detail, plain background.",
+      "board_prompt": "character turnaround board of a young woman in her early twenties, seven and a half heads tall, medium build, right shoulder slightly lower: three orthographic full-body views (front, strict side, back) plus six head angles (front, three-quarter, profile, low, high, back) plus six detail close-ups (apricot eye and high brow, small straight nose and thin lips, hemp-cord high ponytail, copper forehead clip, burn scar on the back of the right hand, thick-soled cloth boots), even soft frontal light, thin grey layout lines, no text labels, cinematic Chinese guofeng period-film look, photoreal 3D surface with idealised semi-stylised facial structure, real materials with visible craft, soft motivated key light, matte finish, natural film grain, 8K, extreme detail, plain background.",
+      "voice": "A low husky young-woman alto with a slight rasp, quick and clipped, warm underneath the bluntness."
+    },
+    {
+      "id": "char_xiaodeng",
+      "name": "小灯",
+      "kind": "human",
+      "description": "男，瘦小的孩子（舰上唯一的孩子），窄肩，跑起来往前倾，六头身。圆润苹果脸，额宽下巴圆；圆眼，瞳色黑，眼白亮，野生平眉；鼻梁低平，嘴唇薄，笑起来缺一颗门牙，左眉尾一道浅疤（自己摔的）。肤色偏黄，脸颊两块冻红，手背有冻疮。独特记号：左眉尾浅疤，怀里总揣着那只木鸟。毛发三要素：短发在脑后扎成一小撮（深色细绳束住），长度刚到耳下，额前乱翘、右边总有一撮立着。首套服装：旧棉小袄（袖口往里卷两折），下摆补过一块深色布，脚上大头棉鞋。气质：闹，眼睛不肯认生。",
+      "image_prompt": "a small thin child, narrow-shouldered, six heads tall, round apple face with a wide forehead and a round chin, yellow-tinged skin with two frost-red patches on the cheeks and chilblains on the back of his hands, round black eyes with bright whites, wild straight flat brows, a low flat nose bridge, thin lips with one front tooth missing in the smile, a pale scar at the left brow tail; hair: short, gathered into one small tuft at the back of the head tied with a dark thin cord, length just below the ears, the forehead fringe messy with one strand standing up on the right; costume: an old padded cotton jacket with the cuffs rolled in two folds and a dark patch on the hem, big-headed cotton shoes, in cinematic Chinese guofeng period-film look, photoreal 3D surface with idealised semi-stylised facial structure, real materials with visible craft, soft motivated key light, matte finish, natural film grain, shallow depth of field, 8K, extreme detail, plain background.",
+      "board_prompt": "character turnaround board of a small thin child, six heads tall: three orthographic full-body views (front, strict side, back) plus six head angles (front, three-quarter, profile, low, high, back) plus six detail close-ups (round black eye and wild brow, missing front tooth, scar at the left brow tail, small tuft of short hair at the back, frost-red cheeks and chilblained hands, big-headed cotton shoes), even soft frontal light, thin grey layout lines, no text labels, cinematic Chinese guofeng period-film look, photoreal 3D surface with idealised semi-stylised facial structure, real materials with visible craft, soft motivated key light, matte finish, natural film grain, 8K, extreme detail, plain background.",
+      "voice": "A child's bright slightly hoarse piping soprano, fast and excitable, always half a breath from shouting."
+    },
+    {
+      "id": "char_caojin",
+      "name": "曹锦",
+      "kind": "human",
+      "description": "男，四十四岁，中等身量、肩窄，坐着比站着显高，七头身。脸窄而长，颧骨高，面中略塌；眼皮厚压眼，瞳色褐，眼白偏多，眉骨压着眼；鼻梁低、鼻翼薄，唇色暗、唇线薄。面色发黄，鼻翼泛油，法令纹深。独特记号：右手掌常年一道炭黑印（写数写的），左手拇指甲缺一小块。毛发三要素：短发向后梳贴、用一根细绳束在脑后，长度过耳，额前抹得平直、无碎发。首套服装：炭黑总管袍，袖口窄，腰束皮算袋，袋上别一截炭条。气质：句子短，只报数。",
+      "image_prompt": "a forty-four-year-old man, narrow long face with high cheekbones and a slightly sunken mid-face, medium build with narrow shoulders, sallow complexion, oily nose wings, deep nasolabial folds, heavy thick eyelids pressing down on brown eyes with too much white showing, low nose bridge with thin nostrils, dark thin lips, a permanent charcoal-black smear across his right palm, a chipped corner on the left thumbnail; hair: short hair combed flat back and tied with a thin cord at the back of the head, length past the ears, the forehead smoothed flat and clear with no strands; costume: a charcoal-black steward's long robe with narrow cuffs, a leather tally pouch at the waist with a stub of charcoal tucked into it, in cinematic Chinese guofeng period-film look, photoreal 3D surface with idealised semi-stylised facial structure, real materials with visible craft, soft motivated key light, matte finish, natural film grain, shallow depth of field, 8K, extreme detail, plain background.",
+      "board_prompt": "character turnaround board of a forty-four-year-old narrow-faced man, seven heads tall: three orthographic full-body views (front, strict side, back) plus six head angles (front, three-quarter, profile, low, high, back) plus six detail close-ups (heavy-lidded brown eyes, low nose bridge and thin lips, flat-combed short hair with thin cord, charcoal-black palm, chipped left thumbnail, tally pouch with charcoal stub), even soft frontal light, thin grey layout lines, no text labels, cinematic Chinese guofeng period-film look, photoreal 3D surface with idealised semi-stylised facial structure, real materials with visible craft, soft motivated key light, matte finish, natural film grain, 8K, extreme detail, plain background.",
+      "voice": "A dry mid-low male voice, short flat sentences with no rise or fall, like numbers read off a ledger."
+    }
+  ],
+  "scenes": [
+    {
+      "id": "scene_ice_hold",
+      "name": "冰星老舱·霜封内舱",
+      "description": "冻了三千多年的古船内舱。头顶是铆钉密布的弧形铁肋舱盖，一处破缝往下灌着冰星的风与冷光；地面甲板覆着一层白瓷般的厚霜，凿开的断面脆而扎手。舱尾立着一人高的圆腹三足青铜玉炉，腹板是整片老玉，炉沿一圈旧铜边被熏得发黑，四十天来点不着，炉心只缩着一粒霜白的点，铜座上积着薄薄一层凝霜。空间寂静、古老、冷得像教堂，只有风穿过破缝的低鸣与浮尘在光柱里悬停。",
+      "image_prompt": "Cold blue hour before dawn inside an ancient ice-locked starship hold; the last of the night leaking down through a shattered ceiling hatch in long dusty shafts, the air thick with suspended frost motes catching the light like ground glass; mood hushed, ancient, waiting, cathedral-cold. Interior of a three-thousand-year-frozen vessel: a vast curved overhead hull of riveted dark iron ribs, deck plating sealed under a thick layer of white porcelain-like frost, and at the stern a one-person-tall three-legged bronze jade furnace, round-bellied, its belly plate one whole slab of ancient green jade, its rim ringed with smoke-blackened old copper; at the furnace heart a single faint frost-white point of light barely alive after forty days unlit, its bronze seat rimed with frost beading at the base. Light: the shaft from the broken hatch pools cold grey-blue across the frosted deck plates and along the rivet lines, while a whisper of warm ember-orange breathes out of the furnace mouth — a warm golden lattice gently merging with warm grey shadow; dusk-blue runs down the rough hull ribs and cold light talks to the wet moss of old rust. Colour: faded vermilion scale on the bronze, rusted celadon on the jade, cold grey-blue on iron, snow-white frost. Foreground: a low row of iron cargo cleats bolted to the deck plates, their heads furred with hoar frost; and a waist-high iron railing grating running along the platform edge, frost caught in every weld. Midground: the great three-legged bronze jade furnace as the anchor of the room, and a lashed stack of frozen jade sample crates against the hull, with an old bronze deck drain where a thin eternal melt-ice has frozen into a pale ripple. Background: the ribbed iron hull curving away into blue shadow, and through the shattered ceiling hatch a sliver of pre-dawn ice-star sky, a distant horizon of ice ridges and far ice mountains beneath one cold star, faint mist drifting down the breach. ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot; pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath; semi-realistic painterly Eastern Star-Sea aesthetic, matte brush texture, volumetric side light, dust suspended in the shaft, empty stage, no people, high detail.",
+      "landmarks": "舱尾圆腹三足青铜玉炉（画面中央偏后，恒定锚点）；头顶偏左的破碎舱盖破缝（光柱与风的来源）",
+      "light_state": "天没亮／拂晓前冷蓝时刻；主光自头顶偏左的舱盖破缝垂直漏下，为顶侧光；炉心一点霜白微光是唯一暖源，方向自舱尾向舱前"
+    },
+    {
+      "id": "scene_hold_door",
+      "name": "冰星老舱·门槛铁壁",
+      "description": "古船内舱的门户一侧。厚重铆钉铁壁被一个方形门洞切开，门框是一圈结霜的旧铁舱环，铆钉头泛绿；门槛是一道凸起的铁围板，边缘绒着一层白霜。门外是平坦的甲板与一路铺到远方的冰原，低矮冰脊与远处冰山压在拂晓的冷蓝天色下。门槛左侧立着一根铆钉铁管与一盘冻在壁上的缆绳，舱内深处有一线极淡的炉火暖光反打出来。空间冷硬、逼仄而开阔并存，风从门外斜灌进来，霜尘在光里悬停。",
+      "image_prompt": "Cold blue hour before dawn at the threshold of an ancient ice-locked starship hold; the last of the night pouring in from the open deck outside in long dusty shafts, suspended frost motes glittering in the air; mood austere, hushed, taut. A heavy riveted iron bulkhead pierced by a rectangular doorway, framed by a thick frost-rimed iron hatch ring with brass rivet heads gone green; beyond it the flat hoar-white deck runs away toward the far ice plain, low ice ridges and distant ice mountains under a pre-dawn sky. Light: cold grey-blue floods in through the open doorway from the deck beyond, pooling on the raised threshold coaming and catching the frost on the hatch ring's inner lip, while a faint warm ember-orange glimmer spills back out of the deep hold — a warm golden lattice gently merging with warm grey shadow; cold light talks to the wet moss of old rust along the bulkhead seams, dusk-blue running down the rough iron. Colour: rusted celadon on the brass, faded vermilion on old painted hull marks, cold grey-blue on iron, snow-white frost. Foreground: a raised iron threshold coaming across the doorway, its lip furred with hoar frost; and a vertical run of riveted iron pipe beside the frame with a cable coil frozen to the bulkhead wall. Midground: the hatch frame with its heavy dog-clamp levers and a frost-shagged iron cleat set at door height, and the inner deck plating worn bright along the walking line, its rivet heads rimed white. Background: the open deck running out to the far ice plain, low ice ridges, distant ice mountains and a single cold star above the horizon, thin wind-driven frost streaming across the ground. ultra-wide angle, grand scale, epic wide shot, vast space, distant horizon, cinematic establishing shot; pre-event timeless location, no blood, no corpses, no fresh aftermath, no dropped props, no event aftermath; semi-realistic painterly Eastern Star-Sea aesthetic, matte brush texture, back light from the doorway, empty stage, no people, high detail.",
+      "landmarks": "中央的方形门框与凸起铁门槛（恒定锚点）；门槛左侧的铆钉铁管与冻住的缆绳盘",
+      "light_state": "天没亮／拂晓前冷蓝时刻；主光自门外甲板迎面斜入（逆光／侧逆光），舱内深处一线炉火暖光自门内向门外反打"
+    }
+  ],
+  "props": [
+    {
+      "id": "prop_pickaxe",
+      "name": "镐子",
+      "en": "a thick rusty iron ice pickaxe on a hemp-wrapped wooden shaft",
+      "description": "破冰铁镐：镐头锻铁，覆一层厚铁锈，刃口被冰磨出细亮线；木柄缠麻绳防滑，柄尾开裂处箍一只旧铜箍。尺寸：连柄约到成人腰高，镐头一掌长。独有特征：镐头铁锈层上有两点细小牙痕（本集被巴掌大的玉兽咬住不放留下）。功能与限制：队里批的活是破冰取样——它能凿开三千年冻层的霜壳、撬下老玉板，却是纯人力工具，破不开整块老玉，也护不住炉火；『咬镐』这一下是活物现世的当场证据。",
+      "image_prompt": "single ice pickaxe centred on a pure white background, a thick rusted forged-iron pick head on a hardwood shaft wrapped with hemp cord, an old copper band around the split butt of the shaft, two small shallow tooth marks bitten into the rust layer, one object only, no hands, no text, cinematic Chinese guofeng period-film look, photoreal 3D surface, real materials with visible craft, soft motivated light, matte finish, natural film grain, 8K, extreme detail, plain pure white background."
+    },
+    {
+      "id": "prop_jade_slab",
+      "name": "老玉板",
+      "en": "a thick pale-celadon old jade slab with a white-porcelain-like chiselled fracture face",
+      "description": "冰星老舱舱盖下冻了三千多年的老玉板：整片淡青玉，断面像白瓷，脆、扎手，茬口泛灰白，未凿开的一面还挂着霜层。尺寸：约两块砖长、半掌厚，需两人抬。独有特征：切开后断口呈白瓷状脆面，内里透青，霜一碰镐头就结出新霜。功能与限制：灯楼船玉闸裂了三成，只有这种压了三千年的老玉板能补——但它是死物，只补得了闸，补不了船上剩不到三天的暖。",
+      "image_prompt": "single thick pale-celadon old jade slab centred on a pure white background, a freshly chiselled fracture face like white porcelain with a brittle flaking edge, grey-white frost lines still lying on the uncut surface, one object only, no hands, no text, cinematic Chinese guofeng period-film look, photoreal 3D surface, real materials with visible craft, soft motivated light, matte finish, natural film grain, 8K, extreme detail, plain pure white background."
+    },
+    {
+      "id": "prop_bronze_jade_furnace",
+      "name": "青铜玉炉",
+      "en": "a waist-high round-bellied three-legged bronze furnace with one whole jade plate in its belly and a blackened rim",
+      "description": "舱尾那口青铜玉炉：一人高，圆腹三足，腹板是整片老玉，炉沿一圈旧铜边被熏得发黑。尺寸：一人高，需双臂合抱。独有特征：炉心一朵霜白灯焰，平时缩成一粒白点；炉壁凝霜会随焰势化水，顺炉脚淌到铜座上积成一小汪。功能与限制：全船唯一暖源，灯焰随玉兽贴近而升高（四十天点不着，她一进来就涨到一指高，退开半寸就缩回去）——它是『玉兽＝暖源』的当场证据，也是打脸『入册』的当场证据；限制极硬：船上剩的暖不够三天，霜潮压到白浪线那天之前它不能灭。",
+      "image_prompt": "single waist-high bronze furnace centred on a pure white background, a round belly on three sturdy legs, one whole plate of old jade set into the belly, a blackened old-bronze rim, a small frost-white lamp flame no bigger than a grain inside, frost melting along the rim and dripping down to the base, one object only, no hands, no text, cinematic Chinese guofeng period-film look, photoreal 3D surface, real materials with visible craft, soft motivated light, matte finish, natural film grain, 8K, extreme detail, plain pure white background."
+    },
+    {
+      "id": "prop_wooden_bird",
+      "name": "木鸟",
+      "en": "a small unpainted hand-carved wooden bird with three grooves cut across the wing and a shiny worn tail",
+      "description": "小灯怀里那只手刻木鸟：未上色，原木本色，翅上刻三道线，尾羽被摩挲得发亮，没有底座。尺寸：一掌可握，比真鸟小得多。独有特征：尾巴磨得发亮，放在甲板上会往右歪。功能与限制：小灯的念想，也是他递出、玉兽按进绒毛认人的信物；限制就在他身上那句『它不会飞——我刻的时候没留重心』：它能被握住、被烤暖、被按进绒毛，却永远飞不起来。",
+      "image_prompt": "single small hand-carved unpainted wooden bird centred on a pure white background, three grooves cut across the wing, the tail worn shiny and smooth from handling, no stand, no base, one object only, no hands, no text, cinematic Chinese guofeng period-film look, photoreal 3D surface, real materials with visible craft, soft motivated light, matte finish, natural film grain, 8K, extreme detail, plain pure white background."
+    }
+  ],
+  "shots": [
+    {
+      "id": 1,
+      "scene": "scene_ice_hold",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang",
+        "char_xiaodeng"
+      ],
+      "positions": {
+        "姜晚舟": "画面中央偏左、前景、面朝右下方冰坑，双手握镐",
+        "小灯": "画面右后、后景、面朝左前方，抱着木鸟半步在后",
+        "阿糖": "画面中央下方霜坑破口里、前景，一团白绒，无面朝方向"
+      },
+      "shot_size": "全景",
+      "camera": "The camera pushes in with small amplitude at slow speed along the hold's axis, from the frozen hatch to the broken ice face.",
+      "action": "第三镐砸进霜面，闷响不是脆响；姜晚舟掰开镐柄半寸，霜里露出一小团白，那团白自己动了一下，一只短爪啪地搭上镐柄，她说「活的」。",
+      "dialogue": [
+        {
+          "speaker": "姜晚舟",
+          "text": "活的。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, nineteen-year-old female salvager of the lamp-tower ship: freckled wheat skin, dark-brown almond eyes, burn scar on her right hand, hemp-cord ponytail, copper fringe clip, oilcloth apron over grey work clothes, rolled sleeves, copper keys, thick-soled boots.\n<Subject 2> is 阿糖, palm-sized jade beast: white fur with jade-green sheen, pale-green-tipped muzzle, round bean-green eyes, grey-corded neck tuft, two-forked tail tip, no clothing.\n<Subject 3> is 小灯, seven-year-old boy of the ship: round apple face, wide black eyes, missing front tooth, chapped cheeks, one lock up at the right, dark padded jacket, rolled sleeves, darker hem patch, oversized padded shoes, worn wooden bird in his arms.\nThe scene is the LAST attached picture — 冰星老舱·霜封内舱: a hold frozen three thousand two hundred years, cracked hatch overhead, layered frost, a broken ice face like white porcelain breathing vapour, a tall round-bellied three-footed bronze-jade furnace at the cabin end holding a whole old-jade slab, its bronze rim blackened, before dawn.\nEach front sheet is its attached picture; same subject throughout.\n\nsummary:\n[reference generation] Cold blue-white frost hold before dawn; three characters fixed by attached sheets, a frozen white bundle that proves alive; sheets guide identity and layout only, camera and light built freely.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 ([Shot 1], [Shot 2], [Shot 3]): fully_preserved - wheat skin, ponytail, copper clip, oilcloth apron, rolled sleeves, keys.\n- <Subject 2> 阿糖 ([Shot 1], [Shot 3]): fully_preserved - white-furred jade beast, jade sheen, forked tail tip, brow frost mark.\n- <Subject 3> 小灯 ([Shot 1]): fully_preserved - apple face, missing tooth, chapped cheeks, padded jacket, darker hem patch.\n- Scene 冰星老舱·霜封内舱 ([Shot 1]): weak_reference - frost hold layout, blue-white mood, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in dark planes; cold blue-white frost palette against one small warm bronze glow, frost dust drifting.\n[Shot 1] Ultra-wide eye-level deep perspective down the hold, epic establishing shot. 姜晚舟 crouches centre-left with the pick; 小灯 behind right with the wooden bird; the broken ice face lies centre-frame, vapour curling out. Slow push-in; the pick lands with a dull thud, not an ice crack.\n[Shot 2] At 00:02.400, medium shot from her right. She levers the pick handle half an inch outward; the frost splits along a seam on a small white bundle, soft with rime, too round to be stone. Her hands stop; her chin lifts.\n[Shot 3] At 00:04.800, closer, level with her arms. The white bundle shifts once; a white paw slaps flat onto the rusted pick handle. 姜晚舟's eyes widen; low and level, words clipped short (S1): <d>[Chinese]活的。</d> The boy's shoulders jerk upward behind her.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, tools or stone; every icy and stone surface stays blank and wind-worn.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nWind screams through the cracked hatch; frost ticks and cracks, apron leather creaks, vapour hisses on metal.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view": "ultra-wide eye-level deep perspective",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.4
+        },
+        {
+          "at": 4.8
+        }
+      ],
+      "end_state": "姜晚舟蹲在破开的霜坑前，镐头斜卡在冰面里，坑底一小团白绒上搭着一只短爪，小灯站在她右后方半步处抱着木鸟。",
+      "hook_type": "reveal",
+      "prop_ids": [
+        "prop_wooden_bird"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 2,
+      "scene": "scene_ice_hold",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang",
+        "char_xiaodeng"
+      ],
+      "positions": {
+        "姜晚舟": "画面右侧、前景、侧身面朝左下的冰坑，双手握镐柄",
+        "小灯": "画面左侧、中景、面朝右，双脚离地蹦起",
+        "阿糖": "画面中央下缘、前景冰坑里，白绒一团，短爪扣在镐柄上"
+      },
+      "shot_size": "中景",
+      "camera": "The camera pans right with small amplitude at normal speed, from the boy's jump to 姜晚舟's hands on the pick handle.",
+      "action": "小灯蹦起来喊「活的！是活的！」；姜晚舟把镐柄一点点往自己这边拖，拖不动——它咬着不放，一嘴白毛全立起来；她松开镐子，伸出指背碰了碰它的耳朵，耳尖一撮泛青，团子整只往她手心一扑，顺袖口钻进她怀里。",
+      "dialogue": [
+        {
+          "speaker": "小灯",
+          "text": "活的！是活的！",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, female salvager: freckled skin, burn scar on right hand, high ponytail with hemp cord, copper left-fringe clip, oilcloth apron, rolled sleeves. Her front sheet is first attached picture; SAME subject in every other picture.\n<Subject 2> is 阿糖, palm-sized jade beast: white fur with jade-green sheen, bean-green eyes, grey-corded neck tuft, two-forked tail tip. Its front sheet is next attached picture; SAME subject in every other picture.\n<Subject 3> is 小灯, seven-year-old boy: round apple face, missing front tooth, chapped cheeks, short tuft with one right lock standing, padded cotton jacket with darker hem patch, worn wooden bird in arms. His front sheet is next attached picture; SAME subject in every other picture.\nThe scene is the LAST attached picture — 冰星老舱·霜封内舱: a frost-frozen hold, cracked hatch, rime, ice face breathing vapour, three-footed bronze-jade furnace with old-jade slab and blackened rim, before dawn.\n\nsummary:\n[reference generation] In the same hold, the boy's joy and the beast's refusal to let go are staged between the three sheet-fixed subjects; frost light, rime and camera free.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 ([Shot 1], [Shot 2], [Shot 3]): fully_preserved - face, ponytail, fringe clip, apron.\n- <Subject 2> 阿糖 ([Shot 1], [Shot 2], [Shot 3]): fully_preserved - white jade-sheen fur, bean-green eyes, neck tuft, forked tail.\n- <Subject 3> 小灯 ([Shot 1], [Shot 3]): fully_preserved - apple face, missing tooth, chapped cheeks, padded jacket.\n- Scene 冰星老舱·霜封内舱: weak_reference - hold layout and blue-white frost mood, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; cold blue-white frost light with one small warm bronze glow far down the hold, frost dust suspended in the air.\n[Shot 1] Medium shot, level with them. 小灯 jumps left, mouth wide, missing tooth showing, bird to chest. 姜晚舟 crouches right over the broken ice face, arms braced on the pick. Camera pans right, small amplitude, normal speed, from jump to hands. He shouts: <d>[Chinese]活的！是活的！</d> Frost dust shakes loose from the hatch rim.\n[Shot 2] At 00:02.600 cuts tighter on her arms, no closer than medium. She drags the pick hand over hand, boots skidding; it does not come. White bundle hangs off rusted iron, teeth clamped, strands on end. Her forearms slacken; she lets go. Handle rocks once and stays.\n[Shot 3] At 00:05.000 she touches the back of her finger to the creature's ear, wrist relaxed, slow. An ear-tip tuft runs pale blue. It freezes half a breath, then throws into her palm, slides up her loose sleeve, buries into her apron front, shaking, curling into a ball. Her shoulders drop; brow crease softens.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, tools or stone; every surface stays blank and wind-worn.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nWind whistles down the hatch, frost ticks, apron leather rasps, pick grinds rusted iron, creature chirrs as it burrows into cloth.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视中景，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.6
+        },
+        {
+          "at": 5
+        }
+      ],
+      "end_state": "姜晚舟跪坐冰面，镐子横在膝前，白绒团子已顺她右袖口钻进怀里，只露出一撮立起的白毛在领口；小灯站在她左侧半步，张大嘴，木鸟仍抱在怀里。",
+      "hook_type": "expression-beat",
+      "prop_ids": [
+        "prop_pickaxe"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 3,
+      "scene": "scene_ice_hold",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang",
+        "char_xiaodeng"
+      ],
+      "positions": {
+        "姜晚舟": "画面中央偏右、前景、面朝左下，双手捧着白绒团子",
+        "小灯": "画面左后方、后景、面朝右，缩着脖子抱着木鸟",
+        "阿糖": "画面中央、前景她双手之间，一枚白绒球，鼻头贴着她手腕"
+      },
+      "shot_size": "近景",
+      "camera": "The camera stays static at a low, close height while the white bundle curls tighter in her hands, with only a slow drift of frost dust past the lens.",
+      "action": "团子在她怀里抖着，把自己团成一枚球，鼻头往她手腕上贴得更紧；姜晚舟低头问「你冷不冷。」；小灯缩着脖子劝她停手。",
+      "dialogue": [
+        {
+          "speaker": "姜晚舟",
+          "text": "你冷不冷。",
+          "os": true
+        },
+        {
+          "speaker": "小灯",
+          "text": "师姐，别挖了。灯炉都凉了，挖出来也是死的。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, the nineteen-year-old female salvager: wheat-toned freckled skin, dark-brown almond eyes, old burn scar on the right hand, high ponytail with hemp cord, copper fringe clip, oilcloth apron, copper keys at the waist. Front sheet = first attached picture; SAME subject in every other picture.\n<Subject 2> is 阿糖, a palm-sized jade beast: thick white fur with jade-green sheen, round bean-green eyes, grey-corded neck tuft, two-forked tail tip. Front sheet = next attached picture; SAME subject in every other picture.\n<Subject 3> is 小灯, the seven-year-old boy: round apple face, wide black eyes, one missing front tooth, chapped red cheeks, padded jacket with darker hem patch, worn wooden bird. Front sheet = next attached picture; SAME subject in every other picture.\nThe scene is the LAST attached picture — 冰星老舱·霜封内舱: three-thousand-year frost hold, broken ice face exhaling vapour, rime on every plate, one-person-tall bronze-jade furnace, cold blue light from the cracked hatch.\n\nsummary:\n[reference generation] A close exchange inside the frozen hold: the salvager asks the frozen creature a question and the child argues against digging; identities held by the reference sheets, frost light and camera built freely.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 ([Shot 1], [Shot 3]): fully_preserved.\n- <Subject 2> 阿糖 ([Shot 1], [Shot 2]): fully_preserved.\n- <Subject 3> 小灯 ([Shot 2], [Shot 3]): fully_preserved.\n- Scene 冰星老舱·霜封内舱: weak_reference - layout and frost mood referenced, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; the whole frame sits in cold blue frost light with one small warm bronze glimmer far behind, fine rime dust drifting through the beam.\n[Shot 1] Close on her arms, ice face low. The white bundle is a tight ball, rime-spiked fur, nose pressed to her wrist, forked tail tucked under; 姜晚舟's hands stay cupped and still. Low, clipped (S1): <d>[Chinese]你冷不冷。</d> Her breath fogs.\n[Shot 2] At 00:03.000 cut to the boy at left rear, chest up, frost in his eyelashes. 小灯 hugs the wooden bird, chin down, shoulders hunched; he shuffles one foot and looks past her at the broken ice, not her face. Bright, piping child's voice drawn thin (S2): <d>[Chinese]师姐，别挖了。灯炉都凉了，挖出来也是死的。</d>\n[Shot 3] At 00:05.800 the camera returns to 姜晚舟 in the same close framing; she has not moved. Lips closed, she looks down at the white ball in her palms, lifts her chin toward the frozen hatch, holds, jaw set, eyes steady. Frost dust drifts between lens and face. No further speech.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, tools or stone; every icy surface stays blank and wind-worn.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nHatch wind drops to a low moan; rime ticks on the plates; the creature's breath comes as tiny rapid puffs; boots scrape once; a distant metal groan runs through the hull.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视近景，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 3
+        },
+        {
+          "at": 5.8
+        }
+      ],
+      "end_state": "姜晚舟双手并在腹前，白绒团子团成一枚球贴在她腕上，鼻头压着她的皮肤；小灯缩在她左后方半步，抱着木鸟，肩膀塌着。",
+      "hook_type": "tender",
+      "prop_ids": [
+        "prop_wooden_bird"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 4,
+      "scene": "scene_ice_hold",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang",
+        "char_xiaodeng"
+      ],
+      "positions": {
+        "姜晚舟": "画面中央偏右、前景、面朝左前，双手把白绒团子往围裙里层塞",
+        "小灯": "画面左后、后景、面朝右并抬手指向她背后",
+        "阿糖": "画面中央、前景她围裙内层贴着心口，只露一点白绒与眉心细纹"
+      },
+      "shot_size": "近景",
+      "camera": "The camera trucks left with small amplitude at slow speed beside her as she tucks the creature in, then holds as the boy's arm comes up.",
+      "action": "姜晚舟说「死人也是人。」，掀开围裙把团子塞进最里层贴着心口；团子眉心那道细纹从眉心的位置往下亮了一下，像霜上划过一线光；小灯忽然不蹦了，伸手一指她背后，说「看那儿。」",
+      "dialogue": [
+        {
+          "speaker": "姜晚舟",
+          "text": "死人也是人。",
+          "os": true
+        },
+        {
+          "speaker": "小灯",
+          "text": "看那儿。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, nineteen, female salvager: freckled skin, burn scar on the right hand, hemp-cord ponytail, oilcloth apron over grey work clothes, waist keys. Front sheet: first attached picture; SAME subject throughout.\n<Subject 2> is 阿糖, palm-sized jade beast: white fur with jade sheen, bean-green eyes, grey-corded neck tuft, forked tail, pale brow mark. Front sheet: next attached picture; SAME subject throughout.\n<Subject 3> is 小灯, seven-year-old boy: round apple face, wide black eyes, missing front tooth, chapped cheeks, upright hair lock, padded jacket with darker hem patch, worn wooden bird in arms. Front sheet: next attached picture; SAME subject throughout.\nThe scene is the LAST attached picture — 冰星老舱·霜封内舱: frost hold before dawn, rime on every plate, cracked hatch overhead, one-person-tall round-bellied three-footed bronze-jade furnace at the cabin end, old-jade belly slab, blackened bronze rim.\n\nsummary:\n[reference generation] She tucks the living bundle to her chest; the child points past her at the furnace. Subjects stay fixed by their reference sheets; frost light, camera move and furnace glow are free.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 ([Shot 1]–[Shot 3]): fully_preserved - face, ponytail, fringe clip, apron, waist keys.\n- <Subject 2> 阿糖 ([Shot 2]–[Shot 3]): fully_preserved - jade-sheen fur, bean-green eyes, neck tuft, forked tail, brow mark.\n- <Subject 3> 小灯 ([Shot 3]): fully_preserved - apple face, missing tooth, chapped cheeks, hem-patched jacket.\n- Scene 冰星老舱·霜封内舱: weak_reference - hold layout and frost mood, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in dark planes; cold blue rime light, a faint warm bronze glimmer down the hold, frost dust in the beam.\n[Shot 1] Close over her shoulder, ice along the frame bottom. 姜晚舟 lifts her oilcloth apron with both hands, waist keys chiming once, and folds the white-fur ball into the innermost layer of her grey work clothes; hands broad and arm-level. Low and level, words clipped short (S1): <d>[Chinese]死人也是人。</d>\n[Shot 2] At 00:02.600 tight on chest and jaw. The white bundle shows above the cloth; its brow mark catches the frost light as a thin pale line, then dims to frost white. Chin comes down, jaw tightens, right hand closes over the cloth; lips stay closed.\n[Shot 3] At 00:05.200 pull back to medium close, the boy at left rear hugging his wooden bird. 小灯 stops bouncing, goes still, and points past her right shoulder. Bright piping child's voice gone small (S2): <d>[Chinese]看那儿。</d> Camera trucks left at small amplitude, slow speed, holding on his pointing hand in the foreground, the furnace's dark shape barely readable beyond.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, tools, wooden toys or stone; every surface stays blank and weathered.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nHatch wind thins to a hiss, oilcloth rustles, waist keys chime once, claws scratch inside her clothes.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视近景，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.6
+        },
+        {
+          "at": 5.2
+        }
+      ],
+      "end_state": "姜晚舟站直，围裙内层鼓着一小块，白绒团子贴在她心口处只露出一道正发亮的细纹；小灯在她左后方举着手臂指向画面右后方的炉子。",
+      "hook_type": "reveal",
+      "prop_ids": [
+        "prop_bronze_jade_furnace",
+        "prop_wooden_bird"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 5,
+      "scene": "scene_ice_hold",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang"
+      ],
+      "positions": {
+        "姜晚舟": "画面中央偏左、中景、侧身面朝右，怀里抱着围裙，仰头看炉口",
+        "小灯": "不在画内（画外，炉边左侧传来声音）",
+        "阿糖": "画面中央、前景她围裙内层心口处，只露一撮白绒与两叉尾尖"
+      },
+      "offscreen": {
+        "小灯": "上一镜在画面左后，本镜已出画，蹲到炉边左侧、画面外"
+      },
+      "shot_size": "全景",
+      "camera": "The camera tilts up at slow speed from the melting frost at the furnace foot to the flame in the furnace mouth.",
+      "action": "舱尾那口一人高的青铜玉炉，四十天点不着的炉心白点往上长了半寸，涨到一指高稳住；炉壁凝着的霜从炉口往下化，淌到炉脚，在铜座上积了一小汪水；灯焰抖了一下缩回半寸，姜晚舟把围裙往下一压、团子跟着往里一缩，焰又长了回来。",
+      "dialogue": [
+        {
+          "speaker": "小灯",
+          "text": "亮了。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, nineteen-year-old female salvager: wheat-toned freckled skin, dark-brown almond eyes, burn scar on the right hand, hemp-corded high ponytail, copper fringe clip, oilcloth apron over grey work clothes, rolled sleeves, waist keys. Her front sheet is the first attached picture; she is the SAME subject in every picture showing her.\n<Subject 2> is 阿糖, a palm-sized jade beast: thick white fur with a jade-green sheen, bean-green eyes, grey-corded neck tuft, two-forked tail tip. Its front sheet is the next attached picture; it is the SAME subject in every picture showing it.\nThe scene is the LAST attached picture — 冰星老舱·霜封内舱: the frost hold at dawn, a one-person-tall three-footed bronze-jade furnace at the cabin end, its belly one slab of old jade, blackened rim, copper seat beneath, rime on every plate.\n\nsummary:\n[reference generation] The furnace unlit forty days answers the bundle: flame grows, frost melts and pools on the copper seat; sheets hold identity and layout while flame light and camera stay free.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved — face, ponytail, apron, keys.\n- <Subject 2> 阿糖 (appears in [Shot 2], [Shot 3]): fully_preserved — fur, bean-green eyes, forked tail tip.\n- 冰星老舱·霜封内舱 ([Shot 1]): weak_reference — furnace, hold layout, frost mood; camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; the palette turns here — cold blue rime against a rising warm bronze-jade flame that lights half of 姜晚舟's face.\n[Shot 1] Low-angle up the cabin end: the round-bellied bronze-jade furnace fills the right two thirds, old-jade belly aglow, rime-streaked rim, copper seat below; 姜晚舟 stands left, one step off, side-on, apron bunched. The camera tilts slowly from the melting frost to the flame in its mouth. Frost creaks; water ticks.\n[Shot 2] At 00:02.800 cut to medium close on furnace mouth and her face. The frost-white flame grows from a pin-prick to a finger's height and steadies; rime slides down the bronze wall and drops to the copper seat, where a shallow pool gathers and steams. Warm glow reaches her cheek. Off-screen left, a bright piping child's voice, hushed almost to nothing (S2): <d>[Chinese]亮了。</d>\n[Shot 3] At 00:05.400 cut back to the wide low angle. The flame shivers, drops half an inch; 姜晚舟 presses the apron flat and the white bundle curls smaller; the flame climbs a hair higher and holds. Her shoulders settle; the bundle's two-forked tail tip slides from her sleeve and sweeps her wrist. No speech.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on the furnace, the jade slab, clothing or stone; the jade belly stays uninscribed, blank and wind-worn.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nHatch wind persists; rime snaps off the furnace wall, water ticks onto the copper seat and steams, bronze creaks.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view": "low-angle upward view",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.8
+        },
+        {
+          "at": 5.4
+        }
+      ],
+      "end_state": "姜晚舟站在炉前一步远，围裙内层鼓着，白绒团子贴在她心口只露出两叉尾尖；青铜玉炉炉心那朵霜白的灯焰烧到一指高，炉脚铜座上积着一小汪水，炉壁上挂着几道融开的霜痕。",
+      "hook_type": "reveal",
+      "prop_ids": [
+        "prop_bronze_jade_furnace"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 6,
+      "scene": "scene_hold_door",
+      "characters": [
+        "char_caojin",
+        "char_jiangwanzhou"
+      ],
+      "positions": {
+        "姜晚舟": "画面左侧三分之一、前景、面朝右（朝门槛）",
+        "小灯": "不在画内（画外，炉边左侧）",
+        "曹锦": "画面右侧三分之一、后景门槛外、面朝左（朝舱内）"
+      },
+      "offscreen": {
+        "小灯": "上一镜在画面外炉边，本镜仍在画外炉边未入画",
+        "阿糖": "上一镜在姜晚舟围裙内层，本镜仍在画外她怀里未入画"
+      },
+      "shot_size": "全景",
+      "camera": "The camera pushes in with small amplitude at slow speed from the threshold toward 曹锦's still face.",
+      "action": "曹锦出现在门槛外，不进舱，一只手插在算袋里，在掌心写下一个数又用拇指擦掉，说「抱回来了？」和「队里批的是破冰取样，不是捡活物。」",
+      "dialogue": [
+        {
+          "speaker": "曹锦",
+          "text": "抱回来了？",
+          "os": true
+        },
+        {
+          "speaker": "曹锦",
+          "text": "队里批的是破冰取样，不是捡活物。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 曹锦, the forty-four-year-old quartermaster: narrow long face, high cheekbones, heavy lids, thin dark lips, short hair tied back with a cord, charcoal-black narrow-sleeved robe, tally pouch at the waist, charcoal smudge in his right palm. Front sheet: first attached picture; the SAME subject wherever else he appears.\n<Subject 2> is 姜晚舟, the nineteen-year-old salvager: freckled wheat-toned skin, dark-brown almond eyes, burn scar on right hand, high ponytail with hemp cord, copper fringe clip, oilcloth apron, sleeves rolled above the elbow, copper keys at the waist. Front sheet: next attached picture; the SAME subject wherever else she appears.\nThe scene is the LAST attached picture — 冰星老舱·门槛铁壁: hold threshold, rimed iron door frame, warm furnace glow behind the woman, cold blue hatch light behind the man, before dawn.\n\nsummary:\n[reference generation] The quartermaster stops outside the threshold and turns the living creature into a ledger stock figure; identities fixed by the reference sheets, space, light and camera built freely.\n\nretention_analysis:\n- <Subject 1> 曹锦 (appears in [Shot 1], [Shot 2], [Shot 3]): fully_preserved - face, hair cord, robe, tally pouch, palm smudge.\n- <Subject 2> 姜晚舟 (appears in [Shot 2], [Shot 3]): fully_preserved - face, ponytail, fringe clip, apron, rolled sleeves, copper keys.\n- Scene picture 冰星老舱·门槛铁壁 ([Shot 1]): weak_reference - threshold, deck plates, light contrast, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; warm bronze furnace light from the cabin left dies at the iron threshold, where cold blue rime light takes the deck outside.\n[Shot 1] Ultra-wide eye-level deep perspective through the doorway, cinematic establishing shot: the iron threshold band across the lower frame, rimed, riveted deck plates receding. 姜晚舟 foreground left, warm glow on her back; 曹锦 right, beyond the threshold, not stepping in. Camera pushes in, small amplitude, slow speed. Deck plates groan; wind outside thin and dry.\n[Shot 2] At 00:02.800 cut to a medium close on 曹锦, the doorway frame crossing the back. He pulls his right hand from the pouch and draws a short tally in his left palm, one thumb sweep, the mark staying illegible, then rubs it away. Flat, thin, reporting only numbers (S1): <d>[Chinese]抱回来了？</d> His eyes stay off her face.\n[Shot 3] At 00:05.000 cut to 姜晚舟 in a medium close, furnace glow along her left cheek and shoulder. She does not step back; her chin lifts, her right hand pressing flat on the apron front where the bundle sits. 曹锦's voice from off-frame right, flat and level, still reporting: <d>[Chinese]队里批的是破冰取样，不是捡活物。</d> Her lips stay closed; she answers nothing.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, the tally pouch or the deck plates; the mark in his palm stays an illegible smudge.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nWarm furnace crackle behind the woman, dry wind, deck plates ticking under boots, oilcloth and pouch creaking, one long hull groan from far below.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view": "ultra-wide eye-level deep perspective",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.8
+        },
+        {
+          "at": 5
+        }
+      ],
+      "end_state": "曹锦站在门槛外不动，右手还插在算袋里、左手指尖沾着炭；姜晚舟站在舱内炉边两步处，围裙内层鼓着一小块，面朝门槛。",
+      "hook_type": "suspense",
+      "vo_kind": "speech"
+    },
+    {
+      "id": 7,
+      "scene": "scene_hold_door",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_caojin",
+        "char_atang"
+      ],
+      "positions": {
+        "姜晚舟": "画面右侧、前景、面朝左，一手按在围裙上",
+        "曹锦": "画面左侧、后景门槛外、面朝右",
+        "阿糖": "画面右侧下缘、前景围裙内层只露一撮白绒与两叉尾尖"
+      },
+      "offscreen": {
+        "小灯": "上一镜未入画，本镜仍在画外炉边左侧"
+      },
+      "shot_size": "近景",
+      "camera": "The camera pans left with small amplitude at slow speed, handing the frame from 姜晚舟 to 曹锦 at the threshold.",
+      "action": "姜晚舟说「她是活的。」；曹锦把手从算袋里抽出来，指尖沾着炭，回「活的更贵。按存量算，一只玉兽约四百寸暖。」",
+      "dialogue": [
+        {
+          "speaker": "姜晚舟",
+          "text": "她是活的。",
+          "os": true
+        },
+        {
+          "speaker": "曹锦",
+          "text": "活的更贵。按存量算，一只玉兽约四百寸暖。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, nineteen, female salvager: wheat-toned freckled skin, dark-brown almond eyes, burn scar on the back of her right hand, high ponytail with hemp cord, copper fringe clip, oilcloth apron over grey work clothes, rolled sleeves, copper keys at her waist. Front sheet: first attached picture; SAME subject in every other picture.\n<Subject 2> is 曹锦, forty-four, quartermaster: narrow long face, high cheekbones, heavy lids, thin dark lips, sallow oily skin, combed-back hair with a thin cord, charcoal-black narrow-sleeved robe, leather tally pouch with charcoal stub. Front sheet: next attached picture; SAME subject in every other picture.\n<Subject 3> is 阿糖, a palm-sized jade beast: thick white fur with a jade-green sheen, round bean-green eyes, grey-corded neck tuft, two-forked tail tip. Front sheet: next attached picture; SAME subject in every other picture.\nThe scene is the LAST attached picture — 冰星老舱·门槛铁壁: the hold's threshold, worn iron band and rime-crusted door frame, iron-riveted deck plates outside, warm furnace glow inside against cold blue hatch light, before dawn.\n\nsummary:\n[reference generation] Two people price one living creature across an iron threshold — the salvager says it is alive and the quartermaster puts a figure on it; all three subjects are held by their reference sheets while the light, framing and camera are built freely.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 (appears in [Shot 1], [Shot 3]): fully_preserved.\n- <Subject 2> 曹锦 (appears in [Shot 2], [Shot 3]): fully_preserved.\n- <Subject 3> 阿糖 (appears in [Shot 1]): fully_preserved.\n- The scene picture 冰星老舱·门槛铁壁: weak_reference - threshold layout and warm-versus-cold light contrast referenced, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; warm bronze light inside the threshold and cold rime blue outside, frost dust crossing between them.\n[Shot 1] Chest-to-waist close shot, no wider. 姜晚舟's right hand lies flat on her oilcloth apron; under her palm the cloth lifts on its own, white fur and a two-forked tail tip at the seam. Low, level voice, words clipped short (S1): <d>[Chinese]她是活的。</d>\n[Shot 2] At 00:02.800 the camera pans left, small amplitude, slow speed, to 曹锦 at the threshold. He pulls his right hand from the tally pouch, fingertips grey with charcoal, left palm half-open, the tally on it rubbed to an illegible black smear. He looks at the bulge of cloth, not at her. Flat, thin voice reporting only numbers (S2): <d>[Chinese]活的更贵。按存量算，一只玉兽约四百寸暖。</d>\n[Shot 3] At 00:05.400 the shot returns to 姜晚舟 in the same close framing, doorway behind her shoulder. She does not move her hand; knuckles whiten on the apron, her breathing shortens, she looks past him at the deck plates beyond the threshold. 曹锦 stays half out of frame at the left edge, palm still open. No speech in this shot.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, the tally pouch, the deck plates or stone; the mark on his palm stays an illegible smudge.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nFurnace crackle behind the woman, dry wind on the deck outside, iron and rivets ticking, leather pouch creaking, cloth shifting under her hand, one small non-verbal chirr from inside the apron.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视近景对切，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.8
+        },
+        {
+          "at": 5.4
+        }
+      ],
+      "end_state": "姜晚舟站在舱内，右手按着围裙、掌心下露出一点白绒与两叉尾尖；曹锦站在门槛外，左掌摊着刚被拇指擦过的一团炭黑，视线落在围裙上。",
+      "hook_type": "suspense",
+      "vo_kind": "speech"
+    },
+    {
+      "id": 8,
+      "scene": "scene_hold_door",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang",
+        "char_caojin"
+      ],
+      "positions": {
+        "姜晚舟": "画面中央、前景，侧身面朝右，双手捧着白绒团子举在炉口前一寸",
+        "曹锦": "画面右后、后景门槛外，面朝左，袖口被暖流吹得贴住手腕",
+        "阿糖": "画面中央偏上、前景她双手之间，白绒团子面向炉口"
+      },
+      "offscreen": {
+        "小灯": "上一镜未入画，本镜仍在画外炉边左侧"
+      },
+      "shot_size": "中景",
+      "camera": "The camera arcs right with small amplitude at slow speed around 姜晚舟 as she carries the white bundle to the furnace mouth.",
+      "action": "姜晚舟抱着团子转身走到炉边蹲下，把团子捧到炉口前一寸；炉心那朵焰跳到两指高，暖流直扑门口；曹锦袖口贴住手腕，他掌心刚写下的数被热气冲花，糊成一团黑；她说「炉四十天没亮。」「她一进来就亮。你要入册，先登记这炉。」",
+      "dialogue": [
+        {
+          "speaker": "姜晚舟",
+          "text": "炉四十天没亮。",
+          "os": true
+        },
+        {
+          "speaker": "姜晚舟",
+          "text": "她一进来就亮。你要入册，先登记这炉。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 10,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> 姜晚舟, nineteen, female salvager: wheat-toned skin, dark-brown almond eyes lit at the tails, burn scar on her right hand, hemp-cord high ponytail, copper fringe clip, oilcloth apron, rolled grey sleeves, copper keys at the waist. Front sheet = first attached picture; SAME in all pictures.\n<Subject 2> 阿糖, palm-sized jade beast: thick white fur, jade-green sheen, pale-green muzzle tip, bean-green eyes, grey-corded neck tuft, forked tail tip. Front sheet = next attached picture; SAME in all pictures.\n<Subject 3> 曹锦, forty-four, quartermaster: long narrow face, heavy lids, combed-back corded hair, charcoal-black narrow-sleeved robe, leather tally pouch at the waist. Front sheet = next attached picture; SAME in all pictures.\nScene = LAST attached picture, 冰星老舱·门槛铁壁: iron threshold band, rime-crusted frame, deck plates outside, a person-tall three-footed bronze-jade furnace with old-jade belly slab at the cabin end, before dawn.\n\nsummary:\n[reference generation] She refuses the ledger and answers with the furnace: the flame leaps at the living bundle, the number on the quartermaster's palm steams to a black smear; subjects fixed by reference sheets, light and camera free.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 ([Shot 1], [Shot 2], [Shot 3]): fully_preserved - face, ponytail, apron.\n- <Subject 2> 阿糖 ([Shot 1], [Shot 2]): fully_preserved - white fur, jade sheen, forked tail tip.\n- <Subject 3> 曹锦 ([Shot 2], [Shot 3]): fully_preserved - long face, heavy lids, tally pouch.\n- 冰星老舱·门槛铁壁 ([Shot 1], [Shot 2], [Shot 3]): weak_reference - threshold layout and warm/cold light contrast referenced, camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: light along the eye tails, deep tonal shadow in the skin's planes; warm bronze-jade flame against cold blue rime, fast heat shimmer across the middle distance.\n[Shot 1] Medium shot. 姜晚舟 turns from the threshold, white bundle in both hands against her oilcloth apron, crosses to the furnace; the camera arcs right, slow, as she kneels and lifts the bundle a finger's width before the furnace mouth. Low, level voice (S1): <d>[Chinese]炉四十天没亮。</d>\n[Shot 2] At 00:03.200 cut to medium close on the furnace mouth. The frost-white flame leaps two fingers high and steadies, warm pulse across the old-jade belly slab; white fur lights warm on one side. She holds the bundle steady. Same low, level voice (S1): <d>[Chinese]她一进来就亮。你要入册，先登记这炉。</d>\n[Shot 3] At 00:06.400 cut back to the threshold. Warm air crosses the cabin: 曹锦's sleeves flatten to his wrists, tally pouch cords lift, the black smear on his open left palm pales to an unreadable blot. His hand freezes above the pouch; he steps back half a boot. No speech.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, the pouch, the furnace or the jade slab; every written mark stays an illegible smear.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nThe furnace flame roars into a low roll, then a hard crackle; water hisses on hot copper, cloth snaps in warm air, a pouch creaks, a boot scuffs the threshold.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视中近景绕拍，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 3.2
+        },
+        {
+          "at": 6.4
+        }
+      ],
+      "end_state": "姜晚舟蹲在炉边，双手把白绒团子捧在炉口前一寸，炉心灯焰窜到两指高；曹锦站在门槛外，左掌上那个数被热气冲糊成一团黑，右手指尖悬在算袋口上方。",
+      "hook_type": "reversal",
+      "prop_ids": [
+        "prop_bronze_jade_furnace",
+        "prop_jade_slab"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 9,
+      "scene": "scene_hold_door",
+      "characters": [
+        "char_caojin",
+        "char_xiaodeng"
+      ],
+      "positions": {
+        "姜晚舟": "不在画内（画外，炉的另一侧）",
+        "小灯": "画面右侧、中景炉边，蹲着、面朝左前的炉口方向",
+        "曹锦": "画面中央、中景门槛处，背对舱内、面朝右侧甲板"
+      },
+      "offscreen": {
+        "姜晚舟": "上一镜在炉边捧着阿糖，本镜仍在炉的另一侧画外",
+        "阿糖": "上一镜在姜晚舟手中，本镜随她一起在画外"
+      },
+      "shot_size": "中景",
+      "camera": "The camera pulls out with small amplitude at slow speed as 曹锦 turns his back and steps off the threshold.",
+      "action": "曹锦又说了一遍「我算的是船。」，转身走出门槛，甲板上他留下的脚印比旁人的深半分；舱里静下来，只剩炉心那朵焰的细小噼啪声；小灯蹲到炉边伸手掌试热度，试到一半缩回来，把木鸟举到炉边烤，说「它不会飞。我刻的时候没留重心。」",
+      "dialogue": [
+        {
+          "speaker": "曹锦",
+          "text": "我算的是船。",
+          "os": true
+        },
+        {
+          "speaker": "小灯",
+          "text": "它不会飞。我刻的时候没留重心。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 8,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 曹锦, 44, quartermaster: narrow long face, heavy lids, thin lips, hair combed back and tied with cord, charcoal-black robe, tally pouch. Front sheet first attached picture; SAME subject every picture.\n<Subject 2> is 小灯, 7-year-old boy: round apple face, missing front tooth, chapped cheeks, tuft with one right lock up, dark padded jacket with rolled sleeves and darker hem, worn wooden bird with three wing lines. Front sheet next attached picture; SAME subject every picture.\nThe scene is the LAST attached picture — 冰星老舱·门槛铁壁: hold threshold, worn iron band, riveted deck plates beyond, one-person-tall three-footed bronze-jade furnace at cabin end, warm inside, cold blue rime outside, before dawn.\n\nsummary:\n[reference generation] The quartermaster repeats his line and walks out, bootprints deeper than the crew's; inside, the child tests the furnace and holds out his wooden bird; reference sheets hold both identities while light, deck and camera are free.\n\nretention_analysis:\n- <Subject 1> 曹锦 ([Shot 1], [Shot 2]): fully_preserved - narrow long face, heavy lids, thin lips, combed-back hair, charcoal-black robe, tally pouch.\n- <Subject 2> 小灯 ([Shot 3]): fully_preserved - round apple face, missing front tooth, chapped cheeks, padded jacket with darker hem, upturned lock, wooden bird.\n- Scene 冰星老舱·门槛铁壁: weak_reference - threshold, deck plates, warm-versus-cold light; camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; warm bronze glow inside the threshold and flat cold rime blue on the deck plates beyond it, rime dust hanging in the doorway.\n[Shot 1] Medium shot of threshold, iron band crossing bottom. 曹锦 turns away, one hand in tally pouch; charcoal smear on open left palm is dry. Without turning his head he repeats, flat and thin, numbers only (S1): <d>[Chinese]我算的是船。</d> Camera pulls out slowly as he steps off the iron band onto the deck.\n[Shot 2] At 00:02.600 cut down to deck plates outside. His boots leave prints in thin rime; older shallower crew prints run the other way — his sink deeper, edged with cracked rime. Wind drags loose snow and half buries the deepest print. No speech in this shot.\n[Shot 3] At 00:04.800 cut back inside to furnace. 小灯 crouches in his padded jacket, sleeves rolled twice; he holds a palm to the old-jade belly slab, feels heat, pulls back, rubs wrist. He lifts the worn wooden bird to the furnace mouth — three lines across its wing — and turns it in warm air. Bright, piping child's voice gone quiet (S2): <d>[Chinese]它不会飞。我刻的时候没留重心。</d>\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, the pouch, the deck plates, the wooden bird or stone; the bird's wing stays blank apart from its three cut lines.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nWind scrapes deck plates; bootfalls ring dull on riveted iron and fade; inside, furnace flame snaps, cloth rustles, wooden bird creaks.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视中景，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.6
+        },
+        {
+          "at": 4.8
+        }
+      ],
+      "end_state": "曹锦的背影走出门槛、脚步留在甲板锈板上，那一串脚印比旁边进出的几串深半分；舱内小灯蹲在炉边，一只手举着木鸟停在炉口前，另一只手刚缩回来，炉心灯焰稳稳烧着。",
+      "hook_type": "callback",
+      "prop_ids": [
+        "prop_wooden_bird"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 10,
+      "scene": "scene_hold_door",
+      "characters": [
+        "char_xiaodeng",
+        "char_jiangwanzhou",
+        "char_atang"
+      ],
+      "positions": {
+        "姜晚舟": "画面右侧、中景站着、面朝左下，怀里抱着白绒团子",
+        "小灯": "画面左侧、前景蹲着、面朝右，双手举着木鸟",
+        "阿糖": "画面中央偏右、前景她怀里白绒一团，两只前爪按着木鸟"
+      },
+      "offscreen": {
+        "曹锦": "上一镜转身走出门槛，本镜已在舱外画外（甲板方向）"
+      },
+      "shot_size": "近景",
+      "camera": "The camera pedestals down with small amplitude at slow speed to the crouched child's eye level beside the furnace foot.",
+      "action": "小灯把木鸟凑到团子鼻子底下，团子闻了闻，用两只前爪把木鸟按进自己的绒毛里按得死死的；小灯说「那叫糖球吧。」；姜晚舟低头看怀里那团白，说「行。但得记着，船上剩的暖不够三天。」；团子在她怀里打了个滚，两只前爪按住她的手背。",
+      "dialogue": [
+        {
+          "speaker": "小灯",
+          "text": "那叫糖球吧。",
+          "os": true
+        },
+        {
+          "speaker": "姜晚舟",
+          "text": "行。但得记着，船上剩的暖不够三天。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 9,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 小灯, the seven-year-old boy: round apple face, wide black eyes, missing front tooth, chapped cheeks, upright hair lock, dark padded jacket, oversized shoes, a worn wooden bird with three cut lines on its wing.\n<Subject 2> is 姜晚舟, the nineteen-year-old salvager: freckled wheat skin, dark-brown almond eyes, burn scar on her right hand, high ponytail with hemp cord, copper fringe clip, oilcloth apron, rolled sleeves, copper keys.\n<Subject 3> is 阿糖, a palm-sized jade beast: thick white fur with a jade-green sheen, pale green muzzle tip, bean-green eyes, grey-corded neck tuft, two-forked tail tip.\nThe scene is the LAST attached picture, 冰星老舱·门槛铁壁: the hold's threshold at the cabin end, the three-footed bronze-jade furnace beside them, rime on iron and deck, before dawn.\nAll three subjects come from their attached reference sheets and stay the SAME in every picture.\n\nsummary:\n[reference generation] Beside the lit furnace the child offers his wooden bird and names it; the salvager accepts it while naming the deadline. Subjects are fixed by their reference sheets; light, framing and camera are free.\n\nretention_analysis:\n- <Subject 1> 小灯 ([Shot 1], [Shot 2], [Shot 4]): fully_preserved - face, jacket, wooden bird.\n- <Subject 2> 姜晚舟 ([Shot 2], [Shot 3], [Shot 4]): fully_preserved - face, ponytail, apron, keys.\n- <Subject 3> 阿糖 ([Shot 3], [Shot 4]): fully_preserved - fur, muzzle, eyes, forked tail tip.\n- 冰星老舱·门槛铁壁: weak_reference - threshold, furnace placement and warm light; camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; a warm bronze-jade glow from the furnace lays across all three of them, with a cold blue rime rim on the plates behind.\n[Shot 1] Close shot at the crouched child's height. 小灯 holds the wooden bird up in both hands, a hand's width under the creature's nose; the camera pedestals down at slow speed to settle level with him.\n[Shot 2] At 00:02.400 the shot widens to a medium close on 姜晚舟 holding the bundle at her chest. Bright, piping child's voice gone soft (S2), from left of frame, 小灯 says: <d>[Chinese]那叫糖球吧。</d> The white ball sniffs once, clamps both forepaws on the bird and presses it into its chest fur; her mouth pulls to one side and her shoulders loosen.\n[Shot 3] At 00:05.000 the camera settles into a close shot of her arms and the bundle. Low, level voice, words clipped short (S1): <d>[Chinese]行。但得记着，船上剩的暖不够三天。</d> The bundle lays both forepaws on the back of her hand, the two-forked tail tip sweeping once across her wrist; her head comes up.\n[Shot 4] At 00:07.200 the shot returns to the crouched child, chest-up against the furnace glow. 小灯's face empties; his hands close on his jacket edge, mouth open with nothing coming out. No speech; the furnace crackle continues under the frame.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, the wooden bird, the furnace or stone; the bird's wing stays blank apart from its three cut lines.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nWarm furnace crackle and dry snaps, wood creaking in the child's hands, padded cloth rustling, faint claws ticking on the wooden toy, thin wind on the deck outside.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view_note": "平视近景，官方视角表无对应项",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 2.4
+        },
+        {
+          "at": 5
+        },
+        {
+          "at": 7.2
+        }
+      ],
+      "end_state": "团子把木鸟按进自己胸前的绒毛里按得死死的，两只前爪压在上面；姜晚舟低头看着怀里这团白，右手托在它身下；小灯蹲在炉边仰着脸看她。",
+      "hook_type": "tender",
+      "prop_ids": [
+        "prop_wooden_bird"
+      ],
+      "vo_kind": "speech"
+    },
+    {
+      "id": 11,
+      "scene": "scene_hold_door",
+      "characters": [
+        "char_jiangwanzhou",
+        "char_atang"
+      ],
+      "positions": {
+        "姜晚舟": "画面中央偏左、前景，面朝右看着炉心灯焰，嘴唇闭合",
+        "姜晚舟·Q版": "画面左侧她左肩上、前景，2.5 头身小人站起、双手叉腰",
+        "阿糖": "画面中央、前景她怀里白绒一团，两叉尾尖垂在她腕上"
+      },
+      "offscreen": {
+        "小灯": "上一镜蹲在炉边，本镜仍在画外炉脚右侧未入画",
+        "曹锦": "上一镜已走出门槛，本镜仍在舱外甲板画外"
+      },
+      "shot_size": "近景",
+      "camera": "The camera pushes in with small amplitude at slow speed from 姜晚舟's shoulder to the flame in the furnace mouth, then holds as the deck beyond comes into the corner of the frame.",
+      "action": "姜晚舟抱着团子看着炉心那朵焰，不做声；她左肩上那个 Q 版小人站起来叉着腰；镜头推向炉口再带出门外甲板——霜潮的雾线压过来，甲板表面先结出一层放射状的霜。内心独白由她自己的声音说出。",
+      "dialogue": [
+        {
+          "speaker": "姜晚舟",
+          "text": "三天之内，这炉得一直亮。",
+          "os": true
+        },
+        {
+          "speaker": "姜晚舟",
+          "text": "不然霜潮压到白浪线那天，我们谁也别想走。",
+          "os": true
+        }
+      ],
+      "narration": "",
+      "duration": 10,
+      "mode": "ref2va",
+      "h3_prompt": "subject_definitions:\n<Subject 1> is 姜晚舟, the nineteen-year-old female salvager: wheat-toned freckled skin, dark-brown almond eyes, an old burn scar on the back of her right hand, high ponytail with hemp cord, copper fringe clip, oilcloth apron over grey work clothes, rolled sleeves, copper keys at the waist; sheet 1, SAME subject throughout.\n<Subject 2> is 阿糖, a palm-sized jade beast: soft white fur with a jade-green sheen, pale green muzzle tip, bean-green eyes, grey-corded neck tuft, forked tail tip; next sheet, SAME subject.\n<Subject 3> is 姜晚舟·Q版, the 2.5-head-body chibi of the same woman on her left shoulder: oversized head, round face, thin neck, apricot eyes, burn scar as a dot, knee-length apron, key string as small bells; its card next, SAME figure.\nThe scene is the LAST attached picture — 冰星老舱·门槛铁壁: the hold's threshold before dawn, the one-person-tall three-footed bronze-jade furnace with its old-jade belly slab, the worn iron threshold band and rime-crusted door frame, iron-riveted deck plates, a frost-tide fog line beyond.\n\nsummary:\n[reference generation] Inner monologue shot: the woman holds the living bundle and watches the furnace flame while her chibi self performs on her left shoulder, and the frost tide closes on the deck beyond; identity, wardrobe and layout come from the reference sheets, the performance and camera built freely.\n\nretention_analysis:\n- <Subject 1> 姜晚舟 (appears in [Shot 1], [Shot 3]): fully_preserved - face, ponytail, copper clip, apron, rolled sleeves, waist keys; lips closed throughout.\n- <Subject 2> 阿糖 (appears in [Shot 1], [Shot 2]): fully_preserved - jade-sheened white fur, pale muzzle tip, bean-green eyes, neck tuft, forked tail tip.\n- <Subject 3> 姜晚舟·Q版 (appears in [Shot 2]): fully_preserved - 2.5-head-body proportions, round face, apricot eyes, burn-scar dot, knee-length apron, key-string bells.\n- The scene 冰星老舱·门槛铁壁: weak_reference - threshold space, furnace placement, warm-versus-cold light; camera free.\n\ndetailed_description:\nCinematic, 3D CG, semi-realistic oriental star-sea illustration: shadowed brow bones, light along the eye tails, deep tonal shadow in the skin's dark planes; warm bronze-jade furnace light on her front, a cold blue-grey fog bank waiting beyond the door, rime dust crossing both.\n[Shot 1] Close over her right shoulder, the furnace mouth at frame left. 姜晚舟 holds the white-fur bundle, lips closed, gaze moving from the flame to the open doorway. Off-screen inner voice, low and clipped (S1) says: <d>[Chinese]三天之内，这炉得一直亮。</d> Slow push-in toward the flame.\n[Shot 2] At 00:03.400 the camera eases back to her left shoulder: the chibi 姜晚舟 stands on the apron strap, hands on hips, spins a full circle, drops to one knee and cups both hands around the white fur, guarding it. Lips closed; same inner voice (S1): <d>[Chinese]不然霜潮压到白浪线那天，我们谁也别想走。</d> The bundle rolls once.\n[Shot 3] At 00:07.000 the camera holds on the hot furnace mouth, then the cold bank beyond the threshold enters the frame corner in compressed depth: the fog line stands off the deck; where it touches, the plate frosts into fine radiating needles, then the fog rolls closer and stops. 姜晚舟 stays left foreground, lips closed. No further speech.\nExclusions: no watermarks, no logos, no captions, no subtitles, no added lettering on clothing, the furnace, the jade slab, the deck plates or the fog; every surface stays blank, unwritten and weathered.\nSubjects must remain clearly visible and adequately lit throughout the video; avoid rendering any frame nearly black or overly dark.\n\noverall_soundscape:\nFurnace crackle close to the microphone, cloth and keys shifting with her breathing, rime ticking in the door frame, and a long low moan of wind carrying the frost tide against the hull.\n\nnon_diegetic_music:\nN/A\n\nMANDARIN ONLY (mandatory language rule): every spoken line and voiceover MUST be Mandarin Chinese (普通话), matching the [Chinese] tag inside each <d>…</d>; no English, no Japanese, no invented or gibberish speech, no foreign accent. Ambient non-speech sound only where the soundscape asks for it.",
+      "view": "compressed distant depth",
+      "angle_zh": "平视",
+      "cuts": [
+        {
+          "at": 0
+        },
+        {
+          "at": 3.4
+        },
+        {
+          "at": 7
+        }
+      ],
+      "end_state": "姜晚舟抱着白绒团子站在炉前，嘴唇闭合，视线从炉心灯焰抬向门外；她左肩上站着 2.5 头身的 Q 版姜晚舟，双手叉腰；门外甲板的霜面上，雾线正推过来，甲板先结出一层放射状的霜。",
+      "hook_type": "suspense",
+      "prop_ids": [
+        "prop_bronze_jade_furnace",
+        "prop_jade_slab"
+      ],
+      "vo_kind": "inner",
+      "chibi_ids": [
+        "姜晚舟·Q版"
+      ]
+    }
+  ],
+  "brief_scenes": [
+    {
+      "no": 1,
+      "place": "冰星老舱",
+      "time": "天没亮",
+      "in_out": "内",
+      "header": "【场 1|冰星老舱|天没亮|内】"
+    },
+    {
+      "no": 2,
+      "place": "冰星老舱舱门",
+      "time": "同刻",
+      "in_out": "内",
+      "header": "【场 2|冰星老舱舱门|同刻|内】"
+    }
+  ],
+  "StrippedDirectives": 0
+}

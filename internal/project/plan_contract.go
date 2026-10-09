@@ -208,13 +208,20 @@ func PlanIssuesText(issues []Issue) []string {
 // 判据：逐条台词看说话人是否在**本镜的出场名单**里（名单在方案里是 id，说话人是名字，
 // 所以两边都要能对上：id / 名字 / 去括注的基名）。
 //
-// 【2026-10-07 修：不再把 os 行整个甩给 HasVoiceover】原来这里有 `if l.OS … continue`，
+// 【2026-10-07 修（第一半）：不再把 os 行整个甩给 HasVoiceover】原来这里有 `if l.OS … continue`，
 // 理由是"os 标记交给 HasVoiceover 那条路管" —— 而 `HasVoiceover` 在 `vo_kind=speech` 时
 // **直接 return false**（那是 2026-09-29 为治"哑剧"定的：speech 镜里画面里有人在说）。
 // 两者叠起来就是一个洞：真机第01集 12 句「舱内AI」的台词都标着 os=true、说话人不在本镜，
 // 却既不进 HasVoiceover、也不进这里 ⇒ **一句"闭嘴"约束都没有**，全靠模型自己在英文正文里
 // 写一句 off-screen（那一集它写了，但平台不能指望这个）。
 // 现在 os 只是"模型自己标的画外"，**判定权在平台**（说话人在不在出场名单里）。
+//
+// 【2026-10-09 修（第二半，真机复现）：上半那次只改了注释，代码里的 `l.OS` 还留着】——
+// 真机《我捡的团子·第01集》19 句台词**全被模型标成 os=true**（schema 里写的是 os:false），
+// 于是 `if l.OS … continue` 让这条判据对**每一镜**都返回空：镜 5 的台词是小灯说的、而它
+// 根本不在本镜出场名单里（真画外音），平台却**没补**那句强制的"画内的人保持闭嘴"⇒
+// 用户看到的就是「另一人说话、其它角色动嘴」。⇒ os 从此**只影响措辞归属，不再参与跳过**：
+// 说话人在不在这一镜，是方案自己（`characters` + `offscreen` 字段）能确定性判定的事实。
 func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 	if plan == nil {
 		return nil
@@ -245,8 +252,10 @@ func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 		if name == "" || strings.TrimSpace(l.Text) == "" {
 			continue
 		}
-		if l.OS || IsVoiceoverSpeaker(name) {
-			continue // 画外标记 / 旁白/系统音这类标签说话人：交给 HasVoiceover 与逐句声线绑定
+		// 【2026-10-09】**不许拿 `l.OS` 当跳过条件**：那是模型的自述，真机 19 句**全是 true**
+		// （见上面第二半）。旁白/系统音这类**标签说话人**照旧跳过（它们由 HasVoiceover 管）。
+		if IsVoiceoverSpeaker(name) {
+			continue
 		}
 		// 【2026-10-07 不改这里的原因】曾想把它改成"系统音也算画面外说话人"，
 		// 但那样会把「系统音不在本镜」报成"画面里没这个人"（system_voice_test ⑤ 明确要求不许），

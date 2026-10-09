@@ -416,7 +416,17 @@ type HealResult struct {
 	// 平台能确定性地对齐，不该留给模型自觉。句数不等时不猜（那是"少说了一句/多说了一句"，报 fail）。
 	AlignTags int
 	Voiceover int // 补了几镜的画外演出素材引用
-	MusicNA   int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
+	// SpeakerOSMarked / SpeakerOSCleared 说话人绑定归一改了几处（见 speaker_bind.go）：
+	// marked = 说话人不在本镜、补标成画外音（os=true）；cleared = **纠正**（人在画面里亲口说，
+	// 却被标成画外音）。两件必须分开报。
+	//
+	// 【为什么"纠正"也要报（2026-10-09 真机）】《我捡的团子·第01集》**19 句台词全被模型标成
+	// os=true**（schema 里写的是 os:false）—— 用户报的「另一人说话、其它角色动嘴」正是它：
+	// 平台的"画外说话人"判据被这些 os 全部跳过，镜 5 那种真画外音反而没有"画内闭嘴"约束。
+	// 平台按出场名单把它改回来，等于替模型改了措辞，用户有权知道改了几处。
+	SpeakerOSMarked  int
+	SpeakerOSCleared int
+	MusicNA          int // 把几镜的 non_diegetic_music 改写成 N/A（平台政策，见 music_na.go）
 	// EntityRefs 分镜里的**名字引用**归一成卡片 id 的处数（五步会话输出的是名字，
 	// 见 entity_refs.go）；EntityRefsUnknown 是归一之后仍对不上卡片的引用数。
 	EntityRefs int
@@ -489,6 +499,11 @@ func HealPlan(plan *Plan) HealResult {
 	// 并卡会把被丢掉的 id 的引用改写成保留的 id，跑在归一之前才对得上。
 	charDupes := DedupeCharacters(plan)
 	entFixed, entUnknown, entLoose := RemapEntityRefs(plan)
+	// 说话人绑定归一化（见 speaker_bind.go）：说话人在不在本镜由**方案的出场名单**定，
+	// 不让模型自述的 `os` 覆盖。排在引用归一之后（那时 `characters` 已是卡片 id，名字对得上）。
+	// 【2026-10-09 真机】这一步原来只在 director 的**产出**路径上调，读取边界没调 ⇒
+	// 盘上那份方案（19 句台词全被标成 os=true，其中 18 句的说话人就在本镜）再被读出来时，没人纠正它。
+	osMarked, osCleared := markOffscreenSpeakers(plan)
 	// 声线兜底排在并卡之后：并掉的卡不必再补嗓子（不然播报里会多出几个已不存在的名字）。
 	// 它只填空的，已有 voice 的卡一个字不动；同名同声、异名不同声（见 voice_defaults.go）。
 	voices, voiceNames := FillMissingVoices(plan)
@@ -523,6 +538,8 @@ func HealPlan(plan *Plan) HealResult {
 		AlignTags:         alignTags,
 		Voiceover:         FillVoiceoverAssets(plan),
 		MusicNA:           EnsureMusicNA(plan),
+		SpeakerOSMarked:   osMarked,
+		SpeakerOSCleared:  osCleared,
 		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
 		// 补上之后 `CutIssues` 那几条（每刀 1.5–4 秒等）才真正开始工作。
 		Cuts:       plan.FillCutsFromPrompt(),

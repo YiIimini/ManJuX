@@ -24,10 +24,25 @@ import "strings"
 //   - 说话人根本不是本方案的角色（打字错、临时角色）→ **不动**，交给契约失败暴露
 //     （自动标 os 会把"写错名字"这类真问题盖掉）。
 //
-// 归一化是**单向**的：只把 os 从 false 改成 true，从不改回 false，也不动台词文本。
-func MarkOffscreenSpeakers(p *Plan) int {
+// 归一化是**双向**的（2026-10-09 改成）：这一位由**平台**按方案的出场名单定 ——
+//
+//	· 说话人在本镜 `characters` 里、且**不在** `offscreen`（已出画）里 ⇒ `os=false`（画内对口型）
+//	· 说话人不在本镜（或是本镜已出画的角色）⇒ `os=true`（画外音）
+//
+// 【为什么必须双向（真机取证）】原版是单向的（只 false→true，从不改回），理由是"不覆盖模型
+// 的判断" —— 真机《我捡的团子·第01集》**19 句台词全被模型标成 os=true**（而 schema 里写的
+// 是 `os:false`）：于是①平台自己的"画外说话人"判据被这些 os 全部跳过（见 plan_contract.go
+// 的 OffScreenSpeakers 注释），镜 5 那种**真画外音**反而没人管 ⇒ 画内的人被模型安排去动嘴；
+// ②"人在画面里亲口说"的镜头全被写成画外音。⇒ "说话人在不在这一镜"是**方案自己的事实**
+// （characters + offscreen 两个字段），不该让模型的自述把它改掉。不动的只有三种：画外音标签
+// 说话人（旁白/系统/内心，整镜画外，由 vo_kind 管）、空说话人、**不是本方案角色**的名字
+// （那多半是打错字，交给契约失败暴露）。
+//
+// 返回值：补标处数、**纠正**（把画内台词从 os=true 改回 false）处数。两件事分开报 ——
+// 纠正数是"模型写错了、平台替你改了"，用户有权知道。
+func markOffscreenSpeakers(p *Plan) (marked, cleared int) {
 	if p == nil {
-		return 0
+		return 0, 0
 	}
 	byID := map[string]bool{}
 	byName := map[string]bool{}
@@ -35,7 +50,7 @@ func MarkOffscreenSpeakers(p *Plan) int {
 		byID[strings.TrimSpace(ch.ID)] = true
 		byName[strings.TrimSpace(ch.Name)] = true
 	}
-	n := 0
+	// 统计口径：marked 补标（画外音没标）、cleared 纠正（人在画面里却被标成画外音）。
 	for i := range p.Shots {
 		sh := &p.Shots[i]
 		if len(sh.Dialogue) == 0 {
@@ -58,21 +73,51 @@ func MarkOffscreenSpeakers(p *Plan) int {
 				}
 			}
 		}
-		for j := range sh.Dialogue {
-			line := &sh.Dialogue[j]
-			if line.OS {
+		// 本镜**已出画**的角色（`offscreen` 字段）：人在场、但这一镜不在画面里 —— 他的台词仍算画外音。
+		offScreen := map[string]bool{}
+		for k := range sh.Offscreen {
+			key := strings.ToLower(strings.TrimSpace(k))
+			if key == "" {
 				continue
 			}
+			offScreen[key] = true
+			for _, ch := range p.Characters {
+				if ch.ID == k || ch.Name == k {
+					offScreen[strings.ToLower(strings.TrimSpace(ch.Name))] = true
+					offScreen[strings.ToLower(strings.TrimSpace(ch.ID))] = true
+				}
+			}
+		}
+		for j := range sh.Dialogue {
+			line := &sh.Dialogue[j]
 			sp := strings.TrimSpace(line.Speaker)
-			if sp == "" || IsVoiceoverSpeaker(sp) || onScreen[sp] {
+			if sp == "" || IsVoiceoverSpeaker(sp) {
 				continue
 			}
 			if !byID[sp] && !byName[sp] {
 				continue // 不是本方案的角色：可能是写错了名字，让它去失败
 			}
-			line.OS = true
-			n++
+			if !onScreen[sp] || offScreen[strings.ToLower(sp)] {
+				if !line.OS {
+					line.OS = true
+					marked++
+				}
+				continue
+			}
+			if line.OS {
+				line.OS = false
+				cleared++
+			}
 		}
 	}
-	return n
+	// 装配期诊断量：纠正了几条被误标成画外音的台词（供两阶段如实播报，不进 JSON）。
+	p.SpeakerOSFixed += cleared
+	return marked, cleared
+}
+
+// MarkOffscreenSpeakers 兼容入口：返回**改动总处数**（补标 + 纠正）。
+// 需要区分"补标/纠正"两件事时用 markOffscreenSpeakers（播报用得到）。
+func MarkOffscreenSpeakers(p *Plan) int {
+	marked, cleared := markOffscreenSpeakers(p)
+	return marked + cleared
 }

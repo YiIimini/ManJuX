@@ -365,10 +365,10 @@ func normalizePlan(plan *project.Plan, opt Options) {
 	if plan == nil {
 		return
 	}
-	if n := project.MarkOffscreenSpeakers(plan); n > 0 && opt.OnNote != nil {
-		opt.OnNote("把 %d 条「说话人不在本镜画面里」的台词标成画外音（os=true）—— 语义上本来就是画外音，"+
-			"标上之后契约不再因此 fail", n)
-	}
+	// 画外音标注：**交给 HealPlan 里那一步**（project.markOffscreenSpeakers，读取边界与产出路径
+	// 共用一份实现）。这里原来单独调一次 `MarkOffscreenSpeakers` —— 2026-10-09 真机暴露它的
+	// 问题：那次调用只报"补标了几条"，而真正要紧的是**纠正**（模型把画面里亲口说的台词
+	// 全标成了画外音），纠正数必须单独说出来。重复调用已去掉，播报见下面 hr.SpeakerOS*。
 	// 画外演出的**资产引用**由归一化补全（2026-09-28 实测：一次真跑里 35 镜的 fail 就是
 	// 「#11 vo_kind=inner 但 chibi_ids 为空」——模型标了"这是内心镜"，却忘了写演出素材 id，
 	// 契约于是 fail，用户看到的是"又说不能渲"）。口径是"字段标了不算，素材必须真在"，
@@ -420,6 +420,19 @@ func normalizePlan(plan *project.Plan, opt Options) {
 		if hr.Voiceover > 0 {
 			opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
 				"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", hr.Voiceover)
+		}
+		// 【2026-10-09 真机（用户：「旁白说话角色未对齐（另一人说话，其它角色动嘴）」）】
+		// 两件事分开报：**纠正**比补标重要得多 —— 它意味着模型把"画面里的人在说"写成了画外音，
+		// 而平台按出场名单改回来了（不改的话那一镜的提示词里连"谁开口"都没约束）。
+		if hr.SpeakerOSMarked > 0 {
+			opt.OnNote("把 %d 条「说话人不在本镜画面里」的台词标成画外音（os=true）—— 语义上本来就是画外音，"+
+				"标上之后契约不再因此 fail", hr.SpeakerOSMarked)
+		}
+		if hr.SpeakerOSCleared > 0 {
+			opt.OnNote("⚠ 纠正了 %d 条**被误标成画外音**的台词（说话人就在本镜出场名单里）—— "+
+				"全标成画外音时，提示词里就只剩\"画内的人闭嘴\"这句约束，画面里谁开口全凭模型自己安排"+
+				"（用户报的「另一人说话、其它角色动嘴」就是它）；平台按 `characters` 出场名单改回**画内对口型**",
+				hr.SpeakerOSCleared)
 		}
 		if hr.MusicNA > 0 {
 			// 平台政策：每镜配乐一律 N/A（DEV-05）。实测写进提示词后仍有 19 镜带着配乐 ——

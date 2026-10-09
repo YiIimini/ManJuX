@@ -297,6 +297,15 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 				"（场次/人物/景别/机位/台词原文 + 卡片的英文外形）拼了一版最小合规正文，**不是新编内容**；"+
 				"渲染因此可以继续%s。不满意就在故事板里改这几镜的正文", n, joinShotIDs(ids, 8), cjk)
 	}
+	// 说话人误标纠正要如实说（2026-10-09 用户：「旁白说话角色未对齐（另一人说话，其它角色动嘴）」）：
+	// 模型把"画面里的人在说"写成画外音时，那一镜的提示词里只剩"画内的人保持闭嘴"这一条约束。
+	if plan.SpeakerOSFixed > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"🎭 纠正了 %d 条**被误标成画外音**的台词（说话人就在本镜的出场名单里）—— "+
+				"标成画外音时提示词里只剩\"画内的人保持闭嘴\"，画面里到底谁开口就全凭模型自己安排"+
+				"（用户报的「另一人说话、其它角色动嘴」就是它）；已按 `characters` 出场名单改回**画内对口型**",
+			plan.SpeakerOSFixed)
+	}
 	if ids := project.EmptyPromptShotIDs(plan); len(ids) > 0 {
 		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
 			"⚠ 还有 %d 镜的正文是**空的**（%s）—— 这几镜连场次/人物/台词都没有，平台拼不出正文；"+

@@ -407,13 +407,18 @@ func EnsureVoiceoverClause(plan *project.Plan, sh *project.Shot) bool {
 			"no on-screen character mouths those words, and the voice stays off-frame and disembodied."
 	}
 	if offScreen {
-		// 说话人这一镜不在画面里：画面内的人一律不许动嘴（嘴型只跟着**画面里真的在说的人**走）
+		// 说话人这一镜不在画面里：画面内的人一律不许动嘴（嘴型只跟着**画面里真的在说的人**走）。
+		//
+		// 【2026-10-09 真机咬出来的】这条子句原来写「keep their lips completely closed」——
+		// 而幂等判据找的是 `VoiceoverClauseMarker`（「lips remain completely closed」），
+		// 于是**这条子句本身不幂等**：装配点每调一次就再追加一遍（真机探针第二遍又追加了）。
+		// 现在两种子句都逐字含 marker，判据才拦得住重复追加。
 		if clause != "" {
 			clause += "\n"
 		}
 		clause += "OFF-SCREEN SPEAKER (mandatory): the character who speaks these lines is NOT in this shot — " +
-			"the people on screen keep their lips completely closed and their mouths at rest while that voice is heard; " +
-			"nobody on screen mouths those words, and the speaking voice stays off-frame."
+			"the people on screen keep their lips at rest and stay silent: their lips remain completely closed " +
+			"while that voice is heard; nobody on screen mouths those words, and the speaking voice stays off-frame."
 	}
 	sh.H3Prompt = strings.TrimRight(sh.H3Prompt, "\n") + "\n\n" + clause
 	return true
