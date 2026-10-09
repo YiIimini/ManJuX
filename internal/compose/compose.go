@@ -1,11 +1,15 @@
-// Package compose 负责合成成片:镜头规范化 → 拼接(硬切/叠化)→
-// 响度归一化 → 字幕烧录 → faststart。
+// Package compose 负责合成成片:镜头规范化 → 拼接 → 响度归一化 → 字幕烧录 → faststart。
+//
+// 拼接与接缝转场**交给成熟的装配引擎**（MoviePy；见 engine.go 与 assemble_mpy.py）：
+// 平台只喂输入、读引擎回报的真实时间轴 —— 不再自己拼 ffmpeg 滤镜图（2026-10-09 真机 P0：
+// 自写的 xfade 链在"过渡窗口越过前一镜末帧"时静默丢帧、退出码还是 0，成片只剩前 3 镜画面）。
+//
 // 关键纪律(知识库):H3 源视频仅首帧为 IDR,任何裁剪/拼接必须重编码,
 // 禁止流复制;成片必须 +faststart(微信/播放器起播兼容)。
 //
 // 音频纪律(2026-09-24 用户报「配音也不完整 / 有杂音」后成文,改之前先读):
-//   - **不许切在字上**:叠化转场必须让出与画面重叠等长的音频,让出哪一段是可选的
-//     ——切成静音上(见 internal/audio 的 SolveCut),人声一个字都不丢;
+//   - **接缝用交叉淡入淡出,不切内容**:转场交给引擎后,重叠的两镜音频一进一出地叠,
+//     不砍掉任何一段 —— 比旧实现"让出与画面重叠等长的音频"更不容易丢台词;
 //   - **每镜音频先补到与画面等长**(apad + -shortest):H3 偶有音轨比画面短的情况,
 //     不补的话裁剪区间会越界,只能静默丢帧;
 //   - **中间轨一律无损**(flac/mkv):拼接不是"再压一遍 AAC"的地方,否则每过一道
@@ -80,6 +84,11 @@ type Params struct {
 	// Grade 调色档:off / soft / film / heavy,空串与不认识的值都按 film(默认开,
 	// 见 GradeFilter/NormalizeGrade)。档位在终混统一应用,且排在字幕之前。
 	Grade string
+	// ToolDir 装配引擎的 **python 运行环境落点**（可选）:拼接脚本(assemble_mpy.py,
+	// MoviePy)需要一个装有 moviepy 的解释器。查找顺序:环境变量 MANJUX_MPY_PYTHON
+	// → <ToolDir>/mpy-venv/Scripts/python.exe → 首次引导创建(uv 优先,退回 python -m venv)。
+	// 空 = 用系统临时目录下的默认落点。管线传的是 <project.Store>/tools。
+	ToolDir string
 }
 
 // defaultPeakLinear peak 参数的默认值(0.92 线性 ≈ -0.72 dBTP)。
@@ -216,16 +225,14 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 	}
 
-	// 每镜在成片中的实际起始时间:转场(fade/dissolve)两镜重叠 FadeSec,
-	// 成片总长比各镜累加短 (n-1)*FadeSec(逐接缝重叠被压小时按实际的算)——
-	// 字幕时间轴必须按此偏移,否则转场模式下字幕会逐步超前画面(2026-09-09 修正)。
+	// 逐接缝的**重叠时长**由平台算（seamFades：同场次内部只留 1 帧 ≈ 硬切，换场叠化
+	// FadeSec，且不超过相邻任一镜的一半），交给装配引擎执行；每镜在成片里的**真实**
+	// 起点则由引擎回报（见 engine.go 的 timeline），平台不再自己按 fades 累加推 ——
+	// 一处算、处处一致：字幕落点、母版时长全读引擎回报的这一份。
 	//
-	// 2026-09-26 审计补齐(三套判据):偏移量不能由"又一套判据"推 —— 旧实现这里
-	// 判 `trans != "cut"`,画面那边判 `switch p.Transition { case "fade" }`,
-	// 音轨那边判 `durations[i] <= d`。参数为空串/被写坏时,字幕按"有重叠"扣、
-	// 画面却是零重叠硬切:全片字幕逐镜提前 i×FadeSec、res.Duration 少报
-	// (n-1)×FadeSec,而日志里一个字都没有。现在三处消费者(画面 xfade 的 offset /
-	// 字幕 starts / 音轨接缝)全部读下面这一份 fades,判据分裂无处可生。
+	// 2026-09-26 审计：偏移量不能由"又一套判据"推 —— 旧实现这里判 `trans != "cut"`、
+	// 画面那边判 `switch p.Transition`，参数写坏时字幕按"有重叠"扣、画面却硬切。现在
+	// 重叠只由下面这一份 fades 推出，判据分裂无处可生。
 	trans := effectiveTransition(p.Transition)
 	fd, fadeClamped := clampFadeSec(p.FadeSec)
 	// **同一场次内部的接缝一律硬切**（2026-10-09 用户：「分镜直接拼接画面很明显」）：
@@ -235,7 +242,6 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	// 10 处接缝全叠化：同一场里那 9 处本该硬切的地方都在糊。
 	sceneSeams := sceneSeamFlags(plan)
 	fades := seamFades(trans, durations, fd, sceneSeams)
-	starts := shotStarts(durations, fades)
 	// 同场硬切了几处如实播报（否则用户按"全片叠化"去理解画面，会以为自己参数没生效）。
 	if n := countSameSceneSeams(sceneSeams); n > 0 && trans == transFade && onProgress != nil {
 		onProgress(3, fmt.Sprintf("同场次内部 %d 处接缝按**硬切**（叠化只用在换场处）—— "+
@@ -249,33 +255,24 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		}
 	}
 
-	// ---- 逐镜人声包络 ----
-	// 接缝"切在静音上"与字幕"落在真实发声段落"吃的是同一份包络,这里只解一次。
-	// 硬切 + 全片没有一句字幕时才跳过(那时没有任何地方用它,不必白解一遍全片音轨)。
+	// ---- 逐镜人声包络（只为字幕落点）----
+	// 接缝转场交给引擎后用的是**交叉淡入淡出**（不切内容），音频不再被让出 —— 所以
+	// 包络只服务字幕的"落在真实发声段落上"。全片没有一句字幕时跳过（没人用它）。
 	var envs []*audio.Envelope
-	if trans == transFade || hasCueText(plan) {
+	if hasCueText(plan) {
 		envs = decodeEnvelopes(ctx, f, parts)
 	}
-	// heads/tails:该镜在成片里**实际可听**的音频区间(硬切即整镜;叠化由接缝让出量扣)。
-	// 字幕按可听区间排 —— 被接缝切掉的那段在成片里是没有声音的。
+	// heads/tails:该镜在成片里的可听区间。引擎的接缝是交叉淡入淡出（不切内容）,
+	// 所以每镜整段都在 ⇒ 恒为整镜（字幕按整镜窗口排）。
 	heads, tails := fullAudioWindows(durations)
 
-	// ---- 步骤二:拼接 ----
-	var master string
-	switch trans {
-	case transFade:
-		// dissolve(xfade 像素溶解,颗粒噪点观感)按用户 2026-09-10 定调不再使用,
-		// 存量项目参数里的 dissolve 一律按 fade(平滑交叉叠化)执行,不迁移数据
-		// (归一化在 effectiveTransition 里)。
-		master, heads, tails, err = stitchWithTransitions(ctx, f, parts, durations, starts, fades, envs, colorArgs, work, trans, res, onProgress)
-		if err != nil {
-			return nil, err
-		}
-	default: // cut
-		master, err = stitchCut(ctx, f, parts, work, onProgress)
-		if err != nil {
-			return nil, err
-		}
+	// ---- 步骤二:拼接（交给成熟的装配引擎 MoviePy，见 engine.go）----
+	// 平台原来自己拼 xfade 链：2026-10-09 真机 P0，画面只剩前 3 镜而音轨完好、退出码
+	// 还是 0。拼接与接缝转场全部交给 assemble_mpy.py：平台只喂输入 + 读引擎回报的真实
+	// 时间轴 —— 自己算偏移、自己拼图正是成熟引擎每天在做的事。
+	master, starts, err := stitchWithEngine(ctx, f, parts, engineFades(fades), work, p.ToolDir, colorArgs, onProgress)
+	if err != nil {
+		return nil, err
 	}
 
 	// ---- 保留 768p 母版（云端「整片 2K」的唯一合法源）----
@@ -296,8 +293,19 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 	if onProgress != nil {
 		onProgress(85, "字幕与响度终混")
 	}
-	// 成片总长:各镜累加 − 各接缝重叠(与画面链、字幕起点同源)。
+	// 成片总长:**实测**装配引擎中间轨的**画面**时长(BGM 铺底吃这个值)。算术值
+	// (各镜累加 − 各接缝重叠)只作兜底:容器时间基与末帧对齐会让实测差几十毫秒。
 	total := filmDuration(durations, fades)
+	if info, perr := f.Probe(master); perr == nil && info != nil && info.VideoDuration > 0 {
+		total = info.VideoDuration
+	} else {
+		note := "⚠ 量不到拼接中间轨的画面时长：BGM 铺底按各镜算术值推算（可能有几十毫秒误差）"
+		res.AudioNotes = append(res.AudioNotes, note)
+		announce(note)
+	}
+	// 拼接引擎的产出如实回显（这一轮把平台自写的 xfade 链换成装配引擎的可见痕迹）。
+	res.AudioNotes = append(res.AudioNotes, fmt.Sprintf(
+		"拼接引擎：%d 镜拼接完成，画面实测 %.2f 秒（字幕落点读引擎回报的真实时间轴）", len(parts), total))
 
 	// 字幕落点(乙4):按每镜的真实人声排;对不上就回退镜头级窗口并如实记 note。
 	// note 进 AudioNotes —— 它本来就是"音频实况"的如实回显通道(管线逐条播报),
@@ -425,7 +433,7 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 			"-movflags", "+faststart", "-f", "mp4", partPath)
 	} else {
 		// 一个视频滤镜都没有(未烧字幕且未开调色)这一路**视频零滤镜**:master 已经是
-		// 同规格 x264(硬切路 -c:v copy、叠化路 xfade 后 crf18 重编),这里再解一遍码、
+		// 同规格 x264(装配引擎产出:全硬切走 concat 复制、有转场走 MoviePy 重编),这里再解一遍码、
 		// 再压一遍等于白付一次整集 medium 编码(分钟级),并把每一镜又推一代 x264 代次
 		// 损失(审计 M35)—— 与该文件自己的音频纪律("中间轨一律无损")自相矛盾。
 		// mkv→mp4 允许视频流复制。
@@ -469,16 +477,12 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 
 // ---------- 转场判据(唯一收口点) ----------
 //
-// 画面重叠、字幕偏移、成片时长、音轨接缝这四处必须由**同一份**判据推出。
-// 2026-09-26 渲染管线审计在这里抓出三套互不一致的判据:
-//
-//	字幕 starts[] : `trans != "cut"`(参数为空串/写错时也按"有重叠"扣)
-//	画面 xfade    : `switch p.Transition { case "fade" }`(空串/写错走硬切)
-//	音轨接缝      : `durations[i] <= d` 时**整个接缝不让**(两镜音频都保持整段)
-//
-// 三者不一致的后果都不是报错,而是"字幕逐镜提前、成片时长少报、音轨比画面长"
-// 这类静默漂移。下面把它收成四件各自可单测的事:归一化转场、钳制转场时长、
-// 逐接缝算实际重叠、由重叠推字幕起点/成片总长/音频窗口。
+// 逐接缝的**重叠时长**由这里统一算出（seamFades），交给装配引擎（见 engine.go）做
+// 交叉叠化；字幕起点不再由重叠推算，而是直接读引擎回报的真实时间轴。
+// 2026-09-26 渲染管线审计在这里抓出三套互不一致的判据（字幕按 trans != "cut" 扣、
+// 画面按 switch 走、音轨各自判），后果都不是报错而是"字幕逐镜提前、成片时长少报、
+// 音轨比画面长"这类静默漂移。下面把它收成四件各自可单测的事:归一化转场、钳制转场
+// 时长、逐接缝算实际重叠、由重叠推成片总长(兜底)。
 
 // 归一化后的转场取值(只有这两种会进入拼接)。
 const (
@@ -499,8 +503,9 @@ const (
 	defaultFadeSec = 0.5
 )
 
-// minSeamFade 单条接缝重叠的下限(1 帧 @24fps):xfade 不接受 0 时长,而源片时长
-// 探测异常(≈0)时逐接缝重叠会被算成 0 —— 那时给一帧,让整条链仍然自洽。
+// minSeamFade 单条接缝重叠的下限(1 帧 @24fps):同场次"硬切"用一个 1 帧的极短叠化
+// 表达(装配引擎把 0 当作硬切,但 1 帧能让整条链的几何保持自洽);源片时长探测异常(≈0)
+// 时逐接缝重叠也会被压到这里。
 const minSeamFade = 1.0 / 24
 
 // effectiveTransition 归一化转场:只有 fade/dissolve 走叠化,其余(含空串与手改
@@ -549,15 +554,14 @@ func transitionNotes(rawTrans string, rawSec, fd float64, clamped bool) []string
 }
 
 // seamFades 逐接缝的实际重叠时长(秒),与 durations 等长(最后一镜后面没有接缝,
-// 恒为 0 —— 这样三处消费者都能直接按下标取用)。
+// 恒为 0 —— 这样消费者都能直接按下标取用)。
 //
 // 为什么要**逐个接缝**算而不是全片一个 fd:某一镜短于转场时(用户把 FadeSec 调到
-// 2s、而某镜只有 1.5s),全局 fd 会同时让 xfade 的 offset 变成负数、音轨那边又
-// "整个接缝不让" —— 画面与音轨从此对不齐。
+// 2s、而某镜只有 1.5s),全局 fd 会让重叠窗口越过这一镜自身。
 //
 // 上限取"相邻任一镜的**一半**",而不是"相邻任一镜的全长":
 //
-//	· 一半是 xfade 能成立的必要条件(重叠窗口必须落在两镜之内);
+//	· 一半是重叠能成立的必要条件(重叠窗口必须落在两镜之内);
 //	· 全长只保证"装得下",却会让一镜被前后两条接缝吃光 —— 那条镜在成片里
 //	  永远没有一帧是自己独占的(在时间轴上被跳过),成片比计划短了一整镜;
 //	· 取一半后每镜至少保留自身 50% 的独占画面,时间轴严格推进(见
@@ -576,9 +580,9 @@ func seamFades(trans string, durations []float64, fd float64, sameScene []bool) 
 		// 叠化是"换场"的语言：同场两镜是同一时刻的连续动作，给它们叠化就是把两帧不同姿态的
 		// 人像糊成重影 —— 观众看到的"拼接痕迹"恰恰是叠化**造出来**的，硬切反而看不见。
 		//
-		// 【为什么是 1 帧而不是 0】xfade **不接受 0 时长**（`minSeamFade` 的存在就是这个原因：
-		// 0 会让它报错）。1/24 秒里两幅画面各半 —— 肉眼看就是硬切，而拼接链的几何一个字都不用改
-		// （xfade 的 offset、字幕起点、音轨窗口读的还是同一份 fades）。
+		// 【为什么是 1 帧而不是 0】装配引擎(assemble_mpy.py)按 fades 走交叉叠化，
+		// 0 会被它当作硬切；1/24 秒里两幅画面各半 —— 肉眼看就是硬切，而重叠时长
+		// 这份数据一个字都不用改。
 		use := fd
 		if i < len(sameScene) && sameScene[i] {
 			use = minSeamFade
@@ -587,7 +591,7 @@ func seamFades(trans string, durations []float64, fd float64, sameScene []bool) 
 		f := math.Min(use, half)
 		if f < minSeamFade {
 			// 连一帧的叠化都排不出来:只能给到可用的一半 —— 绝不能超过它,
-			// 否则 starts 会倒退、xfade 的 offset 会变成负数。
+			// 否则起点会倒退（成片起点由引擎回报，重叠越界无从成立）。
 			f = math.Min(minSeamFade, half)
 		}
 		fades[i] = f
@@ -612,9 +616,9 @@ func countSameSceneSeams(flags []bool) int {
 	return n
 }
 
-// shotStarts 每镜在成片时间轴上的真实起点 —— 字幕必须直接吃这个数组。
-// 与 xfade 的 offset 是同一个量(offset = 后一镜在成片里的起点),
-// 由 TestShotStartsMatchPictureOverlap 钉住。
+// shotStarts 由时长与逐接缝重叠**推算**每镜起点。成片里这个真值改由装配引擎回报
+// （见 engine.go 的 timeline.clips[].start，Compose 直接吃引擎那份）；这里保留为
+// 纯函数，供不变式断言（TestShotStartsMatchPictureOverlap）与其它消费者沿用。
 func shotStarts(durations, fades []float64) []float64 {
 	starts := make([]float64, len(durations))
 	var acc float64
@@ -633,51 +637,13 @@ func filmDuration(durations, fades []float64) float64 {
 	return sum(durations) - sum(fades)
 }
 
-// seamAudioWindows 由各接缝的重叠时长与切点推出每镜保留的音频区间。
-//
-// 不变式(由 TestSeamAudioWindowsMatchPictureOverlap 钉住):每个接缝两镜让出的
-// 音频之和**恰好等于**画面让出的重叠 ——
-//
-//	(durations[i]-tails[i]) + heads[i+1] == fades[i]
-//
-// 旧实现在"短镜"接缝上直接跳过(两镜音频都保持整段),这条不变式就破了:
-// 音轨比画面长,且越往后累积越多 —— 音画整体错位,却全程不报错。
-// cuts[i] 是接缝 i 的切点(相对后一镜头部,∈ [0, fades[i]]),越界一律夹回窗口内。
-func seamAudioWindows(durations, fades, cuts []float64) (heads, tails []float64) {
-	n := len(durations)
-	heads = make([]float64, n)
-	tails = make([]float64, n)
-	for i := 0; i < n; i++ {
-		heads[i], tails[i] = 0, durations[i]
-	}
-	for i := 0; i+1 < n; i++ {
-		d := fades[i]
-		if d <= 0 {
-			continue // 硬切/退化源片:这条接缝不让出音频
-		}
-		t := 0.0
-		if i < len(cuts) {
-			t = cuts[i]
-		}
-		if t < 0 {
-			t = 0
-		}
-		if t > d {
-			t = d
-		}
-		tails[i] = durations[i] - (d - t)
-		heads[i+1] = t
-	}
-	return heads, tails
-}
-
 // ---------- 音频链 ----------
 
-// decodeEnvelopes 逐镜解码人声包络。接缝的"切在静音上"与字幕的"落在真实发声段落上"
-// 共用同一份:同一段音轨解两遍纯属白烧时间(一次解码 ≈ 全片每镜一遍 16kHz 单声道)。
+// decodeEnvelopes 逐镜解码人声包络，**只为字幕落点**（跨了"落在真实发声段落上"这一环）。
+// 接缝不再让出音频（引擎在接缝处用交叉淡入淡出），所以这里只解一次、只喂字幕。
 //
-// 解不出来的镜留在切片里当 nil,由各自的调用方回退(接缝退回中点切、字幕退回镜头级窗口)
-// —— 不在这里抛错:音轨解不出来不该让整片合成失败。
+// 解不出来的镜留在切片里当 nil，由调用方回退（字幕退回镜头级窗口）—— 不在这里抛错：
+// 音轨解不出来不该让整片合成失败。
 func decodeEnvelopes(ctx context.Context, f *ff.FF, parts []string) []*audio.Envelope {
 	envs := make([]*audio.Envelope, len(parts))
 	for i, part := range parts {
@@ -693,7 +659,8 @@ func decodeEnvelopes(ctx context.Context, f *ff.FF, parts []string) []*audio.Env
 	return envs
 }
 
-// fullAudioWindows 硬切时的可听区间:每镜整段都在(没有接缝让出音频)。
+// fullAudioWindows 每镜在成片里的可听区间。接缝转场交给装配引擎后用的是**交叉淡入淡出**
+// （不切内容），所以每镜整段都在 —— 恒为整镜（字幕按整镜窗口排）。
 func fullAudioWindows(durations []float64) (heads, tails []float64) {
 	heads = make([]float64, len(durations))
 	tails = make([]float64, len(durations))
@@ -817,180 +784,6 @@ func measureLoudness(ctx context.Context, f *ff.FF, input, chain string) *loudno
 	}
 }
 
-// stitchCut 硬切拼接:视频流复制(零损失),音频用 concat 滤镜重建。
-//
-// 为什么音频不能跟着视频一起走 demuxer 的 -c copy(旧实现):AAC 每段自带
-// ~1024 采样(21ms)的编码器 priming,concat demuxer 按包拼接时这些 priming 会变成
-// 接缝处的缝隙/错位,听感就是"每切一刀咔一下"。重建音频(aresample=async=1 把时间轴
-// 拉直)+ 一次无损编码,接缝才真正干净。
-// 中间轨用 flac/mkv:无损,最终终混那一道才编码 AAC,不为拼接多付一次有损压缩。
-func stitchCut(ctx context.Context, f *ff.FF, parts []string, work string, onProgress func(int, string)) (string, error) {
-	if onProgress != nil {
-		onProgress(60, "拼接(硬切)")
-	}
-	list := filepath.Join(work, "concat.txt")
-	var sb strings.Builder
-	for _, p := range parts {
-		sb.WriteString("file '" + strings.ReplaceAll(p, "\\", "/") + "'\n")
-	}
-	if err := os.WriteFile(list, []byte(sb.String()), 0o644); err != nil {
-		return "", err
-	}
-	out := filepath.Join(work, "master.mkv")
-	if _, err := f.Run(ctx, "-y", "-f", "concat", "-safe", "0", "-i", list,
-		"-map", "0:v:0", "-map", "0:a:0?",
-		"-c:v", "copy",
-		"-af", "aresample=48000:async=1:first_pts=0",
-		"-c:a", "flac", out); err != nil {
-		return "", fmt.Errorf("拼接失败: %w", err)
-	}
-	return out, nil
-}
-
-// stitchWithTransitions xfade 视频链 + **按静音落刀**的音频链拼接。
-//
-// 视频:xfade 叠化,链式推进;每个接缝的 offset 直接取 starts[i](= 后一镜在成片里的
-// 起点),duration 取 fades[i-1] —— 与字幕时间轴、音频让出量同源,不再各自累加。
-// 音频:每个接缝要交出 fades[i] 秒(与画面重叠**等长**),旧实现固定砍在重叠区中点 ——
-// 等于每镜头尾各砍一半,台词压在头尾就被切掉半句(用户报「配音不完整」的根因)。
-// 现在用 internal/audio 的能量包络求解切点,让"让出去的这段"尽量落在没人声的
-// 地方;两镜都可裁区间内人人声时,自然退回中点(与旧行为一致,不留新问题)。
-//
-// starts/fades 由调用方(Compose)统一推导后传入,本函数不自行再算一遍。
-// envs 同样由调用方传入(与字幕落点对齐共用一份,见 decodeEnvelopes),长度须与 parts 等长,
-// 元素为 nil 表示那一镜的音轨解不出来(该接缝回退中点切)。
-// colorArgs 是中间轨重编码要写入的色彩标记(全片口径统一时非空,见 colorDecision.masterArgs)。
-// 返回值 heads/tails 为该镜在成片里实际可听的音频区间 —— 调用方拿它排字幕落点。
-func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durations, starts, fades []float64, envs []*audio.Envelope, colorArgs []string, work, trans string, res *Result, onProgress func(int, string)) (string, []float64, []float64, error) {
-	if onProgress != nil {
-		onProgress(60, "拼接(转场 "+trans+")")
-	}
-	n := len(parts)
-	args := []string{"-y"}
-	for _, part := range parts {
-		args = append(args, "-i", part)
-	}
-	var filters []string
-	// 视频链(pad 名自带方括号,直接拼接;再包一层会变 [[0:v]] 导致解析失败)
-	//
-	// **offset 必须按帧累计**（2026-10-09 真机 P0，见 xfadeOffsets 的注释）：
-	// 原先直接取 `starts[i]`（按秒累加的连续量），而 xfade 每步的实际输出会被落到**整数帧**上
-	// —— 一个 15 镜的成片里这点误差会攒到半个帧，而 fading 窗口的末端正好压在 A 的末尾，
-	// 于是 xfade 认为"过渡没做完"，**后面所有输入一帧都不输出**（真机实测：15 镜只留前 3 镜，
-	// 画面 23.7 秒、音轨 122.5 秒 —— 用户看到的成片从第 4 镜起就一直定格）。
-	offs := xfadeOffsets(durations, fades)
-	// 每个输入先统一到 CFR 24fps 并重置时间戳：把"这一镜到底有多少帧"变成**确定的**，
-	// 上游 H3 片段有的比标称时长少 2~3 帧（实测 shot_004 是 221 帧而标称 9.3s=223 帧），
-	// 不统一的话链长会一路短下去，最后撞上"过渡窗口越界"那条静默截断。
-	for i := 0; i < n; i++ {
-		filters = append(filters, fmt.Sprintf("[%d:v]fps=%g,setpts=PTS-STARTPTS[vi%d]",
-			i, videoFPS, i))
-	}
-	lastV := "[vi0]"
-	for i := 1; i < n; i++ {
-		outV := fmt.Sprintf("[v%d]", i)
-		filters = append(filters, fmt.Sprintf("%s[vi%d]xfade=transition=%s:duration=%.3f:offset=%.3f%s",
-			lastV, i, trans, fades[i-1], offs[i-1], outV))
-		lastV = outV
-	}
-
-	// ---- 音频链:逐接缝求解切点 ----
-	// undecoded 包络解不出来的镜号:这些接缝会退回"中点切"(每镜头尾各砍一半),
-	// 正是用户报过的「配音不完整」旧行为 —— 必须让用户看见是**哪几镜**没评估到,
-	// 而不是留一句"人声损失已最小化"(审计 M37)。
-	var undecoded []int
-	for i := 0; i < n; i++ {
-		if i >= len(envs) || envs[i] == nil {
-			undecoded = append(undecoded, i+1)
-		}
-	}
-	// 逐接缝切点(相对后一镜头部,∈ [0, fades[i]])。让出多少音频由 seamAudioWindows
-	// 统一结算 —— 那边保证"让出的音频 == 画面让出的重叠"这条不变式。
-	cuts := make([]float64, n)
-	evaluated := 0 // 真正求解过的接缝数(分母不能把没评估的算成"已最小化")
-	seamCount := 0 // 有重叠、本该求解的接缝数
-	for i := 0; i+1 < n; i++ {
-		d := fades[i]
-		if d <= 0 {
-			continue
-		}
-		seamCount++
-		if envs[i] == nil || envs[i+1] == nil {
-			continue // 缺包络:SolveCut 会回退中点,不计入"已求解"
-		}
-		evaluated++
-		cuts[i] = audio.SolveCut(envs[i], durations[i]-d, envs[i+1], d, d)
-	}
-	// head[i]/tail[i] 为该镜保留的音频区间(秒)。
-	heads, tails := seamAudioWindows(durations, fades, cuts)
-	// 判定"这一刀落在静音里":让出的两段(前镜尾 + 后镜头)都没有人声。
-	// 让出的区间正是 [tails[i], durations[i]] 与 [0, heads[i+1]]。
-	silentCut := 0
-	for i := 0; i+1 < n; i++ {
-		if envs[i] == nil || envs[i+1] == nil || tails[i] >= durations[i] {
-			continue
-		}
-		lost := envs[i].SpeechSeconds(envs[i].Speech(), tails[i], durations[i]) +
-			envs[i+1].SpeechSeconds(envs[i+1].Speech(), 0, heads[i+1])
-		if lost <= audio.Hop {
-			silentCut++
-		}
-	}
-	if res != nil {
-		res.AudioNotes = append(res.AudioNotes, seamFeedback(silentCut, evaluated, seamCount, undecoded)...)
-	}
-
-	const afade = 0.02
-	aParts := make([]string, 0, n)
-	for i := 0; i < n; i++ {
-		head, tail := heads[i], tails[i]
-		if tail <= head {
-			head, tail = 0, durations[i]
-		}
-		f := fmt.Sprintf("[%d:a]apad=whole_dur=%.3f,atrim=%.3f:%.3f,asetpts=PTS-STARTPTS", i, durations[i], head, tail)
-		seg := tail - head
-		if seg > 8*afade {
-			if head > 0 {
-				f += fmt.Sprintf(",afade=t=in:st=0:d=%.3f", afade)
-			}
-			if tail < durations[i] {
-				f += fmt.Sprintf(",afade=t=out:st=%.3f:d=%.3f", seg-afade, afade)
-			}
-		}
-		filters = append(filters, f+fmt.Sprintf("[ap%d]", i))
-		aParts = append(aParts, fmt.Sprintf("[ap%d]", i))
-	}
-	filters = append(filters, fmt.Sprintf("%sconcat=a=1:v=0:n=%d[aout]", strings.Join(aParts, ""), n))
-	lastA := "[aout]"
-	// 不加头尾强制淡入淡出:曾对成片首尾各加 0.5s 黑场渐变,用户观感为
-	// 「开头/结尾闪黑窗」(2026-09-09 反馈)——镜间叠化已足够,成片直接
-	// 从首镜画面开始、末镜画面结束。null=视频直通滤镜(nop 不存在);
-	// 兼容单镜场景:无转场可链时 filter_complex 仍有内容。
-	filters = append(filters, fmt.Sprintf("%snull[vout]", lastV))
-	// 中间轨走 flac/mkv:视频已经因 xfade 重编码过一次,音频没必要再压一遍 AAC
-	// (每多一道有损编码就多一层嘶声,而终混那一道还要编码一次)。
-	out := filepath.Join(work, "master.mkv")
-	args = append(args,
-		"-filter_complex", strings.Join(filters, ";"),
-		"-map", "[vout]", "-map", lastA,
-		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
-		"-c:a", "flac")
-	// 中间轨也写色彩标记:硬切路走 -c:v copy,成品的色标继承自 part;这一路是重编码,
-	// 不写就把逐镜写好的标记丢在中间轨上了(全片口径统一时才有值)。
-	args = append(args, colorArgs...)
-	args = append(args, out)
-	if _, err := f.Run(ctx, args...); err != nil {
-		return "", nil, nil, err
-	}
-	// **拼完实测画面时长**（2026-10-09 真机 P0）：上面那条链中断时 ffmpeg 的退出码是 0，
-	// 不实测就会把"前 3 镜画面 + 全程声音"的片子当成功交付（真机第01集就是这样）。
-	want := starts[n-1] + durations[n-1]
-	if err := verifyStitchedLength(ctx, f, out, want); err != nil {
-		return "", nil, nil, err
-	}
-	return out, heads, tails, nil
-}
-
 // ShotSpeechBudget 该镜"应该有"的人声秒数(台词 + 旁白)。
 //
 // 放在 compose 包是因为它和成片音频同源(同一套语速常量);质检用它和实测语音时长
@@ -1048,31 +841,6 @@ func joinInts(xs []int) string {
 		parts[i] = fmt.Sprint(v)
 	}
 	return strings.Join(parts, "、")
-}
-
-// seamFeedback 接缝切点的如实回显(审计 M37)。
-//
-// 为什么分母只算**真正求解过**的接缝:旧实现写死 `silentCut/(n-1)`,把"音轨包络
-// 解不出来、根本没评估"的接缝也算进分母 —— 用户看到「接缝切点:0/9 处完全落在静音…
-// 人声损失已最小化」,完全判断不出有 9 个接缝其实都退回了中点切(每镜头尾各砍一半,
-// 正是「配音不完整」这条老毛病的原样),自然也不会去重渲。
-//
-//	silent    落在静音的接缝数
-//	evaluated 真正求解过的接缝数(= 分母)
-//	seams     有重叠、本该求解的接缝数(> evaluated 说明有接缝没评估)
-//	undecoded 音轨分析失败的镜号
-func seamFeedback(silent, evaluated, seams int, undecoded []int) []string {
-	notes := []string{fmt.Sprintf(
-		"接缝切点:%d/%d 处完全落在静音(其余按最接近静音的时点切,人声损失已最小化)", silent, max(evaluated, 1))}
-	if unevaluated := seams - evaluated; unevaluated > 0 {
-		notes = append(notes, fmt.Sprintf(
-			"⚠ 有 %d 个接缝未做静音求解,已退回中点切(每镜头尾各让出一半):台词压在头尾会被削", unevaluated))
-	}
-	if len(undecoded) > 0 {
-		notes = append(notes, fmt.Sprintf(
-			"⚠ 第 %s 镜的音轨分析失败 —— 这是接缝退回中点切的原因,建议重渲这几镜", joinInts(undecoded)))
-	}
-	return notes
 }
 
 // ---------- 字幕生成 ----------

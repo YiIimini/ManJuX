@@ -625,6 +625,20 @@ func gradeAutoNote(grade string, autoDowngraded bool) string {
 	return fmt.Sprintf("本片风格为动画电影,调色档默认用 %s;可在项目参数里改", grade)
 }
 
+// engineToolDir 装配引擎（MoviePy 的 python 环境）落点：**<数据根>/tools**。
+//
+// 取不到配置就返回空串 —— 那时 compose 会退回用户缓存目录并如实播报，绝不猜一个
+// 可能写坏数据根之外的路径。
+func (c *Coordinator) engineToolDir() string {
+	if c == nil || c.cfg == nil {
+		return ""
+	}
+	if d := c.cfg.Get().DataDir; d != "" {
+		return filepath.Join(d, "tools")
+	}
+	return ""
+}
+
 func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) error {
 	// 【2026-10-08 深度排查】没有 ffmpeg 时**如实降级**，不许 panic（拼接/烧字幕/响度归全都靠它）。
 	if c.ff == nil {
@@ -747,13 +761,20 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		// assemble.grade 有界面、能保存、Sanitize 也在归一,而成片里毫无变化。
 		// 这里传的是上面解析过的**最终**档位(不是未表态的 p.Grade)。
 		Grade: grade,
+		// 装配引擎（MoviePy）的 python 运行环境落点：**<数据根>/tools**（见 compose.Params.ToolDir）。
+		// 换掉自写 xfade 链之后，拼接要起 python 脚本，这个落点是引擎环境（mpy-venv）的唯一出处。
+		//
+		// 【为什么不是 c.store.Root()】store 的根是 `<数据根>/projects`（见 main.go 的
+		// project.NewStore(filepath.Join(g.DataDir, "projects"))）—— 把 python 环境塞进项目仓库里，
+		// 会跟着"项目盘点/清理/导出"一起被扫，且数据根之外的地方没有它的语义。
+		ToolDir: c.engineToolDir(),
 	}, func(pct int, note string) {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", pct, "%s", note)
 	})
 	if err != nil {
 		return err
 	}
-	// 音频实况如实回显:接缝是否切在静音、响度是两遍还是降级,用户一眼能判断
+	// 音频/拼接实况如实回显:装配引擎的产出、响度是两遍还是降级,用户一眼能判断
 	// 「配音不完整/有杂音」这类问题这次到底修没修到。
 	for _, note := range res.AudioNotes {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", 96, "🔊 %s", note)

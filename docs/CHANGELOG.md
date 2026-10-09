@@ -1,5 +1,37 @@
 # 更新日志
 
+## 装配层换成熟引擎（MoviePy）：自写 xfade 链整条删除（2026-10-09）
+
+专题：`docs/装配换成熟引擎MoviePy-2026-10-09.md`。
+
+用户原话：「替代方案，是全部，你TM根本就改不好，别继续不停的补丁了」。
+
+**做法**：不再修那条自写的 ffmpeg `-filter_complex` xfade 链，而是**删掉它**，把"拼接 + 接缝转场"
+交给 **MoviePy 2.2.1**（`internal/compose/assemble_mpy.py`，go:embed 随二进制走）。平台侧只剩：
+写 manifest → 起 python（`sysexec.Hide`）→ 逐行读 `ASM/ASM-FAIL/ASM-DONE` → 用**引擎回报的真实
+时间轴**排字幕与成片时长。硬切（零重叠）走 ffmpeg concat 复制（零重编码），**实测复制出来的时间轴
+不对就自动退回引擎重编**。
+
+**删掉的自写代码**：`internal/compose/xfade.go` 整个文件、`stitchWithTransitions`、`stitchCut`、
+`seamAudioWindows`、`seamFeedback`、`xfadeOffsets`、`verifyStitchedLength`。接缝音频不再"砍掉重叠段"
+（那正是"配音不完整"的根因），改为引擎的交叉淡入淡出。
+
+**真机实测**（同一台机器、用户那一集的镜头）：3 镜硬切 **29.874 秒 / 717 帧**；2 镜 0.5s 叠化
+**18.749 秒 / 450 帧**；6 镜混合（4 处 1 帧同场 + 1 处 0.5 换场）**57.499 秒 / 1380 帧**、
+13,700,387 B、313.5s。
+
+**换的过程中被真机咬出四条我自己的缺陷**：① mkv 的 `stream.duration` 是 N/A ⇒ 自检把 30 秒画面读成
+0 秒（加"最后一张视频包 pts+dur"兜底）② MoviePy 每镜末尾多 2 帧**重复画面** = 用户最反感的"定格"
+（按视频轨实际时长裁齐，6 镜里 5 镜命中）③ **色彩标记编码那一步写不进去**（系统 ffmpeg 9.0.1 与引擎
+自带 7.1 都不认 `-colorspace/-color_primaries/-color_trc/-color_range`，只认 `-c copy`）⇒ 色标只在
+复制流那一步写，写完探测并原样打进日志 ④ 引擎环境落点算错（`store.Root()` 是 `<数据根>/projects`）
+⇒ 改 `<数据根>/tools` 并加门。
+
+**判据**：`internal/compose/engine_test.go`（脚本契约关键点 / manifest 字段与长度 / stdout 三态 /
+timeline 校验 / 接线门：源码里不许再出现 `xfade=transition=`、`xfadeOffsets`、`stitchWithTransitions`、
+`stitchCut`）+ `internal/pipeline/engine_tool_dir_test.go`（引擎环境落在数据根、Compose 必须传 ToolDir）。
+**反向验证 4/4 全红**。八门 + build 全过；**存量项目不用重渲**，重跑一次「合片」即生效。
+
 ## 成片画面被截断（P0）＋ 字幕词级对齐 ＋ 体检补标准 QC 项（2026-10-09）
 
 专题：`docs/成片体检与Q版引用-问题好多啊-2026-10-09.md`（附录 A–E）。

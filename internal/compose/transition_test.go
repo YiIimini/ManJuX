@@ -136,45 +136,6 @@ func TestShotStartsMatchPictureOverlap(t *testing.T) {
 	}
 }
 
-// TestSeamAudioWindowsMatchPictureOverlap 音轨让出的音频必须与画面让出的重叠**等长**:
-//
-//	(durations[i]-tails[i]) + heads[i+1] == fades[i]
-//
-// 旧实现在短镜接缝上整个跳过(两镜音频都保持整段),不变式因此破了 ——
-// 音轨比画面长,且越往后累积越多,全程还不报错。
-func TestSeamAudioWindowsMatchPictureOverlap(t *testing.T) {
-	durations := []float64{4, 0.6, 6}
-	fades := seamFades(transFade, durations, 1.0, nil)
-	cuts := []float64{fades[0] / 3, fades[1] / 2, 0}
-	heads, tails := seamAudioWindows(durations, fades, cuts)
-	for i := 0; i+1 < len(durations); i++ {
-		gave := (durations[i] - tails[i]) + heads[i+1]
-		if math.Abs(gave-fades[i]) > 1e-9 {
-			t.Errorf("接缝 %d:音轨让出 %.3f ≠ 画面重叠 %.3f(音画从此错位)", i, gave, fades[i])
-		}
-	}
-}
-
-// TestSeamAudioWindowsClampCuts 越界切点被夹回窗口内,否则尾巴会算出负数、
-// 音轨比画面短。硬切接缝(fades=0)必须整段保留 —— 硬切不丢任何一个字。
-func TestSeamAudioWindowsClampCuts(t *testing.T) {
-	durations := []float64{4, 4}
-	fades := []float64{0.5, 0}
-	for _, cut := range []float64{-1, 0.5, 2} {
-		heads, tails := seamAudioWindows(durations, fades, []float64{cut, 0})
-		if tails[0] < heads[0] || tails[0] > durations[0] {
-			t.Errorf("cut=%.2f 时第一镜保留区间 [%.3f,%.3f] 非法", cut, heads[0], tails[0])
-		}
-		if heads[1] < 0 || heads[1] > fades[0] {
-			t.Errorf("cut=%.2f 时后镜头部 %.3f 越出窗口 [0,%.2f]", cut, heads[1], fades[0])
-		}
-	}
-	heads, tails := seamAudioWindows(durations, []float64{0, 0}, []float64{0, 0})
-	if heads[0] != 0 || tails[0] != durations[0] || heads[1] != 0 || tails[1] != durations[1] {
-		t.Errorf("硬切(无重叠)必须两镜整段保留,实际 heads=%v tails=%v", heads, tails)
-	}
-}
-
 // TestTransitionNotesReportRewrites 非法转场/越界时长的改写必须播报,合法时保持安静 ——
 // "悄悄改了参数"与"参数不生效"是同一类缺陷的两面(审计 P1-1 的镜像)。
 func TestTransitionNotesReportRewrites(t *testing.T) {
@@ -192,36 +153,6 @@ func TestTransitionNotesReportRewrites(t *testing.T) {
 	}
 	if got := transitionNotes("wipe", 600, maxFadeSec, true); len(got) != 2 {
 		t.Errorf("非法转场 + 越界时长应各播报一条,实际 %v", got)
-	}
-}
-
-// TestSeamFeedbackCountsOnlyEvaluatedSeams M37:分母只能是**真正求解过**的接缝,
-// 否则"9 个接缝全退回了中点切"会被显示成「0/9 处完全落在静音…人声损失已最小化」。
-func TestSeamFeedbackCountsOnlyEvaluatedSeams(t *testing.T) {
-	// 3 个接缝,只有 1 个求解成功、其中 0 个落在静音
-	notes := seamFeedback(0, 1, 3, []int{2, 5})
-	joined := strings.Join(notes, "|")
-	if !strings.Contains(joined, "0/1 处完全落在静音") {
-		t.Errorf("分母应为已求解的接缝数 1,实际播报:%q", joined)
-	}
-	if strings.Contains(joined, "/3 处") {
-		t.Errorf("未评估的接缝不能算进分母:%q", joined)
-	}
-	if !strings.Contains(joined, "2 个接缝未做静音求解") {
-		t.Errorf("应明说有几个接缝没评估:%q", joined)
-	}
-	if !strings.Contains(joined, "2、5") {
-		t.Errorf("应点出是哪几镜的音轨分析失败:%q", joined)
-	}
-
-	// 全部求解成功时只留一条正常回显,不制造噪声
-	notes = seamFeedback(2, 2, 2, nil)
-	if len(notes) != 1 || !strings.Contains(notes[0], "2/2 处完全落在静音") {
-		t.Errorf("全部求解成功时应只有一条回显,实际 %v", notes)
-	}
-	// 单镜(没有接缝)时分母兜底为 1,不出 NaN/除零
-	if notes := seamFeedback(0, 0, 0, nil); !strings.Contains(notes[0], "0/1") {
-		t.Errorf("无接缝时也应给出可读回显,实际 %v", notes)
 	}
 }
 

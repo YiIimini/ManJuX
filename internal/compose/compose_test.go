@@ -28,6 +28,7 @@ func TestComposeEndToEndAudioAlignsToVideo(t *testing.T) {
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过端到端合成测试: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 
@@ -84,19 +85,18 @@ func TestComposeEndToEndAudioAlignsToVideo(t *testing.T) {
 	if info.Width != deliverHorizontalW || info.Height != deliverHorizontalH {
 		t.Errorf("成片画幅应为交付标准 %dx%d,实际 %dx%d", deliverHorizontalW, deliverHorizontalH, info.Width, info.Height)
 	}
-	// 音频实况必须留下可读的说明(接缝切点统计 + 响度链是否降级)
+	// 拼接与音频实况必须留下可读的说明(装配引擎产出 + 响度链是否降级)
 	if len(res.AudioNotes) == 0 {
-		t.Error("应回传音频处理实况(接缝切点/响度链),否则用户无法判断这次到底修没修到")
+		t.Error("应回传拼接/音频处理实况,否则用户无法判断这次到底修没修到")
 	}
 	notes := ""
 	for _, n := range res.AudioNotes {
 		notes += n + "|"
 		t.Logf("audio note: %s", n)
 	}
-	// 造的数据里"有声音"的只有每个镜头前 1.5 秒 —— 两个接缝的让出区间因此都能
-	// 完全落在静音里(切点贴到窗口一端),这正是"不切在字上"的可验证判据。
-	if !strings.Contains(notes, "接缝切点:2/2 处完全落在静音") {
-		t.Errorf("两个接缝都应判为落在静音(有声段只有每镜前 1.5 秒),实际:%s", notes)
+	// 自写的 xfade 链已换成装配引擎（MoviePy）—— 引擎的产出必须如实回显。
+	if !strings.Contains(notes, "拼接引擎") {
+		t.Errorf("应回显装配引擎的拼接结果,实际:%s", notes)
 	}
 }
 
@@ -106,6 +106,7 @@ func TestComposeCutKeepsFullAudio(t *testing.T) {
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 	clips := make([]string, 0, 2)
@@ -152,6 +153,7 @@ func TestComposeIllegalTransitionStaysCutAndKeepsSubtitlesAligned(t *testing.T) 
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 	clips := make([]string, 0, 3)
@@ -218,6 +220,7 @@ func TestComposeFadeShortShotKeepsAudioInSync(t *testing.T) {
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 	// 中间一镜只有 0.7 秒,而转场要 2 秒 —— 长于半镜的病态组合
@@ -269,6 +272,7 @@ func TestComposeDeliversAtStandardSize(t *testing.T) {
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 	clip := filepath.Join(dir, "clip.mp4")
@@ -368,6 +372,7 @@ func TestComposeAnnouncesAspectMismatch(t *testing.T) {
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 	// 16:9 的输入,成片规格是 9:16 —— 必然要补黑边
@@ -508,6 +513,7 @@ func TestComposeAlignsSubtitleToRealSpeech(t *testing.T) {
 	if err != nil {
 		t.Skipf("本机无 ffmpeg,跳过字幕落点端到端测试: %v", err)
 	}
+	requireEngine(t)
 	dir := t.TempDir()
 	ctx := context.Background()
 
@@ -570,4 +576,50 @@ func TestComposeAlignsSubtitleToRealSpeech(t *testing.T) {
 	if math.Abs(cue[0]-0.6) < 0.3 {
 		t.Error("落点仍停在镜头级窗口上 —— 真实人声没有接进字幕链")
 	}
+}
+
+// requireEngine 端到端合成测试需要装配引擎（MoviePy）的解释器：拼接已从自写的 xfade 链
+// 换成 engine.go 调 assemble_mpy.py。先认环境变量 MANJUX_MPY_PYTHON，再认平台自己引导
+// 出来的 data/**/mpy-venv（找到就用它，免得测试自己现装一遍 MoviePy）；都没有就跳过 ——
+// 与「本机无 ffmpeg」同样的处理（合成本来就依赖外部工具，缺工具时测不了）。
+func requireEngine(t *testing.T) {
+	t.Helper()
+	if py := strings.TrimSpace(os.Getenv("MANJUX_MPY_PYTHON")); py != "" {
+		if _, err := os.Stat(py); err == nil {
+			return
+		}
+	}
+	root := repoRootForTest(t)
+	for _, rel := range []string{
+		filepath.Join("data", "tools", "mpy-venv", "Scripts", "python.exe"),
+		filepath.Join("data", "projects", "tools", "mpy-venv", "Scripts", "python.exe"),
+	} {
+		p := filepath.Join(root, rel)
+		if _, err := os.Stat(p); err == nil {
+			t.Setenv("MANJUX_MPY_PYTHON", p)
+			return
+		}
+	}
+	t.Skip("本机没有装配引擎（MoviePy）的解释器，跳过端到端合成测试：可设 MANJUX_MPY_PYTHON 指定，或跑一次合成让它自动引导安装")
+}
+
+// repoRootForTest 从测试的工作目录往上找 go.mod（找不到就失败，不静默）。
+func repoRootForTest(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("取不到工作目录：%v", err)
+	}
+	for i := 0; i < 8; i++ {
+		if _, serr := os.Stat(filepath.Join(dir, "go.mod")); serr == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	t.Fatal("往上找不到 go.mod —— 测试工作目录不对")
+	return ""
 }

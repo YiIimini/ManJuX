@@ -39,11 +39,11 @@ type cueSpan struct {
 	Start, End float64
 }
 
-// speechTrack 某镜的人声信息:包络 + 该镜在成片里**实际可听**的音频区间。
+// speechTrack 某镜的人声信息:包络 + 该镜在成片里的可听区间。
 //
-// 为什么要 From/To:叠化转场会让每镜让出一点音频(见 seamAudioWindows),被让出的
-// 那一段在成片里根本听不到 —— 按它排字幕,等于给观众看一段没有声音的字。
-// 硬切时 From/To 就是 0/镜头时长。
+// 为什么保留 From/To:接缝转场交给装配引擎后用的是**交叉淡入淡出**(见 engine.go),
+// 内容不再被切掉 —— 所以每镜 From/To 恒为 0/镜头时长(整镜可听)。字段留着是为了让
+// 「按可听区间排字幕」这条判据仍有唯一收口点,将来引擎若改为裁切也不必再改字幕侧。
 type speechTrack struct {
 	Env  *audio.Envelope
 	From float64
