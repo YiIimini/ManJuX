@@ -62,15 +62,24 @@ func TestTranscribePassesAnAbsoluteMediaPath(t *testing.T) {
 // 素材不存在退 2，否则把一份固定格式的结果写进 --out 指定的文件。
 func writeFakeTool(t *testing.T, dir string) string {
 	t.Helper()
+	// 【2026-10-09 必须改：夹具自己不能随控制台变化】原来那三行是 `echo …> %5`，而末尾那个字符
+	// 正好是数字（`mp4` 的 `4`、`4>>` 的 `4`）—— cmd 会把 `4>` 当成**句柄 4 重定向**：同一份夹具
+	// 在**有控制台**时落进文件、在**无控制台**（CREATE_NO_WINDOW，平台走的就是这条）时落空。
+	// 于是它测的成了"测试环境有没有控制台"，而不是产品行为（改 sysexec 隐藏窗口时就当场咬了）。
+	// 改成括号重定向块 `> "文件" ( … )`，并且**真的把 %3（--model 的取值）写进结果** ——
+	// 这样 `r.Model == "medium"` 那条断言才算验了"参数确实传到了子进程"（原来写死 medium，等于没验）。
+	// 同时只用 ASCII：cmd.exe 按 OEM 代码页读 .cmd，UTF-8 中文会被拆错命令。
 	script := strings.Join([]string{
 		"@echo off",
-		"if not exist %1 (",
-		"  echo ASR-FAIL media not found: %1",
+		"if not exist \"%~1\" (",
+		"  echo ASR-FAIL media not found: %~1",
 		"  exit /b 2",
 		")",
-		"echo # shot_003.mp4> %5",
-		"echo # model=medium lang=zh prob=1.00 dur=8.0s segs=1>> %5",
-		"echo [  0.11-  2.55] shoudao。>> %5",
+		"> \"%~5\" (",
+		"  echo # shot_003.mp4",
+		"  echo # model=%3 lang=zh prob=1.00 dur=8.0s segs=1",
+		"  echo [  0.11-  2.55] shoudao.",
+		")",
 		"exit /b 0",
 	}, "\r\n")
 	path := filepath.Join(dir, "asr_fake.cmd")

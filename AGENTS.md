@@ -97,6 +97,27 @@
 
 本窗口的对话历史**不进仓库**，所以新会话只能靠文件重建上下文。开工前按顺序读：
 
+> **最新一轮（2026-10-09，用户「分镜渲染完成后进行质检时一直不停重复 显示/关闭 终端窗口」）：
+> `docs/子进程无窗口-质检闪终端窗口-2026-10-09.md`** —— 平台是 windowsgui 程序，不加 `CREATE_NO_WINDOW`
+> 的控制台子进程**每次调用**都会闪一个黑窗（规矩本来就写在 `internal/sysexec/sysexec.go` 文件头），
+> **但散文规矩管不住代码**：全仓 29 处 `exec.Command`/`exec.CommandContext` 里 27 处已包 `sysexec.Hide`，
+> 漏掉的两处**恰好都在质检链上** —— `qc/face.go:125`（insightface 人脸测量，`stages_qc_assemble.go:999`
+> 逐**角色**调）与 `asr/asr.go:145`（faster-whisper 语音对账，`stages_qc_assemble.go:242` 逐**镜**调、
+> 重出链 `voice_check.go:186` 再来一遍）⇒ 一集十几次到几十次闪烁。**修法**：两处改走 `sysexec.Hide`；
+> 安全性已核 —— `qc/face.go` 本就设了 `PYTHONIOENCODING=utf-8`，`asr/asr.go` 结果从**文件**读。
+> **判据**：新增 `internal/sysexec/hide_coverage_test.go`（`TestEveryExecIsHidden`：每行 exec 调用必须同处
+> 出现 `sysexec.Hide(`，漏一处就红并点名 file:line；`TestHideSetsBothNoWindowFlags`：两个开关都要在；
+> 外加反摆设断言 `sites < 15` 直接 fail）。**反向验证 3/3 全红**。**边界**：只判生产代码（`_test.go` 不判）、
+> 判据刻意用"同一行"这种最笨形式、`sysexec` 自身不参与扫描。**真机 A/B**：真正的 `asr.cmd` 跑两遍
+> （隐藏/不隐藏）结果文件**逐字节相同**（69 B，sha256 前 12 都是 `dcb10d6f5198`）⇒ 隐藏不改变真机行为。
+> **旧项目无需重渲**，重启 app 后跑质检即生效。
+>
+> **同一轮补记**：顺带修掉一处**夹具依赖控制台** —— `internal/asr/transcribe_test.go` 的假工具原是
+> `echo # shot_003.mp4> %5`，行尾字符正好是数字，cmd 把 `4>` 当**句柄 4 重定向** ⇒ 同一份夹具
+> "有控制台时写进文件、无控制台时落空"（改 sysexec 时当场红）。改成括号重定向块 `> "%~5" ( … )` +
+> 纯 ASCII，并**真的把 `%3`（--model 取值）写进结果**（原来写死 medium，那条断言等于没验参数传递）。
+> 教训：夹具不许依赖运行环境（控制台/locale/cwd），否则测的是"今天这台机器长什么样"。
+>
 > **最新一轮（2026-10-09，用户「现在场景和分镜运镜很单一，是否场景应该在分镜里提取才合理」）：
 > `docs/场景与运镜单一-两条整集判据-2026-10-09.md`** —— **先取证再答**：场景**两处都已经有**（剧本 ① 会话的
 > 结构化场次表 `【场 N|地点|时间|内外】`；场景卡 ④ 会话**先跑**、分镜每镜 `scene` 字段引用它；提示词 `SCENE QUOTA`

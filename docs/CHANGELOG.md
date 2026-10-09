@@ -10,6 +10,39 @@
 > 完整历史见 `git log`(当前版本 v0.34.1;release 提交共 96 条,此处列最近 29 个)。
 > (数字与条数会随提交漂移,2026-09-24 已按实际核对过一次。)
 
+## 质检阶段不停闪终端窗口 —— 两处漏了「无窗口」包装的子进程（2026-10-09）
+
+专题文档：`docs/子进程无窗口-质检闪终端窗口-2026-10-09.md`。
+
+用户原话：「**分镜渲染完成后进行质检时一直不停重复 显示/关闭 终端窗口**」。平台是 windowsgui 程序，
+不加 `CREATE_NO_WINDOW` 的控制台子进程**每次调用**都会闪一个黑窗 —— 这条规矩本来就写在
+`internal/sysexec/sysexec.go` 的文件头（"全部 exec 调用一律经 Hide() 包装,根治闪窗"），
+**但散文规矩管不住代码**：全仓 29 处 `exec.Command`/`exec.CommandContext` 里 27 处包了，
+漏掉的两处**恰好都在质检链上** —— `internal/qc/face.go:125`（insightface 人脸测量，python；
+`stages_qc_assemble.go:999` 逐**角色**调）与 `internal/asr/asr.go:145`（faster-whisper 语音对账；
+`stages_qc_assemble.go:242` 逐**镜**调、重出链 `voice_check.go:186` 再来一遍）⇒ 一集十几次到几十次闪烁。
+渲染/合成不闪是因为 `ff`/`qc/vlm.go`/`sysmon`/`compose`/`comfyengine`/`browser` 那 27 处**都已包装**。
+
+**修法**：两处改为 `sysexec.Hide(...)`。安全性已核（不是想当然）：`qc/face.go` 结果从 stdout 读、
+且**本来就设了 `PYTHONIOENCODING=utf-8`**（正为对付"无控制台时 Python 管道按 GBK"）；`asr/asr.go`
+结果**一律从文件读**、stdout 只收报错。**判据（防再漏）**：新增 `internal/sysexec/hide_coverage_test.go`
+—— `TestEveryExecIsHidden` 扫全仓**生产代码**，每行 `exec.Command(`/`exec.CommandContext(` 必须同处出现
+`sysexec.Hide(`，**漏一处就红并点名 file:line**；`TestHideSetsBothNoWindowFlags` 要求 `Hide` 的
+`HideWindow` 与 `CreationFlags&CREATE_NO_WINDOW` **两个都在**；外加反摆设断言（`sites < 15` 直接 fail）。
+**反向验证 3/3 全红**（`scratch/reverse_verify_no_window.ps1`：摘掉 face.go 的包装 / 去掉 CREATE_NO_WINDOW /
+把扫描过滤改坏）。**边界**：只判生产代码（`_test.go` 不判）；判据刻意用"同一行"这种最笨也最不会骗人的形式；
+`sysexec` 自身不参与扫描。**旧项目无需重渲**，重启 app 后跑质检即生效。
+
+**真机 A/B（不是想当然安全）**：用**真正的** `D:\Ai\Tools\ASR\asr.cmd` 对同一段 4 秒音频跑两遍 ——
+不隐藏 / 隐藏两边的退出码都是 0，结果文件**逐字节相同**（69 字节，sha256 前 12 都是 `dcb10d6f5198`）。
+根因也对上：`asr.cmd` 自己设了 `PYTHONUTF8=1`+`PYTHONIOENCODING=utf-8`，`transcribe.py:82` 是
+`open(out,"w",encoding="utf-8")` —— 编码不靠控制台；`qc/face.go` 同理（`PYTHONIOENCODING=utf-8`）。
+**顺带修掉一处夹具依赖控制台**：`internal/asr/transcribe_test.go` 的假工具原是 `echo # shot_003.mp4> %5`
+—— 行尾字符正好是数字，cmd 把 `4>` 当**句柄 4 重定向**，于是同一份夹具"有控制台时写进文件、
+无控制台时落空"，改 `sysexec` 时当场变红（**夹具自己随环境变，测的就不是产品**）。改成括号重定向块
+`> "%~5" ( … )` + 纯 ASCII，并**真的把 `%3`（--model 取值）写进结果** —— 原来写死 `medium`，
+`r.Model == "medium"` 那条断言其实没验过参数是否传到子进程（摆设）。
+
 ## 场景单一 + 分镜运镜单一 —— 两条「整集级」判据与它们各自的上游（2026-10-09）
 
 专题文档：`docs/场景与运镜单一-两条整集判据-2026-10-09.md`。

@@ -29,6 +29,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 )
 
 // Segment 一段转写（秒 + 文本）。
@@ -142,7 +144,10 @@ func Transcribe(ctx context.Context, tool, media, model string) (*Result, error)
 	}
 	out := strings.TrimSuffix(media, filepath.Ext(media)) + ".asr.txt"
 	_ = os.Remove(out) // 旧结果不许冒充这一次的
-	cmd := exec.CommandContext(ctx, tool, media, "--model", model, "--out", out)
+	// **必须经 sysexec.Hide**（2026-10-09 用户：「质检时一直不停重复 显示/关闭 终端窗口」）：
+	// 语音对账是**逐镜**跑的，直接 exec 时每一镜都要在桌面上闪一个黑窗（十几镜就是十几次）。
+	// 结果本来就一律从**文件**读（下面 Parse(out)），stdout 只用于报错，隐藏窗口不影响取数。
+	cmd := sysexec.Hide(exec.CommandContext(ctx, tool, media, "--model", model, "--out", out))
 	cmd.Dir = filepath.Dir(media)
 	// 控制台中文会乱码（工具的说明里写了），所以结果一律从**文件**读；这里只收 stdout 供报错。
 	raw, err := cmd.CombinedOutput()

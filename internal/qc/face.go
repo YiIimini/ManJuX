@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/YiIimini/ManJuX/internal/sysexec"
 )
 
 // face.go 人脸一致性**测量**（insightface buffalo_l 的 512 维嵌入 + 余弦相似度）。
@@ -122,7 +124,11 @@ func MeasureFaceConsistency(ctx context.Context, cfg FaceConfig, ref string, fra
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	start := time.Now()
-	cmd := exec.CommandContext(cctx, cfg.Python, args...)
+	// **必须经 sysexec.Hide**（2026-10-09 用户：「质检时一直不停重复 显示/关闭 终端窗口」）：
+	// 这一处原来直接 exec.CommandContext —— 质检**逐角色**调它，每次都在桌面上闪一个黑窗，
+	// 十几个角色就是十几次闪烁。python 侧已设 PYTHONIOENCODING=utf-8，
+	// 所以加 CREATE_NO_WINDOW 不会把中文管道输出带回 GBK。
+	cmd := sysexec.Hide(exec.CommandContext(cctx, cfg.Python, args...))
 	cmd.Env = append(os.Environ(),
 		"PYTHONIOENCODING=utf-8", // 不设的话中文路径/中文输出会乱码（实测）
 		"INSIGHTFACE_HOME="+cfg.ModelRoot,
