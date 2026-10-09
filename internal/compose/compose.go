@@ -590,22 +590,11 @@ func seamFades(trans string, durations []float64, fd float64, sameScene []bool) 
 	return fades
 }
 
-// sceneSeamFlags 逐接缝判"这两镜是不是**同一个场次**"（true = 同场 ⇒ 硬切）。
+// sceneSeamFlags 逐接缝判"这两镜是不是**同一个场次**"（true = 同场 ⇒ 不叠化）。
 //
-// 缺方案 / 缺场景标注（老包、空 scene）时一律 false —— 那种情况下没有依据说"这是同场连续动作"，
-// 就保持原有行为（叠化），不拿猜出来的东西去改画面。
-func sceneSeamFlags(plan *project.Plan) []bool {
-	if plan == nil || len(plan.Shots) < 2 {
-		return nil
-	}
-	out := make([]bool, 0, len(plan.Shots)-1)
-	for i := 0; i+1 < len(plan.Shots); i++ {
-		a := strings.TrimSpace(plan.Shots[i].Scene)
-		b := strings.TrimSpace(plan.Shots[i+1].Scene)
-		out = append(out, a != "" && strings.EqualFold(a, b))
-	}
-	return out
-}
+// 【2026-10-09】判据搬进 `project.SceneSeamFlags`（**方案自己的事实**，成片体检也要用同一份），
+// 这里只做委托 —— 免得"合成按一个口径、体检按另一个口径说"。
+func sceneSeamFlags(plan *project.Plan) []bool { return project.SceneSeamFlags(plan) }
 
 // countSameSceneSeams 数有几处接缝是"同场次"（播报用）。
 func countSameSceneSeams(flags []bool) int {

@@ -461,6 +461,10 @@ type HealResult struct {
 	// 拼过哪几镜由各阶段如实播报，用户不满意就在故事板里改那几镜。
 	Bodies  int
 	BodyIDs []int
+	// ChibiRefs / ChibiRefUnknown `chibi_ids` 归一到真实卡片 id 的处数、认不出来的引用
+	//（见 chibi_refs.go，2026-10-09 用户「问题好多啊」）。
+	ChibiRefs       int
+	ChibiRefUnknown []string
 	// BodiesCJK 上面那几镜里，几镜的**中文材料（走位/动作/外形）没能进正文**（汉字卫生门，
 	// 见 prompt_cjk.go 与 empty_body.go）；调用方据此如实播报"那几镜只能靠参考图与机位兜画"。
 	BodiesCJK int
@@ -527,6 +531,9 @@ func HealPlan(plan *Plan) HealResult {
 	//
 	// 只在**唯一读取边界**调用，所以预检 / 渲染 / 人审三个消费方看到的是同一份（2026-09-28 的教训）。
 	filledBodies, filledBodyIDs := FillEmptyShotBodies(plan)
+	// **Q 版引用归一**（2026-10-09 用户「问题好多啊」）：`chibi_ids` 里的显示名改写成真实卡片 id。
+	// 排在最后：它只读角色卡表与 chibi_ids，与上面各项互不依赖（并卡/引用归一之后卡片 id 才是终态）。
+	chibiFixed, chibiUnknown := plan.NormalizeChibiIDs()
 	return HealResult{
 		EntityRefs:        entFixed,
 		EntityRefsUnknown: entUnknown,
@@ -542,14 +549,16 @@ func HealPlan(plan *Plan) HealResult {
 		SpeakerOSCleared:  osCleared,
 		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
 		// 补上之后 `CutIssues` 那几条（每刀 1.5–4 秒等）才真正开始工作。
-		Cuts:       plan.FillCutsFromPrompt(),
-		Voices:     voices,
-		VoiceNames: voiceNames,
-		CodeShots:  codeShots,
-		CodeIDs:    codeIDs,
-		CodeCount:  codeCount,
-		Bodies:     filledBodies,
-		BodyIDs:    filledBodyIDs,
-		BodiesCJK:  plan.FilledBodyCJK,
+		Cuts:            plan.FillCutsFromPrompt(),
+		Voices:          voices,
+		VoiceNames:      voiceNames,
+		CodeShots:       codeShots,
+		CodeIDs:         codeIDs,
+		CodeCount:       codeCount,
+		Bodies:          filledBodies,
+		BodyIDs:         filledBodyIDs,
+		BodiesCJK:       plan.FilledBodyCJK,
+		ChibiRefs:       chibiFixed,
+		ChibiRefUnknown: chibiUnknown,
 	}
 }

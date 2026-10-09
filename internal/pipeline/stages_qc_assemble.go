@@ -776,6 +776,13 @@ func (c *Coordinator) runAssemble(ctx context.Context, proj *project.Project) er
 		c.emit(proj.ID, PhaseAssemble, 0, "success", 100, "✔ 成片就绪:%s(%.0f 秒)", filepath.Base(res.FinalPath), res.Duration)
 	}
 
+	// **开演前的体检**（2026-10-09 用户：「问题好多啊」）—— 合片一完成就把盘上能算的都算一遍，
+	// 逐条点名（字幕与实测发声差多少、说话人在不在画面里、同场接缝叠化、该念没念……）。
+	//
+	// 为什么放在这里：这是"成片已就绪"的唯一确认点，而这一整套此前**没有任何一处**把
+	// "这一集到底行不行"合起来说一遍 —— 用户只能自己打开成片看。判据全是确定性的（读盘 + ffprobe）。
+	c.auditProducedFilm(ctx, proj, plan, clips, res, outDir)
+
 	// 云端 2K 定稿(可选,消耗云额度)
 	if p.Upgrade2K {
 		c.emit(proj.ID, PhaseAssemble, 0, "info", 100, "按配置自动升级 2K…")

@@ -306,6 +306,20 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 				"（用户报的「另一人说话、其它角色动嘴」就是它）；已按 `characters` 出场名单改回**画内对口型**",
 			plan.SpeakerOSFixed)
 	}
+	// Q 版引用归一要如实说（2026-10-09 用户：「问题好多啊」）：`chibi_ids` 写的是显示名
+	// （真机第01集「简宁·Q版」），而渲染侧只认卡片 id —— 平台按方案自己的角色卡表改写成 id。
+	if plan.ChibiRefFixed > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"🎭 把 %d 处 `chibi_ids` 的**显示名**改写成真卡片 id（如「简宁·Q版」→ `char_jianning_q`）—— "+
+				"不改的话内心镜的 Q 版参考图绑不上（渲染时静默丢掉），画面里就会出现**本人演内心戏**",
+			plan.ChibiRefFixed)
+	}
+	if len(plan.ChibiRefUnknown) > 0 {
+		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
+			"⚠ %d 处 `chibi_ids` 对不上任何 Q 版卡（%s）—— 平台**不猜**（猜错会把别人的 Q 版画进这一镜）："+
+				"请在故事板里把那一镜的引用改成方案里真实的卡 id，或补上这张 Q 版卡",
+			len(plan.ChibiRefUnknown), strings.Join(plan.ChibiRefUnknown, "、"))
+	}
 	if ids := project.EmptyPromptShotIDs(plan); len(ids) > 0 {
 		c.emit(proj.ID, PhaseScript, 0, "warn", 16,
 			"⚠ 还有 %d 镜的正文是**空的**（%s）—— 这几镜连场次/人物/台词都没有，平台拼不出正文；"+

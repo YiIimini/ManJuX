@@ -114,6 +114,18 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 				"（用户报的「另一人说话、其它角色动嘴」就是它）；已按 `characters` 出场名单改回**画内对口型**",
 			plan.SpeakerOSFixed)
 	}
+	// Q 版引用归一（2026-10-09 用户：「问题好多啊」）：重渲/导入包路径不经过剧本阶段，
+	// 而它读的方案同样被装配点改写过 —— 改了几处必须说出来。
+	if plan.ChibiRefFixed > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+			"🎭 把 %d 处 `chibi_ids` 的**显示名**改写成真卡片 id —— 不改的话内心镜的 Q 版参考图绑不上，"+
+				"画面里就会出现**本人演内心戏**", plan.ChibiRefFixed)
+	}
+	if len(plan.ChibiRefUnknown) > 0 {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0,
+			"⚠ %d 处 `chibi_ids` 对不上任何 Q 版卡（%s）—— 平台不猜；请改成真实卡 id 或补卡",
+			len(plan.ChibiRefUnknown), strings.Join(plan.ChibiRefUnknown, "、"))
+	}
 	// 单镜渲染超时取自设置页(全局),此前该配置项被引擎写死忽略 —— 用户怎么改
 	// 都不生效,只能吃 45 分钟硬编码。现在经 Job.Timeout 透传给各引擎。
 	shotTimeout := time.Duration(g.Render.ShotTimeout) * time.Minute

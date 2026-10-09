@@ -367,6 +367,15 @@ type Plan struct {
 	// 平台按 `characters` 出场名单改回**画内对口型**，**改了几处必须说出来**（这是平台替模型改的措辞）。
 	// 与其他装配期诊断量一样**不进 JSON**：它是这次的账，不是方案的一部分。
 	SpeakerOSFixed int `json:"-"`
+	// ChibiRefFixed / ChibiRefUnknown 本次读取/产出时把 `chibi_ids` 归一到真实卡片 id 的处数、
+	// 以及**认不出来**的引用（display name，见 chibi_refs.go）。
+	//
+	// 【真机取证（2026-10-09 用户：「问题好多啊」）】第01集 3 个内心镜的 `chibi_ids` 写的是
+	// 显示名「简宁·Q版」（真实卡 id 是 `char_jianning_q`）⇒ 契约门 fail，且渲染侧的 Q 版顶替
+	// 从来没生效过（它认得是另一套 id 空间）⇒ **内心戏附的是本人定妆照**，正是口径禁止的那件事。
+	// 同上：是这次的账，不进 JSON。
+	ChibiRefFixed   int      `json:"-"`
+	ChibiRefUnknown []string `json:"-"`
 }
 
 // Asset 参考图资产。

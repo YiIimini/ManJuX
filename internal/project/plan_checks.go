@@ -1027,6 +1027,10 @@ func checkVoiceover(p *Plan, add func(level, where, format string, a ...any)) {
 	//          后者会让面板图绑不上（口径要求 system 镜的 prop_ids 必含面板）。
 	if p.HasVoiceoverShots() {
 		var badKind, badRefs, noClauseInner, noClauseSys, noPanel, monologue []string
+		// Q 版引用解析用的卡片表（判据只有一份：project.ResolveChibiRef，见 chibi_refs.go）。
+		// 装配点 HealPlan 会把显示名改写成卡片 id；这里再解析一次，是为让**直接读 JSON 的
+		// 消费方**（导入包/人审）拿到同一结论 —— 否则"能解析出来"的引用会被误报成悬空。
+		chibiCards := ChibiCardsOf(p)
 		for _, sh := range p.Shots {
 			k := strings.TrimSpace(sh.VoKind)
 			if k == "" {
@@ -1038,9 +1042,13 @@ func checkVoiceover(p *Plan, add func(level, where, format string, a ...any)) {
 			}
 			// 引用完整性：Q 版卡 / 机器人 / 面板都必须真的在方案里
 			for _, id := range sh.ChibiIDs {
-				if !p.HasCharacterID(id) {
-					badRefs = append(badRefs, fmt.Sprintf("#%d chibi_ids→%s", sh.ID, id))
+				if p.HasCharacterID(id) {
+					continue
 				}
+				if rid, _, ok := ResolveChibiRef(id, chibiCards); ok && p.HasCharacterID(rid) {
+					continue // 显示名/旧写法，能对号；渲染侧也走同一判据（pipeline/refs.go）
+				}
+				badRefs = append(badRefs, fmt.Sprintf("#%d chibi_ids→%s", sh.ID, id))
 			}
 			if k == VoKindSystem {
 				for _, key := range []string{"bot", "panel"} {

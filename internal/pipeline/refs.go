@@ -93,6 +93,21 @@ func boardImagePath(dir, rel string) string {
 // 曾经它们合成一个 `missing` 返回，三个消费方全把"参考图**太多**已裁掉"念成
 // "参考图**缺失**、建议补齐后重渲" —— 而照做只会更超上限。
 // 这条路径恰好只在用户必须动手时才触发，等于在最需要正确指引的地方给了反向指引。
+// charCardRefs 把资产表里的角色条目转成 Q 版引用解析用的卡片表（键形如 `char:<id>`）。
+//
+// 判据只有一份（project.ResolveChibiRef / ChibiKey）：装配点按**方案的角色卡表**归一，
+// 渲染侧按**资产表**对号 —— 两侧用同一套写法认定，才不会出现"装配点认了、渲染侧认不出"。
+func charCardRefs(assets map[string]project.Asset) []project.CardRef {
+	out := make([]project.CardRef, 0, len(assets))
+	for k, a := range assets {
+		if !strings.HasPrefix(k, "char:") {
+			continue
+		}
+		out = append(out, project.CardRef{ID: strings.TrimPrefix(k, "char:"), Name: a.Name})
+	}
+	return out
+}
+
 func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, compact bool) (refs []engine.RefImage, roles []RefRole, missing []string, warnings []string) {
 	add := func(engineKind, roleKind, id, name, path string) {
 		refs = append(refs, engine.RefImage{Kind: engineKind, Path: path})
@@ -104,10 +119,41 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 	// 带错的表现是"该出 Q 版却出了本人"或"系统镜没有面板、模型自己编一块屏"。
 	voKind := strings.TrimSpace(shot.VoKind)
 	chibiOf := map[string]string{} // 原角色 id → Q 版资产 id（技能侧约定 chibi_<原角色id>）
-	for _, id := range shot.ChibiIDs {
-		if base := strings.TrimPrefix(strings.TrimSpace(id), "chibi_"); base != "" && base != id {
-			chibiOf[base] = id
+	// **Q 版引用的第二套解析**（2026-10-09 用户「问题好多啊」，真机第01集取证）：
+	// 下面那条前缀判据只认 `chibi_<本体id>`，且去找资产键 `char:chibi_<本体id>` ——
+	// 而生产上根本不存在这个键（平台自己派生的 Q 版写 `char:<本体id>_chibi`，库里搬来的
+	// Q 版卡写 `char:<卡id>`，本集是 `char:char_jianning_q`）。于是顶替**从来没生效过**：
+	// 内心镜的出场名单里有本人 ⇒ 附的是**本人定妆照** —— 正是口径禁止的「本人演这段」。
+	// 判据与装配点共用一处：project.ResolveChibiRef（显示名 / id / 前缀后缀三种写法一次认全）。
+	chibiCards := charCardRefs(assets)
+	chibiWant := map[string]bool{}      // 本镜要附的 Q 版资产 id（去重：Q 版卡也可能写在 characters 里）
+	chibiByOwner := map[string]string{} // 本体（名字/裸 id 归一）→ Q 版资产 id
+	for _, raw := range shot.ChibiIDs {
+		if base := strings.TrimPrefix(strings.TrimSpace(raw), "chibi_"); base != "" && base != raw {
+			chibiOf[base] = raw
 		}
+		id, name, ok := project.ResolveChibiRef(raw, chibiCards)
+		if !ok {
+			continue
+		}
+		chibiWant[id] = true
+		if base := project.ChibiBaseName(id, name); base != "" {
+			chibiByOwner[project.ChibiKey(base)] = id
+		}
+	}
+	attachedChibi := map[string]bool{}
+	// useChibi 附一张 Q 版资产：只在**图在盘上**时附，且同一张图不重复占参考图位。
+	useChibi := func(chibiID string) bool {
+		ca, ok2 := assets["char:"+chibiID]
+		if !ok2 || !project.FileOnDisk(dir, ca.File) {
+			return false
+		}
+		if attachedChibi[chibiID] {
+			return true
+		}
+		add("character", "character_chibi", chibiID, ca.Name, filepath.Join(dir, ca.File))
+		attachedChibi[chibiID] = true
+		return true
 	}
 	for _, cid := range shot.Characters {
 		a, ok := assets["char:"+cid]
@@ -121,15 +167,20 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 		// 内心镜：**本人不演这段**（口径原话）—— 有 Q 版卡就用 Q 版顶替本镜的身份参考，
 		// 不再附本人那张正面照（两张一起附会请模型把两个人**都**画进画面）。
 		// Q 版卡还没出图时不顶替（宁可按老样子给本人照，也不让这一镜没有身份参考）。
-		if voKind == "inner" {
+		if voKind == project.VoKindInner {
+			// ① Q 版卡自己就写在出场名单里（真机镜 14 如此）：按 Q 版附，不当本人。
+			if chibiWant[cid] || project.IsChibiRef(project.CardRef{ID: cid, Name: a.Name}) {
+				useChibi(cid)
+				continue
+			}
+			// ② 技能侧前缀写法 `chibi_<本体id>`。
 			if chibiID, has := chibiOf[cid]; has {
+				if useChibi(chibiID) {
+					continue
+				}
 				// **字段非空不等于盘上有图**（2026-10-06 审计，与上面角色分支同一条判据）：
 				// 悬挂条目照样进参考图集合 ⇒ 引擎上传一个不存在的文件 ⇒ **整镜失败**
 				// （不是"降级"，是渲染作业直接报错）。判据统一走 project.FileOnDisk。
-				if ca, ok2 := assets["char:"+chibiID]; ok2 && project.FileOnDisk(dir, ca.File) {
-					add("character", "character_chibi", chibiID, ca.Name, filepath.Join(dir, ca.File))
-					continue
-				}
 				// 有卡但图不在盘上：按"Q 版还没出图"处理（下面回落到本人定妆照），
 				// 但要**说出来** —— 这一镜本该由 Q 版演出，观众看到的是本人。
 				if ca, ok2 := assets["char:"+chibiID]; ok2 && strings.TrimSpace(ca.File) != "" {
@@ -137,6 +188,20 @@ func RefPlan(dir string, shot project.Shot, assets map[string]project.Asset, com
 						"Q 版卡 %s 的图片不在盘上(%s)：本镜改用 %s 的本人定妆照（内心戏本该由 Q 版演出），补齐这张图后请重渲本镜",
 						chibiID, ca.File, cid))
 				}
+			}
+			// ③ 显示名 / 平台派生写法：按「这张 Q 版是谁的」对号（与装配点同一判据）。
+			substituted := false
+			for _, key := range []string{project.ChibiKey(a.Name), project.ChibiKey(strings.TrimPrefix(cid, "char_"))} {
+				if key == "" {
+					continue
+				}
+				if chibiID, has := chibiByOwner[key]; has && useChibi(chibiID) {
+					substituted = true
+					break
+				}
+			}
+			if substituted {
+				continue
 			}
 		}
 		master := filepath.Join(dir, a.File)
