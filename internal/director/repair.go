@@ -33,6 +33,11 @@ const (
 	// 串行等纯属浪费：实测那一集 12 镜打满上限，光这一段就十几分钟。
 	// 但也不能无限并发 —— 一次几十个请求会把接口压到限流，限流一开整轮都变慢。
 	repairConcurrency = 4
+	// repairMaxCameraRewrites 一轮里**因为整集运镜单调**而重写的镜数上限。
+	//
+	// 取 4：整集换掉三四镜就足以打破「一直是推/拉」（判据要求铺开到 4 种），
+	// 再多就是替导演改分镜了 —— 运镜是叙事选择，平台只把"一潭死水"撬开一个口子。
+	repairMaxCameraRewrites = 4
 )
 
 // repairableIssue 一镜需要修的地方（给人看的一句话 + 给模型看的指令）。
@@ -89,6 +94,46 @@ func collectRepairable(plan *project.Plan) []repairableIssue {
 					"and generic filler sentences — keep every beat, every line and every technical "+
 					"requirement (six sections, brightness guard, exclusions sentence, retention markers, "+
 					"dialogue tags). Do not shorten by deleting content that matters.", n),
+			})
+		}
+	}
+	// ④ 整集运镜单调 —— **有界**（2026-10-09 用户：「场景和分镜运镜很单一」）。
+	//
+	// 这是**整集级**的问题（判据见 project.CameraMonotoneKinds，与渲染前门同一处阈值），
+	// 但修法能逐镜落地：把几镜的**运镜那一句**换成整集**没用过**的官方运动类型。
+	// 三个约束保命：
+	//   ① 上限 repairMaxCameraRewrites 镜 —— 整集换三四镜就足以打破"一直是推/拉"；
+	//   ② 指令里明写「动作/台词/时长/六段式/亮度与排除句一个字不许动」，只换运镜那一句；
+	//   ③ 这一段放在**逐镜循环之外**：循环里那三条（空提示词 / 一镜到底 / 词数超标）各自
+	//      都 `continue` 了，写在里面就会被它们跳过（实测：12 镜全被"一镜到底"吃掉，
+	//      运镜修复一条都收不到）。
+	// 追加在最后也是这个道理：真缺陷先占住 repairMaxShots 的预算，运镜单调不该把它们挤掉
+	// （运镜难看是一回事，那一镜出不来是另一回事）。
+	if used, unused, _, monotone := project.CameraMonotoneKinds(plan.Shots); monotone {
+		rewrites := 0
+		for _, sh := range plan.Shots {
+			if rewrites >= repairMaxCameraRewrites {
+				break
+			}
+			// 空提示词的镜由上面那条单独修（它会整镜重写）；认不出运动类型的镜不动 ——
+			// 不知道它是什么，就没有理由说它"和别的镜重复"。
+			if strings.TrimSpace(sh.H3Prompt) == "" || len(project.CameraKindsIn(sh.Camera)) == 0 {
+				continue
+			}
+			rewrites++
+			out = append(out, repairableIssue{
+				shotID: sh.ID,
+				note: fmt.Sprintf("#%d(运镜与整集其它镜重复：整集只用过 %d 种运镜「%s」)",
+					sh.ID, len(used), strings.Join(used, "/")),
+				fix: fmt.Sprintf("Every clip in this episode uses only %d camera motions (%s), so the whole "+
+					"episode feels like one long camera move however the shot sizes change. Rewrite ONLY the "+
+					"camera-motion sentence of this shot: replace it with ONE of the official motions listed in "+
+					"the `camera` field spec that this episode has NOT used yet (%s) — pick the one that fits "+
+					"what actually happens in this shot, and write it as a natural English action "+
+					"(`The camera … `). Change NOTHING else: same action, same dialogue lines verbatim, same "+
+					"duration, same timestamps, the same internal-shot structure, the same brightness and "+
+					"exclusion sentences.",
+					len(used), strings.Join(used, "/"), strings.Join(unused, ", ")),
 			})
 		}
 	}

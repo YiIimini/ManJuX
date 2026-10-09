@@ -628,7 +628,7 @@ func checkCoverage(p *Plan, add func(level, where, format string, a ...any)) {
 					"而独有特征是它在画面里被认出来的唯一依据",
 				len(issues), strings.Join(parts, "；"))
 		}
-		// ── 运镜（camera）的三条门（2026-09-28 用户问「运镜是否合理」）──────────────
+		// ── 运镜（camera）的四条门 ─────────────────────────────────────────────
 		//
 		// 判据在 `camera_gate.go`（返回**数据**），播报文案在这里 —— 因为 `docs/门目录.md`
 		// 由 gatecat 扫**字面格式串**生成，写成 `add(..., "%s", msg)` 那条门在目录里就看不出来。
@@ -650,6 +650,34 @@ func checkCoverage(p *Plan, add func(level, where, format string, a ...any)) {
 					"连续 %d 镜同一个运镜「%s」（#%d 起）—— 上限 %d 镜；与「连续同景别」同一条机理："+
 						"运镜一潭死水，整集看下来像没剪过",
 					iss.Run, iss.Cam, iss.Start, PlanMaxConsecutiveSameCamera)
+			case CamMonotone:
+				add("warn", "plan.shots",
+					"整集 %d 镜的运镜只有 %d 种（%s）—— 官方词表有 %d 条，建议至少铺开到 %d 种；"+
+						"只有一两种运镜时，景别与视角再变也救不回「镜头感」（观众说的「镜头一直是推/拉」就是这一条）",
+					iss.Shots, len(iss.Kinds), strings.Join(iss.Kinds, " / "), len(PlanCameraKinds), PlanCameraVarietyMinKinds)
+			}
+		}
+		// ── 场次覆盖对账（2026-10-09 用户：「场景和分镜运镜很单一」）──────────────────
+		//
+		// 剧本（平台自己的 ① 会话产出）自带结构化场次表【场 N|地点|时间|内外】，剧本阶段
+		// 已把它落进方案（Plan.BriefScenes）—— 这里在**渲染前门**再对一次账：此前这笔账只在
+		// 剧本阶段播报，重渲 / 导入包 / 预检（cmd/preflight）根本看不到，用户要到成片才发现。
+		for _, iss := range SceneCoveragePlanIssues(p) {
+			switch iss.Kind {
+			case SceneShareOverCap:
+				add("warn", "plan.brief_scenes",
+					"「%s」一场占了 %d/%d 镜（%d%%）—— 上限 %d%%：超过就是观众说的「原地打转」；"+
+						"把多余的镜让给别的场次，或在同一场内部换机位与时段",
+					iss.Scene, iss.Shots, iss.Total, iss.Percent, SceneShareCapPercent)
+			case SceneMissing:
+				add("warn", "plan.brief_scenes",
+					"剧本列了 %d 场戏，分镜只用到 %d 个场景 —— 有场次整段没被拍；逐场核对剧本的"+
+						"「【场 N|地点|时间|内外】」，缺哪场补哪场",
+					iss.Brief, iss.Used)
+			case SceneNightDropped:
+				add("warn", "plan.brief_scenes",
+					"剧本里有**夜场**，而全集一个夜戏场景都没用上 —— 色调与节奏会没有起伏"+
+						"（实测第 02 集：唯一的夜戏整场丢掉，整集八成镜头挤在同一个户外白日场景里）")
 			}
 		}
 

@@ -133,7 +133,9 @@ func TestViewRequiredForShot(t *testing.T) {
 // TestValidatePlanCatchesMonotoneViewpoint 视角单调：≥10 镜却只有 <6 种机位。
 func TestValidatePlanCatchesMonotoneViewpoint(t *testing.T) {
 	p := viewShotPlan(12, true) // 12 镜全是同一种视角
-	if !hasIssue(ValidatePlan(p), "warn", "只用了") {
+	// 【2026-10-09】判据盯**这句门自己的话**（「整集只用了…机位视角」）—— 原来只 grep「只用了」，
+	// 运镜单调那条门（「整集 N 镜的运镜只有 M 种」）加进来时会互相命中，等于两条门共用一个宽串。
+	if !hasIssue(ValidatePlan(p), "warn", "整集只用了") {
 		t.Fatalf("12 镜只用 1 种视角必须报视角单调：%v", PlanIssuesText(ValidatePlan(p)))
 	}
 	// 铺开到 6 种 → 不该报
@@ -141,7 +143,7 @@ func TestValidatePlanCatchesMonotoneViewpoint(t *testing.T) {
 	for i := range p.Shots {
 		p.Shots[i].H3Prompt = strings.Replace(p.Shots[i].H3Prompt, ViewAerial45, views[i%len(views)], 1)
 	}
-	if hasIssue(ValidatePlan(p), "warn", "只用了") {
+	if hasIssue(ValidatePlan(p), "warn", "整集只用了") {
 		t.Error("铺开到 6 种视角后不该再报单调")
 	}
 }

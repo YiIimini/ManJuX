@@ -3,6 +3,7 @@ package project
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -24,11 +25,11 @@ import (
 
 // ScriptScene 剧本里的一场戏。
 type ScriptScene struct {
-	No     int    // 场号
-	Place  string // 地点
-	Time   string // 时间（清晨/上午/夜…）
-	InOut  string // 内 / 外 / 内外
-	Header string // 原样表头（播报与对照用）
+	No     int    `json:"no"`     // 场号
+	Place  string `json:"place"`  // 地点
+	Time   string `json:"time"`   // 时间（清晨/上午/夜…）
+	InOut  string `json:"in_out"` // 内 / 外 / 内外
+	Header string `json:"header"` // 原样表头（播报与对照用）
 }
 
 // scriptSceneRe 结构化剧本的场次头：`【场 1|碑奴粥棚|清晨|外】`（全/半角竖线、空格都容忍）。
@@ -56,7 +57,49 @@ func ParseScriptScenes(brief string) []ScriptScene {
 // 取 40：一部短剧一集通常 3–6 场，一场过半必然显得"原地打转"；实测第 02 集 49% 就是这种感觉。
 const SceneShareCapPercent = 40
 
-// SceneCoverageIssues 剧本场次 ↔ 分镜覆盖对账（每条一句人话；顺序即优先级）。
+// ── 场次覆盖对账 ────────────────────────────────────────────────────────────
+
+// SceneCoverageKind 场次覆盖问题的种类。
+type SceneCoverageKind string
+
+const (
+	// SceneShareOverCap 单场戏占全集镜数超过 SceneShareCapPercent。
+	SceneShareOverCap SceneCoverageKind = "share_over_cap"
+	// SceneMissing 剧本列了 N 场、分镜只用到更少的场景 ⇒ 有场次整段没被拍。
+	SceneMissing SceneCoverageKind = "missing"
+	// SceneNightDropped 剧本有夜场，而全集一个夜戏场景都没用上。
+	SceneNightDropped SceneCoverageKind = "night_dropped"
+)
+
+// SceneCoverageIssue 一条场次覆盖问题（**只给数据**）。
+//
+// 【为什么是数据】与 `CameraIssue` 同一个理由：`docs/门目录.md` 由 gatecat 扫
+// `add(level, where, "字面格式串", …)` 生成 —— 判据若直接返回成句的中文，接线处只能写
+// `add(..., "%s", msg)`，格式串没有字面量，门目录里就看不到这条门是什么。
+type SceneCoverageIssue struct {
+	Kind    SceneCoverageKind
+	Scene   string // SceneShareOverCap：场景名（卡片名优先，退回镜头里写的那个串）
+	Shots   int    // SceneShareOverCap：这一场几镜
+	Total   int    // SceneShareOverCap：全集几镜
+	Percent int    // SceneShareOverCap：占比
+	Brief   int    // SceneMissing：剧本列了几场
+	Used    int    // SceneMissing：分镜用到几个场景
+}
+
+// SceneCoveragePlanIssues 用**方案自己带的**场次表（Plan.BriefScenes）对账。
+//
+// 【为什么要有这一份（2026-10-09 用户：「场景和分镜运镜很单一」）】原来这笔账只在剧本阶段
+// 播报一次，而**渲染前**那道门（project.ValidatePlan / cmd/preflight）、重渲与导入包路径
+// 都拿不到剧本文本 ⇒ 出了剧本阶段就再也看不见，用户要到成片才发现「场景过于单一」。
+// 现在剧本阶段把解析出的场次表落进方案（Plan.BriefScenes），凡读得到方案的地方都能对账。
+func SceneCoveragePlanIssues(plan *Plan) []SceneCoverageIssue {
+	if plan == nil {
+		return nil
+	}
+	return sceneCoverageIssues(plan, plan.BriefScenes)
+}
+
+// sceneCoverageIssues 场次覆盖对账的**唯一判据实现**（返回数据，空 = 没问题）。
 //
 // ## 判据刻意**不靠名字模糊匹配**
 //
@@ -71,11 +114,12 @@ const SceneShareCapPercent = 40
 //     而全集一个夜戏场景都没用上，就报出来（第 02 集正是把唯一的夜戏整场丢了）。
 //
 // 只在剧本有结构化场次表（≥2 场）时才判：老包没有表 ⇒ 无从对照，不报。
-func SceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []string {
+//
+// **输出顺序是确定的**（场景按串排序）：同一条门每次跑出来顺序都一样，才谈得上比对。
+func sceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []SceneCoverageIssue {
 	if plan == nil || len(briefScenes) < 2 || len(plan.Shots) == 0 {
 		return nil
 	}
-	// 按场景分组（镜头里存的是场景卡 id；退回按卡片名兜一次）
 	cardByID := map[string]Scene{}
 	cardByName := map[string]Scene{}
 	for _, sc := range plan.Scenes {
@@ -87,10 +131,16 @@ func SceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []string {
 		perScene[sh.Scene]++
 	}
 	total := len(plan.Shots)
-	var out []string
+	keys := make([]string, 0, len(perScene))
+	for k := range perScene {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
 
+	var out []SceneCoverageIssue
 	// ① 单场占比
-	for key, n := range perScene {
+	for _, key := range keys {
+		n := perScene[key]
 		if pct := n * 100 / total; pct > SceneShareCapPercent {
 			name := key
 			if sc, ok := cardByID[key]; ok {
@@ -98,19 +148,42 @@ func SceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []string {
 			} else if sc, ok := cardByName[key]; ok {
 				name = sc.Name
 			}
-			out = append(out, fmt.Sprintf("「%s」一场就占了 %d/%d 镜（%d%%）—— 超过 %d%% 观众会觉得「原地打转」；"+
-				"把多余的镜分给其它场次，或在这一场内部换机位与时段", name, n, total, pct, SceneShareCapPercent))
+			out = append(out, SceneCoverageIssue{
+				Kind: SceneShareOverCap, Scene: name, Shots: n, Total: total, Percent: pct,
+			})
 		}
 	}
 	// ② 场次数不足
 	if used := len(perScene); used < len(briefScenes) {
-		out = append(out, fmt.Sprintf("剧本列了 %d 场戏，分镜只用到 %d 个场景 —— 有场次整段没被拍；"+
-			"逐场核对剧本的【场 N|地点|时间|内外】，缺哪场补哪场", len(briefScenes), used))
+		out = append(out, SceneCoverageIssue{Kind: SceneMissing, Brief: len(briefScenes), Used: used})
 	}
 	// ③ 时段缺失（剧本有夜场，而全集没用到任何夜戏场景）
 	if briefHasNight(briefScenes) && !planUsesNightScene(plan, perScene, cardByID, cardByName) {
-		out = append(out, "剧本里有**夜场**，而全集一个夜戏场景都没用上 —— 色调与节奏会没有起伏"+
-			"（实测第 02 集就是这样：唯一的夜戏整场丢掉，82% 的镜头挤在同一个户外白日场景里）")
+		out = append(out, SceneCoverageIssue{Kind: SceneNightDropped})
+	}
+	return out
+}
+
+// SceneCoverageIssues 场次覆盖对账的**人话版**（供剧本阶段播报）。
+//
+// 判据只有一处实现（sceneCoverageIssues）；渲染前的门（plan_checks.go）用**数据版**自己出文案，
+// 这样 `docs/门目录.md` 才收得到那三条门。
+func SceneCoverageIssues(plan *Plan, briefScenes []ScriptScene) []string {
+	iss := sceneCoverageIssues(plan, briefScenes)
+	out := make([]string, 0, len(iss))
+	for _, it := range iss {
+		switch it.Kind {
+		case SceneShareOverCap:
+			out = append(out, fmt.Sprintf("「%s」一场就占了 %d/%d 镜（%d%%）—— 超过 %d%% 观众会觉得「原地打转」；"+
+				"把多余的镜分给其它场次，或在这一场内部换机位与时段",
+				it.Scene, it.Shots, it.Total, it.Percent, SceneShareCapPercent))
+		case SceneMissing:
+			out = append(out, fmt.Sprintf("剧本列了 %d 场戏，分镜只用到 %d 个场景 —— 有场次整段没被拍；"+
+				"逐场核对剧本的【场 N|地点|时间|内外】，缺哪场补哪场", it.Brief, it.Used))
+		case SceneNightDropped:
+			out = append(out, "剧本里有**夜场**，而全集一个夜戏场景都没用上 —— 色调与节奏会没有起伏"+
+				"（实测第 02 集就是这样：唯一的夜戏整场丢掉，82% 的镜头挤在同一个户外白日场景里）")
+		}
 	}
 	return out
 }

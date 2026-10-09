@@ -287,6 +287,15 @@ type Plan struct {
 	Scenes     []Scene     `json:"scenes"`
 	Props      []Prop      `json:"props,omitempty"`
 	Shots      []Shot      `json:"shots"`
+	// BriefScenes 剧本（平台自己的 ① 会话产出）里的**结构化场次表**（【场 N|地点|时间|内外】）。
+	//
+	// 【为什么落进方案（2026-10-09 用户：「场景和分镜运镜很单一」）】场次覆盖对账
+	// （SceneCoveragePlanIssues）此前只在剧本阶段播报一句 —— 而**渲染前**的门
+	// （project.ValidatePlan / cmd/preflight）与重渲、导入包路径**拿不到剧本文本**，
+	// 于是「一场戏占掉半集、剧本有夜场却整场没拍」这笔账出了剧本阶段就再也看不见，
+	// 用户要到成片才发现「场景过于单一」。落进方案后，凡读得到方案的地方都能对账：
+	// 一处解析，多处消费。老方案没有这个字段 ⇒ 不判（与「老包没有场次表就不判」同口径）。
+	BriefScenes []ScriptScene `json:"brief_scenes,omitempty"`
 
 	// StrippedDirectives 本次读取时从 h3_prompt 里剔掉的"生成器指令行"条数（见 h3_clean.go）。
 	// **不进 JSON**：它是读取期的诊断量，不是方案的一部分（写回磁盘会把上游文件"改脏"）。

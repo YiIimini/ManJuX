@@ -172,7 +172,12 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	// 而 ⑤ 分镜按**叙事节拍**铺镜头、**没有场次配额约束** ⇒ 实测第 02 集：一场戏占 49%、
 	// 剧本第 3 场只剩 1 镜、**唯一的夜戏整场丢掉**，观众的评价就是「场景过于单一」。
 	// 以前无处对照（剧本没有场次表），现在有 —— 就在**存盘前**把这笔账报出来。
-	for _, msg := range project.SceneCoverageIssues(plan, project.ParseScriptScenes(text)) {
+	//
+	// 2026-10-09（用户：「场景和分镜运镜很单一」）：场次表**落进方案**（Plan.BriefScenes）——
+	// 渲染前的门（project.ValidatePlan / cmd/preflight）、重渲与导入包路径**拿不到剧本文本**，
+	// 只能靠方案自己带上这一份，否则这笔账出了本阶段就再也看不见（解析一次，多处消费）。
+	plan.BriefScenes = project.ParseScriptScenes(text)
+	for _, msg := range project.SceneCoverageIssues(plan, plan.BriefScenes) {
 		c.emit(proj.ID, PhaseScript, 0, "warn", 16, "🎬 %s", msg)
 	}
 	if n, details := director.FitDialogueDurations(plan); n > 0 {
