@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/YiIimini/ManJuX/internal/asr"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -34,10 +35,11 @@ func TestZZProbeRealSubtitleTiming(t *testing.T) {
 	// 时长与 ASR 都从剪辑侧车文件取（`# ... dur=7.9s`），不重编、不调 ffprobe。
 	durations := make([]float64, len(plan.Shots))
 	asrSpans := make([][]cueSpan, len(plan.Shots))
+	asrWords := make([][]asr.Word, len(plan.Shots))
 	for i, sh := range plan.Shots {
 		clip := filepath.Join(dir, "clips", "shot_"+pad3(sh.ID)+".mp4")
 		durations[i] = durFromASRHeader(clip)
-		asrSpans[i] = asrSpansOf(clip)
+		asrSpans[i], asrWords[i] = asrSpansOf(clip)
 	}
 	fades := seamFades(transFade, durations, 0.5, sceneSeamFlags(&plan))
 	starts := shotStarts(durations, fades)
@@ -47,7 +49,7 @@ func TestZZProbeRealSubtitleTiming(t *testing.T) {
 	for i := range tracks {
 		tracks[i] = speechTrack{From: 0, To: durations[i]}
 	}
-	cp := planCues(&plan, starts, durations, tracks, asrSpans)
+	cp := planCues(&plan, starts, durations, tracks, asrSpans, asrWords)
 
 	t.Logf("落点播报：\n  %s", strings.Join(cp.notes, "\n  "))
 	t.Logf("接缝：同场 %d 处硬切（1 帧）／换场 %d 处叠化 —— fades=%v",

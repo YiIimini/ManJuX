@@ -39,6 +39,7 @@ func main() {
 	flag.Parse()
 
 	probe := probeFn(*ffmpeg, *ffprobe)
+	tracks := trackProbeFn(*ffmpeg, *ffprobe)
 	eps, err := episodes(filepath.Join(*dataDir, "projects"), *project, *ep)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "扫描项目失败：%v\n", err)
@@ -50,7 +51,7 @@ func main() {
 	}
 	anyFail := false
 	for _, dir := range eps {
-		in, inErr := filmaudit.LoadEpisode(dir, probe)
+		in, inErr := filmaudit.LoadEpisode(dir, probe, tracks)
 		if inErr != nil {
 			fmt.Printf("⛔ %s：%v\n", filepath.Base(dir), inErr)
 			anyFail = true
@@ -95,6 +96,22 @@ func probeFn(ffmpegPath, ffprobePath string) filmaudit.ProbeFn {
 			return 0, perr
 		}
 		return info.Duration, nil
+	}
+}
+
+// trackProbeFn 造一个"两条轨各自时长"的探针（2026-10-09 真机 P0：画面被截断、音轨完好时
+// format 时长看着是正常的，必须分开量才能发现）。
+func trackProbeFn(ffmpegPath, ffprobePath string) filmaudit.TrackProbeFn {
+	f, err := ff.New(ffmpegPath, ffprobePath)
+	if err != nil {
+		return nil
+	}
+	return func(p string) (float64, float64, bool) {
+		info, perr := f.Probe(p)
+		if perr != nil || info == nil || info.VideoDuration <= 0 {
+			return 0, 0, false
+		}
+		return info.VideoDuration, info.AudioDuration, true
 	}
 }
 

@@ -133,24 +133,30 @@ func fallbackCues(filmStart, d float64, count int) []cueSpan {
 type cueSource int
 
 const (
-	cueEnvelope   cueSource = iota // ① 人声包络（逐句精确）
-	cueASR                         // ② ASR 段落（逐句精确）
-	cueASRWindow                   // ③ 只用 ASR 的人声区间、句内按字数推
-	cueShotWindow                  // ④ 镜头级窗口（没有可用的发声证据）
+	// cueAlign ⓪ **词级对齐**（2026-10-09 新增，最高一档）：把**已知台词**逐句对到 whisper
+	// 给出的词级时间戳上 —— 这是业界标准 forced alignment 的最省一档（WhisperX / stable-ts
+	// 走的是同一件事，见 internal/asr/align.go 的文件头）。它比②强的正是真机那种形态：
+	// **段数与句数不符**（镜 10/11）时，②只能把窗口收进人声区间，而词级能把每一句钉到它
+	// 自己的那几个词上。
+	cueAlign      cueSource = iota
+	cueEnvelope             // ① 人声包络（逐句精确）
+	cueASR                  // ② ASR 段落（逐句精确）
+	cueASRWindow            // ③ 只用 ASR 的人声区间、句内按字数推
+	cueShotWindow           // ④ 镜头级窗口（没有可用的发声证据）
 )
 
 // asrSpansOf 读某镜的 ASR 转写（`<clip>.asr.txt`），把段落换算成**相对镜头起点**的秒区间。
 //
 // 读不到 / 解析失败一律返回 nil —— 那是"没有证据"，不是"这一镜没台词"（后者由 QC 的
 // 语音对账负责播报）；没有证据就退回④，不许用空结果去猜。
-func asrSpansOf(clipPath string) []cueSpan {
+func asrSpansOf(clipPath string) ([]cueSpan, []asr.Word) {
 	if strings.TrimSpace(clipPath) == "" {
-		return nil
+		return nil, nil
 	}
 	base := strings.TrimSuffix(clipPath, filepath.Ext(clipPath))
 	r, err := asr.Parse(base + ".asr.txt")
 	if err != nil || r == nil {
-		return nil
+		return nil, nil
 	}
 	var out []cueSpan
 	for _, s := range r.Segments {
@@ -159,7 +165,10 @@ func asrSpansOf(clipPath string) []cueSpan {
 		}
 		out = append(out, cueSpan{Start: s.Start, End: s.End})
 	}
-	return out
+	// 词级时间戳是**升级版 ASR 工具**（`word_timestamps=True`）才写的；老结果文件里没有
+	// ⇒ 老项目这里就是 nil，自动退回②③④。这一条刻意**不**播报"缺失"：那是工具版本，
+	// 不是这一集的错（与"该念没念"那种必须点名的东西分得开）。
+	return out, r.Words
 }
 
 // cueWeights 每句字幕的**字数**（用于③里"句内按时长推"）。没有字数信息时一律给 1（等分）。
@@ -211,7 +220,10 @@ func splitWindowCues(lo, hi float64, weights []int, count int) []cueSpan {
 // 为什么条数不符时不"按比例摊"到人声段上:把 3 句台词摊到 2 个人声段上,落点看着合理、
 // 实际每句都错位,而且不会有人发现。所以③那一档只做一件事:**把窗口收进人声区间**
 // （句内位置是推的,会标成 cueASRWindow 如实说明),而不是假装逐句对齐。
-func alignCues(filmStart, d float64, tr speechTrack, asrSpans []cueSpan, weights []int, count int) ([]cueSpan, cueSource) {
+// ⓪（词级对齐，2026-10-09）之后这一条**不那么常触发了**：段数与句数不符的镜靠词级就能
+// 逐句落点（真机镜 10/11），③留给"连词级也对不上"的镜（那通常意味着台词真的没念全）。
+func alignCues(filmStart, d float64, tr speechTrack, asrSpans []cueSpan, words []asr.Word,
+	parts []string, weights []int, count int) ([]cueSpan, cueSource) {
 	if count <= 0 {
 		return nil, cueShotWindow
 	}
@@ -221,6 +233,17 @@ func alignCues(filmStart, d float64, tr speechTrack, asrSpans []cueSpan, weights
 	}
 	if lim := filmStart + d; hi > lim {
 		hi = lim
+	}
+	// ⓪ 词级对齐（2026-10-09，业界标准 forced alignment 的可用档）：把**已知台词**逐句对到
+	// 词流上。放在最前面是因为它是**唯一**能处理"段数与句数不符"的证据源（真机镜 10/11），
+	// 而包络那一档在真机整集上都退化了（逐镜都判成"段落数不符"）。
+	// 认不出来（比例不够）就往下走 —— 不许硬凑一个落点：那会把"这句根本没念"盖住。
+	if spans, ok := asr.AlignLines(stripSpeakers(parts), words); ok && len(spans) == count {
+		rel := make([]cueSpan, 0, len(spans))
+		for _, sp := range spans {
+			rel = append(rel, cueSpan{Start: sp.Start, End: sp.End})
+		}
+		return clampCues(filmStart, lo, hi, rel), cueAlign
 	}
 	// ① 人声包络：逐句精确（原有那一档，最准）
 	if spans := speechSpans(tr.Env, tr.From, tr.To); len(spans) == count {
@@ -284,19 +307,23 @@ func (cp *cuePlan) shotSpans(i int, filmStart, d float64, count int) []cueSpan {
 	return fallbackCues(filmStart, d, count)
 }
 
-// planCues 依人声落点排全片字幕。tracks / asrSpans 与 plan.Shots 同序;缺项按"没有证据"处理。
+// planCues 依人声落点排全片字幕。tracks / asrSpans / asrWords 与 plan.Shots 同序;缺项按
+// "没有证据"处理。
 //
-// 两个证据源（人声包络、逐镜 ASR 转写）都要用上：包络量的是**这一镜自己的音轨**，ASR 量的是
-// **实际念出来的话与时间** —— 真机那一集正是只有 ASR 可用（包络这一档对每镜都退化了），
-// 而字幕因此按整镜铺开（镜 1 挂 6.2 秒、真实发声只有 1 秒），用户看到的就是"字幕与声音对不上"。
-func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTrack, asrSpans [][]cueSpan) cuePlan {
+// 三个证据源（人声包络、逐镜 ASR 段落、**词级对齐**）都要用上：包络量的是**这一镜自己的
+// 音轨**，ASR 量的是**实际念出来的话与时间** —— 真机那一集正是只有 ASR 可用（包络这一档
+// 对每镜都退化了），而字幕因此按整镜铺开（镜 1 挂 6.2 秒、真实发声只有 1 秒），用户看到的
+// 就是"字幕与声音对不上"。词级对齐（2026-10-09）补的是最后那一截：**段数与句数不符**的镜
+// （真机镜 10/11）也能逐句落点，而不是只把窗口收进人声区间。
+func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTrack,
+	asrSpans [][]cueSpan, asrWords [][]asr.Word) cuePlan {
 	var cp cuePlan
 	if plan == nil {
 		return cp
 	}
 	cp.byShot = make([][]cueSpan, len(plan.Shots))
 	var noEvidence, asrWindow, mismatch []int
-	total, byEnvelope, byASR := 0, 0, 0
+	total, byAlign, byEnvelope, byASR := 0, 0, 0, 0
 	for i, shot := range plan.Shots {
 		parts := director.ShotSubtitleParts(shot)
 		count := len(parts)
@@ -315,14 +342,21 @@ func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTr
 		if i < len(tracks) {
 			tr = tracks[i]
 		}
-		var asr []cueSpan
+		// 注意：局部变量不叫 `asr` —— 那会**遮蔽包名** internal/asr，`asr.Word` 就解析不了了。
+		var asrSeg []cueSpan
 		if i < len(asrSpans) {
-			asr = asrSpans[i]
+			asrSeg = asrSpans[i]
 		}
-		spans, src := alignCues(t, d, tr, asr, cueWeights(parts), count)
+		var words []asr.Word
+		if i < len(asrWords) {
+			words = asrWords[i]
+		}
+		spans, src := alignCues(t, d, tr, asrSeg, words, parts, cueWeights(parts), count)
 		cp.byShot[i] = spans
 		total++
 		switch src {
+		case cueAlign:
+			byAlign++
 		case cueEnvelope:
 			byEnvelope++
 		case cueASR:
@@ -336,6 +370,11 @@ func planCues(plan *project.Plan, starts, durations []float64, tracks []speechTr
 				noEvidence = append(noEvidence, i+1)
 			}
 		}
+	}
+	if byAlign > 0 {
+		cp.notes = append(cp.notes, fmt.Sprintf(
+			"字幕落点:%d/%d 镜按**词级对齐**逐句落点（已知台词对到 whisper 的词级时间戳，"+
+				"段数与句数不符也逐句精确）", byAlign, total))
 	}
 	if byEnvelope > 0 {
 		cp.notes = append(cp.notes, fmt.Sprintf(
@@ -374,4 +413,37 @@ func hasCueText(plan *project.Plan) bool {
 		}
 	}
 	return false
+}
+
+// stripSpeakers 把字幕文本里的**说话人前缀**剥掉（`姜晚舟:活的。` ⇒ `活的。`）。
+//
+// 【为什么必须剥（真机实测，2026-10-09）】词级对齐全靠"已知台词 ↔ 词流"的字符命中率，
+// 而前缀里那个人名**不在音轨里**（H3 只念台词本身）⇒ 它被算成一个错字：真机那句
+// 「姜晚舟:活的。」= 6 个字里错 1 个，命中比例掉到 0.83 —— 看着还够，但四字以上的人名
+// （如「郑大勇:工牌呢。」）就会掉到 0.5 以下 ⇒ 整镜退回段级档，词级这一档白做。
+//
+// 前缀的拼装方式见 `director.ShotSubtitleParts`（`Speaker + ":" + Text`，半角冒号）。
+// 只认"冒号在 12 字以内、前半段不含句读"这一种形状 —— 台词里正常出现的冒号（时间、
+// 引语）不会被误剥。
+func stripSpeakers(parts []string) []string {
+	out := make([]string, len(parts))
+	for i, p := range parts {
+		out[i] = stripSpeakerPrefix(p)
+	}
+	return out
+}
+
+func stripSpeakerPrefix(s string) string {
+	i := strings.IndexAny(s, ":：") // 半角为主，全角容忍
+	if i <= 0 || i > 12 {
+		return s
+	}
+	if strings.ContainsAny(s[:i], "。！？，、!?") {
+		return s
+	}
+	rest := strings.TrimSpace(s[i+1:])
+	if rest == "" {
+		return s
+	}
+	return rest
 }

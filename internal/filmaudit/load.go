@@ -22,8 +22,16 @@ import (
 // ProbeFn 量一个媒体文件的时长（秒）。CLI 传 ffprobe 实现；传 nil 就跳过依赖时长的判断。
 type ProbeFn func(path string) (float64, error)
 
+// TrackProbeFn 量一个媒体文件**两条轨各自的**时长（秒）。返回 ok=false 表示量不到
+// （调用方一律按"没验过"处理：跳过判据，绝不把"没量到"当成"合格"）。
+//
+// 【为什么还要第二个探针（2026-10-09 真机 P0）】ProbeFn 返回的是 format 时长 = 两条流里
+// 最长的那条 —— 而"画面被截断、音轨完好"的成片正是靠这个口径藏起来的（真机第01集：
+// 画面 23.7 秒 / 音轨 122.5 秒，format 报 122.5）。
+type TrackProbeFn func(path string) (video, audio float64, ok bool)
+
 // LoadEpisode 读一集目录（形如 `data/projects/<书>/<书>·第NN集·xxx/`）。
-func LoadEpisode(epDir string, probe ProbeFn) (Input, error) {
+func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn) (Input, error) {
 	var in Input
 	in.ID = filepath.Base(epDir)
 	raw, err := os.ReadFile(filepath.Join(epDir, "plan", "plan.json"))
@@ -63,6 +71,11 @@ func LoadEpisode(epDir string, probe ProbeFn) (Input, error) {
 
 	if b, cerr := os.ReadFile(filepath.Join(epDir, "output", "final.srt")); cerr == nil {
 		in.Cues = ParseSRT(string(b))
+	}
+	if final := filepath.Join(epDir, "output", "final.mp4"); tracks != nil {
+		if v, a, ok := tracks(final); ok {
+			in.VideoDur, in.AudioDur = v, a
+		}
 	}
 	if final := filepath.Join(epDir, "output", "final.mp4"); probe != nil {
 		if _, serr := os.Stat(final); serr == nil {

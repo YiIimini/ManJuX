@@ -247,3 +247,87 @@ func TestAuditNeverTruncatesFails(t *testing.T) {
 		t.Errorf("体检报的 ⚠ 比契约门还多？(%d > %d)", warn, wantWarn)
 	}
 }
+
+// 成片**画面被截断**必须报 ⛔（2026-10-09 真机 P0：这条缺陷此前谁都没报出来）。
+//
+// 夹具数字是**实测值**（`ffprobe -select_streams v:0 -count_frames` 于真机 final.mp4）：
+// 画面 23.708333 秒 / 569 帧，音轨 122.498917 秒。
+func TestFilmTrackMismatchIsFatal(t *testing.T) {
+	p := &project.Plan{
+		Characters: []project.Character{{ID: "char_a", Name: "甲"}},
+		Scenes:     []project.Scene{{ID: "scene_a", Name: "走廊"}},
+		Shots: []project.Shot{
+			{ID: 1, Scene: "scene_a", Characters: []string{"char_a"}, Duration: 8, H3Prompt: "x"},
+			{ID: 2, Scene: "scene_a", Characters: []string{"char_a"}, Duration: 7, H3Prompt: "x"},
+		},
+	}
+	fs := Audit(Input{
+		Plan:      p,
+		Durations: []float64{8, 7},
+		VideoDur:  23.708333, // 真机实测：前 3 镜的画面
+		AudioDur:  122.498917,
+		Cues:      nil,
+	})
+	var hit int
+	for _, f := range fs {
+		if f.Level == "fail" && strings.Contains(f.Msg, "画面只有") {
+			hit++
+		}
+	}
+	if hit == 0 {
+		t.Fatalf("画面 23.7 秒 / 音轨 122.5 秒 必须报 ⛔（真机就是这个形态）：%s", strings.Join(msgOf(fs), "\n"))
+	}
+	// 用户看到的观感要说清（"从第 N 秒起定格"这类话），不能只报一个数字
+	all := strings.Join(msgOf(fs), "\n")
+	if !strings.Contains(all, "定格") {
+		t.Errorf("要说清观感（画面定格、声音继续），实际：%s", all)
+	}
+	// ② **画面比方案短**（真机形态：画面 23.7 秒 vs 逐镜合计 125.5 秒 ⇒ 有镜根本没进成片）。
+	// 单独喂一次：上面那份夹具的画面比逐镜合计还长，走不到这个分支（补它是为了让这条判据
+	// 真的有测试守着 —— 否则改坏它测试照样绿）。
+	fs2 := Audit(Input{
+		Plan:      p,
+		Durations: []float64{8, 7}, // 逐镜合计 15 秒
+		VideoDur:  8.0,             // 画面只有第一镜
+		AudioDur:  8.0,
+	})
+	var hit2 int
+	for _, f := range fs2 {
+		if f.Level == "fail" && strings.Contains(f.Msg, "根本没进成片") {
+			hit2++
+		}
+	}
+	if hit2 == 0 {
+		t.Errorf("画面 8 秒 / 逐镜合计 15 秒 ⇒ 必须点名「有几镜根本没进成片」：%s",
+			strings.Join(msgOf(fs2), "\n"))
+	}
+}
+
+// 两条轨对得上时**不许**报这条（否则体检就是噪音）。
+func TestFilmTrackQuietWhenAligned(t *testing.T) {
+	p := &project.Plan{
+		Characters: []project.Character{{ID: "char_a", Name: "甲"}},
+		Scenes:     []project.Scene{{ID: "scene_a", Name: "走廊"}},
+		Shots:      []project.Shot{{ID: 1, Scene: "scene_a", Characters: []string{"char_a"}, Duration: 8, H3Prompt: "x"}},
+	}
+	fs := Audit(Input{Plan: p, Durations: []float64{8}, VideoDur: 7.99, AudioDur: 8.0})
+	for _, f := range fs {
+		if strings.Contains(f.Msg, "画面只有") {
+			t.Errorf("画面与音轨、与方案都相符时不该报这条：%s", f.Msg)
+		}
+	}
+}
+
+// **没量到**就不报（三态纪律：没验过 ≠ 合格，也不等于有错）。
+func TestFilmTrackUnknownIsSilent(t *testing.T) {
+	p := &project.Plan{
+		Characters: []project.Character{{ID: "char_a", Name: "甲"}},
+		Scenes:     []project.Scene{{ID: "scene_a", Name: "走廊"}},
+		Shots:      []project.Shot{{ID: 1, Scene: "scene_a", Characters: []string{"char_a"}, Duration: 8, H3Prompt: "x"}},
+	}
+	for _, f := range Audit(Input{Plan: p, Durations: []float64{8}}) {
+		if strings.Contains(f.Msg, "画面只有") {
+			t.Errorf("没量到两条轨时长时不该报：%s", f.Msg)
+		}
+	}
+}

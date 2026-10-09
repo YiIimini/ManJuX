@@ -1,0 +1,53 @@
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'D:\Ai\Datas\ManJuX\data\projects\被开除一年后，我回公司送水\被开除一年后，我回公司送水·第01集·这筐纸别动\output\final.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.101
+  Duration: 00:02:02.50, start: 0.000000, bitrate: 1334 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709/bt709/iec61966-2-1, progressive), 1080x1920 [SAR 64:63 DAR 4:7], 5929 kb/s, 24 fps, 24 tbr, 12288 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.101 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 184 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+  Stream #0:1 -> #0:1 (aac (native) -> pcm_s16le (native))
+Output #0, null, to 'NUL':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.101
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(tv, bt709/bt709/iec61966-2-1, progressive), 1080x1920 [SAR 64:63 DAR 4:7], q=2-31, 200 kb/s, 24 fps, 24 tbn (default)
+    Metadata:
+      encoder         : Lavc63.1.101 wrapped_avframe
+      handler_name    : VideoHandler
+  Stream #0:1(und): Audio: pcm_s16le, 48000 Hz, stereo, s16, 1536 kb/s (default)
+    Metadata:
+      encoder         : Lavc63.1.101 pcm_s16le
+      handler_name    : SoundHandler
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 13.5545
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 15.272604 | silence_duration: 1.718104
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 16.465604
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 18.341125 | silence_duration: 1.875521
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 20.203104
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 23.742333 | silence_duration: 3.539229
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 25.468937
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 29.189083 | silence_duration: 3.720146
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 29.839208
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 33.143771 | silence_duration: 3.304562
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 33.614688
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 36.012458 | silence_duration: 2.397771
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 36.839146
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 38.725604 | silence_duration: 1.886458
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 38.725875
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 41.808167 | silence_duration: 3.082292
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 44.588458
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 49.861125 | silence_duration: 5.272667
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_start: 51.604937
+[Parsed_silencedetect_0 @ 00000187e36266c0] silence_end: 55.237958 | silence_duration: 3.633021
+[out#0/null @ 00000187e0feb0c0] video:236KiB audio:22875KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  569 fps=0.0 q=-0.0 Lsize=N/A time=00:02:02.49 bitrate=N/A speed= 310x elapsed=0:00:00.39    

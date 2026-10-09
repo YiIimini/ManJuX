@@ -1,0 +1,44 @@
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'D:\Ai\Datas\ManJuX\data\projects\被开除一年后，我回公司送水\被开除一年后，我回公司送水·第01集·这筐纸别动\clips\shot_014.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.101
+  Duration: 00:00:07.20, start: 0.000000, bitrate: 2727 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(tv, bt709/bt709/iec61966-2-1, progressive), 768x1344, 2566 kb/s, 24 fps, 24 tbr, 12288 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.101 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 194 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Output #0, null, to 'NUL':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.101
+  Stream #0:0(und): Video: wrapped_avframe, yuv420p(tv, bt709/bt709/iec61966-2-1, progressive), 768x1344, q=2-31, 200 kb/s, 24 fps, 24 tbn (default)
+    Metadata:
+      encoder         : Lavc63.1.101 wrapped_avframe
+      handler_name    : VideoHandler
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_start: 0.333333
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_duration: 1.166667
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_end: 1.5
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_start: 1.5
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_duration: 1.166667
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_end: 2.666667
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_start: 2.666667
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_duration: 0.583333
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_end: 3.25
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_start: 3.5
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_duration: 0.583333
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_end: 4.083333
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_start: 4.083333
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_duration: 1.666667
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_end: 5.75
+[Parsed_freezedetect_0 @ 0000022a585d5240] lavfi.freezedetect.freeze_start: 5.75
+[out#0/null @ 0000022a565cb6c0] video:70KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=  170 fps=0.0 q=-0.0 Lsize=N/A time=00:00:07.08 bitrate=N/A speed=92.8x elapsed=0:00:00.07    

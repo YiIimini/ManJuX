@@ -57,6 +57,15 @@ type Input struct {
 	// 那一版提示词是**照着旧标法**装配并提交的（真机 19 句全被标成画外音 ⇒ 镜 5 的真画外音反而
 	// 没拿到"画内闭嘴"约束）。体检要说的正是这句话：已提交的提示词可能不对，重渲那几镜。
 	RawInFrameAsOffscreen int
+	// VideoDur / AudioDur 成片**两条轨各自的**时长（秒，0 = 不知道）。
+	//
+	// 【为什么必须分开量（2026-10-09 真机 P0）】`format.duration` 取的是两条流里**最长的那个**，
+	// 所以"画面被截断、音轨完好"这种片子从时长看着完全正常 —— 真机第01集就是这样：
+	// 画面 **23.708 秒**（569 帧 ≈ 前 3 镜）、音轨 **122.499 秒**；观众从第 24 秒起看到定格，
+	// 而盘上、日志、质检**没有一句话**提到这件事（日志还报"成片就绪 122 秒"）。
+	// 根因在 compose 的 xfade 链（偏移与真实帧长差不到一帧 ⇒ 链中断且退出码为 0），
+	// 已在 `internal/compose/xfade.go` 修掉；这里留判据，让**任何**这种片子都能被当场点名。
+	VideoDur, AudioDur float64
 }
 
 // Finding 一条体检结论。Level: fail（必须处理）/ warn（该看一眼）/ info（如实告知）。
@@ -88,6 +97,10 @@ func Audit(in Input) []Finding {
 				joinInts(in.ClipMissing))})
 	}
 
+	// ── 0. 成片自己：画面与声音**时长对不上**（2026-10-09 真机 P0）───────────────
+	// 放在最前面：一条片子如果画面只有前几个镜、后面全是定格，那么字幕/说话人那些结论
+	// 都是次要的 —— 而且这种情况**此前完全没人报**（format.duration 取最长的流，看着正常）。
+	out = append(out, filmTrackFindings(p, in)...)
 	// ── A. 字幕落点 vs ASR 实测发声段 ────────────────────────────────────────────
 	cuesByShot, srtNotes := splitCuesByShot(p, in.Durations, in.Cues)
 	out = append(out, srtNotes...)
@@ -429,4 +442,50 @@ func countInFrameMarkedOffscreen(p *project.Plan) int {
 		}
 	}
 	return n
+}
+
+// filmTrackFindings 成片**两条轨**自己的判据：画面 vs 声音的时长。
+//
+// 【真机 P0（2026-10-09）】《被开除一年后，我回公司送水·第01集》合出来的 final.mp4
+// 画面 **23.708 秒**（569 帧 = 192+175+204 减去 2 帧同场硬切 ⇒ **只有前 3 镜**）、
+// 音轨 **122.499 秒**。观众的观感是"从第 24 秒起画面一直不动、声音还在说"。
+//
+// 为什么此前没人报得出来：
+//
+//	· `format.duration` = 两条流里**最长**的那条 ⇒ 报 122.5 秒，看着正常；
+//	· 合片那一步的 ffmpeg **退出码是 0**（xfade 链中断是静默的）⇒ 日志报"成片就绪 122 秒"；
+//	· 字幕/说话人那些判据全都在"音轨时间轴"上做，画面短不短与它们无关。
+//
+// 所以这条判据必须**分开量两条流**（Input.VideoDur / AudioDur），并与逐镜时长之和对照。
+func filmTrackFindings(p *project.Plan, in Input) []Finding {
+	if in.VideoDur <= 0 {
+		return nil // 没量到就不猜（三态纪律：没验过 ≠ 合格）
+	}
+	var out []Finding
+	// ① 两条轨自己对不上（声音比画面长 ⇒ 画面定格）
+	if in.AudioDur > 0 && in.AudioDur-in.VideoDur > 1.0 {
+		out = append(out, Finding{Level: "fail", Where: "film.tracks", Msg: fmt.Sprintf(
+			"成片**画面只有 %.1f 秒**、音轨 %.1f 秒（差 %.1f 秒）—— 画面结束之后观众看到的是**定格**，"+
+				"声音还在继续说。这不是字幕/配音的问题，是**合片把后面的镜头丢了**："+
+				"重跑「合片」即会按修好的拼接逻辑重合成（不用重渲）",
+			in.VideoDur, in.AudioDur, in.AudioDur-in.VideoDur)})
+	}
+	// ② 与**逐镜时长之和**对不上（画面比方案短 ⇒ 后面的镜没进成片）
+	if p != nil && len(in.Durations) > 0 {
+		want := 0.0
+		for i, d := range in.Durations {
+			if d > 0 {
+				want += d
+			} else if i < len(p.Shots) {
+				want += float64(p.Shots[i].Duration)
+			}
+		}
+		if want-in.VideoDur > 1.5 {
+			out = append(out, Finding{Level: "fail", Where: "film.tracks", Msg: fmt.Sprintf(
+				"成片画面只有 %.1f 秒，而方案逐镜合计 %.1f 秒（少 %.1f 秒）—— 有几镜**根本没进成片**"+
+					"（真机第01集实测：画面只有前 3 镜 23.7 秒、音轨 122.5 秒）。重跑「合片」",
+				in.VideoDur, want, want-in.VideoDur)})
+		}
+	}
+	return out
 }

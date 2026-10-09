@@ -47,6 +47,22 @@ type Result struct {
 	Prob     float64
 	Duration float64
 	Segments []Segment
+	// Words 词级时间戳（逐词起止）。**老结果文件里没有这一段**（工具升级前不写），
+	// 那时这里是 nil ⇒ 上层自动退回段级落点（见 internal/compose/subtitle.go 的四档）。
+	//
+	// 【为什么要有（2026-10-09 用户：「看看全网上有没有最优的解决方案？」）】成片语音是 H3
+	// 音画同生生的，**没有任何现成时间戳**；字幕要贴在人声上只能事后对齐 —— 业界标准就是
+	// forced alignment（WhisperX 的 wav2vec2 对齐 / stable-ts 的 align，arXiv 2303.00747）。
+	// 真机取证：镜 10 的 ASR 只有 2 段、台词也是 2 句，可"段"与"句"的边界并不重合
+	// （段 4.18-6.30 里其实是「工牌呢」，段 6.30-7.84 是「被收了」），段级判据**判不了**这件事，
+	// 词级才能（见 align.go 的 AlignLines）。
+	Words []Word
+}
+
+// Word 一个词的起止 + 文本。
+type Word struct {
+	Start, End float64
+	Text       string
 }
 
 // Text 全部转写文本（按段拼）。
@@ -91,6 +107,13 @@ var segRe = regexp.MustCompile(`^\[\s*([0-9.]+)\s*-\s*([0-9.]+)\s*\]\s*(.*)$`)
 // metaRe 头部注释：`# model=medium lang=zh prob=1.00 dur=7.3s segs=1`。
 var metaRe = regexp.MustCompile(`model=(\S+)\s+lang=(\S+)\s+prob=([0-9.]+)\s+dur=([0-9.]+)s`)
 
+// wordRe 词级行：`w   4.18-  6.30 公`（工具 2026-10-09 起写的第二段）。
+//
+// 刻意用 `w ` 前缀而不是 `[...]`：老的解析器只认 `[start-end] 文本`，多出来的这类行
+// 会被它忽略 ⇒ **工具升级不会打断老版本平台**（反过来，老工具不写这一段，
+// 上层自动退回段级落点）。
+var wordRe = regexp.MustCompile(`^w\s+([0-9.]+)\s*-\s*([0-9.]+)\s+(\S.*)$`)
+
 // Parse 读一份转写结果文件（asr.cmd 的 `--out` 产物）。
 func Parse(path string) (*Result, error) {
 	fh, err := os.Open(path)
@@ -109,6 +132,12 @@ func Parse(path string) (*Result, error) {
 				r.Prob, _ = strconv.ParseFloat(m[3], 64)
 				r.Duration, _ = strconv.ParseFloat(m[4], 64)
 			}
+			continue
+		}
+		if m := wordRe.FindStringSubmatch(line); m != nil {
+			ws, _ := strconv.ParseFloat(m[1], 64)
+			we, _ := strconv.ParseFloat(m[2], 64)
+			r.Words = append(r.Words, Word{Start: ws, End: we, Text: strings.TrimSpace(m[3])})
 			continue
 		}
 		if m := segRe.FindStringSubmatch(line); m != nil {

@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/YiIimini/ManJuX/internal/asr"
 	"github.com/YiIimini/ManJuX/internal/audio"
 	"github.com/YiIimini/ManJuX/internal/director"
 	"github.com/YiIimini/ManJuX/internal/ff"
@@ -315,13 +316,17 @@ func Compose(ctx context.Context, f *ff.FF, clips []string, plan *project.Plan, 
 		// 第二个证据源：逐镜 **ASR 转写**（质检那一步就写在剪辑旁 `<clip>.asr.txt`），
 		// 里面是**实测的发声时间**。真机那一集包络这一档对每镜都退化，字幕因此按整镜铺开
 		// （镜 1 挂 6.2 秒、真实发声只有 1 秒）—— 用户报的「字幕显示存在延迟」就是它。
+		//
+		// 同一份文件里还有**词级时间戳**（升级版 ASR 工具才有；老文件没有 ⇒ nil ⇒ 自动退回
+		// 段级/窗口档）。有它就能把**已知台词**逐句对到词上（⓪档，见 subtitle.go 的 cueAlign）。
 		asrSpans := make([][]cueSpan, len(clips))
+		asrWords := make([][]asr.Word, len(clips))
 		for i := range asrSpans {
 			if i < len(clips) {
-				asrSpans[i] = asrSpansOf(clips[i])
+				asrSpans[i], asrWords[i] = asrSpansOf(clips[i])
 			}
 		}
-		cp := planCues(plan, starts, durations, tracks, asrSpans)
+		cp := planCues(plan, starts, durations, tracks, asrSpans, asrWords)
 		cues = &cp
 		res.AudioNotes = append(res.AudioNotes, cp.notes...)
 	}
@@ -868,14 +873,24 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 	var filters []string
 	// 视频链(pad 名自带方括号,直接拼接;再包一层会变 [[0:v]] 导致解析失败)
 	//
-	// offset 直接取 starts[i] —— 它不是"又算一遍",而是与字幕起点**同一个值**:
-	// xfade 的 offset 就是后一镜在成片时间轴上的起点。旧实现各自累加一次,
-	// 于是字幕与画面可以各说各话(见文件头 seamFades 的说明)。
-	lastV := "[0:v]"
+	// **offset 必须按帧累计**（2026-10-09 真机 P0，见 xfadeOffsets 的注释）：
+	// 原先直接取 `starts[i]`（按秒累加的连续量），而 xfade 每步的实际输出会被落到**整数帧**上
+	// —— 一个 15 镜的成片里这点误差会攒到半个帧，而 fading 窗口的末端正好压在 A 的末尾，
+	// 于是 xfade 认为"过渡没做完"，**后面所有输入一帧都不输出**（真机实测：15 镜只留前 3 镜，
+	// 画面 23.7 秒、音轨 122.5 秒 —— 用户看到的成片从第 4 镜起就一直定格）。
+	offs := xfadeOffsets(durations, fades)
+	// 每个输入先统一到 CFR 24fps 并重置时间戳：把"这一镜到底有多少帧"变成**确定的**，
+	// 上游 H3 片段有的比标称时长少 2~3 帧（实测 shot_004 是 221 帧而标称 9.3s=223 帧），
+	// 不统一的话链长会一路短下去，最后撞上"过渡窗口越界"那条静默截断。
+	for i := 0; i < n; i++ {
+		filters = append(filters, fmt.Sprintf("[%d:v]fps=%g,setpts=PTS-STARTPTS[vi%d]",
+			i, videoFPS, i))
+	}
+	lastV := "[vi0]"
 	for i := 1; i < n; i++ {
 		outV := fmt.Sprintf("[v%d]", i)
-		filters = append(filters, fmt.Sprintf("%s[%d:v]xfade=transition=%s:duration=%.3f:offset=%.3f%s",
-			lastV, i, trans, fades[i-1], starts[i], outV))
+		filters = append(filters, fmt.Sprintf("%s[vi%d]xfade=transition=%s:duration=%.3f:offset=%.3f%s",
+			lastV, i, trans, fades[i-1], offs[i-1], outV))
 		lastV = outV
 	}
 
@@ -965,6 +980,12 @@ func stitchWithTransitions(ctx context.Context, f *ff.FF, parts []string, durati
 	args = append(args, colorArgs...)
 	args = append(args, out)
 	if _, err := f.Run(ctx, args...); err != nil {
+		return "", nil, nil, err
+	}
+	// **拼完实测画面时长**（2026-10-09 真机 P0）：上面那条链中断时 ffmpeg 的退出码是 0，
+	// 不实测就会把"前 3 镜画面 + 全程声音"的片子当成功交付（真机第01集就是这样）。
+	want := starts[n-1] + durations[n-1]
+	if err := verifyStitchedLength(ctx, f, out, want); err != nil {
 		return "", nil, nil, err
 	}
 	return out, heads, tails, nil

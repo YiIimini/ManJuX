@@ -58,6 +58,13 @@ func (c *Coordinator) auditProducedFilm(ctx context.Context, proj *project.Proje
 		}
 	}
 	in.FinalDuration = res.Duration
+	// 成片**两条轨各自的**时长（2026-10-09 真机 P0：画面被截断时 format 时长看着正常 ——
+	// 真机第01集是画面 23.7 秒 / 音轨 122.5 秒，而日志报"成片就绪 122 秒"）。
+	if c.ff != nil && res.FinalPath != "" {
+		if info, err := c.ff.Probe(res.FinalPath); err == nil && info != nil {
+			in.VideoDur, in.AudioDur = info.VideoDuration, info.AudioDuration
+		}
+	}
 
 	fs := filmaudit.Audit(in)
 	fail, warn, info := filmaudit.CountLevels(fs)

@@ -93,6 +93,15 @@ type ProbeInfo struct {
 	AudioRate  int     `json:"audio_sample_rate"` // Hz
 	VideoCodec string  `json:"video_codec"`
 	AudioCodec string  `json:"audio_codec"`
+	// VideoDuration / AudioDuration **各自那条流**的时长（秒）。
+	//
+	// 【2026-10-09 真机 P0：为什么必须分开量】`Duration` 取的是 `format.duration`，
+	// 也就是**两条流里最长的那个** —— 于是"视频轨被截断、音轨完好"这种成片，
+	// format.duration 照样报完整长度（真机第01集：画面 23.7 秒、音轨 122.5 秒，
+	// 而 format.duration 报 122.5），从时长到质检**没有任何一处**看得出来。
+	// 所以这里把两条流分开量，成片时长对不上时才有判据可用。
+	VideoDuration float64 `json:"video_duration"`
+	AudioDuration float64 `json:"audio_duration"`
 }
 
 type probeOut struct {
@@ -103,6 +112,8 @@ type probeOut struct {
 		Height       int    `json:"height"`
 		SampleRate   string `json:"sample_rate"`
 		AvgFrameRate string `json:"avg_frame_rate"`
+		Duration     string `json:"duration"`
+		NbFrames     string `json:"nb_frames"`
 	} `json:"streams"`
 	Format struct {
 		Duration string `json:"duration"`
@@ -126,22 +137,40 @@ func (f *FF) Probe(path string) (*ProbeInfo, error) {
 	info := &ProbeInfo{}
 	info.Duration, _ = strconvParse(po.Format.Duration)
 	for _, st := range po.Streams {
+		// 流时长：优先 `duration`；mp4 里有时只给 nb_frames（用帧数/帧率折算）。
+		d, _ := strconvParse(st.Duration)
+		if d <= 0 && st.NbFrames != "" {
+			if nf, err := strconv.ParseFloat(st.NbFrames, 64); err == nil && nf > 0 {
+				if rate := parseRate(st.AvgFrameRate); rate > 0 {
+					d = nf / rate
+				}
+			}
+		}
 		switch st.CodecType {
 		case "video":
 			info.Width, info.Height = st.Width, st.Height
 			info.VideoCodec = st.CodecName
 			info.FPS = parseRate(st.AvgFrameRate)
+			info.VideoDuration = d
 		case "audio":
 			info.HasAudio = true
 			info.AudioCodec = st.CodecName
 			info.AudioRate, _ = strconv.Atoi(st.SampleRate)
+			info.AudioDuration = d
 		}
+	}
+	// 流时长拿不到时（老容器/缺字段）退回容器时长 —— 宁可少一个判据，也不要报假的 0。
+	if info.VideoDuration <= 0 {
+		info.VideoDuration = info.Duration
+	}
+	if info.HasAudio && info.AudioDuration <= 0 {
+		info.AudioDuration = info.Duration
 	}
 	return info, nil
 }
 
+// parseRate 把 ffprobe 的 `24/1` 这种帧率串折算成数字。
 func parseRate(s string) float64 {
-	// "24/1" 形式
 	if i := strings.IndexByte(s, '/'); i > 0 {
 		num, _ := strconvParse(s[:i])
 		den, _ := strconvParse(s[i+1:])

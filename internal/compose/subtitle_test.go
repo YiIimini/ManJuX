@@ -36,7 +36,7 @@ func TestAlignCuesUsesRealSpeech(t *testing.T) {
 	spans := []cueSpan{{Start: 1.0, End: 2.0}, {Start: 4.0, End: 5.5}, {Start: 7.5, End: 8.5}}
 	tr := speechTrack{Env: synthEnv(d, spans), From: 0, To: d}
 
-	got, src := alignCues(0, d, tr, nil, nil, 3)
+	got, src := alignCues(0, d, tr, nil, nil, nil, nil, 3)
 	if src != cueEnvelope {
 		t.Fatalf("三句台词对三个发声段,必须判为按人声包络对齐,实际 %v", src)
 	}
@@ -69,7 +69,7 @@ func TestAlignCuesUsesRealSpeech(t *testing.T) {
 func TestAlignCuesFallsBackOnCountMismatch(t *testing.T) {
 	const d = 10.0
 	tr := speechTrack{Env: synthEnv(d, []cueSpan{{Start: 1, End: 2}, {Start: 5, End: 6}}), From: 0, To: d}
-	got, src := alignCues(0, d, tr, nil, nil, 3)
+	got, src := alignCues(0, d, tr, nil, nil, nil, nil, 3)
 	if src != cueShotWindow {
 		t.Fatal("两段人声对三句台词、且没有 ASR 可依时必须判为未对齐")
 	}
@@ -86,7 +86,7 @@ func TestAlignCuesFallsBackOnCountMismatch(t *testing.T) {
 func TestAlignCuesFallsBackWithoutEnvelope(t *testing.T) {
 	const d = 8.0
 	for _, tr := range []speechTrack{{From: 0, To: d}, {Env: &audio.Envelope{Hop: audio.Hop}, From: 0, To: d}} {
-		got, src := alignCues(2.0, d, tr, nil, nil, 2)
+		got, src := alignCues(2.0, d, tr, nil, nil, nil, nil, 2)
 		if src != cueShotWindow {
 			t.Fatal("没有可用包络、也没有 ASR 时不能声称已对齐")
 		}
@@ -137,7 +137,7 @@ func TestPlanCuesNotes(t *testing.T) {
 		// 第 3 镜:包络解不出来 → 回退
 		{From: 0, To: 10},
 	}
-	cp := planCues(plan, starts, durations, tracks, nil)
+	cp := planCues(plan, starts, durations, tracks, nil, nil)
 	notes := strings.Join(cp.notes, "|")
 	if !strings.Contains(notes, "1/3 镜按**人声包络**逐句对齐") {
 		t.Errorf("应如实回显对齐比例,实际 %q", notes)
@@ -171,7 +171,7 @@ func TestCuePlanDrivesBothSubtitles(t *testing.T) {
 	starts := []float64{0}
 	durations := []float64{10}
 	tracks := []speechTrack{{Env: synthEnv(10, []cueSpan{{Start: 4, End: 5}}), From: 0, To: 10}}
-	cp := planCues(plan, starts, durations, tracks, nil)
+	cp := planCues(plan, starts, durations, tracks, nil, nil)
 	if !strings.Contains(strings.Join(cp.notes, "|"), "1/1 镜按**人声包络**逐句对齐") {
 		t.Fatalf("测试前提没成立(没对齐):%v", cp.notes)
 	}
@@ -249,7 +249,7 @@ func TestAlignCuesUsesASRSegments(t *testing.T) {
 	const d = 7.9
 	tr := speechTrack{From: 0, To: d} // 真机那一集：包络这一档对每镜都退化了
 	asr := []cueSpan{{Start: 3.50, End: 4.50}}
-	got, src := alignCues(0, d, tr, asr, []int{4}, 1)
+	got, src := alignCues(0, d, tr, asr, nil, nil, []int{4}, 1)
 	if src != cueASR {
 		t.Fatalf("一段 ASR 对一句台词 ⇒ 必须判为按 ASR 对齐，实际 %v", src)
 	}
@@ -265,7 +265,7 @@ func TestAlignCuesUsesASRSegments(t *testing.T) {
 	// 条数不符（真机镜 10：两句台词、ASR 只转出一段 0.18–9.27）⇒ 只把窗口收进人声区间、句内按字数推。
 	asrLong := []cueSpan{{Start: 0.18, End: 9.27}}
 	weights := cueWeights([]string{"那叫糖球吧。", "行。但得记着，船上剩的暖不够三天。"})
-	got2, src2 := alignCues(0, 9.2, speechTrack{From: 0, To: 9.2}, asrLong, weights, 2)
+	got2, src2 := alignCues(0, 9.2, speechTrack{From: 0, To: 9.2}, asrLong, nil, nil, weights, 2)
 	if src2 != cueASRWindow {
 		t.Fatalf("条数不符但有 ASR ⇒ 该走「只收窗口」那一档，实际 %v", src2)
 	}
@@ -283,15 +283,30 @@ func TestASRSpansFromClipSidecar(t *testing.T) {
 	dir := t.TempDir()
 	clip := filepath.Join(dir, "shot_001.mp4")
 	sidecar := strings.TrimSuffix(clip, ".mp4") + ".asr.txt"
-	body := "# shot_001.mp4\n# model=medium lang=zh prob=1.00 dur=7.9s segs=1\n[  3.50-  4.50] 活的。\n"
+	body := "# shot_001.mp4\n# model=medium lang=zh prob=1.00 dur=7.9s segs=1\n" +
+		"# words=2\n[  3.50-  4.50] 活的。\nw   3.50-  4.00 活\nw   4.00-  4.50 的。\n"
 	if err := os.WriteFile(sidecar, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	spans := asrSpansOf(clip)
+	spans, words := asrSpansOf(clip)
 	if len(spans) != 1 || math.Abs(spans[0].Start-3.5) > 1e-9 || math.Abs(spans[0].End-4.5) > 1e-9 {
 		t.Errorf("该从 <clip>.asr.txt 读出 [3.50,4.50]，实得 %+v", spans)
 	}
-	if got := asrSpansOf(filepath.Join(dir, "nope.mp4")); got != nil {
-		t.Errorf("没有转写文件时该返回 nil（没有证据 ≠ 没台词），实得 %+v", got)
+	// 同一个文件里的**词级**行也要一并读出来（⓪档要用它做逐句对齐）
+	if len(words) != 2 || math.Abs(words[1].Start-4.00) > 1e-9 {
+		t.Errorf("词级行该读出来（2 个词、第二个从 4.00 起），实得 %+v", words)
+	}
+	// 老格式文件（没有 `w ` 段）⇒ 词为空、段照旧 —— 上层会自动退回段级档
+	old := "# shot_002.mp4\n# model=medium lang=zh prob=1.00 dur=7.9s segs=1\n[  1.00-  2.00] 老格式。\n"
+	oldClip := filepath.Join(dir, "shot_002.mp4")
+	if err := os.WriteFile(strings.TrimSuffix(oldClip, ".mp4")+".asr.txt", []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if oldSpans, oldWords := asrSpansOf(oldClip); len(oldSpans) != 1 || len(oldWords) != 0 {
+		t.Errorf("老格式文件该读出 1 个段、0 个词，实得 %+v / %+v", oldSpans, oldWords)
+	}
+	spans2, words2 := asrSpansOf(filepath.Join(dir, "nope.mp4"))
+	if spans2 != nil || words2 != nil {
+		t.Errorf("没有转写文件时该返回 nil（没有证据 ≠ 没台词），实得 %+v / %+v", spans2, words2)
 	}
 }
