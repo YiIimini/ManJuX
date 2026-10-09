@@ -17,9 +17,14 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 		Name string `json:"name"`
 		Icon string `json:"icon"`
 	}
+	// styleOut 风格预设：key/显示名/**介质族**。
+	// Medium 供界面判"介质互相矛盾的组合"（比较相等性即可，族名由后端单一真源给出），
+	// 空串 = 未声明介质（题材/调子类），不参与判定。见 pipeline.StyleMediumConflicts。
 	type styleOut struct {
-		Key  string `json:"key"`
-		Name string `json:"name"`
+		Key         string `json:"key"`
+		Name        string `json:"name"`
+		Medium      string `json:"medium"`
+		MediumLabel string `json:"medium_label"`
 	}
 
 	// sourceListOut 资产来源词汇表(定义在 project 包,与写入 source 的地方同源)。
@@ -42,7 +47,12 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) {
 	sort.Strings(keys) // map 遍历无序 → 固定顺序,前端渲染才稳定
 	styles := make([]styleOut, 0, len(keys))
 	for _, k := range keys {
-		styles = append(styles, styleOut{Key: k, Name: pipeline.StylePresets[k].Name})
+		styles = append(styles, styleOut{
+			Key:         k,
+			Name:        pipeline.StylePresets[k].Name,
+			Medium:      pipeline.StylePresets[k].Medium,
+			MediumLabel: pipeline.MediumLabel(pipeline.StylePresets[k].Medium),
+		})
 	}
 	up := engine.DefaultUpscaleOptions()
 	// 实体类型清单(角色卡的"渲染方法"选择器):同样是后端单一真源 ——

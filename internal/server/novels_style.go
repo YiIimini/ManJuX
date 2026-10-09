@@ -36,8 +36,11 @@ type importStyle struct {
 	Style   string   // 最终权威风格串（空 = 由 LLM 自定，之后仍被「全局风格:」锁定）
 	From    string   // "user"（导入时选定）/ "brief"（立项 art_style）/ "llm"（都没有）
 	Unknown []string // 用户勾了但平台不认的 key（如实点名，不静默吞）
-	Styles  []string // 用户勾选的 key：写进每集项目参数（项目参数抽屉看得见、重跑分镜 hint 一致）
-	Hint    string   // 自由文本附加要求
+	// Conflicts 勾选的预设里**介质互相矛盾**的组合说明（空 = 没有矛盾）。
+	// 平台**照用户选的做**（用户拍板优先），但必须如实点名 —— 见 pipeline.StyleMediumConflicts。
+	Conflicts []string
+	Styles    []string // 用户勾选的 key：写进每集项目参数（项目参数抽屉看得见、重跑分镜 hint 一致）
+	Hint      string   // 自由文本附加要求
 }
 
 // presetNames 把用户勾选的 key 译成中文显示名（播报用，如「国漫二维动画 + 水墨国风」）。
@@ -53,9 +56,10 @@ func (s importStyle) presetNames() string {
 //  3. 都没有 ⇒ 空（From=llm）：由分镜会话自定，之后照旧被「全局风格:」锁定。
 func resolveImportStyle(briefStyle string, styles []string, freeHint string) importStyle {
 	st := importStyle{
-		Styles:  append([]string(nil), styles...),
-		Hint:    strings.TrimSpace(freeHint),
-		Unknown: pipeline.UnknownStyleKeys(styles),
+		Styles:    append([]string(nil), styles...),
+		Hint:      strings.TrimSpace(freeHint),
+		Unknown:   pipeline.UnknownStyleKeys(styles),
+		Conflicts: pipeline.StyleMediumConflicts(styles),
 	}
 	if chosen := pipeline.ComposeStyleHint(styles, freeHint); chosen != "" {
 		st.Style, st.From = chosen, "user"

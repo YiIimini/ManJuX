@@ -310,6 +310,27 @@ function toggleProduceStyle(key) {
 // styleOptions 风格清单以后端 /api/meta 为**单一真源**（这里不再抄一份预设表，免得两边漂移）。
 const styleOptions = computed(() => G.metaStyles || [])
 
+// styleConflict 勾选的预设里**介质互相矛盾**的组合（真人实拍 / 二维动画 / 三维 CG / 手绘 / 定格
+// 只能有一个）。判据只用后端给的 medium 做**相等比较**（族名与中文名都由 /api/meta 给，
+// 前端不抄表）；medium 为空 = 未声明介质，不参与。
+//
+// 【2026-10-09 用户「H3 不是可以多风格组合吗？」】H3 确实支持把风格写成一句话里的并列
+// （官方 base-en.txt §4.1 示例就是 `Live-action, cinematic`），所以多选是**允许**的；
+// 但平台自己的规则写着风格串不许含互斥词组，勾出矛盾组合时**当场提示**，别等出图才发现。
+const styleConflict = computed(() => {
+  const byKey = {}
+  for (const st of styleOptions.value) byKey[st.key] = st
+  const seen = {}
+  for (const k of producePicks.value) {
+    const st = byKey[k]
+    if (!st || !st.medium) continue
+    if (seen[st.medium]) continue
+    seen[st.medium] = `${st.name}（${st.medium_label || st.medium}）`
+  }
+  const parts = Object.values(seen)
+  return parts.length > 1 ? parts.join(' 与 ') : ''
+})
+
 async function confirmProduce() {
   const n = produceDlg.value && produceDlg.value.novel
   if (!n) return
@@ -960,6 +981,12 @@ function onCardCmd(cmd, n) {
           <template v-if="produceScan && produceScan.card">
             <br><span style="color:var(--mx-text3)">另发现风格卡 设定集/{{ produceScan.card }}（{{ produceScan.card_chars }} 字）—— 本书画面口径以它为准。</span>
           </template>
+        </div>
+        <!-- 介质互斥提示（勾了矛盾组合当场说清；平台照你选的做，但建议只留一项） -->
+        <div v-if="styleConflict" class="text-xs rounded p-2"
+             style="background:color-mix(in srgb, var(--mx-red) 10%, transparent); color:var(--mx-red)">
+          ⚠ <b>介质互相矛盾</b>：{{ styleConflict }} —— 一个画面不可能同时是这几样，画面会被拉成四不像
+          （如塑料 CG 脸）。平台照你选的做，建议只留一项。
         </div>
         <div v-if="styleOptions.length" class="flex flex-wrap gap-2">
           <el-button v-for="st in styleOptions" :key="st.key" size="small"

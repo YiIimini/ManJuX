@@ -140,6 +140,25 @@ function toggleStyle(k) {
   else form.script.styles.push(k)
 }
 
+// styleConflict 介质互相矛盾的组合（真人实拍 / 二维动画 / 三维 CG / 手绘 / 定格只能有一个）。
+// 判据只用后端给的 medium 做**相等比较**（族名与中文名都由 /api/meta 给，前端不抄表）；
+// 后端未就绪或该预设没声明 medium ⇒ 不参与（**不猜**，宁可不说）。
+//
+// 【2026-10-09 用户「H3 不是可以多风格组合吗？」】H3 支持把风格写成一句话里的并列
+// （官方 base-en.txt §4.1 示例 `Live-action, cinematic`），所以多选允许；但平台自己的规则
+// 写着风格串不许含互斥词组 —— 勾出矛盾组合时当场提示，别等出片才发现。
+const styleConflict = computed(() => {
+  const byKey = new Map((G.metaStyles || []).map(m => [m.key, m]))
+  const seen = new Map()
+  for (const k of (form.script.styles || [])) {
+    const m = byKey.get(k)
+    if (!m || !m.medium || seen.has(m.medium)) continue
+    seen.set(m.medium, `${m.name || k}（${m.medium_label || m.medium}）`)
+  }
+  const parts = [...seen.values()]
+  return parts.length > 1 ? parts.join(' 与 ') : ''
+})
+
 async function save() {
   try {
     const saved = await api.putParams(pj.value.project.id, form)
@@ -166,6 +185,12 @@ async function save() {
         <div class="text-xs mb-2">
           <b>渲染视频风格</b>
           <span style="color:var(--mx-text3)">(可多选组合,决定全片视觉基调;已选 {{ (form.script.styles || []).length }} 项)</span>
+        </div>
+        <!-- 介质互斥提示：平台照你选的做，但把矛盾当场说清（出片前就该看得见） -->
+        <div v-if="styleConflict" class="text-xs rounded p-2 mb-2"
+             style="background:color-mix(in srgb, var(--mx-red) 10%, transparent); color:var(--mx-red)">
+          ⚠ <b>介质互相矛盾</b>：{{ styleConflict }} —— 一个画面不可能同时是这几样，会被拉成四不像（如塑料 CG 脸）。
+          平台照你选的做，建议只留一项。
         </div>
         <div class="style-chip-grid">
           <button v-for="st in styleList" :key="st.key" class="style-chip" :class="{ on: hasStyle(st.key) }" @click="toggleStyle(st.key)">

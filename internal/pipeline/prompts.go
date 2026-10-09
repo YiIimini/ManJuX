@@ -1770,35 +1770,54 @@ func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityK
 // 就地用本地 Krea-2 生成,绝不静默降级纯文生(2026-09-08 逻辑重构:
 // 「定妆照没生成就渲染」被用户点名的反直觉行为根治)。
 // 资产生成只依赖本地 ComfyUI,与本次渲染引擎选择无关(云端渲染也本地补图)。
-var StylePresets = map[string]struct{ Name, Prompt string }{
+// StylePresets 渲染风格预设：key → (显示名, 英文风格提示, **介质族**)。
+//
+// Medium 只给「**串里明确写了介质**」的预设填，其余留空 = 不参与互斥判定（题材/调子类如
+// `cyberpunk`/`urban_xianxia`/`film_noir`/`hongkong` 没写介质，硬猜一个族反而会误判）。
+// 判定用途：一个画面不可能同时是实拍、二维动画与水墨 —— 见 StyleMediumConflicts。
+var StylePresets = map[string]struct{ Name, Prompt, Medium string }{
 	// 国风电影级 —— 与技能侧《立项.json》的「渲染风格串」同源(用户 2026-09-26 规则:
 	// 「一切创作产物的电影级画面风格必须是国风系」),也是**新建项目的默认**(见
 	// project/params.go)。写在预设表第一位不是装饰:平台 LLM 直出会把这串写进 plan.style,
 	// 而下游所有参考图与每一镜都照它渲染 —— 它错了,整部剧的画风就错了。
 	// 为什么必须与技能侧同源:两条产品线(小说线 / 电影剧本线)的默认画风不一致时,
 	// 同一部剧走不同入口会出两种画风(2026-09-27 用户报「平台端 LLM 直出为什么是 2D 漫画」)。
-	"guofeng_cinematic": {"国风电影级", "GUOFENG ANIMATED-FEATURE ART DIRECTION, a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces, a muted celadon-grey and ink-wash palette, real materials with visible craft, soft motivated key light, matte finish, natural film grain, shallow depth of field, a Chinese period film, not a western fantasy, not cyberpunk neon, not japanese anime"},
-	"urban_xianxia":     {"都市仙侠霓虹", "CHINESE URBAN-XIANXIA, NEON-NOIR WET-STREET LIGHTING, CINEMATIC ANIMATION, GOD RAYS THROUGH SKYSCRAPERS"},
-	"guoman_2d":         {"国漫二维动画", "CHINESE 2D ANIME STYLE, CLEAN LINEWORK, VIBRANT CEL SHADING, DONGHUA QUALITY"},
-	"live_action":       {"真人实拍质感", "PHOTOREALISTIC LIVE-ACTION CINEMATOGRAPHY, 35MM FILM, SHALLOW DEPTH OF FIELD, NATURAL SKIN TEXTURE"},
-	"pixar_3d":          {"3D 皮克斯", "PIXAR-STYLE 3D RENDER, SOFT GLOBAL ILLUMINATION, EXPRESSIVE STYLIZED CHARACTERS, SUBSURFACE SCATTERING"},
-	"ink_wash":          {"水墨国风", "CHINESE INK WASH PAINTING STYLE, BRUSH TEXTURE, NEGATIVE SPACE, MISTY MOUNTAINS, TRADITIONAL AESTHETIC"},
-	"cyberpunk":         {"赛博朋克", "CYBERPUNK, RAIN-SOAKED STREETS, HOLOGRAPHIC ADS, CHROME AND NEON, BLADE RUNNER MOOD"},
-	"ghibli":            {"吉卜力手绘", "GHIBLI-INSPIRED HAND-PAINTED, WARM WATERCOLOR BACKGROUNDS, SOFT WIND AND LIGHT, WHIMSICAL SERENITY"},
-	"film_noir":         {"黑色电影", "FILM NOIR, HIGH CONTRAST BLACK AND WHITE WITH ONE ACCENT COLOR, VENETIAN BLIND SHADOWS, SMOKEY"},
-	"hongkong":          {"港片胶片", "HONG KONG CINEMA 1990s, SATURATED NEON, TEAL-ORANGE GRADE, ANAMORPHIC FLARES"},
-	"claymation":        {"黏土定格", "CLAYMATION STOP-MOTION STYLE, FINGERPRINT TEXTURE, TACTILE HANDMADE CHARM"},
+	"guofeng_cinematic": {"国风电影级", "GUOFENG ANIMATED-FEATURE ART DIRECTION, a photoreal 3D surface with IDEALISED, SEMI-STYLISED faces, a muted celadon-grey and ink-wash palette, real materials with visible craft, soft motivated key light, matte finish, natural film grain, shallow depth of field, a Chinese period film, not a western fantasy, not cyberpunk neon, not japanese anime", "3d"},
+	"urban_xianxia":     {"都市仙侠霓虹", "CHINESE URBAN-XIANXIA, NEON-NOIR WET-STREET LIGHTING, CINEMATIC ANIMATION, GOD RAYS THROUGH SKYSCRAPERS", ""},
+	"guoman_2d":         {"国漫二维动画", "CHINESE 2D ANIME STYLE, CLEAN LINEWORK, VIBRANT CEL SHADING, DONGHUA QUALITY", "2d"},
+	"live_action":       {"真人实拍质感", "PHOTOREALISTIC LIVE-ACTION CINEMATOGRAPHY, 35MM FILM, SHALLOW DEPTH OF FIELD, NATURAL SKIN TEXTURE", "live"},
+	"pixar_3d":          {"3D 皮克斯", "PIXAR-STYLE 3D RENDER, SOFT GLOBAL ILLUMINATION, EXPRESSIVE STYLIZED CHARACTERS, SUBSURFACE SCATTERING", "3d"},
+	"ink_wash":          {"水墨国风", "CHINESE INK WASH PAINTING STYLE, BRUSH TEXTURE, NEGATIVE SPACE, MISTY MOUNTAINS, TRADITIONAL AESTHETIC", "painted"},
+	"cyberpunk":         {"赛博朋克", "CYBERPUNK, RAIN-SOAKED STREETS, HOLOGRAPHIC ADS, CHROME AND NEON, BLADE RUNNER MOOD", ""},
+	"ghibli":            {"吉卜力手绘", "GHIBLI-INSPIRED HAND-PAINTED, WARM WATERCOLOR BACKGROUNDS, SOFT WIND AND LIGHT, WHIMSICAL SERENITY", "painted"},
+	"film_noir":         {"黑色电影", "FILM NOIR, HIGH CONTRAST BLACK AND WHITE WITH ONE ACCENT COLOR, VENETIAN BLIND SHADOWS, SMOKEY", ""},
+	"hongkong":          {"港片胶片", "HONG KONG CINEMA 1990s, SATURATED NEON, TEAL-ORANGE GRADE, ANAMORPHIC FLARES", ""},
+	"claymation":        {"黏土定格", "CLAYMATION STOP-MOTION STYLE, FINGERPRINT TEXTURE, TACTILE HANDMADE CHARM", "stopmotion"},
 }
 
-// composeStyleHint 风格预设(可组合)拼接 + 用户自由文本。
+// composeStyleHint 风格预设（可组合）拼接 + 用户自由文本。
+//
+// 【2026-10-09 用户「H3 不是可以多风格组合吗？」→ 查官方原文后改】预设之间用**逗号**并列，
+// 而不是 ` + `：官方 `h3-prompt-writing/references/base-en.txt` §4.1 给的就是这种写法 ——
+// 「At the beginning of `[Shot 1]`, state the overall style and initial composition. Common styles
+// include `Cinematic`, `live-action`, `2D-animated`, `3D CG`…」，示例 `[Shot 1] Live-action,
+// cinematic, a medium-wide shot frames...`；而官方唯一用 ` + ` 组合的是**任务类型**
+// （`ref-en.txt` §「combine the task types with ` + `」），不是风格。既然这条串最终会进
+// 「全局风格:」行并成为 plan.Style（= 提示词开头的风格句），就照官方的风格句写法来。
+// 同时**去重**：同一个预设勾两次不该在串里出现两遍。
 func composeStyleHint(styles []string, freeHint string) string {
 	var parts []string
+	seen := map[string]bool{}
 	for _, k := range styles {
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
 		if p, ok := StylePresets[k]; ok {
 			parts = append(parts, p.Prompt)
 		}
 	}
-	out := strings.Join(parts, " + ")
+	out := strings.Join(parts, ", ")
 	if strings.TrimSpace(freeHint) != "" {
 		if out != "" {
 			out += "; "
@@ -1971,4 +1990,79 @@ func englishIdentitySummary(ch project.Character) string {
 		body = string(r[:200])
 	}
 	return englishSummary(body)
+}
+
+// MediumLabel 介质族的中文说法（**导出**：播报与界面提示都用它，中文名只此一份）。
+func MediumLabel(m string) string { return mediumLabel(m) }
+
+// mediumLabel 介质族的中文说法（播报与界面提示用；空串 = 未声明介质，不参与判定）。
+func mediumLabel(m string) string {
+	switch m {
+	case "live":
+		return "真人实拍"
+	case "2d":
+		return "二维动画"
+	case "3d":
+		return "三维 CG"
+	case "painted":
+		return "手绘/水墨"
+	case "stopmotion":
+		return "定格动画"
+	}
+	return m
+}
+
+// MediumOf 预设 key 的介质族（未知 key 或未声明介质 ⇒ 空串）。
+func MediumOf(key string) string {
+	if p, ok := StylePresets[key]; ok {
+		return p.Medium
+	}
+	return ""
+}
+
+// StyleMediumConflicts 勾选的预设里**介质互相矛盾**的组合（返回可直接播报/显示的说明）。
+//
+// 【为什么要有它（2026-10-09 用户「H3 不是可以多风格组合吗？」）】H3 确实支持把风格写成
+// 逗号并列的一句话（官方 `base-en.txt` §4.1 的示例就是 `Live-action, cinematic`），所以平台
+// 允许**多选组合**；但平台自己的规则写着风格串**不许含互斥词组**
+// （`docs/技能侧改动-电影级口径.md` §检查表：「`no cartoon or anime styling` 与 `SEMI-STYLISED … faces`
+// 同时出现 = 自相矛盾」——"负向禁令与自己的正向词打架"是真正的毒药）。
+// 一个画面不可能同时是真人实拍、二维动画与水墨：勾出这种组合时平台**仍然照用户选的做**
+// （用户拍板优先），但必须**如实点名**，不能等出图变成塑料 CG 脸才让人发现。
+//
+// 判定刻意**保守**：只对「串里明确写了介质」的预设判定（Medium 非空），题材/调子类
+// （cyberpunk / urban_xianxia / film_noir / hongkong）留空 ⇒ 不参与，免得硬猜介质造成误报。
+func StyleMediumConflicts(styles []string) []string {
+	seen := map[string]string{} // medium → 第一个用它的中文名
+	var out []string
+	for _, k := range styles {
+		m := MediumOf(k)
+		if m == "" {
+			continue
+		}
+		name := k
+		if p, ok := StylePresets[k]; ok {
+			name = p.Name
+		}
+		if _, dup := seen[m]; dup {
+			continue // 同介质重复（比如同时勾国风电影级 + 3D 皮克斯）：不算矛盾
+		}
+		seen[m] = name
+	}
+	if len(seen) < 2 {
+		return nil
+	}
+	// 固定顺序输出（map 遍历无序 ⇒ 播报与判据都不稳）
+	order := []string{"live", "2d", "3d", "painted", "stopmotion"}
+	var parts []string
+	for _, m := range order {
+		if name, ok := seen[m]; ok {
+			parts = append(parts, name+"("+mediumLabel(m)+")")
+		}
+	}
+	if len(parts) < 2 {
+		return nil
+	}
+	out = append(out, strings.Join(parts, " 与 "))
+	return out
 }

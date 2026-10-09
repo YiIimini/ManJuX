@@ -168,6 +168,14 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("⚠ 你选的渲染风格里有平台不认的项(%s):已忽略,其余照选",
 				strings.Join(style.Unknown, "、"))})
 	}
+	if len(style.Conflicts) > 0 {
+		// 介质互相矛盾的组合：**仍然照用户选的做**（用户拍板优先），但必须如实点名 ——
+		// 平台自己的规则写着风格串不许含互斥词组，"负向禁令与正向词打架"是真正的毒药。
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+			Message: fmt.Sprintf("⚠ 你选的渲染风格**介质互相矛盾**(%s)：一个画面不可能同时是这几样，"+
+				"画面会被拉成四不像（如塑料 CG 脸）。平台照你选的做，建议只留一项后重跑。",
+				strings.Join(style.Conflicts, "；"))})
+	}
 	// 查重:同书系列/同名项目已存在
 	if s.novelProduced(name) {
 		// 已有系列:放行进入补缺模式——重拆按集号去重,已有分集不动,只建缺失;
