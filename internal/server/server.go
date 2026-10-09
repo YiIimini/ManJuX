@@ -376,6 +376,9 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/novels/detail", s.handleNovelDetail)
 	m.HandleFunc("GET /api/novels/script", s.handleNovelScript)
 	m.HandleFunc("GET /api/novels/read", s.handleNovelRead)
+	// 「视频制作」对话框要显示**原书风格**（扫到的是什么/来自哪个字段）——2026-10-09 用户：
+	// 「另外导入的小说也需要解析是否存在视频风格相关字段」。
+	m.HandleFunc("GET /api/novels/style", s.novelStyle)
 	m.HandleFunc("POST /api/novels/produce", s.handleNovelProduce)
 	m.HandleFunc("POST /api/novel-batch", s.handleNovelBatch)
 	m.HandleFunc("DELETE /api/novel-batch", s.handleNovelBatch)

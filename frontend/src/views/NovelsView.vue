@@ -283,7 +283,8 @@ const producePicks = ref([])   // 勾选的风格 key
 const produceHint = ref('')    // 风格附加要求（自由文本）
 
 // 一键视频创作(带重复验证,后端 409)
-//
+// 原书风格解析结果（GET /api/novels/style）：{found, style, field, card, card_chars, hint}
+const produceScan = ref(null)
 // 【2026-10-09 用户：「小说库导入视频制作时，用户需要选择对应的渲染风格，目前所有视频渲染风格
 // 都是一样的」】这一步原来是"确认框 → 直接开跑"，风格**写死**取小说目录 立项.json 的 art_style。
 // 现在先弹一个风格选择框（预设多选 + 自由文本），选择的串会由后端写进每集输入的
@@ -292,6 +293,11 @@ function openProduce(n) {
   produceDlg.value = { novel: n }
   producePicks.value = []
   produceHint.value = ''
+  produceScan.value = null
+  // 解析这本书自带的"视频风格"字段（立项.json 的 art_style/渲染风格串/画风、设定集里的视觉风格卡）——
+  // 用户 2026-10-09：「另外导入的小说也需要解析是否存在视频风格相关字段」。结果**显示在对话框里**，
+  // 只写日志等于没解析。
+  api.novelStyle(n.path).then(r => { produceScan.value = r }).catch(() => { produceScan.value = null })
 }
 
 
@@ -935,6 +941,25 @@ function onCardCmd(cmd, n) {
         <div class="text-xs" style="color:var(--mx-text3)">
           渲染风格决定**全片视觉基调**（角色定妆照与每一镜都按它渲染）。
           不勾选 = 沿用这本书自带的风格串（改动前的行为）。
+        </div>
+        <!-- 原书风格解析结果（用户 2026-10-09：「导入的小说也需要解析是否存在视频风格相关字段」）：
+             **不选**时用的就是它；扫不到就直说「这本书没有风格字段」，而不是让用户以为平台取了书的风格。 -->
+        <div class="text-xs rounded p-2" style="background:var(--mx-fill, #f6f7f9); color:var(--mx-text2)">
+          <template v-if="produceScan && produceScan.found">
+            <b>原书风格</b>：{{ produceScan.style.slice(0, 120) }}{{ produceScan.style.length > 120 ? '…' : '' }}<br>
+            <span style="color:var(--mx-text3)">来自 {{ produceScan.field }}<template v-if="produceScan.hint">；画风名：{{ produceScan.hint }}</template></span>
+          </template>
+          <template v-else-if="produceScan">
+            <b>这本书里没有解析到视频风格字段</b>
+            <span style="color:var(--mx-text3)">（立项.json 的 art_style / 渲染风格串 / 画风 与 设定集里的风格卡都没有）——
+              建议在上面选一个预设，或写下附加要求；不选则由分镜会话自定。</span>
+          </template>
+          <template v-else>
+            <span style="color:var(--mx-text3)">正在解析这本书的风格字段…</span>
+          </template>
+          <template v-if="produceScan && produceScan.card">
+            <br><span style="color:var(--mx-text3)">另发现风格卡 设定集/{{ produceScan.card }}（{{ produceScan.card_chars }} 字）—— 本书画面口径以它为准。</span>
+          </template>
         </div>
         <div v-if="styleOptions.length" class="flex flex-wrap gap-2">
           <el-button v-for="st in styleOptions" :key="st.key" size="small"

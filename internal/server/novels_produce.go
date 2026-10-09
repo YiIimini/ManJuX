@@ -4,7 +4,6 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -135,19 +134,29 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	if sheetCut != "" {
 		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: sheetCut})
 	}
-	// 读取立项.json 的 art_style 作为视频渲染风格(2026-09-11 用户定调)
-	artStyle := ""
+	// 小说自带的"视频风格"字段：**扫全**（立项.json 的 art_style / 渲染风格串 / 画风 + 设定集里的
+	// 视觉风格卡），而不是只读 art_style —— 2026-10-09 用户：「另外导入的小说也需要解析是否存在
+	// 视频风格相关字段」。真机那本书四个字段都在，而平台原来只看 art_style 一个。
+	scan := novelStyleScan{}
 	if fi.IsDir() {
-		if raw, e := os.ReadFile(filepath.Join(in.Path, "立项.json")); e == nil {
-			var proj json.RawMessage
-			var m map[string]any
-			if json.Unmarshal(raw, &proj) == nil && json.Unmarshal(raw, &m) == nil {
-				if v, ok := m["art_style"].(string); ok && strings.TrimSpace(v) != "" {
-					artStyle = strings.TrimSpace(v)
-				}
-			}
-		}
+		scan = scanNovelStyle(in.Path)
 	}
+	artStyle := scan.Style
+	switch {
+	case scan.Found():
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: fmt.Sprintf("🎨 已从这本书里解析到视频风格字段(%s):%s", scan.Field, clampRunes(scan.Style, 80))})
+	default:
+		// 扫不到就**如实说**（用户才知道"导入时该自己选一个"，而不是以为平台取了书的风格）
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: "🎨 这本书里没有解析到视频风格字段(立项.json 的 art_style/渲染风格串/画风 与 设定集/视觉风格卡-*.md 都没有):" +
+				"将在「视频制作」里按你选的风格渲染;不选则由分镜会话自定"})
+	}
+	if scan.Card != "" {
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: fmt.Sprintf("🎨 另发现风格卡 设定集/%s(%d 字):本书的画面口径以它为准", scan.Card, scan.Chars)})
+	}
+
 	// 【2026-10-09 用户：「小说库导入视频制作时，用户需要选择对应的渲染风格，目前所有视频渲染风格
 	// 都是一样的」】这一步原来**没有选择入口**：风格写死取立项 art_style。现在用户在「视频制作」
 	// 对话框里勾的预设/附加要求**优先**，而且是**确定性**的 —— 见 novels_style.go：

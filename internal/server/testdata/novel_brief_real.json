@@ -1,0 +1,40 @@
+{
+  "书名": "我捡的团子，暖了三千人的船",
+  "形态": "小说（长篇 · 未来星海 × 萌宠团宠 · 竖屏漫剧可渲染）",
+  "route": "novel",
+  "题材": "T13 萌宠异兽 × 未来星海（东方星海奇幻 · 灯炉与霜潮）",
+  "章节数": 48,
+  "卷数": 6,
+  "每卷章数": {
+    "卷一_冰星里的团子": 8,
+    "卷二_灯炉与巴掌印": 8,
+    "卷三_收冰船来了": 8,
+    "卷四_灯盟的巡阅": 8,
+    "卷五_霜潮之夜": 8,
+    "卷六_三千人的暖": 8
+  },
+  "每章字数": "实测 1494–1778 字，均值 1661（48 章共 79,731 字，中文含标点；目标 1550–1780，硬下限 1400、硬上限 1800；1 章 ≈ 1 集）",
+  "骨架": "主骨架 10 萌宝养家流（被宠 ＋ 带飞两条驱动线）；佐料只注入道具与词汇级——34 转生异兽（F 级外表 × 神级内核）",
+  "开局": "A4#19 非人开局：主角是一只从冰星残骸里刨出来的巴掌大青玉玉兽，开局就被当废料与燃料折价处置，身份压到最低",
+  "protagonist": "A2.5#4 萌兽／灵宠形态 —— 青玉玉兽「阿糖」（别名 团子、糖球）；巴掌大、白色绒毛、眉心一道霜纹、尾如一片霜叶；全舰团宠",
+  "反派梯队": "① **曹锦**（后勤总管，算账型：要把团子按燃料折价卖掉）② **桑落**（收冰船船长·猎霜人：冷面抢兽，抽干玉兽取暖）③ **辛纪**（灯盟巡阅使，伪善型：以「征用」为名夺兽，笑面下是生意）④ **白主**（星海寒潮的意识，非人形：霜潮之源，要冻住所有活物）",
+  "爽感路线": "被当废料折价 → 一抱上手熄灭的灯炉就亮（当场兑现）→ 全舰轮流抱它（团宠滚雪球）→ 夺兽之战里它反手救了来夺它的人（事实自打脸）→ 霜潮夜化形，把「暖」还给星海",
+  "画风": "guofeng-starsea-painterly（东方星海 · 绘画感电影光：霜蓝 × 月白 × 旧金；雾雪、华丽首饰、巨剑、青铜与老玉；鬼刀风格按特征实现，不点名作者）",
+  "渲染风格串": "PAINTERLY CINEMATIC EASTERN COSMIC FANTASY: a semi-realistic hand-painted digital illustration finish with visible brush texture and fine film grain; luminous frost-blue, moon-white and pale-gold palette; misty volumetric light, dramatic rim light, drifting frost motes; ornate filigree jewellery, flowing silk, drifting hair; aged bronze, pale jade and cold-forged steel with visible craft; snow plains under a deep night sky, towers of bronze and jade. Cool shadows with one warm lantern-gold accent per frame. This is an eastern cosmic fantasy, NOT neon cyberpunk, NOT western medieval fantasy, NOT flat anime cel-shading, NOT a plastic 3D render.",
+  "art_style": "PAINTERLY CINEMATIC EASTERN COSMIC FANTASY: a semi-realistic hand-painted digital illustration finish with visible brush texture and fine film grain; luminous frost-blue, moon-white and pale-gold palette; misty volumetric light, dramatic rim light, drifting frost motes; ornate filigree jewellery, flowing silk, drifting hair; aged bronze, pale jade and cold-forged steel with visible craft; snow plains under a deep night sky, towers of bronze and jade. Cool shadows with one warm lantern-gold accent per frame. This is an eastern cosmic fantasy, NOT neon cyberpunk, NOT western medieval fantasy, NOT flat anime cel-shading, NOT a plastic 3D render.",
+  "风格": {
+    "主": "治愈温馨",
+    "次": "高燃打斗",
+    "理由": "①题材定光谱：萌宠团宠的底色必须是暖的，暖才有人愿意看它被宠；②内核定语气：这是一个「三千人的冷船靠一只团子取暖」的故事，暖是燃料也是主题；③情感层定温度：家常的热汤、被塞进怀里、孩子的手——温度要能被读者摸到；④节奏定呼吸：日常段短句轻快，霜潮夜段短句急促，疏密 1:1.7",
+    "与上一本的差异": "上一本《他们拼算力飞升，我烧了三千炷香》主风格是「冷峻克制」、反派是官僚、主角是冷面青年、画风是国风数据冥界；本书反过来——治愈温馨、团宠、主角是非人萌兽、画风走鬼刀式的绘画感星海奇幻。两本同属「爽文长篇小说」，但一本靠冷（制度压迫）取爽，一本靠暖（被宠爱与被需要）取爽"
+  },
+  "novelty": {
+    "opening_scene": "冰原星海的残骸舱：破冰镐刨开一层霜，霜里露出一只巴掌大的青玉团子；它被塞进机修生的怀里时，舱尾那盏熄了四十天的灯炉先亮了一下",
+    "engine": "金手指客体化：不是面板系统，是「暖」——体温来自被抱、被牵挂；一炉古灯炉（青铜玉质）是唯一能把暖变成光与动的造物；每用一次它就更冷一分，需要被人捧回来",
+    "世界独一性": "未来星海但审美是东方的：船是青铜与老玉的灯楼，暖是硬通货，舰队靠「灯炉」在寒潮里航行；霜潮是活的东西",
+    "造物三问": "①古灯炉：结构原理＝以玉为芯、以暖为薪，暖进炉心转成光；与主题关系＝命就是灯，灯亮＝船活；一眼可辨＝一人高的青铜玉炉，炉心一朵霜白灯焰。②舰队：青铜与老玉层层垒起的灯楼船，栏杆与舷窗都是可推拉的玉闸，夜里三千灯炉一字排开。③收冰船：铁黑色，船头一排钩爪与破冰齿，专为撬开冻住的玉兽而造"
+  },
+  "_画面口径": "全片零霓虹、零义体、零现代物件：未来的造物一律表现为青铜、老玉、霜铁、绢与灯；冷色为主，每帧只给一处暖（灯炉金）",
+  "_合规提示": "不点名任何在世创作者与真实人物；玉兽写成虚构生物，不涉现实信仰符号；人物不在现实中出现姓名与肖像",
+  "opening_note": "本项为新书立项记录，字段与既有作品保持一致"
+}

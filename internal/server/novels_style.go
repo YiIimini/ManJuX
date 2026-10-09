@@ -1,7 +1,12 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/pipeline"
@@ -159,4 +164,136 @@ func (s *Server) syncGlobalStyleFromParams(id string, params project.StageParams
 	}
 	msg += " —— 下一轮「剧本分镜 / 渲染」都按它（这一行是平台写的,不动你的正文与剧本）"
 	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info", ProjectID: id, Message: msg})
+}
+
+// novelStyleScan 小说自带的"视频风格"字段扫描结果（2026-10-09 用户：
+// 「另外导入的小说也需要解析是否存在视频风格相关字段」）。
+//
+// 【真机取证】《我捡的团子，暖了三千人的船》的 立项.json 里同时有四个相关字段：
+//
+//	画风       = guofeng-starsea-painterly（东方星海 · 绘画感电影光：霜蓝 × 月白 × 旧金 …）中文，人读
+//	渲染风格串 = PAINTERLY CINEMATIC EASTERN COSMIC FANTASY: …（英文，权威串）
+//	art_style  = 与「渲染风格串」同值（英文，权威串）
+//	风格       = { 主/次/与上一本的差异 } ← **文学风格，不是画风**，绝不能当画风串用
+//
+// 另外 设定集/视觉风格卡-鬼刀式东方星海.md 里第一段代码块**就是**那句风格串，卡自己也写着
+// 「一句话风格串（立项.json 的 渲染风格串 / art_style 直接用）」。
+// 平台此前只读 art_style：字段改名/缺失时就当"这本书没有风格"，风格卡更是从来没读过。
+type novelStyleScan struct {
+	Style string // 权威风格串（进「全局风格:」行 → director.enforceStyleLock → 每一镜）
+	Field string // 取自哪里（播报用，必须说清，不许含糊成"读到了"）
+	Card  string // 风格卡文件名（若有；只播报存在与字数，不把整张卡塞进风格串）
+	Chars int    // 风格卡字数
+	Hint  string // 人读的旁注（例如「画风」字段的中文名）——仅供界面展示
+}
+
+// Found 有没有扫到可用的风格串。
+func (s novelStyleScan) Found() bool { return strings.TrimSpace(s.Style) != "" }
+
+// scanNovelStyle 从小说目录里扫"视频风格"相关字段（**纯函数**，便于机检）。
+//
+// 优先级（写死，先精准后兜底）：
+//  1. 立项.json 的 art_style（老行为，保持最高优先）
+//  2. 立项.json 的 渲染风格串（同义字段；真机里两者同值，改名时互为兜底）
+//  3. 立项.json 的 画风（中文画风名：**只在没有英文串时**兜底，比"没有"强）
+//  4. 设定集/视觉风格卡-*.md 里**第一段代码块**（真机那张卡自己写明"这就是风格串"）
+func scanNovelStyle(dir string) novelStyleScan {
+	var out novelStyleScan
+	brief := map[string]any{}
+	if raw, err := os.ReadFile(filepath.Join(dir, "立项.json")); err == nil {
+		_ = json.Unmarshal(raw, &brief)
+	}
+	pick := func(keys ...string) (string, string) {
+		for _, k := range keys {
+			if v, ok := brief[k].(string); ok && strings.TrimSpace(v) != "" {
+				return strings.TrimSpace(v), k
+			}
+		}
+		return "", ""
+	}
+	if s, k := pick("art_style", "渲染风格串"); s != "" {
+		out.Style, out.Field = s, "立项.json 的 "+k
+	}
+	if h, _ := pick("画风"); h != "" {
+		out.Hint = h
+		if out.Style == "" {
+			out.Style, out.Field = h, "立项.json 的画风（只有中文名，兜底）"
+		}
+	}
+	if name, card := findStyleCard(dir); card != "" {
+		out.Card, out.Chars = name, len([]rune(card))
+		if out.Style == "" {
+			if s := firstFencedBlock(card); s != "" {
+				out.Style, out.Field = s, "设定集/"+name+" 的风格串代码块"
+			}
+		}
+	}
+	return out
+}
+
+// findStyleCard 在 设定集/ 里找「视觉风格卡*.md」，返回（文件名, 内容）。
+//
+// 多张卡时取**文件名排序最后**的一张：真机里 视觉风格卡-3D写实动漫脸.md 是技能自带的快照，
+// 而 视觉风格卡-鬼刀式东方星海.md 是**本书专用**（按用户当次点名生成）—— 后者才是本书口径。
+func findStyleCard(dir string) (string, string) {
+	names, _ := filepath.Glob(filepath.Join(dir, "设定集", "*风格卡*.md"))
+	if len(names) == 0 {
+		names, _ = filepath.Glob(filepath.Join(dir, "*", "*风格卡*.md"))
+	}
+	if len(names) == 0 {
+		return "", ""
+	}
+	sort.Strings(names)
+	last := names[len(names)-1]
+	raw, err := os.ReadFile(last)
+	if err != nil {
+		return "", ""
+	}
+	return filepath.Base(last), string(raw)
+}
+
+// firstFencedBlock 取 markdown 里的**第一段** 三反引号 代码块（多行拼成一行；没有就空）。
+func firstFencedBlock(md string) string {
+	fence := "`" + "`" + "`"
+	i := strings.Index(md, fence)
+	if i < 0 {
+		return ""
+	}
+	rest := md[i+len(fence):]
+	if j := strings.IndexByte(rest, '\n'); j >= 0 {
+		rest = rest[j+1:] // 跳掉语言标记那一行
+	}
+	j := strings.Index(rest, fence)
+	if j < 0 {
+		return ""
+	}
+	var parts []string
+	for _, ln := range strings.Split(rest[:j], "\n") {
+		if s := strings.TrimSpace(ln); s != "" {
+			parts = append(parts, s)
+		}
+	}
+	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// novelStyle GET /api/novels/style?path=… —— 给「视频制作」对话框显示**原书风格**：
+// 扫到的是什么串、来自哪个字段、有没有风格卡。找不到就 found=false（前端据此提示"自己选一个"）。
+//
+// 【为什么要有这条接口】用户 2026-10-09：「另外导入的小说也需要解析是否存在视频风格相关字段」——
+// 解析结果必须**看得见**：只写在日志里，用户在导入那一刻仍然不知道这本书有没有风格、用的是哪个。
+func (s *Server) novelStyle(w http.ResponseWriter, r *http.Request) {
+	p := strings.TrimSpace(r.URL.Query().Get("path"))
+	if p == "" || !s.inNovelRoot(p) {
+		writeErr(w, 403, fmt.Errorf("路径超出小说库范围"))
+		return
+	}
+	scan := scanNovelStyle(p)
+	writeJSON(w, 200, map[string]any{
+		"found":      scan.Found(),
+		"style":      scan.Style,
+		"field":      scan.Field,
+		"card":       scan.Card,
+		"card_chars": scan.Chars,
+		"hint":       scan.Hint,
+	})
 }
