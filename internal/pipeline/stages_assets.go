@@ -359,9 +359,8 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 					continue
 				}
 			}
-			// 复用同 seed 机制,保证同角色 Q 版稳定
-			safe := director.SanitizeForCache("characters_char_" + ch.ID + "_chibi")
-			out := filepath.Join(c.store.Dir(proj.ID), "assets", "characters", safe+".png")
+			// 【复用同 seed 机制，保证同角色 Q 版稳定】（种子口径详见下面 nameSeed 那段）
+			//
 			// Q 版走**Q 版那一套渲染方法**(取景/忠实度/画风都不同:大头小身、保留身份
 			// 记号、不得拉回真人头身比)。此前这里手写了一句 chibi 前缀再套人类条款 ——
 			// 非人角色(器物/灵宠/妖兽/灵体)的 Q 版因此仍然长着人脸;更糟的是那段
@@ -376,8 +375,26 @@ func (c *Coordinator) runAssets(ctx context.Context, proj *project.Project, only
 			// `len(ch.ID)*1000 + len(ch.Name)*7 + 13` —— **长度哈希**,
 			// 两个名字长度相同的角色会撞到同一个种子(正是主定妆照早就改掉的坑)。
 			seed := nameSeed("chibi", ch.ID)
-			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "生成:「%s」Q 版形象…", ch.Name)
-			if path, err := comfyGen.GenerateImage(ctx, chibiPrompt, imageNegative, seed, 1024, 1024, out); err == nil {
+			// 【2026-10-10 用户「Q 版卡有对应角色，直接图生图为 Q 版形象能简单一点吗?」—— 能,而且平台早该这样】
+			//
+			// 派生链路 2026-09-28 就按同一条口径建好了（`sheetderive.go`：`ChibiDeriveClause`
+			// 只改画法与头身比、脸/发型/服装/记号照抄参考图；`ChibiDeriveDenoise = 0.75`；
+			// 出图后还用 `qc.IdentityJudge` 拿定妆照判一次身份、不过就换种子重出一轮）。
+			// **唯独这条自动支线漏接了**：它此前直接 `comfyGen.GenerateImage(...)` —— 纯文生图，
+			// 没有参考图 ⇒ 把长相重新描述一遍，必然得到"像但不完全像"的第二张脸。
+			// 现在与方案里那张 Q 版卡走**同一个出口**（`genSheetImage`），不再各写一份路线判断。
+			//
+			// 画幅取**成片画幅**（不是原先写死的 1024×1024）：Q 版图会被挂进内心镜的参考图位
+			// （`refs.go` 的 `character_chibi`），而参考图必须与成片同比例 —— 方图当 9:16 的参考，
+			// 正是 `asset_size_test.go` 顶着的那条"构图漂移从第一帧就埋下"。
+			cw, chh := assetImageSize(proj, "characters")
+			c.emit(proj.ID, PhaseAssets, 0, "info", 0, "生成:「%s」Q 版形象(以定妆照为参考图派生)…", ch.Name)
+			path, err := c.genSheetImage(ctx, comfyGen, sheetJob{
+				proj: proj, assets: assets, kind: "characters",
+				id: ch.ID + "_chibi", name: ch.Name + " · Q版", desc: ch.Description,
+				prompt: chibiPrompt, ek: KindChibi, w: cw, h: chh, seed: seed,
+			})
+			if err == nil {
 				rel, _ := filepath.Rel(c.store.Dir(proj.ID), path)
 				assets[chibiID] = project.Asset{
 					ID: chibiID, Kind: "characters", Name: ch.Name + " · Q版",

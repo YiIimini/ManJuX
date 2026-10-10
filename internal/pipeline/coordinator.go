@@ -274,13 +274,15 @@ func (c *Coordinator) RegenAsset(projectID, assetID string) error {
 	// 旧实现在这里也是写死的 832×1248 + 场景按方向翻转 —— "重新生成的那张"与产线那张
 	// 比例不同,同一个角色在参考图里就已经是两种构图。
 	w, h := assetImageSize(proj, kind)
-	if isChibi {
-		w, h = 1024, 1024 // Q 版是方幅(与产线 Q 版同一口径)
-	}
-	// 出图交给**唯一出口**(genSheetImage):造型变体卡在这里也必须"从主卡派生"——
-	// 用户点「重新生成」的意图是"这一档重出一张",不是"把这个人的脸换一个";而各自
-	// 文生图正是同一角色几张脸会漂的来源(见 sheetderive.go)。chibi 资产不是造型档,
-	// 由 sheetVariantTrigger 挡在外面,走的仍是原本那一次文生图。
+	// 【2026-10-10】Q 版不再另设方幅：它会被挂进内心镜的**参考图位**（`refs.go` 的
+	// `character_chibi`），而参考图必须与成片同画幅（`asset_size_test.go` 顶着的那条
+	// "比例不对 ⇒ 构图漂移从第一帧就埋下"）。原先产线与本条支线都写死 1024×1024 方图 ——
+	// 两边"同一口径"是真的，但那是同一个错。
+	//
+	// 出图交给**唯一出口**(genSheetImage):Q 版与造型变体卡在这里都**从主卡派生**——
+	// 用户点「重新生成」的意图是"这一档重出一张",不是"把这个人的脸换一个";而各自文生图
+	// 正是同一角色几张脸会漂的来源(见 sheetderive.go)。Q 版从 2026-09-28 起就在
+	// `sheetVariantTrigger` 的开闸名单里（拿本体定妆照做图生图，只改画法与头身比）。
 	assets, err := c.store.LoadAssets(projectID)
 	if err != nil {
 		return err

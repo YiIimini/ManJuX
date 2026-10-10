@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // 用**假工具**钉住 Transcribe 的调用契约（真机端到端里就是这么炸的）。
@@ -87,4 +88,51 @@ func writeFakeTool(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// TestTranscribeSurvivesGrandchildHoldingPipe 【2026-10-10 真机咬到】ASR 工具是
+// `asr.cmd`(cmd.exe) → `python.exe`：**孙进程可能握着 stdout 管道不放**（python 或它再拉起的
+// 解码器），而 ctx 到点被杀的只是 cmd.exe ⇒ `CombinedOutput` 会一直等"管道读完"，
+// 真机形态是 `internal/pipeline` 整包 `go test` 卡到 600s / 900s（栈停在 io.copyBuffer）。
+//
+// 判据（照真实形态）：假工具**先写结果文件、再 `start /b` 起一个活 30 秒的孙进程**、然后退出。
+// 工具的契约本来就是"写完文件就退"，所以：
+//
+//	① `Transcribe` 必须**在几秒内**返回（`sysexec.Hide` 的 WaitDelay 兜住孙进程）；
+//	② 返回的结果要**真的解析出来**（`ErrWaitDelay` 不算失败：结果从文件读）。
+func TestTranscribeSurvivesGrandchildHoldingPipe(t *testing.T) {
+	tmp := t.TempDir()
+	media := filepath.Join(tmp, "shot_003.mp4")
+	if err := os.WriteFile(media, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 假工具：写结果 → 起孙进程（握着 stdout 30 秒）→ 立刻退出。
+	script := strings.Join([]string{
+		"@echo off",
+		"> \"%~5\" (",
+		"  echo # model=%3 lang=zh prob=1.00 dur=8.0s segs=1",
+		"  echo [  0.11-  2.55] shoudao.",
+		")",
+		// `/d "%TEMP%"`：孙进程的**工作目录**别落在本用例的临时目录里 —— 它要活 30 秒，
+		// 握着那个目录会让 `t.TempDir()` 的清理把用例判失败；stdout 管道照样继承，判据不受影响。
+		"start \"\" /b /d \"%TEMP%\" cmd /c \"ping -n 30 127.0.0.1 >nul\"",
+		"exit /b 0",
+	}, "\r\n")
+	tool := filepath.Join(tmp, "asr_holds_pipe.cmd")
+	if err := os.WriteFile(tool, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	r, err := Transcribe(context.Background(), tool, media, "medium")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("孙进程握着管道时不该判失败（结果文件已写出）：%v（耗时 %v）", err, elapsed)
+	}
+	if len(r.Segments) != 1 || !strings.Contains(r.Segments[0].Text, "shoudao") {
+		t.Fatalf("结果没解析出来：%+v", r)
+	}
+	if elapsed > 20*time.Second {
+		t.Errorf("等了 %v —— WaitDelay 没生效（孙进程要活 30 秒，正常应 ≤ 10 秒返回）", elapsed)
+	}
+	t.Logf("孙进程握着管道，%v 返回并解析成功（孙进程本身要活 30 秒）", elapsed)
 }

@@ -22,6 +22,7 @@ package asr
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -179,13 +180,24 @@ func Transcribe(ctx context.Context, tool, media, model string) (*Result, error)
 	cmd := sysexec.Hide(exec.CommandContext(ctx, tool, media, "--model", model, "--out", out))
 	cmd.Dir = filepath.Dir(media)
 	// 控制台中文会乱码（工具的说明里写了），所以结果一律从**文件**读；这里只收 stdout 供报错。
+	//
+	// 【2026-10-10】`ErrWaitDelay` 必须当成"跑成了"来看待（前提：结果文件读得回来）：
+	// 工具链是 `asr.cmd`(cmd.exe) → `python.exe`(可能再拉起解码器)，`sysexec.Hide` 给 Wait 加了上限
+	// ⇒ 进程已退出、而孙进程还握着 stdout 管道时，Go 返回的正是这个哨兵错误。
+	// 工具的契约本来就是**先写 `<media>.asr.txt` 再退出**，所以"文件写出来了"才是判据；
+	// 把它当失败会让整条语音核对（逐镜跑）报一堆假失败 —— 真机咬到过更极端的形态：
+	// 孙进程握着管道不放，`CombinedOutput` 一直等 ⇒ `go test` 卡到 600s / 900s（栈在 io.copyBuffer）。
 	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf("ASR 调用失败(%v):%s", err, tail(string(raw), 400))
-	}
 	r, perr := Parse(out)
 	if perr != nil {
+		if err != nil {
+			return nil, fmt.Errorf("ASR 调用失败(%v):%s", err, tail(string(raw), 400))
+		}
 		return nil, fmt.Errorf("ASR 结果读不回来(%v):%s", perr, tail(string(raw), 400))
+	}
+	if err != nil && !errors.Is(err, exec.ErrWaitDelay) {
+		// 结果文件在、但进程退出码非零 ⇒ 结果可信度不足，如实报错（不静默采信半截输出）。
+		return nil, fmt.Errorf("ASR 调用失败(%v):%s", err, tail(string(raw), 400))
 	}
 	r.Tool = tool
 	return r, nil

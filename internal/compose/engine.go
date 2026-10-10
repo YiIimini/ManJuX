@@ -5,6 +5,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -266,7 +267,11 @@ func stitchWithEngine(ctx context.Context, f *ff.FF, parts []string, fades []flo
 	scanErr := sc.Err()
 	waitErr := cmd.Wait()
 	cmdline := fmt.Sprintf("\"%s\" \"%s\" --manifest \"%s\"", python, script, manifest)
-	if waitErr != nil || scanErr != nil || !sawDone {
+	// 【2026-10-10】`ErrWaitDelay` = 进程已退出、而**孙进程还握着 stdout 管道**
+	// （引擎链是 python → 它自己再拉起的 ffmpeg/解码器，`sysexec.Hide` 给 Wait 加了上限）。
+	// 判成功的依据是**引擎报告了 ASM-DONE**（时间轴文件紧接着要读），所以这一种不算失败 ——
+	// 否则"渲染明明跑完、时间轴也写出来了"会被报成拼接失败。
+	if (waitErr != nil && !errors.Is(waitErr, exec.ErrWaitDelay)) || scanErr != nil || !sawDone {
 		why := "引擎没有报告 ASM-DONE"
 		if waitErr != nil {
 			why = waitErr.Error()

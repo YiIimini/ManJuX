@@ -97,6 +97,33 @@
 
 本窗口的对话历史**不进仓库**，所以新会话只能靠文件重建上下文。开工前按顺序读：
 
+> **最新一轮（2026-10-10，用户「Q 版卡有对应角色，直接图生图为 Q 版形象能简单一点吗?」）：
+> `docs/Q版改图生图派生-2026-10-10.md`** —— **能，平台早该这样**：派生链路 2026-09-28 就建好了
+> （`sheetderive.go`：`ChibiDeriveClause` 只改画法/头身比、`ChibiDeriveDenoise = 0.75`、
+> 出图后 `qc.IdentityJudge` 拿定妆照判身份、不过换种子重出一轮），**方案里那张 Q 版卡走的就是它**；
+> **唯独自动支线漏接了** —— `stages_assets.go` 生成 `char:<本体id>_chibi` 时直接
+> `comfyGen.GenerateImage(...)`（纯文生图、无参考图、写死 1024×1024）⇒ 把长相重新描述一遍，
+> 必然「像但不完全像」的第二张脸。**修法**：① 自动支线走**唯一出口** `c.genSheetImage(...)`；
+> ② **两处写死 1024×1024 的口径收口**为成片画幅（Q 版图会被挂进内心镜的**参考图位**
+> `character_chibi`，而「参考图 = 成片画幅」是既有设计；单资产「重新生成」那条支线的 `isChibi` 特例一并删）。
+> **门** `chibi_auto_derive_test.go`：源码级接线/画幅（**只看代码行** —— 第一版被我**自己注释**里那句
+> `comfyGen.GenerateImage(...)` 判红，"断言命中注释"同一形态）+ 行为级语义（`t2i==0`/`i2i≥1`/
+> 派生指令只一遍/参考图=本体定妆照/种子锚定/落盘路径没变/无降级播报）。
+> **反向验证 3/3 全红**（`scratch/reverse_verify_chibi_derive.ps1`）。
+> **边界**：没跑真机出图 A/B（不给"派生一定更好看"的背书）；存量方图 Q 版不会自动变，点「重新生成」才走新口径。
+>
+> **同一轮附带（就在跑八门时咬到）**：`internal/pipeline` 整包 `go test` **卡到 600s / 900s**，
+> 栈停在 `os/exec` 的 `io.copyBuffer` —— 工具链 `asr.cmd`(cmd.exe) → `python.exe`：ctx 到点/进程退出时
+> 被清算的只是 cmd.exe，**孙进程还握着 stdout 管道** ⇒ `CombinedOutput`/`Wait` 一直等"管道读完"。
+> 修法一处收口：`sysexec.Hide` 给每个子进程设 `cmd.WaitDelay = 3s`（只在"进程已退出/ctx 已取消而
+> 管道仍被握着"时生效，正常路径不受影响）；调用方认得 `exec.ErrWaitDelay`（`asr.Transcribe` 结果从**文件**读
+> ⇒ 文件读得回来就算跑成；`compose/engine.go` 判成功本来就是"引擎报告了 ASM-DONE"）。
+> **门**：`TestHideSetsWaitDelay`（直接喂 Hide 本体）+ `TestWaitDoesNotHangWhenGrandchildHoldsPipe`
+> （真孙进程握管道 ⇒ ≤15s 返回，实测 3.01s）+ `TestTranscribeSurvivesGrandchildHoldingPipe`
+> （ASR 真实形态，实测 3.02s）；**反向验证 3/3 全红**（`scratch/reverse_verify_waitdelay.ps1`）。
+> **如实说**：第一次卡死是瞬时的（随后同样用例 73s 通过），触发原因没钉死，但机制确定、
+> 且生产里迟早会咬（质检逐镜跑 ASR / 用户点「停止」时 python→ffmpeg 同型）。
+>
 > **最新一轮（2026-10-10，用户点名四条「风格串互斥不判 LLM 自编的那一句 / 定妆照提示词瘦身 /
 > VLM 预算 / 取景与分辨率二选一」）：`docs/四条待办-风格介质与VLM预算与定妆照瘦身-2026-10-10.md`**
 > —— 四条全部落地，**反向验证 9/9 全红**（`scratch/reverse_verify_four_2026-10-10.ps1`）。
