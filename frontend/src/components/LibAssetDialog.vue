@@ -86,11 +86,15 @@ function keyCandidates() {
   }
   return out
 }
-// labelOf 按文件名与 kind 推断用途（定妆照/三视图板/转台图/场景图/道具图），一眼看出哪张是哪张
+// labelOf 按文件名与 kind 推断用途（定妆照/角色板/转台图/场景图/道具图），一眼看出哪张是哪张。
+//
+// 【2026-10-10 用户「三视图更换为角色板显示更详细」】把「三视图板」改叫**角色板**
+// （它本来就是 production reference sheet：正/侧/背三个全身 + 6 个头角度 + 6 个局部细节，
+// 16:9·2K）；标签里连**内容**一起说清，不用再猜"三视图"到底画了什么。
 function labelOf(file) {
   const b = String(file).split('/').pop() || ''
   if (b.includes('_turnaround')) return '转台图'
-  if (b.includes('_board')) return '三视图板'
+  if (b.includes('_board')) return '角色板（正/侧/背 + 头部细节）'
   if (b.includes('_view_threequarter')) return '四分之三'
   if (b.includes('_view_side')) return '侧面'
   if (b.includes('_view_back')) return '背面'
@@ -100,6 +104,9 @@ function labelOf(file) {
   return '定妆照'
 }
 const IMG_BOX_H = '190px'
+// 角色板（原「三视图板」）是**一张图 15 格**：190px 高的缩略图看不清格子里的东西，
+// 所以它（以及同型的转台图/场景板）占**整行**、并给更高的框 —— 用户要的「显示更详细」。
+const BOARD_BOX_H = '260px'
 function tileRatio(file) {
   const b = String(file).split('/').pop() || ''
   if (b.includes('_board') || b.includes('_turnaround')) return '16/9'
@@ -107,7 +114,10 @@ function tileRatio(file) {
   if (props.kind === 'props') return '1/1'   // 道具是白底方图
   return '3/4'
 }
-
+// wideTile 该不该占整行（横向大图：角色板/转台图/场景板）。
+function wideTile(file) {
+  return tileRatio(file) === '16/9'
+}
 async function load() {
   detail.value = null
   inLib.value = true
@@ -226,13 +236,13 @@ async function removeDetail() {
           <div class="flex-1"></div>
           <template v-if="kind === 'characters' && inLib">
             <el-tag v-if="hasViews" size="small" type="success" effect="plain">
-              含角度参考(三视图板/转台图,渲染时作第二张参考)
+              含角度参考(角色板/转台图,渲染时作第二张参考)
             </el-tag>
             <template v-else>
               <span class="text-xs" style="color:var(--mx-amber)">
                 缺角度参考 —— 只有正面照(渲染时侧面/背面只能靠模型自己编)
               </span>
-              <el-tooltip content="可选:H3 原地转身视频 → 抽帧转台图(约数分钟)。默认不需要 —— 角度参考已由三视图板接手" placement="top">
+              <el-tooltip content="可选:H3 原地转身视频 → 抽帧转台图(约数分钟)。默认不需要 —— 角度参考已由角色板接手" placement="top">
                 <el-button size="small" type="primary" plain :loading="viewsBusy" @click="doViews">
                   <el-icon class="mr-1"><MagicStick /></el-icon>
                   {{ viewsBusy ? '多视角生成中(约数分钟)…' : '补全多视角' }}
@@ -242,11 +252,16 @@ async function removeDetail() {
           </template>
         </div>
         <!-- 图片区：**按这一块的高度显示、整体居中**（2026-09-27 用户两轮反馈的结论）：
-             格子定高、宽按产物比例算（定妆照 3/4、三视图板 16:9），整排水平居中、图用 contain 完整显示。 -->
+             格子定高、宽按产物比例算（定妆照 3/4、角色板 16:9）；**角色板/转台图/场景板占整行、
+             框更高**（一张图 15 格，缩略图看不清细节 —— 用户 2026-10-10「三视图更换为角色板显示更详细」）。
+             整排水平居中、图用 contain 完整显示。 -->
         <div class="flex flex-wrap gap-3" style="justify-content:center">
           <div v-for="(f, i) in detailImages" :key="f"
                class="cursor-zoom-in relative rounded-lg overflow-hidden"
-               :style="'height:' + IMG_BOX_H + ';aspect-ratio:' + tileRatio(f) + ';background:var(--mx-bg2);border:1px solid var(--mx-line)'"
+               :style="'height:' + (wideTile(f) ? BOARD_BOX_H : IMG_BOX_H) +
+                 ';aspect-ratio:' + tileRatio(f) +
+                 (wideTile(f) ? ';flex-basis:100%' : '') +
+                 ';background:var(--mx-bg2);border:1px solid var(--mx-line)'"
                @click="previewDetail(i)">
             <img :src="imgURL(f)" style="width:100%;height:100%;object-fit:contain;object-position:center" loading="lazy" />
             <span class="absolute text-xs px-1 py-0.5"
@@ -255,7 +270,6 @@ async function removeDetail() {
           <el-empty v-if="!detailImages.length" description="这条资产还没有图" :image-size="60" />
         </div>
       </div>
-
       <div>
         <div class="flex items-center gap-2 mb-1">
           <span class="text-xs" style="color:var(--mx-text3)">中文描述(跨项目一致性用)</span>

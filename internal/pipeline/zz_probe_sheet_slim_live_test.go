@@ -110,34 +110,28 @@ func TestZZProbeSheetSlim(t *testing.T) {
 			}
 		}
 	}
-	// CAST DISTINCTNESS：同一条"别人的外形摘要"，新旧两种写法各占多少字符。
-	cplan := &project.Plan{}
+	// 【2026-10-10 之后】CAST DISTINCTNESS 整块已下线（用户报「肩上三个 Q 型人物」，
+	// 图像侧 CFG=1.0 会把名单里的名词画出来）。探针改量**下线之后的形态**：
+	// ① 装配出来的图像提示词里不许再出现别人的外形（判据同 `one_person_only_test.go`）；
+	// ② 提示词总长变化（少了那块）。
+	proj0 := &project.Project{}
+	proj0.Config.Params = project.DefaultStageParams()
+	plan0 := &project.Plan{}
 	for _, c := range cards {
-		cplan.Characters = append(cplan.Characters, project.Character{
+		plan0.Characters = append(plan0.Characters, project.Character{
 			ID: c.id, Name: c.name, Description: c.desc, ImagePrompt: c.prompt,
 		})
 	}
-	blk := castContrastBlock(cplan, "", "", KindHuman)
-	n, newLen, oldLen, midWord := 0, 0, 0, 0
-	for i, c := range cards {
-		if i == 0 { // 第一条当"自己"，对比块里不列它
-			continue
+	if len(plan0.Characters) > 0 {
+		self := plan0.Characters[0]
+		got := PortraitPromptForProject(proj0, plan0, self)
+		others := 0
+		for _, c := range cards[1:] {
+			if c.name != "" && c.name != self.Name && strings.Contains(got, c.name) {
+				others++
+			}
 		}
-		d := englishIdentitySummary(project.Character{ID: c.id, Name: c.name, Description: c.desc, ImagePrompt: c.prompt})
-		if d == "" {
-			continue
-		}
-		old := oldDistinctnessEntry(d)
-		new := distinctnessNote(d)
-		n++
-		newLen += len([]rune(new))
-		oldLen += len([]rune(old))
-		if strings.HasSuffix(old, "…") {
-			midWord++ // 旧写法截断处前面那个字符若仍是字母/数字，就是切在词中间
-		}
+		t.Logf("图像提示词：%d 字；含别人名字 %d 处；含 CAST DISTINCTNESS %v；含 `NOT: ` %v",
+			len([]rune(got)), others, strings.Contains(got, "CAST DISTINCTNESS"), strings.Contains(got, "NOT: "))
 	}
-	t.Logf("CAST DISTINCTNESS：%d 条摘要；新写法合计 %d 字符，旧写法（160 硬切+省略号）合计 %d 字符 ⇒ 变化 %+d；旧写法被截断 %d 条",
-		n, newLen, oldLen, newLen-oldLen, midWord)
-	t.Logf("装配出来的对比块末尾带省略号：%d 处（新写法应当一处都没有）；块长度 %d 字符",
-		strings.Count(blk, "…"), len([]rune(blk)))
 }

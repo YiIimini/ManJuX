@@ -232,8 +232,13 @@ func TestCharacterImagePromptIsSingleAssemblyPoint(t *testing.T) {
 	if !strings.Contains(got, "chubby middle-aged man") {
 		t.Error("原始 image_prompt 必须保留(身份特征前置)")
 	}
-	if !strings.Contains(got, "RENDER STYLE") || !strings.Contains(got, "CAST DISTINCTNESS") {
-		t.Error("装配点必须同时带上风格块与同剧对比块")
+	// 【2026-10-10 期望收缩】原来这里还要求带 `CAST DISTINCTNESS`（同剧对比块）——
+	// 那块与 FACE ID 的 `NOT:` 清单**已整块下线**：用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」，
+	// 而图像侧是 CFG=1.0 的蒸馏档，**否定词不生效、名词会被当指令画出来**（`artstyle.go` 顶部）。
+	// 现在这条只钉「风格块必须在」；"图像提示词里不许出现别人"另有一条更硬的门
+	// （`one_person_only_test.go`：别人的外形特征串逐条都不许出现）。
+	if !strings.Contains(got, "RENDER STYLE") {
+		t.Error("装配点必须带上风格块")
 	}
 	if !strings.Contains(got, MediumMarker) {
 		t.Error("默认(未表态)应开启动画哑光画风")

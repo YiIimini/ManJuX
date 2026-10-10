@@ -13,41 +13,53 @@ import (
 //
 // 定调：**提示词写对了也可能出成一个人** —— 那两张的年龄/脸型/眼型在纸面上分得很开，
 // 出图却是两个瘦长脸的年轻人。读提示词的检查看不见五官，比例自检看三庭眼距（都正常），
-// 朝向自检看是不是正面 —— 三张网都漏，所以必须有"看图比脸"这一层。
+// 朝向自检看是不是正面 —— 三张网都漏，所以必须有「看图比脸」这一层。
+//
+// 【2026-10-10 用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」之后的调整】原先还有一层
+// **往图像提示词里列别人**（`castContrastBlock` 的 CAST DISTINCTNESS 块 + `castFaceIDs` 的
+// FACE ID `NOT:` 列表）。那一层已**整块下线**：图像侧是 CFG=1.0 的蒸馏档，**否定词不生效、
+// 名词会被当指令画出来**（`artstyle.go` 顶部）⇒ 名单里的「巴掌大的小人」就被画到了肩上。
+// 防撞脸现在只剩两件确定性的（都在本文件里钉）：
+//
+//	① 主体**自己**的身份锁逐字重述（`PortraitFaceIDClause`，只讲自己）；
+//	② **出图后看图判身份**（本文件的 `castPeers` / `castCollision` 那几段）。
+//
+// 判据见 `one_person_only_test.go`（图像提示词里一个字都不许出现"别人"）。
 
-// TestIdentityLockExcerptPrefersShapeOverPlot 同剧对比要拿**外形锁**，不能拿剧情。
+// TestIdentityLockExcerptPrefersShapeOverPlot 身份锁要拿**外形锁**，不能拿剧情。
 //
 // 实测事故：《求你们骂我》周廷那条 description 是一整段剧情表行
 // （「1 周廷 周家二少爷，六品武夫 他 三年前就做过一次成功的平账：火从西头起…1／8／31」）。
-// 把它当"特征"塞进对比块，模型读到的是剧情 —— "要跟别人不一样"这句就完全落空，
-// 只剩它自己的先验：一张通用帅哥脸。
+// 若把剧情当"外形"塞进提示词，模型读到的是剧情 —— 身份就只剩它自己的先验：一张通用帅哥脸。
+// 这条现在直接盯**取锁本体**（`identityLockExcerpt`）与该锁进 `PortraitFaceIDClause` 后的形态。
 func TestIdentityLockExcerptPrefersShapeOverPlot(t *testing.T) {
 	plot := "1 周廷 周家二少爷，六品武夫 他 三年前就做过一次成功的平账：火从西头起、货仓是田家的"
 	lock := "Zhou Ting — half-body . IDENTITY LOCK (do not change): thirty-one years old; square face, high cheekbones, deep eye sockets; sallow, slightly oily"
-	plan := &project.Plan{Characters: []project.Character{
-		{ID: "char_01", Name: "沈砚", Description: "主角", ImagePrompt: "Shen Yan — half-body. IDENTITY LOCK (do not change): nineteen years old; thin long face"},
-		{ID: "char_06", Name: "周廷", Description: plot, ImagePrompt: "Zhou Ting — half-body . " + lock},
-	}}
-	blk := castContrastBlock(plan, "", "沈砚", KindHuman)
-	if !strings.Contains(blk, "square face") || !strings.Contains(blk, "thirty-one") {
-		t.Errorf("对比块要用周廷的**外形锁**（方脸/31 岁），实际：%s", blk)
+	ch := project.Character{ID: "char_06", Name: "周廷", Description: plot, ImagePrompt: "Zhou Ting — half-body . " + lock}
+	ex := identityLockExcerpt(ch.ImagePrompt)
+	if !strings.Contains(ex, "square face") || !strings.Contains(ex, "thirty-one") {
+		t.Errorf("身份锁要用**外形锁**（方脸/31 岁），实际：%s", ex)
 	}
-	if strings.Contains(blk, "货仓是田家的") {
-		t.Errorf("对比块不该塞剧情（那是「特征」的假象）：%s", blk)
+	clause := PortraitFaceIDClause(ex)
+	if strings.Contains(clause, "货仓是田家的") {
+		t.Errorf("FACE ID 段不该塞剧情（那是「特征」的假象）：%s", clause)
 	}
-	// 措辞要**点名对比**，不只是抽象的 "different face shape"
-	for _, want := range []string{"at a glance", "never reuse one face template"} {
-		if !strings.Contains(blk, want) {
-			t.Errorf("对比块的措辞要具体到「一眼可辨/不许共用一张脸模板」，缺 %q", want)
+	// 措辞要**具体到维度**，不只是抽象的 "different face shape"
+	for _, want := range []string{"bone structure", "do not fall back to a generic good-looking young face"} {
+		if !strings.Contains(clause, want) {
+			t.Errorf("FACE ID 段的措辞要具体到「骨相/年龄感/眼型/肤色」与「不许退回通用帅哥脸」，缺 %q", want)
 		}
 	}
 }
 
-// TestPortraitFaceIDClauseIsLast 定妆照的最后一句必须是"这张脸是谁"。
+// TestPortraitFaceIDClauseIsLast 定妆照的最后一句必须是"这张脸是谁"，且**只讲自己**。
 //
 // 为什么钉顺序：模型对提示词**末尾**的约束最敏感（比例锚点放最后是同一条设计），
 // 而画风块里那句 "idealised… simplified, readable features" 是往一个模板上拉的力 ——
 // 身份锁必须压在它后面，否则 31 岁的方脸会被抹平成"年轻瘦长脸"。
+//
+// 【2026-10-10】同时钉住"只讲自己"：签名里不再有 `others`，段内不许出现 `NOT:` 别人
+// （那段就是用户看到的"肩上三个 Q 型小人"的来源之一）。
 func TestPortraitFaceIDClauseIsLast(t *testing.T) {
 	plan := &project.Plan{
 		Style: "GUOFENG ANIMATED-FEATURE ART DIRECTION (period Chinese)",
@@ -74,22 +86,34 @@ func TestPortraitFaceIDClauseIsLast(t *testing.T) {
 	if !strings.Contains(prompt[id:], "thirty-one years old; square face") {
 		t.Errorf("FACE ID 段要逐字重述本角色的外形锁：\n%s", prompt[id:])
 	}
-	// 要点名"不许像谁"（拿别人的外形锁当反例），并说清理想化≠可互换
-	for _, want := range []string{"NOT:", "thin long face", "interchangeable"} {
+	// 说清理想化≠可互换
+	for _, want := range []string{"ONE specific person", "interchangeable"} {
 		if !strings.Contains(prompt[id:], want) {
 			t.Errorf("FACE ID 段缺 %q：\n%s", want, prompt[id:])
 		}
+	}
+	// **只讲自己**：不许把别人列进来（用户报的画面级缺陷就是它）
+	if strings.Contains(prompt[id:], "NOT: ") {
+		t.Errorf("FACE ID 段不许再列别人的外形（CFG=1.0 会把名词画出来）：\n%s", prompt[id:])
+	}
+	if strings.Contains(prompt, "thin long face") {
+		t.Errorf("别人的外形锁（沈砚那条 thin long face）漏进了这张卡的提示词：\n%s", prompt)
 	}
 	_ = proj
 }
 
 // TestCastSeparationClausePointsAtDimensions 分离指令必须点明**改哪几个维度**。
+//
+// 【2026-10-10】同时钉住：分离指令里**不许出现对方的名字**（图像侧会给可画的专名）。
 func TestCastSeparationClausePointsAtDimensions(t *testing.T) {
 	c := CastSeparationClause("沈砚")
-	for _, want := range []string{"沈砚", "FACE SHAPE", "AGE READ", "eye shape", "skin tone", "hair silhouette", "identity lock"} {
+	for _, want := range []string{"FACE SHAPE", "AGE READ", "eye shape", "skin tone", "hair silhouette", "identity lock"} {
 		if !strings.Contains(c, want) {
 			t.Errorf("分离指令缺 %q（不给维度的「要不一样」模型听不懂）：%s", want, c)
 		}
+	}
+	if strings.Contains(c, "沈砚") {
+		t.Errorf("分离指令不许写对方名字（图像侧会把专名当画面内容/文字画出来）：%s", c)
 	}
 	if strings.Contains(CastSeparationClause(""), "「」") {
 		t.Error("没给名字时不该出现空书名号")
@@ -195,8 +219,8 @@ func TestCastPeersSkipsSameCharacterVariants(t *testing.T) {
 	//
 	// 原来这里断言"不比"，理由是"告警里分不清谁是谁" —— 而那个理由已经被解决了：
 	// `castPeer` 带 `id`，告警里写得出是哪张卡（下面 plan3 那段钉的就是它）。
-	// 而"不比"的代价是实打实的：**两个恰好同名但确实是不同人**的角色，
-	// 撞脸自检对他们根本不跑 —— 两人共用一张脸时没有任何告警。
+	// 而"不比"的代价是实打实的：**两个恰好同名但确实是不同人**的角色，撞脸自检对他们根本不跑 ——
+	// 两人共用一张脸时没有任何告警。
 	plan2 := &project.Plan{Characters: []project.Character{
 		{ID: "char_01", Name: "阿婆"},
 		{ID: "char_09", Name: "阿婆"},

@@ -1,5 +1,42 @@
 # 更新日志
 
+## 定妆照肩上的 Q 型小人（别人的外形不许进图像提示词）+ 分镜参考哪张 + 三视图改叫角色板（2026-10-10）
+
+专题：`docs/肩上小人-别人的外形不进图像提示词-2026-10-10.md`。
+
+用户：「咋每个角色的定妆照肩膀上都有三个Q型人物？另外三视图更换为角色板显示更详细，咨询一下分镜角色是参考三视图还是参考的定妆照啊？」
+
+**① 肩上小人是真画面级缺陷**：真机卡里 `CAST DISTINCTNESS` 与 `FACE ID` 的 `NOT:` 清单两处都在列
+**别人的外形**，其中两条是「巴掌大的小人」（Q 版形象 + 灵宠）⇒ 图像模型照着画。2026-09-12 咬过同型一次，
+当时加的修法是**否定句** —— 而平台图像侧规则写着 **CFG=1.0 蒸馏档：否定词不生效、名词会被当指令画出来**
+（`artstyle.go` 顶部），所以「列出来 + 说不许画」注定只是半个办法。
+**修法**：图像提示词里**不出现任何「别人」** —— 删掉 `castContrastBlock`/`castFaceIDs` 两处调用与那两个函数
+（连带上一轮为它写的收句辅助；**上一轮改的是「怎么列」，这一轮证明「不该列」**），`PortraitFaceIDClause`
+只讲主体自己，`CastSeparationClause` 不再写对方名字；防撞脸改由两件确定性的事承担：主体自己的身份锁逐字重述
++ **出图后看图判身份**（`cast_distinct.go`，判撞脸就带分离指令换种子重出）。
+**门** `one_person_only_test.go`（夹具＝真机那批卡；图像提示词不许有 CAST DISTINCTNESS / `NOT: ` /
+任何别人的外形特征串，且**必须**留着自己的身份锁与「ONE specific person」）；旧门期望逐条反转
+（`castcontrast_test.go` 删除、`cast_distinct_test.go`/`entity_test.go`/`portrait_slim_test.go`/
+`artstyle_test.go`/`portrait_assembly_test.go` 同步）。**反向验证 2/2 全红**
+（`scratch/reverse_verify_oneperson_tree.ps1`）。
+
+**② 分镜参考哪张（给证据）**：`refs.go` 里 —— **定妆照**是身份唯一权威、角色出场就附
+（`character_front`，:228/:231）；**角度参考**只在需要角度时附，先 `_turnaround`、没有就用 `_board`
+（角色板）顶替（:213-217），近景/特写不附（:218-220），去冗余模式只喂那张拼合图（:222-226）。
+所以是**两张分工**，不是二选一。
+
+**③ 三视图 → 角色板 + 显示更详细**：标签改 `角色板（正/侧/背 + 头部细节）`、tooltip 同步；
+角色板/转台图/场景板改**占整行 + 更高框**（260px vs 190px：一张图 15 格，以前看不清格子里的东西）；
+`frontend_library_detail_test.go` 的老判据（逐字要求 `height: IMG_BOX_H`）改成「有定高 + 有比例」，
+并新增三条断言（占整行 / 更高框 / 标签写清内容）。
+
+**④ 附带修掉一条真缺陷：ASR 的孙进程没被清算**（集成测试当场咬出：临时目录清理失败，
+`clips: ... being used by another process`）。`exec.CommandContext` 只杀直接子进程，而 ASR 是
+`asr.cmd` → `python.exe` ⇒ 超时后 python 变孤儿（生产里就是「点了停止，风扇还在转」）。
+`Transcribe` 改为把进程放进 **kill-on-close 作业对象**（`asr/job_windows.go`，kernel32、无新依赖），
+关句柄即清算整棵树。**门** `TestTranscribeKillsTheWholeTreeOnCancel`（真孙进程写标记 ⇒ 必须不出现），
+**反向验证 2/2 全红**。修完 `internal/pipeline` 整包回到 77.4 秒通过。
+
 ## 自动 Q 版接回「以定妆照为参考图派生」+ 画幅收口（2026-10-10）
 
 专题：`docs/Q版改图生图派生-2026-10-10.md`。

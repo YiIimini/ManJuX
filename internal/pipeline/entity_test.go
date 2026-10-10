@@ -312,22 +312,31 @@ func TestShotEntityKinds(t *testing.T) {
 	}
 }
 
-// TestCastContrastIsKindAware 同剧对比块也要按类型换措辞。
+// TestPortraitPromptIsKindAware 定妆照装配**按类型分措辞**，而且**不列别人**。
 //
-// 真实数据实测(2026-09-24):这段原先一律写"脸型/年龄/肤色要和他们不同、画面里只能有
-// 一个人"—— 套在铜雀身上等于又在要求它长脸。器物比的是形制/材质/部件数。
-func TestCastContrastIsKindAware(t *testing.T) {
+// 真实数据实测(2026-09-24)：对比块的措辞原先一律写"脸型/年龄/肤色要和他们不同、画面里只能有一个人"
+// —— 套在铜雀身上等于又在要求它长脸（"阿凿是一只铜雀却渲染成人物"的连带根因）。
+//
+// 【2026-10-10 用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」】那一整块（CAST DISTINCTNESS）
+// 与 FACE ID 的 `NOT:` 清单**都已下线**：图像侧 CFG=1.0，**否定词不生效、名词会被画出来**。
+// 这条因此改盯两件更基本的事：① 主体**自己**的忠实度块按类型正确（器物不得拿人像那一套）；
+// ② 装配出来的图像提示词里**没有别人的外形**（判据的完整版在 `one_person_only_test.go`）。
+func TestPortraitPromptIsKindAware(t *testing.T) {
 	plan := &project.Plan{Characters: []project.Character{realAzao, realLuqingyan}}
-	obj := castContrastBlock(plan, "", realAzao.Name, KindObject)
-	if !strings.Contains(obj, "different silhouette") || !strings.Contains(obj, "exactly ONE object") {
-		t.Errorf("器物对比块应比形制/材质,且「画面里只有一件」:\n%s", obj)
+	proj := &project.Project{}
+	proj.Config.Params = project.DefaultStageParams()
+	// ① 器物：不得拿人像那一套介质措辞（2026-09-24 的实测：铜雀被渲染成人物）
+	objPrompt := PortraitPromptForProject(proj, plan, realAzao)
+	if strings.Contains(objPrompt, "character render") || strings.Contains(objPrompt, "skin shading") {
+		t.Errorf("器物不得拿人像那一套介质措辞：\n%s", objPrompt)
 	}
-	if strings.Contains(obj, "different face shape") || strings.Contains(obj, "ONE person") {
-		t.Errorf("器物对比块不得比脸/称「一个人」:\n%s", obj)
+	// ② 人物：带自己的忠实度块，且**没有别人的外形**
+	humPrompt := PortraitPromptForProject(proj, plan, realLuqingyan)
+	if !strings.Contains(humPrompt, "IDENTITY FIDELITY") {
+		t.Errorf("人物该带自己的忠实度块：\n%s", humPrompt)
 	}
-	hum := castContrastBlock(plan, "", realLuqingyan.Name, KindHuman)
-	if !strings.Contains(hum, "different face shape") || !strings.Contains(hum, "exactly ONE person") {
-		t.Errorf("人物对比块应保持原措辞(2026-09-11 定稿):\n%s", hum)
+	if strings.Contains(humPrompt, "CAST DISTINCTNESS") || strings.Contains(humPrompt, "Azao") {
+		t.Errorf("定妆照图像提示词里出现了别人/对比块（CFG=1.0 会把名词画出来）：\n%s", humPrompt)
 	}
 }
 

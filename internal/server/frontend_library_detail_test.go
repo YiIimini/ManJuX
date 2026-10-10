@@ -37,15 +37,30 @@ func TestLibraryDetailImagesCentered(t *testing.T) {
 	if strings.Contains(src, "grid-template-columns:repeat(auto-fill,112px)") {
 		t.Error("别再退回 grid auto-fill 定宽列 —— 那个做法不居中（见注释）")
 	}
-	// 高度：格子定高（撑满这一块给的高度），宽由产物比例算出来
-	if !strings.Contains(src, "height:' + IMG_BOX_H + '") || !strings.Contains(src, "const IMG_BOX_H") {
+	// 高度：格子定高（撑满这一块给的高度），宽由产物比例算出来。
+	//
+	// 【2026-10-10】判据从"必须逐字写成 `height:' + IMG_BOX_H + '`"改成"**有定高 + 有比例**"：
+	// 用户要求「三视图更换为角色板显示更详细」之后，横向大图（角色板/转台图/场景板）改用更高的
+	// `BOARD_BOX_H` 并占整行 ⇒ 原来那条逐字判据会把**正确的**实现判红（判据挂在字面量上是老毛病）。
+	if !strings.Contains(src, "'height:'") || !strings.Contains(src, "const IMG_BOX_H") {
 		t.Error("图片格子要**定高**显示（用户：「图片显示高度应该是那个区域的高度」），宽度按产物比例")
 	}
+	if !strings.Contains(src, "aspect-ratio:' + tileRatio(f)") {
+		t.Error("格子形状要按产物形状算（aspect-ratio + tileRatio）")
+	}
 	if !strings.Contains(src, "object-fit:contain") || !strings.Contains(src, "object-position:center") {
-		t.Error("详情弹窗的图要 contain + 居中（cover 会把转台图/三视图板裁得只剩中间一条）")
+		t.Error("详情弹窗的图要 contain + 居中（cover 会把转台图/角色板裁得只剩中间一条）")
 	}
 	if !strings.Contains(src, "tileRatio(f)") {
-		t.Error("格子形状要按产物形状给（tileRatio）：定妆照 3/4、转台图与三视图板 16:9")
+		t.Error("格子形状要按产物形状给（tileRatio）：定妆照 3/4、转台图与角色板 16:9")
+	}
+	// **角色板要看得清**（用户 2026-10-10「三视图更换为角色板显示更详细」）：
+	// 横向大图占整行 + 更高的框，标签里写清它是「角色板（正/侧/背 + 头部细节）」。
+	if !strings.Contains(src, "const BOARD_BOX_H") || !strings.Contains(src, "flex-basis:100%") {
+		t.Error("角色板/转台图/场景板要占整行（flex-basis:100%）并给更高的框（BOARD_BOX_H）")
+	}
+	if !strings.Contains(src, "角色板（正/侧/背 + 头部细节）") {
+		t.Error("标签要写清是「角色板（正/侧/背 + 头部细节）」—— 用户要求把「三视图」改叫角色板")
 	}
 	// 「有没有角度参考」的判据必须认三视图板（用户：「三视图不就是多视角的吗，相关"单视角"状态也要同步调整显示」）。
 	// 判据在**共用组件**里（详情状态用它），卡片标记那份在 LibraryView（见那个文件），

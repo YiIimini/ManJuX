@@ -30,16 +30,18 @@ var assemblyCalls = []string{
 	"normalizeUniformWording(",
 	"styleExpand(",
 	"styleExpandFor(",
-	"castContrastBlock(",
 	"uniformCivilianClarify(",
 	"rewriteSheetFraming(",
 }
 
 // portraitOnlyCalls 只在装配点里允许出现(装配专有)。
+//
+// 【2026-10-10 去掉 `castContrastBlock(`】那两块（CAST DISTINCTNESS 与 FACE ID 的 `NOT:` 清单）
+// **已整块下线**：用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」，而图像侧 CFG=1.0
+// 会把名单里的名词画出来。删掉的函数不再参与"单实现点"扫描（源码里已经没有它了）。
 var portraitOnlyCalls = []string{
 	"styleExpand(",
 	"styleExpandFor(",
-	"castContrastBlock(",
 	"rewriteSheetFraming(",
 }
 
@@ -58,7 +60,7 @@ var assemblyOwners = map[string][]string{
 	// 本体只有一行委托。装配点必须走 styleExpandFor —— 它把已装配的提示词带进去,
 	// 好让平台自己的比例措辞在技能侧比例锚点句同现时让位(技能侧清单 §5.1)。
 	"styleExpand":      {"styleExpandFor("},
-	"PortraitPrompt":   {"styleExpandFor(", "castContrastBlock(", "rewriteSheetFraming("},
+	"PortraitPrompt":   {"styleExpandFor(", "rewriteSheetFraming("},
 	"SceneImagePrompt": {"styleExpand(", "rewriteSheetFraming("},
 	// 第三个装配点(2026-09-27 加三视图细节板):板子继承定妆照的风格块(所以不重走
 	// styleExpand/castContrastBlock —— 那会按实体类型重算一套),但必须把取景从

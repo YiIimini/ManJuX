@@ -136,3 +136,53 @@ func TestTranscribeSurvivesGrandchildHoldingPipe(t *testing.T) {
 	}
 	t.Logf("孙进程握着管道，%v 返回并解析成功（孙进程本身要活 30 秒）", elapsed)
 }
+
+// TestTranscribeKillsTheWholeTreeOnCancel 【2026-10-10 集成测试当场咬出来的一条真缺陷】
+//
+// 现象：`internal/pipeline` 的 `TestRunRenderDrivesEnginePerShot` 结束时清理临时目录失败 ——
+// `clips: The process cannot access the file because it is being used by another process`。
+// 根因：ASR 工具链是 `asr.cmd`(cmd.exe) → `python.exe`，而 `exec.CommandContext` 只杀**直接子进程**
+// ⇒ 超时/取消之后 python 还活着，占着工作目录与 CPU（生产里的样子就是"点了停止，风扇还在转"）。
+//
+// 判据（行为级，不靠读源码）：假工具先写结果文件，再起一个**7 秒后写标记文件的孙进程**，
+// 然后自己挂住（`ping -n 8`）。我们在 1 秒后取消 ctx ⇒ `Transcribe` 提前返回；
+// 之后等 9 秒：**标记文件必须始终不出现**（整棵树被清算）。
+// 把 job 那一步拿掉 ⇒ 孙进程活着写到标记 ⇒ 这条门变红（反向验证脚本里就是这么针的）。
+func TestTranscribeKillsTheWholeTreeOnCancel(t *testing.T) {
+	tmp := t.TempDir()
+	marker := filepath.Join(tmp, "grandchild_alive.txt")
+	media := filepath.Join(tmp, "shot_009.mp4")
+	if err := os.WriteFile(media, []byte("fake"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// 孙进程：`ping -n 7` ≈ 7 秒后再写标记（工作目录设成 %TEMP%，别让临时目录清理跟它打架）。
+	script := strings.Join([]string{
+		"@echo off",
+		"> \"%~5\" (",
+		"  echo # model=%3 lang=zh prob=1.00 dur=8.0s segs=1",
+		"  echo [  0.11-  2.55] shoudao.",
+		")",
+		"start \"\" /b /d \"%TEMP%\" cmd /c \"ping -n 7 127.0.0.1 >nul & echo alive > \"\"" + marker + "\"\"\"",
+		"ping -n 8 127.0.0.1 >nul",
+		"exit /b 0",
+	}, "\r\n")
+	tool := filepath.Join(tmp, "asr_tree.cmd")
+	if err := os.WriteFile(tool, []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	_, err := Transcribe(ctx, tool, media, "medium")
+	if err == nil {
+		t.Fatal("ctx 1 秒就取消、工具要挂 8 秒 ⇒ 必须如实返回失败（不许静默当成验过）")
+	}
+	// 等够孙进程本该写标记的时间：整棵树收干净了，标记就不会出现。
+	deadline := time.Now().Add(9 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, statErr := os.Stat(marker); statErr == nil {
+			t.Fatalf("取消之后孙进程还活着并写出了标记（%s）—— 只杀了直接子进程（cmd.exe），"+
+				"python/孙进程成了孤儿；生产里就是「点了停止，后台还在跑」", marker)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}

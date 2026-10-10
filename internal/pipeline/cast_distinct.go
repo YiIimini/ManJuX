@@ -357,20 +357,25 @@ func (c *Coordinator) castCollision(ctx context.Context, proj *project.Project, 
 // 为什么要写得这么具体：模型上一轮已经"按着身份锁"画出了一张通用脸 ——
 // 再说一句"要不一样"没有用，必须点明**改哪几个维度**（脸型骨相/年龄感/眼眉/肤色/发型剪影），
 // 同时明确"别改成一个新角色"（身份锁里的记号必须留着，否则换个脸就换了个人，等于另一种失败）。
+//
+// 【2026-10-10 不再把对方的名字写进提示词（`otherName` 只留给日志/告警）】
+// 用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」之后把这条也重审了：图像侧是 **CFG=1.0 的
+// 蒸馏档 —— 否定词不生效、名词会被当指令画出来**（`artstyle.go` 顶部）。原先把「沈砚」这个名字
+// 写进提示词（还写了三次）等于给模型一个可画的专名：轻则把名字画成画面上的字（本仓早有
+// "画面文字命中"的实测），重则被当成"该出现的另一个角色"。现在只说"同剧另一个角色"，
+// 点明改哪几个维度的功能不变，隐患去掉。
 func CastSeparationClause(otherName string) string {
-	other := strings.TrimSpace(otherName)
-	if other == "" {
-		other = "另一个角色"
-	}
+	// otherName 只用于调用方的日志/告警文案；提示词里不许出现（见上）。
+	_ = strings.TrimSpace(otherName)
 	return "\nCAST SEPARATION (mandatory — the previous attempt was rejected): the last render of this character " +
-		"read as the SAME PERSON as「" + other + "」in this show. Redraw so a side-by-side comparison is unambiguous: " +
+		"read as the SAME PERSON as another character of this show. Redraw so a side-by-side comparison is unambiguous: " +
 		"change the FACE SHAPE and bone structure (jaw line, cheekbones, brow ridge), the AGE READ, the eye shape, " +
 		"the brow shape, the skin tone, and the hair silhouette (tie, length, forehead state). " +
 		"Everything the identity lock says about this character stays — keep the fixed markers and the costume; " +
-		"do not invent a different person, and do not copy「" + other + "」features. " +
-		"(中文对照:上一次生成被判为与同剧「" + other + "」像同一个人。这次必须让人一眼看出是两个不同的人:" +
+		"do not invent a different person, and do not copy the other cast member's features. " +
+		"(中文对照:上一次生成被判为与同剧另一个角色像同一个人。这次必须让人一眼看出是两个不同的人:" +
 		"改**脸型与骨相(下颌/颧骨/眉骨)、年龄感、眼型、眉形、肤色、发型剪影**;" +
-		"身份锁里的固定记号与服装保持不变 —— 不是换一个人,是不许和「" + other + "」共用一张脸。)\n"
+		"身份锁里的固定记号与服装保持不变 —— 不是换一个人,是不许和同剧别人共用一张脸。)\n"
 }
 
 // ---------- 判定记账（按图片指纹）----------

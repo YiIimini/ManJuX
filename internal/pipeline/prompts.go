@@ -921,13 +921,30 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 	if g, ok := project.GenderOf(s.Description, s.ImagePrompt); ok {
 		added.WriteString(project.GenderClause(g))
 	}
-	added.WriteString(castContrastBlock(plan, s.ID, s.Name, kind))
+	// 【2026-10-10 用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」—— 这两行就是元凶】
+	//
+	// 以前这里往**图像提示词**里塞了两处**别人的外形描述**：
+	//   ① `castContrastBlock(...)`：`CAST DISTINCTNESS — other cast members of this series: <6 条别人的长相>`；
+	//   ② `PortraitFaceIDClause(..., castFaceIDs(...))` 的 `NOT: <别人的长相> ×N`。
+	// 真机那张 6827 字的卡里这两处都在（含 `(A palm-sized miniature of a lean young man …)` 与
+	// `(A palm-sized flat matte-black shadow creature …)` —— 两条"巴掌大"的角色）⇒ 出图就多出几个
+	// 小尺寸人物蹲在肩上（2026-09-12 已经咬过一次同型：「郑伯的定妆照里出现了小尺寸的卫东与 Q 版江砚」）。
+	//
+	// 那次加的是**否定句**（`Do NOT depict any of these other characters`）—— 而平台的图像侧规则写得很清楚：
+	// **CFG=1.0 的蒸馏档否定词不生效，还会把名词当指令画出来**（见 `artstyle.go` 顶部与
+	// `entity_prompts.go` 文件头）。所以"列出来 + 说不许画"这条路在图像侧**注定只能部分有效**，
+	// 一旦名单里有"巴掌大的小人"，它就会被当画面元素。
+	//
+	// 定调（本轮）：**图像提示词里不出现任何"别人的外形"**。防撞脸交给两件确定性的事：
+	//   ① 主体**自己**的身份锁逐字重述（下面的 FACE ID，只讲自己）；
+	//   ② 出图后**看图判身份**（`cast_distinct.go`：与同剧已生成角色逐张比，判撞脸就带
+	//      `CastSeparationClause` 换种子重出一次）—— 它判的是**像素**，不依赖图像模型的否定词能力。
 	added.WriteString(uniformCivilianClarify(s.Description))
 	added.WriteString(PortraitHairClause(kind))
 	added.WriteString(PortraitPoseClause(kind))
 	added.WriteString(PortraitFramingClause(kind, frameW, frameH))
 	if kind == KindHuman || kind == KindChibi {
-		added.WriteString(PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt), castFaceIDs(plan, s.ID, s.Name)))
+		added.WriteString(PortraitFaceIDClause(identityLockExcerpt(s.ImagePrompt)))
 	}
 	prompt += project.DropHanRunes(added.String())
 	// **取景要开头也声明一次**（2026-09-29 用户报「定妆照需要上半身正脸」）：
@@ -955,45 +972,6 @@ func isSelfCard(selfID, selfName, candID, candName string) bool {
 	}
 	return strings.TrimSpace(selfName) != "" &&
 		strings.TrimSpace(selfName) == strings.TrimSpace(candName)
-}
-
-// castFaceIDs 同剧其他人的**外形摘要**（供 PortraitFaceIDClause 点名"不许像谁"）。
-//
-// 与 castContrastBlock 取同一份东西（IDENTITY LOCK 优先、description 兜底），
-// 但**不带人名**：FACE ID 段是"这一帧是某一个具体的人"的收尾纪律，塞进一串人名会
-// 把注意力引到"要不要画别人"上（本段是单人帧）。人名在对比块里已经出现过一次了。
-func castFaceIDs(plan *project.Plan, selfID, selfName string) []string {
-	if plan == nil {
-		return nil
-	}
-	var out []string
-	for _, ch := range plan.Characters {
-		if strings.TrimSpace(ch.Name) == "" {
-			continue
-		}
-		// **按 id 排自己**（审计 B9）：同名不同人是两个人，对方的设定必须留在段里。
-		if isSelfCard(selfID, selfName, ch.ID, ch.Name) {
-			continue
-		}
-		// **摘要必须先过英文可读闸**（2026-10-08）：中文 description 被追加块的清汉字一过，
-		// 只剩一个孤零零的省略号 —— 真机提示词里就是 `NOT: … NOT: … NOT: …`（三张卡同一形态）。
-		// 空摘要**不入列**：占位符不但没信息，还会被模型当成画面上要写的字。
-		// 取用顺序走 `englishIdentitySummary`（IDENTITY LOCK → 英文 description → **卡自己的英文
-		// 定妆提示词**）：小说线的卡 description 是中文、英文外形在 image_prompt 里，缺第三档
-		// 就等于对真机那批卡**永远列不出人**（本函数第一版就是这么漏的，`entity_test.go` 当场咬住）。
-		d := englishIdentitySummary(ch)
-		if d == "" {
-			continue
-		}
-		if r := []rune(d); len(r) > 150 {
-			d = string(r[:150]) + "…"
-		}
-		out = append(out, d)
-		if len(out) >= 3 {
-			break
-		}
-	}
-	return out
 }
 
 // PortraitHairClause 定妆照的**发型纪律**(人类 / Q 版)。
@@ -1727,150 +1705,6 @@ func normalizeUniformWording(text string) string {
 	return text
 }
 
-// castContrastBlock 同剧班底对比块:列出本剧其它角色的关键形象,追加到
-// Krea-2 提示词尾部,强制与同剧角色拉开差异(2026-09-11 用户定调
-// 「不同角色脸不能相似」)。实证:LLM 已写了 fat/scar/narrow face 等
-// 差异化特征,但逐字相同的巨型风格前缀+模型帅哥先验把特征吞掉(肥胖
-// →清瘦、疤→无疤)。生成时给模型看全剧班底,它才知道"要和谁不同"。
-// 注入的提示词随资产入库,库内重生成/跨集复用自带对比上下文。
-//
-// kind 决定"差异"落在哪:人/Q 版比脸,器物比形制与材质,妖兽比物种与体量。
-// 同一段"脸型、年龄、肤色调开"的措辞套在铜雀上,就是在要求它长一张脸
-// (2026-09-24 用户报「阿凿是一只铜雀却渲染成人物」的连带根因)。
-func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityKind) string {
-	if plan == nil {
-		return ""
-	}
-	var parts []string
-	for _, ch := range plan.Characters {
-		n := strings.TrimSpace(ch.Name)
-		// 【2026-10-08 用户「角色渲染的很丑，你看一下资产库」时查到的第二处】
-		// 摘要原来是"取 IDENTITY LOCK，取不到就退中文 description"，而追加块**统一过一遍
-		// `project.DropHanRunes` 清汉字**（老规矩：防模型把中文说明整段画到画面上）⇒
-		// 那份中文 description 被清成一个**孤零零的省略号**，于是真机三张卡的提示词里都是
-		// `other cast members of this series: ( …); ( …); ( …)`。
-		// 修法：摘要先过"英文可读"闸（清汉字后至少还剩几个字母），否则**不入列**。
-		if n == "" {
-			continue
-		}
-		// **按 id 排自己**（审计 B9）：此前 `n == self` 会把"同名不同人"也排掉，
-		// 于是这个角色的对比块里少了另一个人的设定 —— 而"要跟谁不一样"正靠这段说。
-		if isSelfCard(selfID, selfName, ch.ID, ch.Name) {
-			continue
-		}
-		// 外形优先（2026-09-27 修）：IDENTITY LOCK 那句才是"这个人长什么样"；
-		// description 可能整段是剧情 —— 用户报「周廷和主角脸相似」时查到的实况就是
-		// 周廷那条 description 是一段剧情表行（含章号「1／8／31」「被亲父交出顶罪」），
-		// 塞进对比块之后模型读到的是剧情而不是五官，"要跟别人不一样"这句就完全落空了。
-		// 取用顺序走 `englishIdentitySummary`：IDENTITY LOCK（技能侧的权威外形句）→ 英文 description
-		// → **卡自己的英文定妆提示词**。第三档是小说线那批卡的**唯一**英文来源（description 是中文，
-		// 清汉字后只剩省略号）—— 本函数第一版漏了它，`entity_test.go` 的器物/人物两条断言当场变红。
-		d := englishIdentitySummary(ch)
-		if d == "" {
-			continue
-		}
-		// 【2026-10-10 用户「定妆照提示词瘦身：把截断的六段摘要换成结论式一句」】
-		//
-		// 原来这里是**按 160 字符硬切 + 补省略号**，真机那六条（`char:char_shenyan` 那张
-		// 6789 字的卡）**全部切在词中间**：`…long narrow face with a clear jawline, deep-blac…`、
-		// `…its outline feathered and diss…`、`…heavy hooded eyelids over eyes …`、`…thick ey…`。
-		// 半截词对模型不是信息、是噪声，而且占上下文。
-		//
-		// 但**不能整块删**：CAST DISTINCTNESS 是防撞脸的那一块（2026-09-11 实测：不列别人时
-		// 「肥胖→清瘦、疤→无疤」，列出来才掰得住）。所以改成**结论式**：每条收成一个
-		// **完整从句**（在逗号/分号处断，绝不切断单词、不补省略号）—— 判据（脸型/年龄/体态）
-		// 照样在，只是不再带着半截词。
-		if d = distinctnessNote(d); d == "" {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("%s(%s)", n, d))
-		if len(parts) >= 6 {
-			break
-		}
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	traits := "their FACE must read as a different person at a glance — different face shape and bone structure, " +
-		"different age read, different eye and brow shape, different skin tone, different hairline and markers; " +
-		"these identity traits MUST dominate the image; never average them into a generic handsome/pretty face, " +
-		"and never reuse one face template across the cast"
-	one := "exactly ONE person appears in the frame"
-	switch NormalizeEntityKind(string(kind)) {
-	case KindAndroid:
-		// 人形机械:别与同剧的人撞脸/撞装甲 —— 判据落在**装甲板件与标记**上,
-		// 而不是"五官要像另一个人"(那是人那一档的判据)。
-		traits = "a different armour layout, different panel seams and joint structure, different marker placement and colour, " +
-			"different material finish — it must never read as the same unit with a recolour, and never as a plain human in costume; " +
-			"these traits MUST dominate the image"
-		one = "exactly ONE machine unit appears in the frame"
-	case KindObject:
-		traits = "a different silhouette, form, part count, material, colour and finish — it must never be mistaken for a person " +
-			"or for a living creature; these traits MUST dominate the image"
-		one = "exactly ONE object appears in the frame"
-	case KindSpiritPet, KindBeast:
-		traits = "a different species, size class, build, coat or scale pattern and unique markers; these traits MUST dominate the image; " +
-			"never turn it into a generic cute mascot"
-		one = "exactly ONE creature appears in the frame"
-	case KindIncorporeal:
-		traits = "a different form, colour, glow and degree of transparency; these traits MUST dominate the image"
-		one = "exactly ONE presence appears in the frame"
-	case KindChibi:
-		one = "exactly ONE chibi figure appears in the frame"
-	}
-	// `self` 只用于**文案里的主体名**（"这里的这个人是「X」"）—— 排自己那件事已经由
-	// 上面的 `isSelfCard` 按 id 判过了，这里不再参与任何判据。
-	self := strings.TrimSpace(selfName)
-	// 名单只作差异化参考：画面里只能有本体一个。实测(2026-09-12)：不点明"不要画出来"时，
-	// 模型会把名单里的其他角色当画面元素塞进角落（郑伯的定妆照里出现了小尺寸的卫东与 Q 版江砚）。
-	//
-	// 【2026-10-10 修】selfName 为空时，原来会写出 `the subject depicted here (「」)` 与句尾
-	// `… appears in the frame — .` —— 真机那张卡的结尾就是这个残句。名字拿不到就**整句不提名字**：
-	// 半截话/空括号比不写更容易被模型当成指令。
-	who := "the subject depicted here"
-	tail := "Do NOT depict any of these other characters: " + one + "."
-	if self != "" {
-		who = "the subject depicted here (「" + self + "」)"
-		tail = "Do NOT depict any of these other characters: " + one + " — 「" + self + "」."
-	}
-	return "\n\nCAST DISTINCTNESS (reference note, NOT to be drawn) — other cast members of this series: " +
-		strings.Join(parts, "; ") +
-		". They are listed ONLY so that " + who + " is clearly " +
-		"distinguishable from every one of them: " + traits + ". " + tail
-}
-
-// distinctnessEntryRunes CAST DISTINCTNESS 里**每条**别人外形摘要的字符上限（结论式，不是硬切）。
-//
-// 真机那张卡原来是 160 字符硬切 + 省略号，六条全切在词中间。收到 110 是为了**瘦身**
-// （用户 2026-10-10 的要求）而又不丢判据：脸型/年龄/体态这些"一眼可辨"的信息都在头两个从句里。
-const distinctnessEntryRunes = 110
-
-// distinctnessNote 把一条"别人的外形摘要"收成**一个完整从句**（绝不切断单词、不加省略号）。
-//
-// 判据是**从句边界**：在预算内找最后一个 `,` `;` `:` `—` 断开（这类摘要本身就是
-// "年龄/体型, 脸型, 眼型, …" 的并列从句）；找不到就在最后一个空格处断（仍是完整单词）；
-// 连空格都没有的畸形串才硬切。返回空串表示"这条没内容"，调用方**跳过不入列**
-// （占位/半截条目会被模型当成"画面上要写的字"——见 cast_distinct_test.go 的空条目那几条）。
-func distinctnessNote(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return ""
-	}
-	trim := func(x string) string { return strings.TrimRight(strings.TrimSpace(x), " ,;:.—-") }
-	r := []rune(s)
-	if len(r) <= distinctnessEntryRunes {
-		return trim(s)
-	}
-	head := string(r[:distinctnessEntryRunes])
-	if i := strings.LastIndexAny(head, ",;:—"); i >= 40 {
-		return trim(head[:i])
-	}
-	if i := strings.LastIndexAny(head, " \t"); i >= 40 {
-		return trim(head[:i])
-	}
-	return trim(head)
-}
-
 // backfillAssets 渲染前自动补齐缺失的参考图:资产阶段未跑/未生成全时,
 // 就地用本地 Krea-2 生成,绝不静默降级纯文生(2026-09-08 逻辑重构:
 // 「定妆照没生成就渲染」被用户点名的反直觉行为根治)。
@@ -1990,11 +1824,19 @@ func identityLockExcerpt(prompt string) string {
 // 所以这里不删风格块（那是画风，该留），而是**用自己的身份锁压住它**：
 // 年龄感、骨相、眼型、肤色必须逐项读出来，理想化不等于同一张脸。
 //
-// selfLock 传该角色自己的 IDENTITY LOCK 原句（逐字重述，不改写）；others 是其他角色的
-// 外形摘要（可空）。两者都空时返回空串（没有可钉的东西，不硬造）。
-func PortraitFaceIDClause(selfLock string, others []string) string {
+// selfLock 传该角色**自己**的 IDENTITY LOCK 原句（逐字重述，不改写）。空则返回空串
+// （没有可钉的东西，不硬造）。
+//
+// 【2026-10-10：签名里的 `others []string` 删掉了 —— 这里以前写的是 `NOT: <别人的外形> ×N`】
+// 用户报「每个角色的定妆照肩膀上都有三个 Q 型人物」：那段 NOT 列表就是元凶之一
+// （真机那张 6827 字的卡里两条是「巴掌大的小人」）。图像侧是 **CFG=1.0 的蒸馏档**：
+// **否定词不生效、名词会被当指令画出来**（`artstyle.go` 顶部 / `entity_prompts.go` 文件头）
+// ⇒ "列出来 + 说不许画"在图像侧注定只算半个办法。
+// 防撞脸不再靠这一句，靠两件确定性的：主体自己的身份锁（本函数）+ 出图后看图判身份
+// （`cast_distinct.go`，判撞脸就带 `CastSeparationClause` 换种子重出）。
+func PortraitFaceIDClause(selfLock string) string {
 	selfLock = strings.TrimSpace(selfLock)
-	if selfLock == "" && len(others) == 0 {
+	if selfLock == "" {
 		return ""
 	}
 	var sb strings.Builder
@@ -2002,30 +1844,10 @@ func PortraitFaceIDClause(selfLock string, others []string) string {
 	sb.WriteString("this frame shows ONE specific person — not a face template. ")
 	sb.WriteString("The age read, the bone structure (face shape, jaw, cheekbones, brow ridge), the eye shape, " +
 		"the brow shape, the skin tone and the fixed markers below must ALL be visible in this single image: \n")
-	if selfLock != "" {
-		sb.WriteString("  SELF: " + selfLock + "\n")
-	}
-	// 空/占位条目一律不写（2026-10-08 真机三张卡都是 `NOT: … ×3` ——
-	// 中文摘要被追加块的"清汉字"一过，只剩一个孤零零的省略号）。
-	real := 0
-	for _, o := range others {
-		if strings.TrimSpace(o) == "" || o == "…" {
-			continue
-		}
-		if real >= 3 {
-			break
-		}
-		sb.WriteString("  NOT: " + o + "\n")
-		real++
-	}
-	if real > 0 {
-		sb.WriteString("Anyone listed under NOT must be recognisable as a DIFFERENT person in a side-by-side comparison ")
-		sb.WriteString("(different face shape and features, not just different clothes).\n")
-	}
+	sb.WriteString("  SELF: " + selfLock + "\n")
 	sb.WriteString("idealised does NOT mean interchangeable: do not fall back to a generic good-looking young face.\n")
 	sb.WriteString("(中文对照:这一帧是**某一个具体的人**,不是一张通用脸模板 —— 年龄感、骨相(脸型/下颌/颧骨/眉骨)、" +
-		"眼型、眉形、肤色与固定记号都必须在这一张里看得出来;标 NOT 的那些人必须一眼就能看出是**别人**" +
-		"(是脸不一样,不是衣服不一样)。理想化不等于可以互换,不许退回通用帅哥脸。)\n")
+		"眼型、眉形、肤色与固定记号都必须在这一张里看得出来;理想化不等于可以互换,不许退回通用帅哥脸。)\n")
 	return sb.String()
 }
 

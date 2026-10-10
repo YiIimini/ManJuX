@@ -187,7 +187,22 @@ func Transcribe(ctx context.Context, tool, media, model string) (*Result, error)
 	// 工具的契约本来就是**先写 `<media>.asr.txt` 再退出**，所以"文件写出来了"才是判据；
 	// 把它当失败会让整条语音核对（逐镜跑）报一堆假失败 —— 真机咬到过更极端的形态：
 	// 孙进程握着管道不放，`CombinedOutput` 一直等 ⇒ `go test` 卡到 600s / 900s（栈在 io.copyBuffer）。
-	raw, err := cmd.CombinedOutput()
+	//
+	// 【2026-10-10 二修：**连子孙一起收**】原先这里直接 `CombinedOutput`（它内部 Start+Wait），
+	// 而 `exec.CommandContext` 只杀**直接子进程**（cmd.exe）—— python 会活下来继续占着工作目录与 CPU。
+	// 真机表现：质检某镜超时后残留一个 python；集成测试的临时目录清理当场失败
+	// （`clips: The process cannot access the file because it is being used by another process`）。
+	// 现在自己 Start，并把进程放进 **kill-on-close 的作业对象**：`defer job.Close()` 一关，
+	// 整棵树（cmd.exe + python + 它拉起的解码器）被内核清算。
+	var buf strings.Builder
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	job, jerr := startInJob(cmd)
+	if jerr != nil {
+		return nil, fmt.Errorf("ASR 工具起不动(%v)", jerr)
+	}
+	defer job.Close() // 关作业 ⇒ 整棵树一起收（含孙进程）
+	err = cmd.Wait()
+	raw := buf.String()
 	r, perr := Parse(out)
 	if perr != nil {
 		if err != nil {
