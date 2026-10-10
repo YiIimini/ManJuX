@@ -57,6 +57,11 @@ func newTestServer(t *testing.T) *Server {
 	// 用例的产线(2026-09-26 实测)。换成记录器后,被测的是"哪条入口请求了开跑、开的是哪本书"
 	// (这正是当初漏掉的行为),真实启动留给真机端到端。
 	s.startProdFn = func(string, []string) bool { return true }
+	// 桌面壁纸（2026-10-10）：设系统壁纸是**有真副作用**的动作（改跑测试那台机器的桌面），
+	// 所以默认换成「什么都不做」的替身；要断言行为的用例自己覆盖这两个字段。
+	// 读回也默认回空串（＝「不知道」）—— 真机当前壁纸在哪是环境状态，不能拿来当判据。
+	s.setDesktopWallpaper = func(string) error { return nil }
+	s.getDesktopWallpaper = func() string { return "" }
 	return s
 }
 

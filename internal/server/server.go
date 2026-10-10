@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/YiIimini/ManJuX/internal/config"
 	"github.com/YiIimini/ManJuX/internal/engine"
@@ -69,6 +70,31 @@ type Server struct {
 	// 当初漏掉的那件事(用户点「项目包导入」导了 40 集,一行 ▶ 都没有)。真实产线的启动
 	// 由真机端到端跑覆盖,不靠单元测试假装。
 	startProdFn func(prefix string, eps []string) bool
+
+	// 桌面壁纸 = 把库里那张真正设成**本机系统桌面壁纸**（2026-10-10）。
+	//
+	// 设系统壁纸是**有真副作用**的动作（会改跑这段代码那台机器的桌面），所以出口留成可注入的：
+	// 单元测试里换成记录器 / 抛错器，**绝不去动真桌面**（见 newTestServer）。读回也留了接缝 ——
+	// 门要能断言「平台知道系统现在是哪张」，而不是只看平台自己写的那份状态。
+	setDesktopWallpaper func(path string) error
+	getDesktopWallpaper func() string
+
+	// 桌面壁纸轮换（幻灯片）：**只在平台运行期间**跑，一条 goroutine 按间隔换一张。
+	// 状态落 data/wallpapers/desktop.json（deskStateFile）；deskTick > 0 是测试用
+	// （门里用 20ms 验「起得来、停得住」，否则要等 30 分钟）。
+	deskMu     sync.Mutex
+	desk       desktopState
+	deskLoaded bool
+	deskRun    bool
+	deskStop   chan struct{}
+	deskDone   chan struct{}
+	deskSeq    []string
+	deskPos    int
+	deskTick   time.Duration
+
+	// wallpaperDesktopOK 测试可覆盖「本平台支持吗」—— 好让「不支持的平台要如实拒绝（501）」这条也有门。
+	// 生产上留空 ⇒ 走 wallpaper_desktop_windows.go / _other.go 的平台真值。
+	wallpaperDesktopOK func() bool
 }
 
 // SetQuitFunc 注入桌面模式的退出函数(Wails runtime.Quit)。
@@ -381,6 +407,12 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/wallpapers/prompt", s.handleWallpaperPrompt)
 	m.HandleFunc("POST /api/wallpapers/generate", s.handleWallpaperGenerate)
 	m.HandleFunc("DELETE /api/wallpapers/item", s.handleWallpaperDelete)
+	// 桌面壁纸 = **真正设成本机系统桌面壁纸**（2026-10-10 用户：「桌面壁纸可以管理设置当前系统桌面壁纸
+	// （幻灯片、单图等相关功能）」）：单图走 Windows 自己的接口（SPI_SETDESKWALLPAPER，设完读回来对齐），
+	// 幻灯片由**平台自己按间隔轮换**（不写 Windows 那套混淆的幻灯片配置，理由见 wallpaper_desktop.go）。
+	m.HandleFunc("GET /api/wallpapers/desktop", s.handleWallpaperDesktop)
+	m.HandleFunc("POST /api/wallpapers/desktop/apply", s.handleWallpaperDesktopApply)
+	m.HandleFunc("POST /api/wallpapers/desktop/stop", s.handleWallpaperDesktopStop)
 	m.HandleFunc("GET /api/novels/detail", s.handleNovelDetail)
 	m.HandleFunc("GET /api/novels/script", s.handleNovelScript)
 	m.HandleFunc("GET /api/novels/read", s.handleNovelRead)

@@ -1,5 +1,39 @@
 # 更新日志
 
+## 桌面壁纸设成系统壁纸：单图 + 平台自己的幻灯片（2026-10-10）
+
+专题：`docs/桌面壁纸设成系统壁纸-2026-10-10.md`。用户原话：「桌面壁纸可以管理设置当前系统桌面壁纸
+（幻灯片、单图等相关功能）」。
+
+**① 先取证，再决定**：Windows 11 的幻灯片源目录 `SlideshowDirectoryPath1` 实测是 **354 字节二进制**
+（base64 外层 + shell item 结构，hex 头 `80500503…`，**没有可读路径**）⇒ **不猜着写**（真机里那套配置
+**正在用**：30 分钟、随机、源 `D:\Others\图片`）。于是 **单图** = `SystemParametersInfoW(SPI_SETDESKWALLPAPER)`
+（**设完用 `SPI_GETDESKWALLPAPER` 读回来对齐**）；**幻灯片** = **平台自己按间隔轮换**（顺序/随机），
+**注册表一个字节都不写**（门禁 `RegSetValueEx`/`RegCreateKeyEx`/`RegDeleteValue`）。
+
+**② 新文件/接口**：`internal/server/wallpaper_desktop.go`（状态机 + 三个 handler + `normDeskInterval` /
+`deskOrder` / `deskPosAfter` / `deskRotateOnce` / `deskStartRotation` / `deskStopRotation`）、
+`wallpaper_desktop_windows.go`（user32 的 SPI + `regDWORD` 只读注册表）、`wallpaper_desktop_other.go`
+（非 Windows 如实说"本平台不支持"）；`GET /api/wallpapers/desktop`、
+`POST /api/wallpapers/desktop/apply`、`POST /api/wallpapers/desktop/stop`。前端 `WallpapersView.vue`
+桌面分类多一条「系统壁纸」栏（间隔/随机/开始·停止轮换）+ 每张「设为壁纸」+ 当前那张带「系统壁纸」角标。
+
+**③ 纪律**：只有桌面分类能设（竖版设到横版桌面上会被裁 ⇒ 400 并说清去哪儿出横版）；
+**设失败不许写状态**（`deskSet` 在 `deskUpdate` 之前 —— 否则界面说"已设为壁纸"而系统上什么都没变）；
+**测试绝不动真桌面**（出口可注入：`setDesktopWallpaper`/`getDesktopWallpaper`/`wallpaperDesktopOK`，
+`newTestServer` 默认接空操作）；边界**如实播报**（轮换只在平台运行期间生效、平台重启不会自动接着轮）
+＋ `native_note` 提醒"系统自己那套幻灯片可能按它的节奏把平台设的图换掉"（**只读**得来）。
+
+**④ 真机实测**（`TestZZProbeWallpaperDesktopLive`，`MANJUX_LIVE_PROBE=1`）：读当前壁纸
+`…\data\壁纸\深海鲸鱼娘-银金游弋-备选-3440x1440.png`（5,156,431 字节）→ **原样设回** → 读回**逐字一致**，
+0.07 秒；`WallpaperStyle` / `TileWallpaper` / `BackgroundType` **一个都没变**。
+
+**⑤ 门 9 条 + 反向验证 14/14 全红**（`scratch/reverse_verify_wallpaper_desktop.ps1`）。反向验证当场
+**咬出两个真问题**并当轮修掉：**自死锁**（`deskRotateOnce` 持锁时调 `deskSeqBuild`，后者要读状态、拿同一把锁
+⇒ 只在"序列走完重排"那步触发，最初的门只等到第 3 次**全绿**，反向验证把它逼到 `go test` **600 秒超时**才报栈；
+修法：重排挪到锁外，且门现在**跨过一整轮**）与**门判据太软**（门 9 原来数 `停止轮换` 四个字，而那四个字也
+出现在 JS 提示文案里 ⇒ 把按钮删了照样绿；改成咬**按钮标记** `>停止轮换</el-button>`）。
+
 ## 新增「壁纸库」：手机/桌面两分类 + 描述→LLM 写词→可编辑→文生图（2026-10-10）
 
 专题：`docs/壁纸库-手机与桌面两分类-2026-10-10.md`。用户原话：「新增"壁纸库"，分类"手机壁纸"和"桌面壁纸"，

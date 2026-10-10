@@ -195,6 +195,11 @@ export const api = {
   wallpaperPrompt: (desc, kind) => req('POST', '/api/wallpapers/prompt', { desc, kind }),
   wallpaperGenerate: (body) => req('POST', '/api/wallpapers/generate', body),
   wallpaperDelete: (file) => req('DELETE', '/api/wallpapers/item?file=' + encodeURIComponent(file)),
+  // 桌面壁纸 = 设成**本机系统桌面壁纸**（2026-10-10 用户「桌面壁纸可以管理设置当前系统桌面壁纸
+  // （幻灯片、单图等相关功能）」）：状态 / 设上去（single 或 slideshow）/ 停轮换。
+  wallpaperDesktop: () => req('GET', '/api/wallpapers/desktop'),
+  wallpaperDesktopApply: (body) => req('POST', '/api/wallpapers/desktop/apply', body),
+  wallpaperDesktopStop: () => req('POST', '/api/wallpapers/desktop/stop', {}),
 
   // ── 以下为原先散落在各视图里的裸 fetch,统一收口到 api 层 ──
   // 收口的意义:错误处理、URL 编码、请求头三件事只写一遍;
