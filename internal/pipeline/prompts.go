@@ -844,12 +844,32 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 		}
 		if lead := PortraitLeadFraming(kind, leadW, leadH); lead != "" {
 			body := StripPortraitLeadFraming(prompt)
+			// 【2026-10-10 用户「定妆照提示词瘦身」】存量成品也要**同一件收口**：
+			// 库里已入库的提示词是"卡 + 装配块"的成品，里面可能同时躺着卡自己带来的取景句
+			// （真机 `char:char_shenyan` 有两份）与旧措辞的收尾纪律 —— 全是多余口径。
+			// 不在这里收，用户点「重新生成」走的就是短路，三套口径**原样保留**。
+			body = TightenSheetFraming(body, kind, leadW, leadH)
 			if strings.HasPrefix(body, lead) {
-				return prompt
+				return body
 			}
 			return project.DropHanRunes(lead) + body
 		}
 		return prompt
+	}
+	// 【2026-10-10 用户「定妆照提示词瘦身：去重复取景块」】卡自己带来的**平台取景声明句**
+	// 在人像三档（人 / Q 版 / 人形机械）里一律先剥掉 —— 三种形态最终都由平台自己写取景
+	// （人/Q 版：尾部 PortraitFramingClause；人形机械：prof.SheetFraming），卡里那份只会稀释。
+	//
+	// 必须排在 `rewriteSheetFraming` **之前**：人形机械/场景那几档的 `prof.SheetFraming` 里
+	// 也可能带"背景/构图"这类词，剥在后面会把平台刚写进去的那句一起吃掉。
+	//
+	// 真机依据（`TestZZProbeSheetSlim`，读盘上 `asset_map.json` 的成品卡）：
+	//   · 人类成品卡 = 平台的开头声明 + 收尾纪律两句（装配前后逐字节相同，已经是一处收口的形态）；
+	//   · **Q 版卡**是被人像那套装配出来的（标记是 IDENTITY FIDELITY），而重新生成走的是
+	//     CHIBI FIDELITY 那条分支 ⇒ 卡里那份人像收尾纪律会与新的 Q 版取景纪律**并存**
+	//     （探针实测：6664 字 → 9554 字，`FRAMING (mandatory)` ×2）—— 就是这里收掉的重复。
+	if kind == KindHuman || kind == KindChibi || kind == KindAndroid {
+		prompt = StripPlatformFramingSentences(prompt)
 	}
 	if prof.RewriteSheetFraming {
 		prompt = rewriteSheetFraming(prompt, prof.SheetFraming)
@@ -858,6 +878,10 @@ func PortraitPrompt(s PortraitSubject, plan *project.Plan) string {
 		// (PortraitFramingClause 在函数尾部追加)。2026-09-27 用户报「定妆照应该是
 		// 上半身正面照片,咋现在头都顶上看不全」——根因就是卡里写死的 `upper-body
 		// framing` 在 9:16 竖幅里装不下整个头。剥掉它,取景只剩一个来源。
+		//
+		// 【顺序】**整句**剥离必须排在**短语**剥离之前：`stripSheetFramingWords` 会把一句里的
+		// `portrait` 单词摘掉（`The picture is a CHEST-UP : …`），整句判据从此认不出它 ——
+		// 而它明明就是同一句取景声明。整句剥离在上面已经做过了（不分人像哪一档）。
 		prompt = stripSheetFramingWords(prompt)
 	}
 	style := ""
@@ -1745,8 +1769,19 @@ func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityK
 		if d == "" {
 			continue
 		}
-		if r := []rune(d); len(r) > 160 {
-			d = string(r[:160]) + "…"
+		// 【2026-10-10 用户「定妆照提示词瘦身：把截断的六段摘要换成结论式一句」】
+		//
+		// 原来这里是**按 160 字符硬切 + 补省略号**，真机那六条（`char:char_shenyan` 那张
+		// 6789 字的卡）**全部切在词中间**：`…long narrow face with a clear jawline, deep-blac…`、
+		// `…its outline feathered and diss…`、`…heavy hooded eyelids over eyes …`、`…thick ey…`。
+		// 半截词对模型不是信息、是噪声，而且占上下文。
+		//
+		// 但**不能整块删**：CAST DISTINCTNESS 是防撞脸的那一块（2026-09-11 实测：不列别人时
+		// 「肥胖→清瘦、疤→无疤」，列出来才掰得住）。所以改成**结论式**：每条收成一个
+		// **完整从句**（在逗号/分号处断，绝不切断单词、不补省略号）—— 判据（脸型/年龄/体态）
+		// 照样在，只是不再带着半截词。
+		if d = distinctnessNote(d); d == "" {
+			continue
 		}
 		parts = append(parts, fmt.Sprintf("%s(%s)", n, d))
 		if len(parts) >= 6 {
@@ -1786,12 +1821,54 @@ func castContrastBlock(plan *project.Plan, selfID, selfName string, kind EntityK
 	// `self` 只用于**文案里的主体名**（"这里的这个人是「X」"）—— 排自己那件事已经由
 	// 上面的 `isSelfCard` 按 id 判过了，这里不再参与任何判据。
 	self := strings.TrimSpace(selfName)
-	return "\n\nCAST DISTINCTNESS (reference note, NOT to be drawn) — other cast members of this series: " + strings.Join(parts, "; ") +
-		". They are listed ONLY so that the subject depicted here (「" + self + "」) is clearly distinguishable from every one of them: " +
-		traits + ". " +
-		// 实测(2026-09-12):不点明"不要画出来"时,模型会把名单里的其他角色当画面元素塞进角落
-		// (郑伯的定妆照里出现了小尺寸的卫东与 Q 版江砚)。名单只作差异化参考:画面里只能有本体一个。
-		"Do NOT depict any of these other characters: " + one + " — 「" + self + "」."
+	// 名单只作差异化参考：画面里只能有本体一个。实测(2026-09-12)：不点明"不要画出来"时，
+	// 模型会把名单里的其他角色当画面元素塞进角落（郑伯的定妆照里出现了小尺寸的卫东与 Q 版江砚）。
+	//
+	// 【2026-10-10 修】selfName 为空时，原来会写出 `the subject depicted here (「」)` 与句尾
+	// `… appears in the frame — .` —— 真机那张卡的结尾就是这个残句。名字拿不到就**整句不提名字**：
+	// 半截话/空括号比不写更容易被模型当成指令。
+	who := "the subject depicted here"
+	tail := "Do NOT depict any of these other characters: " + one + "."
+	if self != "" {
+		who = "the subject depicted here (「" + self + "」)"
+		tail = "Do NOT depict any of these other characters: " + one + " — 「" + self + "」."
+	}
+	return "\n\nCAST DISTINCTNESS (reference note, NOT to be drawn) — other cast members of this series: " +
+		strings.Join(parts, "; ") +
+		". They are listed ONLY so that " + who + " is clearly " +
+		"distinguishable from every one of them: " + traits + ". " + tail
+}
+
+// distinctnessEntryRunes CAST DISTINCTNESS 里**每条**别人外形摘要的字符上限（结论式，不是硬切）。
+//
+// 真机那张卡原来是 160 字符硬切 + 省略号，六条全切在词中间。收到 110 是为了**瘦身**
+// （用户 2026-10-10 的要求）而又不丢判据：脸型/年龄/体态这些"一眼可辨"的信息都在头两个从句里。
+const distinctnessEntryRunes = 110
+
+// distinctnessNote 把一条"别人的外形摘要"收成**一个完整从句**（绝不切断单词、不加省略号）。
+//
+// 判据是**从句边界**：在预算内找最后一个 `,` `;` `:` `—` 断开（这类摘要本身就是
+// "年龄/体型, 脸型, 眼型, …" 的并列从句）；找不到就在最后一个空格处断（仍是完整单词）；
+// 连空格都没有的畸形串才硬切。返回空串表示"这条没内容"，调用方**跳过不入列**
+// （占位/半截条目会被模型当成"画面上要写的字"——见 cast_distinct_test.go 的空条目那几条）。
+func distinctnessNote(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	trim := func(x string) string { return strings.TrimRight(strings.TrimSpace(x), " ,;:.—-") }
+	r := []rune(s)
+	if len(r) <= distinctnessEntryRunes {
+		return trim(s)
+	}
+	head := string(r[:distinctnessEntryRunes])
+	if i := strings.LastIndexAny(head, ",;:—"); i >= 40 {
+		return trim(head[:i])
+	}
+	if i := strings.LastIndexAny(head, " \t"); i >= 40 {
+		return trim(head[:i])
+	}
+	return trim(head)
 }
 
 // backfillAssets 渲染前自动补齐缺失的参考图:资产阶段未跑/未生成全时,
@@ -2024,21 +2101,11 @@ func englishIdentitySummary(ch project.Character) string {
 func MediumLabel(m string) string { return mediumLabel(m) }
 
 // mediumLabel 介质族的中文说法（播报与界面提示用；空串 = 未声明介质，不参与判定）。
-func mediumLabel(m string) string {
-	switch m {
-	case "live":
-		return "真人实拍"
-	case "2d":
-		return "二维动画"
-	case "3d":
-		return "三维 CG"
-	case "painted":
-		return "手绘/水墨"
-	case "stopmotion":
-		return "定格动画"
-	}
-	return m
-}
+//
+// 【2026-10-10】实现**只剩这一份**：词表与判定搬进 `internal/project/style_medium.go`
+// （那边 `ValidatePlan` 拿得到，用来判 **LLM 自编的 plan.Style** —— 预设 key 这一路只是其中一半）。
+// 这里保留函数名（调用方与测试都按它写），内容转发过去，免得同一句话两处各有一张表。
+func mediumLabel(m string) string { return project.MediumFamilyLabel(m) }
 
 // MediumOf 预设 key 的介质族（未知 key 或未声明介质 ⇒ 空串）。
 func MediumOf(key string) string {

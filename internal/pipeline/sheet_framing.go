@@ -384,9 +384,16 @@ func firstSentenceEnd(s string) int {
 }
 
 // hitsFramingPhrase 这一句里有没有平台自己的取景语汇。
+//
+// 【2026-10-10 修：**大小写不敏感**】真机那张卡里同一件事有三种写法 ——
+// `BUST PORTRAIT (…)`（全大写）、`SCALE (mandatory): …`、`The picture is a CHEST-UP portrait: …`
+// （**CHEST-UP 大写、portrait 小写**）。词表里写的是 `CHEST-UP PORTRAIT`，原实现 `strings.Contains`
+// 逐字比对 ⇒ 第三句**一个词都不命中**，于是"取景说了三遍"里总有一句剥不掉
+// （调试实测：句首 80 字符探针返回 false，而人眼看就是同一句话）。
 func hitsFramingPhrase(sentence string) bool {
+	low := strings.ToLower(sentence)
 	for _, p := range platformFramingPhrases {
-		if strings.Contains(sentence, p) {
+		if strings.Contains(low, strings.ToLower(p)) {
 			return true
 		}
 	}

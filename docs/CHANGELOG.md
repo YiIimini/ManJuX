@@ -1,5 +1,39 @@
 # 更新日志
 
+## 四条待办：风格介质判据 / 定妆照瘦身 / VLM 预算 / 取景与画幅（2026-10-10）
+
+专题：`docs/四条待办-风格介质与VLM预算与定妆照瘦身-2026-10-10.md`。
+
+用户点名四条，全部落地（每条一门 + 反向验证，脚本 `scratch/reverse_verify_four_2026-10-10.ps1`，**8/8 全红**）。
+
+**① 风格介质矛盾接到 `ValidatePlan`（LLM 自编那句也判）**：判据原来只吃"用户勾的预设 key"。
+新建 `internal/project/style_medium.go`（五族词表 + **否定窗口 28 字符**：本书那句
+`NOT a plastic 3D render` 是**否定**、不算声明 3D；中文族名只此一份），`plan_contract.go` 的风格判据
+加一支 ⇒ `add("warn","plan.style",…)`，**渲染前**就点名（预检/入口都看得见）；
+pipeline 的 `mediumLabel` 改成委托同一份词表。**门** `style_medium_test.go` 三条（真机本书
+`art_style` 原文不许误报 / 真机 LLM 自编串读出"手绘+三维 CG" / `ValidatePlan` 挂 warn）。
+
+**② 定妆照提示词瘦身**：
+① **取景**：`StripPlatformFramingSentences` 提到人像三档（人/Q版/人形机械）在 `rewriteSheetFraming`
+**之前**统一剥（`hitsFramingPhrase` 改大小写不敏感 —— `CHEST-UP portrait` 半大写原来一个词都不命中）；
+存量成品（走幂等短路的"重新生成"）新增 `TightenSheetFraming`：**同一判据**删多余取景句、
+保留当前措辞的收尾纪律（缺了补在 FACE ID 之前）、**其余字节原样保留**。
+真机探针（`zz_probe_sheet_slim_live_test.go`）量到：人的那批卡装配前后**逐字节相同**；
+**Q 版卡 9554 → 8347 字**（改前 `FRAMING (mandatory)` ×2、两套取景纪律并存）。
+平台自己的两句（开头声明 + 收尾纪律，2026-09-27 对照实验产物）**不动**。
+② **CAST DISTINCTNESS**：六条摘要从"160 字符硬切 + 省略号"改成**完整从句**（110 字符内、逗号/分号处断、
+不加省略号）；真机同一批卡 **966 → 475 字符（−491）**；块本身（防撞脸）一字不动。
+**门** `portrait_slim_test.go` 四条（含"旧措辞特征串 `head-to-body ratio` 必须没了"——
+反向验证当场咬出"只数 `chest-up portrait`"是摆设：短语剥离会把 `CHEST-UP portrait` 摘成 `CHEST-UP :`）。
+
+**③ VLM 预算**：`visionMaxTokens = 16384` / 重试 `32768`；`ChatVision` 收到 200 就解析，
+**空正文自动加一倍重试一次**，仍空**如实报错**（带 `finish` 与预算，并给"换非推理模型/减表项"的建议）。
+**门** `internal/llm/vision_budget_test.go` 两条（httptest：正好重试一次且预算更大 / 两次都空 ⇒ 报错含 finish）。
+
+**④ 取景/分辨率二选一**：选**"真做成胸像"**（取景口径收口），**不改出图尺寸** —— 参考图 = 成片画幅是既有设计
+（`asset_size_test.go`），拔高尺寸会让 48 集存量资产全部作废，而"更高分辨率有没有用"本轮**没实测**。
+本轮**没做重出图 A/B**（脚本给了一键复测的 `cmd/imagecheck` 命令）。
+
 ## 借鉴 huobao-drama：按资产种类分口径（物件不再拿人像的介质词）+ 场景无人物口径（2026-10-10）
 
 专题：`docs/借鉴huobao-drama-按资产种类分口径-2026-10-10.md`。

@@ -312,6 +312,12 @@ type VisionContent struct {
 	Images []string `json:"images"` // data URI(data:image/png;base64,…)
 }
 
+// 视觉多模态的 token 预算（起步 / 空正文自动重试用）。2026-10-10 实测依据见 ChatVision 的注释。
+const (
+	visionMaxTokens      = 16384
+	visionMaxTokensRetry = 32768
+)
+
 // ChatVision 多模态对话(OpenAI 兼容 image_url 协议)。
 //
 // max_tokens 从 2048 提到 8192(2026-09-27 实测):GLM 一类**思考型**视觉模型的推理 token
@@ -342,7 +348,7 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 	body := map[string]any{
 		"model":       c.model,
 		"messages":    msgs,
-		"max_tokens":  8192,
+		"max_tokens":  visionMaxTokens,
 		"temperature": 0.2,
 	}
 	// json 模式兼容（2026-09-27 实测定案）：OpenAI 兼容端点里有一类要求**提示词里出现
@@ -359,7 +365,14 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 	}
 	var out []byte
 	var resp *http.Response
-	for attempt := 0; attempt < 3; attempt++ {
+	// 【2026-10-10 用户「VLM 预算」】视觉预算：真机实测（deepseek-flash，同一张图、同一份 5 条评分表）
+	// max_tokens=2048/4000 ⇒ **正文 0 字**（推理吃干净、finish=length），8192 才出正文（思考占 5347）
+	// —— 余量只有 1.5 倍，评分表再长一点或一次发多张图就整条"判不了"。
+	// 现在：起步给足 16k；**拿到空正文就自动加一倍再试一次**，仍空才如实报错（说清该怎么办）。
+	budget := visionMaxTokens
+	finish := ""
+	for attempt := 0; attempt < 4; attempt++ {
+		body["max_tokens"] = budget
 		raw, _ := json.Marshal(body)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(raw))
 		if err != nil {
@@ -373,7 +386,28 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 		}
 		out, _ = io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 		if resp.StatusCode == http.StatusOK {
-			break
+			var cr chatResponse
+			if uerr := json.Unmarshal(out, &cr); uerr != nil {
+				resp.Body.Close()
+				return "", uerr
+			}
+			if len(cr.Choices) == 0 {
+				resp.Body.Close()
+				return "", fmt.Errorf("VLM 返回空 choices")
+			}
+			content := strings.TrimSpace(cr.Choices[0].Message.Content)
+			finish = cr.Choices[0].FinishReason
+			resp.Body.Close()
+			if content != "" {
+				return stripReasoning(content), nil
+			}
+			// 空正文 = 思考把预算吃干净（思考模型）⇒ 加一倍再试一次。
+			if budget < visionMaxTokensRetry {
+				budget = visionMaxTokensRetry
+				continue
+			}
+			return "", fmt.Errorf("VLM 返回空内容(finish=%s)：视觉预算已加到 %d 仍拿不到正文"+
+				"（换非推理模型，或把这一次的评分表/图片数量减一减）", finish, budget)
 		}
 		// json 模式被端点拒绝（400/422）→ 去掉 response_format 重试一次。
 		if curJSON && (resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity) {
@@ -392,22 +426,11 @@ func (c *Client) ChatVision(ctx context.Context, system string, turns []VisionCo
 			}
 			continue
 		}
-		defer resp.Body.Close()
-		return "", fmt.Errorf("VLM HTTP %d: %s", resp.StatusCode, textutil.Truncate(string(out), 300))
+		code := resp.StatusCode
+		resp.Body.Close()
+		return "", fmt.Errorf("VLM HTTP %d: %s", code, textutil.Truncate(string(out), 300))
 	}
-	defer resp.Body.Close()
-	var cr chatResponse
-	if err := json.Unmarshal(out, &cr); err != nil {
-		return "", err
-	}
-	if len(cr.Choices) == 0 {
-		return "", fmt.Errorf("VLM 返回空 choices")
-	}
-	content := strings.TrimSpace(cr.Choices[0].Message.Content)
-	if content == "" {
-		return "", fmt.Errorf("VLM 返回空内容(finish=%s)", cr.Choices[0].FinishReason)
-	}
-	return stripReasoning(content), nil
+	return "", fmt.Errorf("VLM 未返回可用正文(finish=%s)", finish)
 }
 
 // appendJSONHint 开 json 模式时**主动**让提示词里出现 "json" 字样。

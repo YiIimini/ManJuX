@@ -396,6 +396,14 @@ func ValidatePlan(p *Plan) []Issue {
 	}
 	if strings.TrimSpace(p.Style) == "" {
 		add("warn", "plan.style", "视觉风格为空 —— 每镜提示词会缺风格句,画风可能漂")
+	} else if c := StyleMediumConflictNote(p.Style); c != "" {
+		// 【2026-10-10 用户「风格串互斥不判 LLM 自编的那一句」】风格串里**介质互相矛盾**：
+		// 真机 `plan.style` 被剧本会话自编成「半写实绘画风，3D CG 质感」——与本书风格卡的
+		// `NOT a plastic 3D render` 正相反；平台按 `3d cg` 展开后出图就是塑料娃娃
+		// （VLM 原话：「皮肤蜡感、磨皮重」「像 3D 塑料娃娃，不像真人定妆」）。
+		// 这条判据此前只吃"用户勾的预设 key"，LLM 自编的那一句从来没被判过 —— 现在接在这里，
+		// **渲染前**就点名（预检/入口都能看到）。口径不变：照它渲，平台只负责当场说清。
+		add("warn", "plan.style", "视觉风格的介质互相矛盾(%s)：%s", c, StyleMediumConflictAdvice())
 	}
 
 	// —— 判据分组（顺序即行为，逐组见 plan_checks.go）——
