@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/YiIimini/ManJuX/internal/pipeline"
@@ -66,28 +67,30 @@ func coverPromptPath(bookDir string) string {
 //
 // 组成部分全部来自这本书**自己声明过**的东西（唯一出处是 scanNovelStyle，见 novels_style.go），
 // 不调模型、不猜剧情：
-//   - 书名 —— 而且**放进英文引号里**：官方 ON-SCREEN TEXT 的判据是「**没被英文引号括起来的文字，
-//     就是模型会画成字形的来源**」（见 project/prompt_cjk.go 顶上那段），所以"想让它出现在封面上"
-//     的字只有一种写法：放进引号。封面上有书名才像封面；
-//   - 立项.json 的 art_style / 渲染风格串 / 画风，或 设定集/视觉风格卡-*.md 里的风格串（有则用 ——
-//     封面与正片必须同一口径，否则封面跟片子看起来不像一套）；
-//   - 一条固定的竖版封面构图口径（下三分之一留标题位）。
+//   - 构图/风格（本书风格串，有则用 —— 封面与正片必须同一口径，否则封面跟片子看起来不像一套）；
+//   - **画面文字**由 `coverTextClause` 唯一承担（书名在英文引号里，且是"画面里唯一的一处文字"）。
 //
 // **正文必须是英文**（照平台自己的图像侧口径：出图装配只吃英文提示词，汉字注解会被当成
 // "要画的字"照抄 —— 见 pipeline/artstyle.go 里那条 StripCJK 注释）。上一版把整句写成中文，
 // 与这条口径冲突：那等于让模型把"下三分之一留出标题位置"这类**说明**也当字形画到封面上去。
 // 于是判据很干脆：**这份词里引号之外不许出现任何汉字**（引号内只有书名）。
+//
+// 【2026-10-10 再改·用户「封面文字内容版本需要优化」】原来这里写的是
+// `The cover title text "《书名》" typeset clearly on the poster. No other text, no subtitles,
+// no watermark, no signature.` —— 真机出图后，书名下方**照样多了一行乱码伪字**（平台自己的 VLM
+// 原话：「下方小字：乱码/糊成一团」「7) 不能：主标题正确清晰，但底部乱码小字必须删掉或重做后才可用」）。
+// 病根在否定式：出图侧 cfg=1.0，**否定词不生效**，而提到的名词会被当成要画的东西。
+// 所以这里改成正向的唯一一处文字口径，一句话都不提别的。
 func coverSeedPrompt(bookDir, bookName string) string {
 	name := strings.TrimSpace(bookName)
 	var b strings.Builder
-	fmt.Fprintf(&b, "Vertical 3:4 poster key visual for the Chinese short drama \"《%s》\". ", name)
+	b.WriteString("Vertical 3:4 poster key visual for a Chinese short drama. ")
 	if st := strings.TrimSpace(scanNovelStyle(bookDir).Style); st != "" {
 		b.WriteString(st + ". ")
 	}
-	fmt.Fprintf(&b, "Single hero subject, centered slightly above the middle, lower third kept clean for the title; "+
-		"dramatic cinematic lighting, shallow depth of field, highly detailed. "+
-		"The cover title text \"《%s》\" typeset clearly on the poster. "+
-		"No other text, no subtitles, no watermark, no signature.", name)
+	b.WriteString("Single hero subject, centered slightly above the middle, dramatic cinematic lighting, " +
+		"shallow depth of field, highly detailed. ")
+	b.WriteString(coverTextClause(name))
 	return b.String()
 }
 
@@ -242,6 +245,12 @@ func (s *Server) handleNovelCoverRedo(w http.ResponseWriter, r *http.Request) {
 	type cand struct {
 		File string `json:"file"`
 		Seed int64  `json:"seed"`
+		// 出图之后的**文字判定**（judgeCoverText）：封面上只许有书名一处文字。
+		// 判不了时 Judged=false + TextNote 说清原因 —— **不许把"没判成"显示成"干净"**。
+		Judged   bool   `json:"judged"`
+		Stray    bool   `json:"stray"`
+		TitleOK  bool   `json:"title_ok"`
+		TextNote string `json:"text_note"`
 	}
 	out := make([]cand, 0, count)
 	seeds := make([]int64, 0, count)
@@ -267,6 +276,29 @@ func (s *Server) handleNovelCoverRedo(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 500, fmt.Errorf("封面生成失败:没有产出任何候选"))
 		return
 	}
+	// **出图之后判文字**（2026-10-10 用户「封面文字内容版本需要优化」→ 口径：封面上只许有书名一处文字）：
+	// 正向词那侧已经收成"唯一一处文字"（coverTextClause），但**模型不一定照做** —— 真机那张词里
+	// 明明写着 no other text，出图照样在书名下方多画一行乱码伪字。所以让平台自己的视觉模型看一眼，
+	// 把结论**带到每张候选上**（用户挑之前就知道哪张干净）；判不了就如实标"没判成"。
+	verdicts := make([]coverTextVerdict, len(out))
+	{
+		jctx, jcancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer jcancel()
+		var wg sync.WaitGroup
+		for i := range out {
+			wg.Add(1)
+			go func(i int) { // 每张候选各判各的，互不干扰；下标互不相同 ⇒ 不共享可写内存
+				defer wg.Done()
+				verdicts[i] = s.judgeCoverText(jctx, out[i].File, filepath.Base(bookDir))
+			}(i)
+		}
+		wg.Wait()
+	}
+	for i := range out {
+		out[i].Judged, out[i].Stray, out[i].TitleOK = verdicts[i].Judged, verdicts[i].Stray, verdicts[i].TitleOK
+		out[i].TextNote = verdicts[i].Text()
+	}
+	s.opLog("🔎 封面候选文字判定(%d 张):%s", len(out), coverTextSummary(verdicts))
 	// 记下参数(不写正向词):下次打开弹窗能"用上次的 seed / 尺寸"复现
 	writeCoverMeta(bookDir, coverMeta{Prompt: prompt, W: w0, H: h0, Seed: seeds[len(seeds)-1],
 		PromptSaved: in.SavePrompt, At: time.Now()})
@@ -414,12 +446,29 @@ func (s *Server) seedCoverFromTitle(bookDir string) (string, error) {
 	if err := os.MkdirAll(candDir, 0o755); err != nil {
 		return "", err
 	}
-	seed := pipeline.RandomSeed()
-	cand := filepath.Join(candDir, fmt.Sprintf("c%d-%d.png", seed, time.Now().UnixNano()%1000))
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
-	if _, err := eng.GenerateImage(ctx, cp.Prompt, "", seed, w0, h0, cand); err != nil {
-		return "", fmt.Errorf("出图失败:%w", err)
+	// 【2026-10-10 用户「封面文字内容版本需要优化」】这条是**没人盯着**的路（视频制作里
+	// "书没有封面时先出一张"）：出完图让平台自己的视觉模型判一次"封面上除了书名还有没有别的字形"，
+	// 不合格就**换种子重出一轮**（coverTextTries=2，有界）。策略在 coverTextRerollDecision（纯函数，
+	// 已被门穷举）；**只有最后那张落盘**，重出的中间产物留在候选目录里。
+	cand := ""
+	var last coverTextVerdict
+	for try := 0; try < coverTextTries; try++ {
+		seed := pipeline.RandomSeed()
+		p := filepath.Join(candDir, fmt.Sprintf("c%d-%d.png", seed, time.Now().UnixNano()%1000))
+		if _, err := eng.GenerateImage(ctx, cp.Prompt, "", seed, w0, h0, p); err != nil {
+			return "", fmt.Errorf("出图失败:%w", err)
+		}
+		cand = p
+		last = s.judgeCoverText(ctx, cand, filepath.Base(bookDir))
+		again, msg := coverTextRerollDecision(last, try, coverTextTries)
+		if msg != "" {
+			s.opLog("⚠ %s", msg) // 不合格/没判成都**如实播报**（warn 级：用户看得到）
+		}
+		if !again {
+			break
+		}
 	}
 	if _, _, err := s.applyCoverCandidate(bookDir, cand); err != nil {
 		return "", fmt.Errorf("落盘失败:%w", err)
@@ -428,8 +477,9 @@ func (s *Server) seedCoverFromTitle(bookDir string) (string, error) {
 	if cp.Note != "" {
 		note = "；" + cp.Note
 	}
-	s.opLog("🎨 已按书名生成封面:《%s》%d×%d（正向词来自:%s%s）",
-		filepath.Base(bookDir), w0, h0, cp.From, note)
+	text := last.Text()
+	s.opLog("🎨 已按书名生成封面:《%s》%d×%d（正向词来自:%s%s；文字判定:%s）",
+		filepath.Base(bookDir), w0, h0, cp.From, note, text)
 	return filepath.Join(bookDir, "封面", "封面.png"), nil
 }
 

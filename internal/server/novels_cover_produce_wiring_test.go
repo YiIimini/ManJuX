@@ -110,9 +110,17 @@ func TestCoverConfigOpensWithoutArchivedPrompt(t *testing.T) {
 	if !hasCoverTitle(prompt, "书K") {
 		t.Errorf("书名必须放进引号（官方口径下「要画在画面上的字」的唯一写法）：%q", prompt)
 	}
-	for _, want := range []string{"Vertical 3:4", "No other text"} {
+	// 【2026-10-10 用户「封面文字内容版本需要优化」】默认词里的"画面文字"口径改成**正向的唯一一处文字**
+	// （`coverTextClause`）：不能说 no other text 这类否定式 —— 出图侧 cfg=1.0 **否定词不生效**，
+	// 而提到的名词会被当成要画的东西（真机那张写着 no other text，书名下方照样多一行乱码伪字）。
+	for _, want := range []string{"Vertical 3:4", "The only lettering anywhere in the image is the cover title"} {
 		if !strings.Contains(prompt, want) {
-			t.Errorf("默认词里要有竖版封面口径与「只画书名」的收口（缺 %q）：%q", want, prompt)
+			t.Errorf("默认词里要有竖版封面口径与「只许书名一处文字」的正向口径（缺 %q）：%q", want, prompt)
+		}
+	}
+	for _, bad := range []string{"No other text", "no other text", "no watermark", "no subtitles"} {
+		if strings.Contains(prompt, bad) {
+			t.Errorf("默认词里不许出现否定式文字条款（cfg=1.0 下不生效，还会把名词喂给模型）：%q", bad)
 		}
 	}
 	if out["llm_ready"] != false {

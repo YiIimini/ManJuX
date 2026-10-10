@@ -485,7 +485,7 @@ async function genCovers() {
       save_prompt: !!f.savePrompt,
     })
     covCands.value = r.candidates || []
-    ElMessage.success(`已生成 ${covCands.value.length} 张候选 —— 挑一张「用这张」才替换现封面`)
+    ElMessage.success(`已生成 ${covCands.value.length} 张候选 —— 挑一张「用这张」才替换现封面${covTextNote(covCands.value)}`)
   } catch (e) { ElMessage.error(e.message) } finally { covBusy.value = false; loading.close() }
 }
 
@@ -515,7 +515,7 @@ async function quickCoverFromTitle(n) {
     covCands.value = r.candidates || []
     covPromptFrom.value = r && r.from ? `正向词来自：${r.from}` : ''
     coverBust.value = Date.now()
-    ElMessage.success(`已按书名出 ${covCands.value.length} 张候选 —— 挑一张「用这张」才替换现封面`)
+    ElMessage.success(`已按书名出 ${covCands.value.length} 张候选 —— 挑一张「用这张」才替换现封面${covTextNote(covCands.value)}`)
     if (covCands.value.length) { cmpIndex.value = 0; cmpOpen.value = true }
   } catch (e) { ElMessage.error(e.message) } finally { loading.close() }
 }
@@ -523,6 +523,18 @@ async function quickCoverFromTitle(n) {
 // 候选图的预览地址(候选也在小说库内,走同一个只读接口)
 function candURL(file) {
   return '/api/novels/cover?path=' + encodeURIComponent(file) + '&t=' + coverBust.value
+}
+
+// covTextNote 候选的**文字判定**提示语（2026-10-10 用户「封面文字内容版本需要优化」）：
+// 后端出完图会用平台自己的视觉模型判一次"封面上除了书名还有没有别的字形"，
+// 这里必须**如实转述**——尤其"没能判定"不许被说成"干净"（那样用户会把一张没验过的封面当合格的）。
+function covTextNote(list) {
+  const bad = list.filter(c => c.judged && (c.stray || c.title_ok === false)).length
+  const unjudged = list.filter(c => !c.judged).length
+  const parts = []
+  if (bad) parts.push(`${bad} 张书名之外还有字形`)
+  if (unjudged) parts.push(`${unjudged} 张没能判定文字(不等于验过)`)
+  return parts.length ? `（文字：${parts.join('、')}）` : '（文字：都只有书名一处）'
 }
 
 // 封面对比:候选不再走"单张放大"(用户 2026-09-26:「重做的封面放大预览左侧需要显示旧的,
@@ -773,6 +785,12 @@ function onCardCmd(cmd, n) {
               <div v-for="(c, i) in covCands" :key="c.file" class="cand-item">
                 <img :src="candURL(c.file)" alt="" title="点击与现封面并排对比(左旧右新)" @click="openCompare(i)" />
                 <div class="flex items-center gap-2 mt-1">
+                  <el-tag v-if="c.judged && !c.stray && c.title_ok" size="small" type="success" effect="plain"
+                          title="平台视觉模型判过：图上只有书名一处文字">文字 OK</el-tag>
+                  <el-tag v-else-if="c.judged" size="small" type="warning" effect="plain"
+                          :title="'平台视觉模型判出问题 —— ' + (c.text_note || '')">文字不合规</el-tag>
+                  <el-tag v-else size="small" type="info" effect="plain"
+                          :title="'没能判定图上文字（' + (c.text_note || '') + '）—— 这不等于验过'">文字未判</el-tag>
                   <span class="timecode" style="font-size:10px">seed {{ c.seed }}</span>
                   <div class="flex-1"></div>
                   <el-button type="primary" size="small" @click="applyCover(c.file)">用这张</el-button>

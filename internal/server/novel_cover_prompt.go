@@ -45,14 +45,151 @@ const coverPromptSys = `你是短剧封面提示词的撰稿人。给你一本�
 
 硬要求（逐条都得满足）：
 1. 只输出那一段英文提示词：不要解释、不要 markdown 围栏、不要用引号把整段包起来、不要编号。
-2. 书名必须出现在提示词里，并且**放进英文双引号**，例如：the cover title text "《书名》" typeset on the poster。
-   原因：官方 ON-SCREEN TEXT 的判据是「没被英文引号括起来的文字，就是模型会画成字形的来源」—— 引号是"要画在画面上的字"的唯一写法。
+2. 书名必须出现在提示词里、并**放进英文双引号**（官方 ON-SCREEN TEXT 的判据是「没被英文引号括起来的文字，
+   就是模型会画成字形的来源」—— 引号是"要画在画面上的字"的唯一写法）。
 3. 除引号里的书名之外，**整段不许出现任何汉字**（引号外的汉字会被模型当字形画出来，变成乱码）。
-4. 必须写明：no other text, no subtitles, no watermark, no signature。
+4. **封面上只许有书名这一处文字**，而且只能用**正向陈述**写 —— 说清"这一处文字是什么"，
+   例如：The only lettering anywhere in the image is the cover title "《书名》", set as one single block of large elegant serif type in the lower third. 再说画面其余部分是纯影像。
+   **不要写 no / without 这类否定句**，也**不要点名** subtitle / watermark / caption / logo / signature 这些词：
+   出图侧是 cfg=1.0（**否定词不生效**），而提到的名词会被当成要画的东西 —— 实测写了 no other text 之后，
+   书名下方照样多出一行乱码伪字（真机会被用户看见，见 docs 里平台自己的 VLM 原话）。
 5. 构图固定：竖版 3:4、单一主视觉居中偏上、下三分之一留出标题位、电影级打光、浅景深、高细节。
 6. 6-8 个英文短语，用逗号/句号分隔；不要写成一大段散文。
 
 直接给出那段英文提示词本身。`
+
+// coverTextClause 封面上**那一处文字**该怎么写 —— 全平台唯一出处
+// （2026-10-10 用户「封面文字内容版本需要优化」，口径定为「**封面上只许有书名一处文字**」）。
+//
+// ## 真机取证（先有证据再改，不是口味）
+//
+// 平台自己的 VLM 读那张真机封面（`data/小说/离婚后，千亿前夫跪求复合/封面/封面.png`，16:16 生成）原话：
+//
+//  1. 有文字。在下三分之一、居中；主标题约占宽85%、高20%，**下方另有一行极小字**。
+//  2. 主标题：《离婚后，千亿前夫跪求复合》；**下方小字：乱码/糊成一团**。
+//  7. **不能**：主标题正确清晰，但底部乱码小字必须删掉或重做后才可用。
+//
+// 那份词里写着 `no other text, no subtitles, no watermark, no signature` —— 为什么没用：
+//
+//   - 出图侧是 Qwen-Image，**cfg=1.0 ⇒ 否定词不生效**（`pipeline/artstyle.go` 顶上那条平台口径）；
+//   - 而且**提到的名词会被当成要画的东西**（2026-09-12「每个定妆照肩膀上都多了三个 Q 型小人」
+//     就是同型事故：提示词里写了"别人/巴掌大的小人"，模型就照着画）。所以 subtitle / watermark /
+//     caption / logo / signature 这些词**一个都不许出现在图像提示词里**。
+//
+// "只许有一处文字"只能用**正向陈述**表达：这一处**就是**唯一的一处，其余是纯影像。
+// 书名的写法由官方 ON-SCREEN TEXT 决定 ——「**没被英文引号括起来的文字，就是模型会画成字形的来源**」
+// （`project/prompt_cjk.go` 顶上那段）⇒ 想画上去的字必须放进英文引号。
+//
+// **必须是"一句话"**（句内不含句号）：收口是**按句**摘掉再贴这一句的，口径自身若由两句组成，
+// 贴回来时第二句会被当成"画面描述"留下 ⇒ 越收越长（`TestCleanCoverPromptEnforcesOneTextClause`
+// 的幂等断言当场红，见本轮文档"被自己的门咬出"）。
+func coverTextClause(bookName string) string {
+	name := strings.TrimSpace(bookName)
+	return fmt.Sprintf("The only lettering anywhere in the image is the cover title \"《%s》\", "+
+		"one single block of large elegant serif type in the lower third, centered and clearly legible, "+
+		"with every other part of the frame staying pure photographic imagery.", name)
+}
+
+// coverTextSentenceHints 句子触发词：某一句里出现任何一个 ⇒ 这句在**讲画面上的文字**，由平台统一改写。
+// 判据故意窄（宁少勿多）：只认明确指出"这是画面上的字"的词，免得把剧情/构图句一起摘掉。
+var coverTextSentenceHints = []string{
+	"title text", "lettering", "typeset", "typesetting", "on-screen text", "on screen text",
+	"watermark", "subtitle", "subtitles", "caption", "captions", "logo", "signature",
+	"text on the poster", "text in the image", "text on the cover", "text across the",
+}
+
+// coverNegationTextRe 否定式文字条款（"no other text" 这一类）：
+// 它们既拦不住模型（cfg=1.0），又把名词喂了进去 —— 必须摘掉，并能单独点名。
+var coverNegationTextRe = regexp.MustCompile(
+	`(?i)\b(no|without|avoid|free of)\b[^.]{0,80}\b(text|subtitle|subtitles|watermark|signature|logo|caption|captions|lettering|words)\b`)
+
+// enforceCoverText 让一份封面词满足「封面上只许有书名这一处文字」——**平台保证，不靠模型自觉**：
+//  1. **逐句**处理：讲画面文字的整句（命中触发词或否定式）**整句摘掉**；
+//  2. 其余句子里**抹掉书名那一处**（书名只由下面贴的那一句承担 —— 一处文字，不是两处）；
+//  3. 末尾贴上 `coverTextClause`。
+//
+// 注意第 2 条**不能**写成"含书名的整句一起摘掉"：真机那份词的第一句就是
+// `Vertical 3:4 poster key visual for the Chinese short drama "《书名》", single hero subject,
+// dramatic cinematic lighting, highly detailed.` —— 整句摘掉会把**构图与打光**一起丢掉
+// （`TestCoverPromptEndpointForcesLLM` 当场红），而它只是**提到**了书名，不是在讲画面上的字。
+//
+// 返回 (新词, 摘掉的句数, 抹掉的书名处数)；**幂等**（再跑一次结果不变）。
+func enforceCoverText(prompt, bookName string) (string, int, int) {
+	name := strings.TrimSpace(bookName)
+	body := make([]string, 0, 8)
+	dropped, untitled := 0, 0
+	for _, s := range splitSentences(prompt) {
+		if isCoverTextSentence(s) {
+			dropped++
+			continue
+		}
+		var n int
+		s, n = removeQuotedTitle(s, name)
+		untitled += n
+		s = strings.Join(strings.Fields(strings.ReplaceAll(s, "\n", " ")), " ")
+		if s = strings.Trim(s, " ,，。.;:"); s != "" {
+			body = append(body, s)
+		}
+	}
+	clause := coverTextClause(name)
+	if len(body) == 0 {
+		return clause, dropped, untitled
+	}
+	return strings.Join(body, ". ") + ". " + clause, dropped, untitled
+}
+
+// isCoverTextSentence 这一句在不在讲"画面上的文字"：命中触发词、或是否定式文字条款。
+// **只看"有没有在讲文字"**，不看"有没有提到书名"（提到书名只抹掉书名那一处，见 enforceCoverText）。
+func isCoverTextSentence(s string) bool {
+	low := strings.ToLower(s)
+	for _, h := range coverTextSentenceHints {
+		if strings.Contains(low, h) {
+			return true
+		}
+	}
+	return coverNegationTextRe.MatchString(s)
+}
+
+// splitSentences 按句号切句（保留句子内容，不保留句号）——够用即可：
+// 封面词是短句清单，没有缩写/小数会踩到这条。
+func splitSentences(s string) []string {
+	out := make([]string, 0, 8)
+	for _, part := range strings.Split(s, ".") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// removeQuotedTitle 抹掉句子里"书名本身"的那一处（"《名》"/“名”/「《名》」/ 裸《名》都算），
+// 返回 (新串, 抹掉几处)。目的：正文里不许再有第二处书名 —— 书名只由 coverTextClause 那一句承担。
+func removeQuotedTitle(s, bookName string) (string, int) {
+	name := strings.TrimSpace(bookName)
+	if name == "" {
+		return s, 0
+	}
+	pats := []string{
+		"《" + name + "》", "\"" + name + "\"", "\"《" + name + "》\"",
+		"“" + name + "”", "“《" + name + "》”",
+		"「" + name + "」", "「《" + name + "》」",
+	}
+	n := 0
+	for _, p := range pats {
+		for {
+			i := strings.Index(s, p)
+			if i < 0 {
+				break
+			}
+			// 去掉后可能留下 ` ,` / ` , ` 这类残迹：连着清理，免得词看起来像坏的。
+			s = strings.Replace(s, p, "", 1)
+			n++
+		}
+	}
+	s = strings.ReplaceAll(s, " ,", ",")
+	s = strings.ReplaceAll(s, " .", ".")
+	return s, n
+}
 
 // coverPromptSource 封面词的来源（**必须能播报**：用户要能看出这行词是谁写的）。
 type coverPromptSource struct {
@@ -195,24 +332,41 @@ func cleanCoverPrompt(raw, bookName string) (prompt, note string, ok bool) {
 	if !coverPromptUsable(cleaned) {
 		return "", note, false
 	}
-	if !hasCoverTitle(cleaned, bookName) {
-		clause := fmt.Sprintf("The cover title text \"《%s》\" typeset clearly on the poster.", strings.TrimSpace(bookName))
-		cleaned = strings.TrimSpace(cleaned)
-		if cleaned != "" {
-			cleaned = strings.TrimRight(cleaned, " .") + ". " + clause
-		} else {
-			cleaned = clause
+	// **画面文字条款由平台唯一写一份**（2026-10-10 用户「封面文字内容版本需要优化」）：
+	// 模型（或技能端留档）自己写的那些画面文字句**整段摘掉**，尤其是 "no other text" 这类否定式 ——
+	// 出图侧 cfg=1.0 下拦不住，还会把 subtitle/watermark 这些**名词**喂进模型；
+	// 然后贴上 coverTextClause 那一句。于是「封面上只许有书名一处文字」是**平台保证的**。
+	before := cleaned
+	cleaned, dropped, untitled := enforceCoverText(cleaned, bookName)
+	if dropped > 0 || untitled > 0 {
+		why := make([]string, 0, 2)
+		if dropped > 0 {
+			why = append(why, fmt.Sprintf("摘掉模型写的画面文字句 %d 处（否定式在 cfg=1.0 下不生效）", dropped))
 		}
-		if note != "" {
-			note += "；"
+		if untitled > 0 {
+			why = append(why, fmt.Sprintf("正文里另有书名 %d 处已去掉（书名只由平台那一句承担）", untitled))
 		}
-		note += "模型漏了书名标题句，平台补了一句"
+		note = appendCoverNote(note, strings.Join(why, "、"))
+	} else if !hasCoverTitle(before, bookName) {
+		note = appendCoverNote(note, "模型没写书名句，平台按口径补上")
 	}
 	// 补完再核一次（书名句本身也得成句）；任一步不过 ⇒ 不可用
 	if !coverPromptUsable(cleaned) {
 		return "", note, false
 	}
 	return cleaned, note, true
+}
+
+// appendCoverNote 把一句说明接在 Note 后面（空的时候不加分隔符）——同一处收口，免得每种情况各拼一遍。
+func appendCoverNote(note, add string) string {
+	add = strings.TrimSpace(add)
+	if add == "" {
+		return note
+	}
+	if strings.TrimSpace(note) == "" {
+		return add
+	}
+	return note + "；" + add
 }
 
 // hasCoverTitle 词里有没有「引号里的书名」（官方口径下"要画在画面上的字"的唯一写法）。

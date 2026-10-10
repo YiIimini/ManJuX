@@ -37,6 +37,22 @@ func codeLines(src string) string {
 	return strings.Join(out, "\n")
 }
 
+// funcBody 取某个顶层函数**自己的**函数体（从 header 起到下一个 "\nfunc " 之前）。
+// 源码级判据要在函数范围里看：同一个调用点可能在这个文件里出现好几次
+// （比如 applyCoverCandidate 既被「挑定候选」调、又被「按书名出封面」调），
+// 全文件计数会把别的路径算进来 —— 那就成了会误报/漏报的判据。
+func funcBody(src, header string) string {
+	i := strings.Index(src, header)
+	if i < 0 {
+		return ""
+	}
+	rest := src[i:]
+	if j := strings.Index(rest[1:], "\nfunc "); j >= 0 {
+		return rest[:j+1]
+	}
+	return rest
+}
+
 func mustServerSrc(t *testing.T, name string) string {
 	t.Helper()
 	b, err := os.ReadFile(name)
