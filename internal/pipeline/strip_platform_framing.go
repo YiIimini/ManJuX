@@ -98,9 +98,18 @@ const faceIDSegmentHead = "FACE ID"
 // —— 内容看着一样、字节被重排（真机探针咬出：8347 字 → 8347 字，但两次不相等）。
 // 改成**按命中区间删**：`body` 里当前纪律占的那一段整体受保护。
 func TightenSheetFraming(body string, kind EntityKind, width, height int) string {
+	// **只对人像两档（人 / Q 版）**：它们的收尾纪律就是 `PortraitFramingClause`，判据唯一。
+	//
+	// 人形机械**不在内**：它自己那份取景（`androidSheetFraming()`）里同样写着
+	// `FRAMING (mandatory) … cropped at mid-chest … pure white seamless backdrop` ——
+	// 拿本判据去"收口"会把它**自己那份**当多余取景句删掉（平台自己写的取景被吃，最不该发生的事）。
+	// 器物的 `prop render` 等取景纪律同理（`PortraitFramingClause` 对它们返回空串，本来就不进来）。
+	if kind != KindHuman && kind != KindChibi {
+		return body
+	}
 	clause := strings.TrimSpace(PortraitFramingClause(kind, width, height))
 	if clause == "" || strings.TrimSpace(body) == "" {
-		return body // 器物/灵宠/妖兽/场景各有自己的取景纪律，不套人像
+		return body
 	}
 	clauseStart := strings.Index(body, clause)
 	clauseEnd := -1

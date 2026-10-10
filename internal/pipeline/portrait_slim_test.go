@@ -300,3 +300,30 @@ func TestChibiSheetDropsHumanFramingClause(t *testing.T) {
 		t.Errorf("Q 版成品的收口不是幂等的：第一次 %d 字、第二次 %d 字", len(got), len(again))
 	}
 }
+
+// 存量收口**不许碰人形机械/器物自己那份取景**（自审时咬出来的一处风险）。
+//
+// `androidSheetFraming()` 自己也写着 `FRAMING (mandatory) … cropped at mid-chest … pure white
+// seamless backdrop`，而这段文字恰好命中平台的取景语汇 ⇒ 若把"收口"套到人形机械上，
+// **平台自己写的那句会被当多余取景句删掉**（最不该发生的事：自己吃掉自己）。
+func TestTightenSheetFramingLeavesOtherKindsAlone(t *testing.T) {
+	android := portraitLeadBust + "A humanoid machine unit with ceramic armour plates and a synthetic faceplate. " +
+		strings.TrimSpace(androidSheetFraming())
+	if s := TightenSheetFraming(android, KindAndroid, 768, 1344); s != android {
+		t.Errorf("人形机械自己那份取景被收口吃掉了：\n%s", s)
+	}
+	obj := "A single small brass key centred on a plain pure white background, cropped at mid-chest for scale."
+	if s := TightenSheetFraming(obj, KindObject, 768, 1344); s != obj {
+		t.Errorf("器物不该被套人像取景纪律：%q", s)
+	}
+	// 真机形态的**人形机械成品**走一遍装配：那句 android 取景必须还在。
+	proj := &project.Project{}
+	proj.Config.Params = project.DefaultStageParams()
+	plan := &project.Plan{Style: "国风电影级"}
+	stored := android + " ANDROID / HUMANOID-MACHINE FIDELITY (mandatory): copy the unit exactly, item by item."
+	got := PortraitPromptForProject(proj, plan, project.Character{ID: "char_q7", Name: "祁七", Kind: "android",
+		Description: "非人类机体", ImagePrompt: stored})
+	if !strings.Contains(got, strings.TrimSpace(androidSheetFraming())) {
+		t.Errorf("重新生成人形机械时，它自己那份取景纪律丢了：\n%s", got)
+	}
+}
