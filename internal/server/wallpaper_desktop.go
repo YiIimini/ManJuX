@@ -253,7 +253,7 @@ func (s *Server) deskRotateInterval() time.Duration {
 // deskSeqBuild 排一条轮换序列（= 清单按顺序偏好排好，取路径）。
 func (s *Server) deskSeqBuild(seed int64) []string {
 	st := s.deskState()
-	files := deskOrder(listWallpapers(s.wallpaperRoot(), wallpaperKindDesktop), st.Shuffle, seed)
+	files := deskOrder(s.listWallpapers(wallpaperKindDesktop), st.Shuffle, seed)
 	out := make([]string, 0, len(files))
 	for _, f := range files {
 		out = append(out, f.File)
@@ -394,9 +394,9 @@ func (s *Server) deskStatus() wallpaperDesktopStatus {
 		OrderLabel:  deskOrderLabel(st.Shuffle),
 		Running:     s.deskRunning(),
 		Current:     cur,
-		Count:       len(listWallpapers(s.wallpaperRoot(), wallpaperKindDesktop)),
+		Count:       len(s.listWallpapers(wallpaperKindDesktop)),
 	}
-	if cur != "" && s.inWallpaperRoot(cur) {
+	if cur != "" && s.wallpaperKindOfPath(cur) == wallpaperKindDesktop {
 		out.CurrentInLibrary = true
 		out.CurrentName = filepath.Base(cur)
 	}
@@ -448,12 +448,14 @@ func (s *Server) handleWallpaperDesktopApply(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	p := strings.TrimSpace(in.File)
-	if !s.inWallpaperRoot(p) {
-		writeErr(w, 403, fmt.Errorf("路径超出壁纸库范围"))
+	// 先认"这张属于哪一类"（输出目录可能被用户改过 ⇒ 不能拿旧路径拼）：
+	// 不在任何一类目录里 = 越界；在手机那一类里 = 竖版设横版桌面会被裁（400 说清）。
+	kind := s.wallpaperKindOfPath(p)
+	if kind == "" {
+		writeErr(w, 403, fmt.Errorf("路径不在壁纸的输出目录里（若你改过输出目录，老目录里的图就不再属于这一类）"))
 		return
 	}
-	// 只认桌面分类（理由见文件头）：手机壁纸是竖版，设到横版桌面上会被裁
-	if !sameFile(filepath.Dir(p), wallpaperKindDir(s.wallpaperRoot(), wallpaperKindDesktop)) {
+	if kind != wallpaperKindDesktop {
 		writeErr(w, 400, fmt.Errorf("只能把「桌面壁纸」设成系统桌面壁纸：手机壁纸是竖版(9:16)，设到横版桌面上会被裁掉两侧。"+
 			"想在桌面上用，就在桌面分类里出一张（「生成壁纸」可以勾上同时生成手机 + 桌面）"))
 		return

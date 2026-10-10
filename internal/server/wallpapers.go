@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -48,10 +49,9 @@ func (s *Server) wallpaperRoot() string {
 	return filepath.Join(strings.TrimSpace(s.cfg.Get().DataDir), "wallpapers")
 }
 
-// wallpaperKindDir 某分类的目录。
-func wallpaperKindDir(root, kind string) string {
-	return filepath.Join(root, kind)
-}
+// 分类目录与路径守卫的**唯一出处**在 wallpaper_dirs.go（输出目录可由用户改）：
+// `wallpaperDirOf(kind)` / `inWallpaperDir(p, kind)` / `wallpaperKindOfPath(p)`。
+// 这里只留"配置/默认根"（wallpaperRoot）与分类归一化，避免两处各判一套。
 
 // normWallpaperKind 只认两个分类；其余（含空）归到手机壁纸（默认值写死在一处）。
 func normWallpaperKind(kind string) string {
@@ -61,27 +61,6 @@ func normWallpaperKind(kind string) string {
 	return wallpaperKindMobile
 }
 
-// inWallpaperRoot 校验路径在壁纸库内（防穿越）——与小说库的 inNovelRoot 同一手法。
-func (s *Server) inWallpaperRoot(p string) bool {
-	root := s.wallpaperRoot()
-	if strings.TrimSpace(root) == "" {
-		return false
-	}
-	abs, err := filepath.Abs(p)
-	if err != nil {
-		return false
-	}
-	rAbs, err := filepath.Abs(root)
-	if err != nil {
-		return false
-	}
-	rel, err := filepath.Rel(rAbs, abs)
-	if err != nil {
-		return false
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
 // wallpaperSize 一个可选分辨率。**16 对齐**是图像侧的硬要求（见 normWallpaperSize）。
 type wallpaperSize struct {
 	W     int    `json:"w"`
@@ -89,20 +68,30 @@ type wallpaperSize struct {
 	Label string `json:"label"`
 }
 
-// wallpaperSizes 分类的默认分辨率档：手机竖版 9:16、桌面横版 16:9。
+// wallpaperSizes 分类的分辨率档（2026-10-10 用户：「壁纸分辨率参数多增加些」）。
 //
-// 数值都是 16 的倍数（1088/1920/1600/896），且在引擎/图像侧的 [512,2048] 区间内 ——
-// 门 `TestWallpaperSizesAre16AlignedAndBounded` 直接喂这个函数。
+// 两条硬约束（不是我的偏好，是图像侧的）：**每条边 16 对齐**、**夹在 [512,2048]**。
+// 所以这里**不可能**有 2K/4K 档（2560/3440/3840/7680 全都超过上限 2048）——
+// 想要"和屏幕一样大"的观感，用 `sizeForScreen`（保持屏幕比例、把最长边压到 2048）。
+// 门 `TestWallpaperSizesAre16AlignedAndBounded` 直接喂这个函数，并且要求**标签开头的尺寸 == 实际像素**
+// （不许标签写 1080、实际出 1072 这种"写着好看"的档）。
 func wallpaperSizes(kind string) []wallpaperSize {
 	if normWallpaperKind(kind) == wallpaperKindDesktop {
 		return []wallpaperSize{
+			{W: 2048, H: 1152, Label: "2048×1152（16:9 最大档 · 出图上限 2048）"},
 			{W: 1920, H: 1088, Label: "1920×1088（16:9 主流桌面）"},
+			{W: 1920, H: 1200, Label: "1920×1200（16:10 桌面）"},
+			{W: 2048, H: 864, Label: "2048×864（21:9 带鱼屏 · 3440×1440 一类）"},
 			{W: 1600, H: 896, Label: "1600×896（16:9 小桌面/笔记本）"},
+			{W: 1280, H: 720, Label: "1280×720（省显存 · 快速试稿）"},
 		}
 	}
 	return []wallpaperSize{
 		{W: 1088, H: 1920, Label: "1088×1920（9:16 主流手机）"},
+		{W: 1200, H: 1920, Label: "1200×1920（5:8 大屏手机）"},
 		{W: 896, H: 1600, Label: "896×1600（9:16 小屏手机）"},
+		{W: 768, H: 1360, Label: "768×1360（9:15 竖版小档）"},
+		{W: 720, H: 1280, Label: "720×1280（省显存 · 快速试稿）"},
 	}
 }
 
@@ -113,15 +102,104 @@ func normWallpaperSize(kind string, w, h int) (int, int) {
 		return def.W, def.H
 	}
 	clamp := func(v int) int {
-		if v < 512 {
-			v = 512
+		if v < wallpaperMinSide {
+			v = wallpaperMinSide
 		}
-		if v > 2048 {
-			v = 2048
+		if v > wallpaperMaxSide {
+			v = wallpaperMaxSide
 		}
-		return v - v%16
+		return v - v%wallpaperAlign
 	}
 	return clamp(w), clamp(h)
+}
+
+// wallpaperSizeNote 给界面显示"**实际会出成多少**"。
+//
+// 为什么必须有它：用户填 3440×1440 时，平台会夹到 2048、再对齐 16 ⇒ 实际出的是别的尺寸。
+// 界面若照用户填的显示，就是"写着 3440、出的是 2048"——那是骗人。改了什么一律写出来。
+func wallpaperSizeNote(kind string, w, h int) string {
+	first := wallpaperSizes(kind)[0]
+	if w <= 0 || h <= 0 {
+		return fmt.Sprintf("没填尺寸 ⇒ 用本分类第一档 %d×%d", first.W, first.H)
+	}
+	aw, ah := normWallpaperSize(kind, w, h)
+	if aw == w && ah == h {
+		return ""
+	}
+	why := make([]string, 0, 2)
+	if w > wallpaperMaxSide || h > wallpaperMaxSide {
+		why = append(why, fmt.Sprintf("单边上限 %d", wallpaperMaxSide))
+	}
+	if w < wallpaperMinSide || h < wallpaperMinSide {
+		why = append(why, fmt.Sprintf("单边下限 %d", wallpaperMinSide))
+	}
+	if w%wallpaperAlign != 0 || h%wallpaperAlign != 0 {
+		why = append(why, fmt.Sprintf("%d 对齐", wallpaperAlign))
+	}
+	return fmt.Sprintf("你填的是 %d×%d，按平台口径（%s）**实际出 %d×%d**", w, h, strings.Join(why, "、"), aw, ah)
+}
+
+// ── 本机屏幕分辨率（"按我的屏幕出一张"） ──────────────────────────────────
+
+// screenSize 本机主屏分辨率（生产走 GetSystemMetrics；非 Windows / 读不到 ⇒ 0,0）。
+func (s *Server) screenSize() (int, int) {
+	if f := s.wallpaperScreen; f != nil {
+		return f()
+	}
+	return desktopScreenSize()
+}
+
+// handleWallpaperSize GET /api/wallpapers/size?kind=&w=&h= —— 问一句"这个尺寸实际会出成多少"。
+//
+// 为什么要有它：用户在界面里填自定义宽高时，平台会**夹上限 + 对齐 16**，实际尺寸与填的不一样。
+// 界面自己算一遍就会与 Go 那份口径**各写一套**（迟早分叉）⇒ 一律回来问这一处。
+func (s *Server) handleWallpaperSize(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	kind := normWallpaperKind(q.Get("kind"))
+	want, _ := strconv.Atoi(strings.TrimSpace(q.Get("w")))
+	hant, _ := strconv.Atoi(strings.TrimSpace(q.Get("h")))
+	aw, ah := normWallpaperSize(kind, want, hant)
+	writeJSON(w, 200, map[string]any{
+		"w":    aw,
+		"h":    ah,
+		"note": wallpaperSizeNote(kind, want, hant),
+	})
+}
+
+// sizeForScreen 把屏幕分辨率映射成**平台能出的**壁纸尺寸：保持屏幕宽高比、最长边压到上限、
+// 两边对齐 16、并夹在 [512,2048] 内。返回 (宽, 高, 人话说明)；屏幕读不到 ⇒ (0,0,"") 由调用方兜。
+//
+// 例（真机 3440×1440 带鱼屏）：出 2048×848 —— 说明里必须写清"屏幕是 3440×1440、上限 2048 ⇒ 出 2048×848"，
+// 别让用户以为出的是原始尺寸。纯函数 ⇒ 门直接喂（不需要真屏幕）。
+func sizeForScreen(sw, sh int) (int, int, string) {
+	if sw <= 0 || sh <= 0 {
+		return 0, 0, ""
+	}
+	w, h := sw, sh
+	if w > wallpaperMaxSide || h > wallpaperMaxSide {
+		if w >= h {
+			h = h * wallpaperMaxSide / w
+			w = wallpaperMaxSide
+		} else {
+			w = w * wallpaperMaxSide / h
+			h = wallpaperMaxSide
+		}
+	}
+	align := func(v int) int {
+		v = v - v%wallpaperAlign
+		if v < wallpaperMinSide {
+			v = wallpaperMinSide
+		}
+		return v
+	}
+	w, h = align(w), align(h)
+	note := fmt.Sprintf("本机屏幕 %d×%d", sw, sh)
+	if sw > wallpaperMaxSide || sh > wallpaperMaxSide {
+		note += fmt.Sprintf("；平台出图单边上限 %d ⇒ 按屏幕比例出 %d×%d", wallpaperMaxSide, w, h)
+	} else {
+		note += fmt.Sprintf(" ⇒ 按屏幕比例出 %d×%d（已对齐 %d）", w, h, wallpaperAlign)
+	}
+	return w, h, note
 }
 
 // ── 提示词口径（唯一出处） ────────────────────────────────────────────────
@@ -346,8 +424,12 @@ func readWallpaperMeta(img, kind string) wallpaperItem {
 }
 
 // listWallpapers 扫盘列出某分类的壁纸（按创建时间倒序）。只认图片扩展名。
-func listWallpapers(root, kind string) []wallpaperItem {
-	dir := wallpaperKindDir(root, kind)
+//
+// 目录**不给参数**：从 `wallpaperDirOf(kind)` 取（用户可能把输出目录改到别处）——
+// 让调用方自己拼目录，就是给"清单读 A 处、生成写 B 处"留门。
+func (s *Server) listWallpapers(kind string) []wallpaperItem {
+	kind = normWallpaperKind(kind)
+	dir := s.wallpaperDirOf(kind)
 	ents, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -365,26 +447,32 @@ func listWallpapers(root, kind string) []wallpaperItem {
 
 // ── HTTP ───────────────────────────────────────────────────────────────
 
-// handleWallpapers GET /api/wallpapers —— 壁纸库现状（两分类 + 尺寸预设 + LLM 就绪）。
+// handleWallpapers GET /api/wallpapers —— 壁纸库现状（两分类 + 目录 + 尺寸档 + LLM 就绪）。
 func (s *Server) handleWallpapers(w http.ResponseWriter, r *http.Request) {
-	root := s.wallpaperRoot()
-	mobile, desktop := listWallpapers(root, wallpaperKindMobile), listWallpapers(root, wallpaperKindDesktop)
+	sw, sh := s.screenSize()
+	fitW, fitH, screenNote := sizeForScreen(sw, sh)
 	writeJSON(w, 200, map[string]any{
-		"root":      root,
-		"mobile":    mobile,
-		"desktop":   desktop,
-		"sizes":     map[string]any{"mobile": wallpaperSizes(wallpaperKindMobile), "desktop": wallpaperSizes(wallpaperKindDesktop)},
+		"root":    s.wallpaperRoot(), // 配置/默认根（输出目录可能被用户改到别处，见 dirs）
+		"mobile":  s.listWallpapers(wallpaperKindMobile),
+		"desktop": s.listWallpapers(wallpaperKindDesktop),
+		"dirs":    s.wallpaperDirInfo(), // 每个分类当前的输出目录 + 是不是改过 + 存不存在
+		"sizes":   map[string]any{"mobile": wallpaperSizes(wallpaperKindMobile), "desktop": wallpaperSizes(wallpaperKindDesktop)},
+		// 图像侧硬口径给界面显示（用户要自定义尺寸时必须能看见"为什么 4K 出不了"）
+		"limits": map[string]any{"max_side": wallpaperMaxSide, "min_side": wallpaperMinSide, "align": wallpaperAlign},
+		// 本机屏幕（"按我的屏幕出一张"）：读不到就 0/空，界面据此置灰
+		"screen":    map[string]any{"w": sw, "h": sh, "fit_w": fitW, "fit_h": fitH, "note": screenNote},
 		"llm_ready": s.llmReady(), // 「AI 写词」能不能用（没配 LLM 时前端置灰，别让用户点了才报错）
 		// 提示词口径给前端显示（用户改词时看得见规矩）：只说**要**什么，不列禁用词清单
 		"hint": "提示词用英文；画面里不要出现任何文字（提了文字类名词，模型就会画字）",
 	})
 }
 
-// handleWallpaperImage GET /api/wallpapers/image?path= —— 只读输出壁纸图（路径必须在壁纸库内）。
+// handleWallpaperImage GET /api/wallpapers/image?path= —— 只读输出壁纸图
+// （路径必须落在**该分类当前的输出目录**里；分类不认识就 403）。
 func (s *Server) handleWallpaperImage(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Query().Get("path")
-	if !s.inWallpaperRoot(p) {
-		writeErr(w, 403, fmt.Errorf("路径超出壁纸库范围"))
+	if s.wallpaperKindOfPath(p) == "" {
+		writeErr(w, 403, fmt.Errorf("路径不在壁纸的输出目录里（若你改过输出目录，老目录里的图就不再属于这一类）"))
 		return
 	}
 	f, err := os.Open(p)
@@ -494,13 +582,12 @@ func (s *Server) handleWallpaperGenerate(w http.ResponseWriter, r *http.Request)
 		}
 		prompts[k] = s.wallpaperPromptFor(in.Desc, k)
 	}
-	root := s.wallpaperRoot()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(len(kinds)*count)*10*time.Minute)
 	defer cancel()
 	made := make([]wallpaperItem, 0, len(kinds)*count)
 	for _, k := range kinds {
 		w0, h0 := normWallpaperSize(k, in.Width, in.Height)
-		dir := wallpaperKindDir(root, k)
+		dir := s.wallpaperDirOf(k) // 输出目录由用户定（见 wallpaper_dirs.go）；一行口径，别再各处拼
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			writeErr(w, 500, err)
 			return
@@ -543,8 +630,8 @@ func (s *Server) handleWallpaperGenerate(w http.ResponseWriter, r *http.Request)
 // handleWallpaperDelete DELETE /api/wallpapers/item?file= —— 删壁纸（图 + 伴随文件）。
 func (s *Server) handleWallpaperDelete(w http.ResponseWriter, r *http.Request) {
 	p := strings.TrimSpace(r.URL.Query().Get("file"))
-	if !s.inWallpaperRoot(p) {
-		writeErr(w, 403, fmt.Errorf("路径超出壁纸库范围"))
+	if s.wallpaperKindOfPath(p) == "" {
+		writeErr(w, 403, fmt.Errorf("路径不在壁纸的输出目录里（若你改过输出目录，老目录里的图就不再属于这一类）"))
 		return
 	}
 	if err := os.Remove(p); err != nil {

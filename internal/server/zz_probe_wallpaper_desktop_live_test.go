@@ -36,6 +36,13 @@ func TestZZProbeWallpaperDesktopLive(t *testing.T) {
 	} else {
 		t.Logf("   文件在盘上：%d 字节", fi.Size())
 	}
+	// 屏幕分辨率（"按我的屏幕出一张"那条）：真机读得到才有资格说这条能用
+	if sw, sh := desktopScreenSize(); sw > 0 && sh > 0 {
+		fw, fh, snote := sizeForScreen(sw, sh)
+		t.Logf("   本机屏幕（GetSystemMetrics）：%d×%d；「按本机屏幕」会出 %d×%d —— %s", sw, sh, fw, fh, snote)
+	} else {
+		t.Logf("   本机屏幕读不到（远程/无头会话）⇒ 界面上「按本机屏幕」会置灰")
+	}
 
 	type regVal struct{ key, name string }
 	watched := []regVal{
@@ -49,7 +56,12 @@ func TestZZProbeWallpaperDesktopLive(t *testing.T) {
 			before[w.key+"|"+w.name] = v
 		}
 	}
-
+	if _, statErr := os.Stat(cur); statErr != nil {
+		// 当前壁纸指着一张**已不在盘上**的图（真机撞到过：用户把 data\壁纸\ 清空了）。
+		// 这种情况**不许**硬设（设一张不存在的图本来就该被拒），如实说"这轮没验到写路径"。
+		t.Logf("② 当前壁纸文件已不在盘上 ⇒ **跳过「设回去」这一步**：这轮没验到写路径（不是通过）")
+		return
+	}
 	if err := setDesktopWallpaperOS(cur); err != nil {
 		t.Fatalf("设系统桌面壁纸失败:%v", err)
 	}

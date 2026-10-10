@@ -95,6 +95,16 @@ type Server struct {
 	// wallpaperDesktopOK 测试可覆盖「本平台支持吗」—— 好让「不支持的平台要如实拒绝（501）」这条也有门。
 	// 生产上留空 ⇒ 走 wallpaper_desktop_windows.go / _other.go 的平台真值。
 	wallpaperDesktopOK func() bool
+
+	// 壁纸**输出目录**（2026-10-10 用户：「壁纸需用户选择生成后输出的目录」）：每个分类一个目录，
+	// 用户改过的记在 `<DataDir>/wallpapers/settings.json`（配置固定留在数据根下，换库位置不会弄丢）。
+	wpMu       sync.Mutex
+	wpSettings wallpaperSettings
+	wpLoaded   bool
+
+	// wallpaperScreen 可覆盖「本机屏幕分辨率」（生产走 GetSystemMetrics；非 Windows 回 0,0）。
+	// 留成接缝的理由和设墙纸那三个一样：门不许依赖跑测试那台机器的屏幕。
+	wallpaperScreen func() (int, int)
 }
 
 // SetQuitFunc 注入桌面模式的退出函数(Wails runtime.Quit)。
@@ -377,6 +387,9 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/library/{kind}/{name}/regen", s.libraryRegen)
 	// 库资产运营:补全多视角转台图 / AI 生成描述与提示词 / 手动编辑描述与提示词
 	m.HandleFunc("POST /api/library/{kind}/{name}/views", s.libraryViews)
+	// 壁纸输出目录可选（2026-10-10 用户：「壁纸需用户选择生成后输出的目录」）。
+	m.HandleFunc("POST /api/wallpapers/dir", s.handleWallpaperDir)
+	m.HandleFunc("GET /api/wallpapers/size", s.handleWallpaperSize)
 	m.HandleFunc("POST /api/library/{kind}/{name}/describe", s.libraryDescribe)
 	m.HandleFunc("PUT /api/library/{kind}/{name}", s.librarySetMeta)
 	m.HandleFunc("POST /api/library/gacha", s.handleLibraryGacha)

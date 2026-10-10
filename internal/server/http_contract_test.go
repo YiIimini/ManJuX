@@ -62,6 +62,8 @@ func newTestServer(t *testing.T) *Server {
 	// 读回也默认回空串（＝「不知道」）—— 真机当前壁纸在哪是环境状态，不能拿来当判据。
 	s.setDesktopWallpaper = func(string) error { return nil }
 	s.getDesktopWallpaper = func() string { return "" }
+	// 本机屏幕分辨率也换成固定值（真机屏幕是环境状态，不能拿来当判据）；要断言的用例自己覆盖。
+	s.wallpaperScreen = func() (int, int) { return 0, 0 }
 	return s
 }
 

@@ -37,6 +37,17 @@ var (
 	procSysParamsInfoW = deskUser32.NewProc("SystemParametersInfoW")
 )
 
+// desktopScreenSize 主屏分辨率（GetSystemMetrics：SM_CXSCREEN=0 / SM_CYSCREEN=1）。
+//
+// 用途：「按我的屏幕出一张」——桌面壁纸最该贴的就是屏幕比例。这里是**物理像素**（不含 DPI 缩放），
+// 与"壁纸要多大"这件事对得上。读不到（远程/无头会话）⇒ 0,0，调用方如实说"读不到屏幕"。
+func desktopScreenSize() (int, int) {
+	procGetSystemMetrics := deskUser32.NewProc("GetSystemMetrics")
+	cx, _, _ := procGetSystemMetrics.Call(0) // SM_CXSCREEN
+	cy, _, _ := procGetSystemMetrics.Call(1) // SM_CYSCREEN
+	return int(cx), int(cy)
+}
+
 // desktopWallpaperSupported 本平台能不能改系统桌面壁纸。
 func desktopWallpaperSupported() bool { return true }
 

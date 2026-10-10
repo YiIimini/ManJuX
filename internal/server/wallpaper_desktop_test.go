@@ -30,7 +30,7 @@ import (
 // `/api/wallpapers` 那张清单（`wallpaperItem.Created`），门里必须给**确定的**时间点，否则顺序没法断言。
 func deskFixture(t *testing.T, s *Server, name, created string) string {
 	t.Helper()
-	p := filepath.Join(wallpaperKindDir(s.wallpaperRoot(), wallpaperKindDesktop), name)
+	p := filepath.Join(s.wallpaperDirOf(wallpaperKindDesktop), name)
 	writeFile(t, p, []byte("PNG-FAKE-"+name))
 	b, err := json.MarshalIndent(wallpaperItem{
 		File: p, Kind: wallpaperKindDesktop, W: 1920, H: 1088, Seed: 3440,
@@ -238,7 +238,7 @@ func TestWallpaperDesktopApplyRejectsNonDesktopAndOutsiders(t *testing.T) {
 	s := newTestServer(t)
 
 	// ① 手机壁纸（竖版）设桌面壁纸：会被裁 ⇒ 400 + 说清为什么
-	mob := filepath.Join(wallpaperKindDir(s.wallpaperRoot(), wallpaperKindMobile), "wp-mobile-20261010-120000-88.png")
+	mob := filepath.Join(s.wallpaperDirOf(wallpaperKindMobile), "wp-mobile-20261010-120000-88.png")
 	writeFile(t, mob, []byte("PNG-FAKE"))
 	code, body := doReq(t, s, "POST", "/api/wallpapers/desktop/apply",
 		map[string]any{"file": mob, "mode": "single"})
@@ -259,7 +259,7 @@ func TestWallpaperDesktopApplyRejectsNonDesktopAndOutsiders(t *testing.T) {
 	}
 
 	// ③ 桌面分类里、但盘上已经不在了：404（不许设一张不存在的图还回 200）
-	ghost := filepath.Join(wallpaperKindDir(s.wallpaperRoot(), wallpaperKindDesktop), "wp-desktop-20261010-130000-1.png")
+	ghost := filepath.Join(s.wallpaperDirOf(wallpaperKindDesktop), "wp-desktop-20261010-130000-1.png")
 	code, body = doReq(t, s, "POST", "/api/wallpapers/desktop/apply",
 		map[string]any{"file": ghost, "mode": "single"})
 	if code != 404 {

@@ -18,10 +18,12 @@
 | # | 事项 | 平台侧要不要动 | 性质 |
 |---|---|---|---|
 | 1 | 登记本轮升到 `COMPATIBILITY.md` / `CHANGELOG.md` | **要**（§7 给了可粘贴文本） | 必做（小） |
-| 2 | 画质基线标记 `q1` 是否升 `q2`（决定存量镜头要不要重出） | **要拍板** | 可选-0（最值钱） |
-| 3 | `w6a8` 备选档接线 | 可不动（多一档而已） | 可选-1 |
-| 4 | Fun ControlNet + 10 特效 embedding 接线 | 可不动（能力齐、无消费点） | 可选-2 |
-| 5 | Acc-8Step 两种上游转换版取舍 | **建议先不动**（当前零影响） | 可选-3 |
+| 2 | 画质基线标记 `q1` 是否升 `q2`（决定存量镜头要不要重出） | **已决定：不升**（见 §3） | 可选-0 |
+| 3 | `w6a8` 备选档接线 | **已决定：不接**（实测无速度/显存优势） | 可选-1 |
+| 4 | Fun ControlNet + 10 特效 embedding 接线 | **已决定：不接**（新能力、无已证优势） | 可选-2 |
+| 5 | Acc-8Step 两种上游转换版取舍 | **已决定：不动**（当前零影响） | 可选-3 |
+> 四项的**决定与理由**见 §3–§6 的开头「**结论（2026-10-10）**」段；都是"按证据判无优势 ⇒ 不做"，不是搁置。
+> 另有 1 条自查：第三方轻量 VAE（LynnReal / LightVAE 一类）虽然新本体支持，但**非官方源 + 画质未验证** ⇒ 同样不接（§6 末尾）。
 | — | TaoMate 3 步档 / 8 步族选路 / LoRA 与步数成对 | **已在平台落地，不用动** | 见 §2 |
 
 ---
@@ -33,13 +35,27 @@
 | 本体 | `v0.37.4 (8ff6dc38)` → **`v0.39.1 (de0125d9)`**（`HEAD == tag` 实测 True） | `accept-after.txt` §(3) |
 | pip 依赖 | frontend `1.52.7→1.53.10`、templates `0.11.69→0.11.77`、docs `0.5.12→0.5.13`、kitchen `0.2.35→0.2.37` | `state-after.txt` §3 |
 | 运行时 | **torch / torchvision / torchaudio / transformers / numpy / tokenizers / huggingface_hub / safetensors / Pillow / av / sageattention 逐项零漂移** | `state-before.txt` ↔ `state-after.txt` §3 diff |
-| 插件 | 7 仓升到上游 HEAD（audio-T8 `6063fafb→1048066c`、rgthree `449c58fc→d7297b42`、was-node-suite `8f80db30→d1f76065`、Director `4b4fe6e1→a8f57b8e`、LTXVideo `61ee82b2→3bf3ca62`、MiniMaxH3-Easy `61ceb3cd→23ba347c`、vrgamedevgirl `8c49237b→3432b03f`）；**18 仓落后 0** | `accept-after.txt` §(3) |
+| 插件 | 7 仓升到上游 HEAD（audio-T8 `6063fafb→1048066c`、rgthree `449c58fc→d7297b42`、was-node-suite `8f80db30→d1f76065`、Director `4b4fe6e1→a8f57b8e`、LTXVideo `61ee82b2→3bf3ca62`、MiniMaxH3-Easy `61ceb3cd→23ba347c`、vrgamedevgirl `8c49237b→3432b03f`）；**18 仓落后 0**。**2026-10-10 复核后续更**：这四家又推了新提交，已再升到上游 HEAD —— Director `a8f57b8e→b168de86`、audio-T8 `1048066c→b6be5652`、Spectrum `5161f045→806fe498`、was-node-suite `d1f76065→c78d0e3b`（其余 14 仓仍未动、仍最新） | `accept-after.txt` §(3) + `_maintenance\20261007-upgrade\升级记录-2026-10-08.md` §11 |
 | 启动自检 | `IMPORT FAILED` **0**、traceback **0**、节点总数 `2503 → 2849` | `boot-scan-0.39.1.txt` |
 | 平台在用节点类 | 阻断级 **10/10**、在用类 **54/54**；schema **零破坏性变更** | `node-diff-before-after.txt` |
 | `data\settings.json` | **一个字节没动**（sha256 `5640B7C9…299` 前后相同） | `state-before/after.txt` §5 |
 | **生产配方真跑**（768×1344 / 124 帧 / 8 步 / 8 步族 LoRA / 3 参考图 / seed 20260924） | **291.1 s → 256.5 s（−11.9%）**；峰值 19558 → 19552 MiB；两条都 `768x1344 / 24fps / 124 帧 / h264 + aac@32000 2ch / 5.167 s`，`ffprobe -v error` 无输出 | `acc-before/after.report.json` |
 | 逐帧指纹 | 视频流 **124/124 帧全不同**；音频流 **162/162 帧逐字节相同** | `md5-before.txt` / `md5-after.txt` |
 | **平台自己的生产路径也端到端跑通**（加做项，`cmd\renderone` 走 Coordinator → `comfyengine` → 平台自管的 ComfyUI(8190)） | `结果 completed  用时 8m0s`；自动补齐资产后以 **ref2va + 2 张参考图**出片；产物 `768x1344 / 24fps / 192 帧 / 8.000 s / h264 + aac@48000 2ch` | `_maintenance\20261007-upgrade\platform-path\renderone.log` + `shot_005.mp4` + `shot_005.ffprobe.json` |
+
+**2026-10-10 复核（第二轮，起因：你这两天在平台里正常使用过）**：
+① 本体 `v0.39.1` 仍是**最新 release tag**（`github/master` 仍比 tag 多 21 个提交，未验证 ⇒ 不动）；
+② 4 个插件仓续更到上游 HEAD（见上表插件行），启动自检 **`IMPORT FAILED` 0、traceback 0、节点数 2849 → 2880**，
+   阻断级 10/10、在用类 54/54 仍全在；schema 复核**无删除、无类型收窄**（新增的都是 optional 输入；
+   仅 `was-node-suite` 的 `WASH3DecodeVideo` 新增了一个 **required** `frame_rate`，属硬破坏，
+   **平台对这 4 个类 0 处引用** ⇒ 不影响 ManJuX）；
+③ 再用生产配方真跑一条：`status=success`、**261.6 s**、峰值 19546 MiB、`768x1344 / 24fps / 124 帧 / h264 + aac@32000`；
+④ **11 个在用/备选权重逐个与上游比对 = 10 SAME / 0 DIFF**（哈希级：本地 sha256 ↔ ModelScope 仓内 `Sha256`；TaoMate 不在 ModelScope，另有 HF LFS oid 记录）⇒ **模型侧没有该更新的**；
+⑤ 网络提醒：本机对 HF 的线路**反复切换**（`huggingface.co` 的 DNS 会在真/假 IP 之间跳 —— 19:1x 解析出假 IP 不通、19:5x 又通了；`hf-mirror` 时通时断且慢）；
+   已改成 **ModelScope 优先**（`www.modelscope.cn`，0.2–0.4 s 出清单、下载实测 **37.5 MB/s**），通道与用法固化在
+   `D:\Ai\ComfyUI\_maintenance\hf-fetch\`（`ms_get.py` / `hf_routes.py` / `ms_verify.py` + README），并把用户级 `HF_ENDPOINT` 设为 hf-mirror 兜底。
+⑥ 提醒：`ComfyUI\input` 会被平台资产链按同名刷新 —— 10-08 验收用的那三张 qiqi 参考图**已被你 10-10 的资产替换掉**，
+   所以 10-10 这次验证换了参考图（只证明"仍能正常出片"，不是与 10-08 的同参对比）。
 
 **为什么值得升**：v0.39.1 含 5 条 H3 直接相关修复 —— `2d6b7328`（提前释放 embedding 临时张量，降峰值）、
 `912fca4f`（修 VAE `rms_rope` 在 offloaded `qk_norm_scale` 上崩溃）、`83071e1a`（VAE offload）、
@@ -65,6 +81,13 @@
 
 ## 3. 可选-0（最值钱的一条）：画质基线标记 `q1` 要不要升 `q2`
 
+**结论（2026-10-10，按证据判）：不升 `q2`。** 理由是成本/收益实测反过来了 —— 我按平台自己的清单统计了现存产物：
+`data\projects` 下 8 个工程里**只有 1 集（《离婚后，千亿前夫跪求复合·第01集》）渲过镜头，共 4 个**，
+而且这 4 个片段的 `LastWriteTime` 是 **2026-10-10 17:43–18:21**（= 在 10-08 升到 v0.39.1 **之后**）⇒
+**它们本来就已经是新本体出的**，改 `q2` 只会把这 4 个已经在最新本体上的产物白重渲一遍，收益为 0。
+另外平台自己已经有一条更合适的机制：`legacyModel`（清单里没记渲染模型的旧产物会在换底模时被点名，由用户决定要不要全量重渲）——
+它盯的正是"底模"这类真正的画质分水岭，而本轮**底模一个都没换**。想重出某一集时用 `cmd\renderone -shots …` 即可，不需要动 `q`。
+
 * **现象/证据**：`internal\pipeline\stages_render.go:679 renderFingerprint()` 的指纹串是
   `prompt / mode / WxH / steps / seed / seam / [accel] / **"q1"**` + 参考图文件指纹 —— **不含 ComfyUI 版本号**。
   代码里的注释把 `q1` 定义为「采样环境版本（v1=2026-09-10 撤下 fp16_accumulation/ck-attention 后的画质基线；
@@ -87,6 +110,10 @@
 ---
 
 ## 4. 可选-1：`w6a8` 备选档（已在盘、已实测、**默认接线未动**）
+
+**结论（2026-10-10）：不接。** 实测无优势 —— 生产规格同参：在用 int8 `256.5 s / 峰值 19552 MiB`，
+w6a8 `261.9 s / 峰值 19552 MiB`（**慢 5.4 s、峰值完全相同**）。与库内 `w4a8` 的结论同型：本机峰值由 `--vram-headroom` 压在天花板，
+权重体积换不来显存下降。**它现在只是"多一档可选"，不是更优**；文件与冒烟证据都在盘，随时可接（接入步骤见本节下文）。
 
 * **落点（盘上已有）**：`D:\Ai\ComfyUI\shared\models\diffusion_models\`
   `minimax_h3_ref2va_pruned_w6a8.safetensors` / `minimax_h3_fl2va_pruned_w6a8.safetensors`（各 15,983,746,636 B，
@@ -113,6 +140,9 @@
 
 ## 5. 可选-2：Fun ControlNet + 10 个特效 embedding（补丁与新资产已就位）
 
+**结论（2026-10-10）：不接。** 这两样是**新能力**（运镜/姿态/局部控制；特效预设），不是对现有最优出片路径的改进；
+而且要用它们必须先做同 prompt 的 A/B 抽帧目视（我这边没有看图能力）。当前看不到"接了就更优"的证据 ⇒ 权重与消费节点都留在盘，等有明确需求再接。
+
 * **盘上新增**：
   * `shared\models\model_patches\minimax_h3_fun_controlnet_union_pruned_int8_convrot.safetensors`（2,296,635,360 B，
     sha256 `9c645c0a30…fed0c`）—— "补丁 + 消费节点"这一对是**齐的**；
@@ -130,6 +160,17 @@
 ---
 
 ## 6. 可选-3：Acc-8Step 两种上游转换版并存（**当前零影响，建议先不动**）
+
+**结论（2026-10-10）：不动。** 本机 4 个底模全是量化版 ⇒ 平台判据 `accelQualityPlan()` 已认定「量化底模与 Acc-8Step 不兼容」，
+`quality` 档**必然回退 turbo** ⇒ 换哪一版转换对当前交付都是**零影响**；两版转换的差异（578 vs 570 张量、差 4 个 I64 与若干 F32）
+也**没做过功能实测**，此时替换只增加未知风险。两份候选的 sha256 都归档在 `_maintenance\20261007-upgrade\`。
+
+**另加一条自查（2026-10-10）**：新本体 `986c4d15` 那条"支持 LynnReal 轻量 MiniMax-H3 VAE"我去核了上游 ——
+确实存在这类第三方轻量/细节 VAE（`corechan/MiniMax-H3-LightVAE`、`stdstu123/LynnReal-Onmi-light-vae`、
+`speach1sdef178/MiniMax-H3-X2-Detail-VAE` 等），**官方 `Comfy-Org/MiniMax-H3` 的 vae 目录只有 fp16 / int8_convrot / audio_fp32 三件**。
+轻量 VAE 的收益是**解码更快**（解码在整段里占比不小），但**非官方源 + 画质未验证**（典型是蒸馏/有损），
+而 `video_vae` 是**交付档的显式设置**，换它属于本仓反复记过的"静默劣化"风险类别 ⇒ **不接**。
+要用的话：先自己挑一集做同参 A/B 抽帧，确认画质能接受再改 `settings.json` 的 `video_vae`（改一行、可回退）。
 
 * **现象/证据**（`_maintenance\20261007-upgrade\` 有全部 sha256 与结构比对）：
 
@@ -208,7 +249,8 @@ pwsh -File D:\Ai\ComfyUI\_maintenance\20261007-upgrade\evidence\accept.ps1 -Tag 
 # ④ 想自己重跑一遍生产配方(约 5 分钟,产出报告 JSON + 显存曲线)
 & D:\Ai\ComfyUI\standalone-env\python.exe -X utf8 D:\Ai\ComfyUI\_maintenance\20261007-upgrade\evidence\run_acc.py after D:\Ai\ComfyUI\_maintenance\20261007-upgrade\wf-prod-ref2va-8step.json
 # ⑤ 目视对比片(需要人眼)
-#    D:\Ai\ComfyUI\ComfyUI\output\manjux_acc\shot_before_00001_.mp4 / shot_after_00001_.mp4 / shot_w6a8_00001_.mp4
+#    _maintenance\20261007-upgrade\20261010-recheck\shot_after2_00001_.mp4（10-10 生产配方 768×1344/124 帧）
+#    与 platform-path-shot_005.mp4（平台自己的生产路径产物 768×1344/192 帧）；要看别的段落按 §8 的 run_acc.py 重跑
 ```
 
 ---
@@ -216,14 +258,15 @@ pwsh -File D:\Ai\ComfyUI\_maintenance\20261007-upgrade\evidence\accept.ps1 -Tag 
 ## 9. 边界与未验事项（照实说）
 
 1. **我没有改平台的任何文件**（本文是唯一新增）；`settings.json` 逐字节未动；不改 Go 代码 / frontend。
+
 2. **绘画质结论**：我这里**没有"看画面"的能力**。报告里所有数字都是**耗时 / 显存 / 规格 / 帧指纹**，
-   不构成"画质更好"的判断 —— 要看观感请开 §8-⑤ 的三个 mp4。
+   不构成"画质更好"的判断 —— 要看观感请按 §8-⑤ 打开留档里那两个 mp4。
 3. **没升 master**：本体停在 release tag `v0.39.1`；`github/master`（`af89add6`）比它多 21 个提交，未经验证，本轮不动。
 4. **没清理任何在用模型**：本轮只新增；`shared\models` 从 55 文件/201.2 GB → **83 文件/233.1 GB**。
 5. **真跑用的输入是只读的**：归档第 01 集的 `h3_prompt` + `ComfyUI\input` 既有参考图；
-   `data\projects`（当前三个目录皆空）、`data\_archived`、`data\小说`、`data\assets_library` 一个字节没动。
-6. **一条给你的提醒**：`data\projects` 三个项目目录与 `assets_library` 现在是**空的** ——
-   要真跑一整集端到端，得先在平台里建项目 / 生成资产；本轮验收用的是"引擎侧同配方真跑"（合同已约定）。
+   `data\_archived`、`data\小说`、`data\assets_library`（以及你自己的工程数据）一个字节没动。
+6. **一条给你的提醒**：`data\projects` 下现在有 8 个工程（其中有 1 集渲过 4 个镜头）、`assets_library` 仍然为空 ——
+   这些都是**你自己的数据，本轮一个字节没动**；本轮验收用的是"引擎侧同配方真跑 + 平台自己的 `cmd\renderone` 各一条"。
 
 ---
 

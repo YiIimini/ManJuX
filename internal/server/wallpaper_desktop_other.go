@@ -21,5 +21,8 @@ func currentDesktopWallpaperOS() (string, error) {
 	return "", fmt.Errorf("本平台读不到系统桌面壁纸（只有 Windows 有；这台是 %s）", runtime.GOOS)
 }
 
+// desktopScreenSize 非 Windows 没有这套概念 ⇒ 0,0（调用方据此把「按我的屏幕」置灰并说明原因）。
+func desktopScreenSize() (int, int) { return 0, 0 }
+
 // nativeSlideshowNote 非 Windows 没有这套东西可提醒。
 func nativeSlideshowNote() string { return "" }

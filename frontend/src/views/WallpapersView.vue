@@ -37,11 +37,28 @@
         <b class="text-xs mt-1">③ 参数</b>
         <div class="flex items-center gap-2">
           <span class="timecode" style="font-size:10px;width:52px">分辨率</span>
-          <el-select v-model="sizeIdx" size="small" style="width:100%">
+          <el-select v-model="sizeIdx" size="small" style="width:100%" @change="refreshSizeNote">
             <el-option v-for="(s, i) in sizes" :key="s.w + 'x' + s.h" :label="s.label" :value="i" />
+            <el-option label="自定义…（自己填宽高）" :value="-1" />
           </el-select>
         </div>
-        <div class="flex items-center gap-3">
+        <!-- 自定义宽高：平台会**夹上限 + 对齐 16** ⇒ 实际出的尺寸由后端那一处口径算出来（前端不许自己算一套） -->
+        <div v-if="sizeIdx === -1" class="flex items-center gap-2">
+          <span class="timecode" style="font-size:10px;width:52px">宽 × 高</span>
+          <el-input-number v-model="deskW" size="small" :min="meta.limits.min_side" :max="meta.limits.max_side"
+                           :step="meta.limits.align" :controls="false" style="width:96px" @change="refreshSizeNote" />
+          <span class="timecode">×</span>
+          <el-input-number v-model="deskH" size="small" :min="meta.limits.min_side" :max="meta.limits.max_side"
+                           :step="meta.limits.align" :controls="false" style="width:96px" @change="refreshSizeNote" />
+        </div>
+        <div class="flex items-center gap-2">
+          <el-button size="small" :disabled="!meta.screen || !meta.screen.fit_w"
+                     :title="screenTip" @click="useScreen">按本机屏幕</el-button>
+          <span class="timecode" style="font-size:10px">{{ meta.screen && meta.screen.note ? meta.screen.note : '' }}</span>
+        </div>
+        <!-- 实际会出多少：只有在"与所选不一致"或"自定义"时才显示（后端算的，见 sizeNote） -->
+        <div v-if="sizeNote" class="text-xs" style="color:var(--mx-warn, #d19a66)">{{ sizeNote }}</div>
+        <div class="flex items-center gap-2">
           <span class="timecode" style="font-size:10px;width:52px">张数</span>
           <el-input-number v-model="count" size="small" :min="1" :max="4" />
           <span class="timecode" style="font-size:10px">seed</span>
@@ -50,11 +67,24 @@
         <el-checkbox v-model="both"
                      title="勾上：同一条词，手机（竖版）与桌面（横版）各出一套 —— 两端各按自己的画幅">同时生成手机 + 桌面</el-checkbox>
 
+        <!-- 输出目录：改的是"以后生成的图落在哪"；老目录里的图**不会被搬动**（这句话写在气泡里） -->
+        <div class="flex items-center gap-2">
+          <span class="timecode" style="font-size:10px;width:52px">输出目录</span>
+          <span class="timecode flex-1" style="font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+                :title="dirTip">{{ curDir.path }}</span>
+          <el-button size="small" @click="pickDir">改目录</el-button>
+          <el-button size="small" :disabled="!curDir.custom" @click="resetDir">恢复默认</el-button>
+        </div>
+        <div v-if="curDir.custom && curDir.exists === false" class="text-xs" style="color:var(--mx-warn, #d19a66)">
+          这个输出目录现在还不在盘上 —— 生成时会自动建出来
+        </div>
+
         <el-button type="primary" size="small" :loading="busy" @click="generate">
           {{ busy ? '出图中…' : '生成壁纸' }}
         </el-button>
         <div class="text-xs" style="color:var(--mx-text3)">
-          出图在本机 ComfyUI 上跑；{{ both ? '两端' : '单端' }} × {{ count }} 张，按 {{ curSizeLabel }} 出。
+          出图在本机 ComfyUI 上跑；{{ both ? '两端' : '单端' }} × {{ count }} 张，按 {{ curSizeLabel }} 出，
+          落在上面那个目录里。
         </div>
       </div>
 
@@ -112,7 +142,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox, ElLoading } from 'element-plus'
 import { api, G } from '../store.js'
 
@@ -129,8 +159,19 @@ const both = ref(false)
 const busy = ref(false)
 const mobile = ref([])
 const desktop = ref([])
-const meta = ref({ sizes: { mobile: [], desktop: [] }, llm_ready: true, hint: '' })
+// dirs/limits/screen 都由后端给：改过输出目录没有、硬口径是什么、本机屏幕多少 —— 前端一个字都不猜
+const meta = ref({
+  sizes: { mobile: [], desktop: [] }, llm_ready: true, hint: '',
+  dirs: { mobile: {}, desktop: {} },
+  limits: { max_side: 2048, min_side: 512, align: 16 },
+  screen: { w: 0, h: 0, fit_w: 0, fit_h: 0, note: '' },
+})
 const bust = ref(Date.now())
+
+// 自定义分辨率（sizeIdx === -1 时生效）+ "实际会出多少"（口径在后端那一处算）
+const deskW = ref(1920)
+const deskH = ref(1088)
+const sizeNote = ref('')
 
 // 系统桌面壁纸的状态（后端说是什么就是什么；前端只负责显示与转述）
 const desk = ref({
@@ -147,8 +188,26 @@ const deskTip = computed(() => (desk.value.running
 const items = computed(() => (kind.value === 'mobile' ? mobile.value : desktop.value))
 const total = computed(() => mobile.value.length + desktop.value.length)
 const sizes = computed(() => (meta.value.sizes && meta.value.sizes[kind.value]) || [])
-const curSize = computed(() => sizes.value[sizeIdx.value] || { w: 0, h: 0, label: '' })
+// sizeIdx === -1 ⇒ 自定义（用 deskW/deskH）；否则用该分类的档位（档位尺寸由后端定义）
+const curSize = computed(() => (sizeIdx.value === -1
+  ? { w: Number(deskW.value) || 0, h: Number(deskH.value) || 0, label: `自定义 ${deskW.value}×${deskH.value}` }
+  : (sizes.value[sizeIdx.value] || { w: 0, h: 0, label: '' })))
 const curSizeLabel = computed(() => curSize.value.label || '默认档')
+
+// 输出目录（后端说是什么就是什么）+ 两句话（气泡里）：改目录**不会搬动**老图
+const curDir = computed(() => (meta.value.dirs && meta.value.dirs[kind.value]) || { path: '', default: '', custom: false, exists: false })
+const dirTip = computed(() => {
+  const d = curDir.value
+  const base = `当前输出目录：${d.path}\n默认目录：${d.default}`
+  return base + (d.custom
+    ? '\n\n（改过）以后生成的图落在这里；**此前生成的图留在老目录里，不会被搬过去**'
+    : '\n\n点「改目录」可以换成你自己的目录（例如 D:\\壁纸）')
+})
+const screenTip = computed(() => {
+  const s = meta.value.screen || {}
+  if (!s.fit_w) return '读不到本机屏幕分辨率（远程/无头会话）'
+  return `${s.note}\n\n点它就把宽高填成这个尺寸（平台出图单边上限 ${meta.value.limits.max_side}，超过会被夹住）`
+})
 
 function imgURL(file) {
   return '/api/wallpapers/image?path=' + encodeURIComponent(file) + '&t=' + bust.value
@@ -161,8 +220,80 @@ async function load() {
     desktop.value = r.desktop || []
     meta.value = r
     if (sizeIdx.value >= sizes.value.length) sizeIdx.value = 0
+    // 自定义宽高的初值 = 本分类第一档（用户点「自定义」时不会看到 0×0）
+    const first = sizes.value[0]
+    if (first && !deskW.value && !deskH.value) { deskW.value = first.w; deskH.value = first.h }
+    await refreshSizeNote()
   } catch (e) { ElMessage.error(e.message) }
 }
+
+// refreshSizeNote 问后端"这个尺寸实际会出成多少"（夹上限/对齐 16 都发生在那一处）。
+// 为什么不让前端自己算：那样就有两份口径，迟早分叉（而且用户会看到"写着 3440、出的是 2048"）。
+async function refreshSizeNote() {
+  const w = curSize.value.w
+  const h = curSize.value.h
+  if (!w || !h) { sizeNote.value = ''; return }
+  try {
+    const r = await api.wallpaperSize(kind.value, w, h)
+    // 只有"实际 ≠ 所选"时才值得提示（否则界面全是废话）
+    sizeNote.value = (r.note && (Number(r.w) !== Number(w) || Number(r.h) !== Number(h)))
+      ? `${r.note} ⇒ 实际出 ${r.w}×${r.h}`
+      : ''
+  } catch (e) { sizeNote.value = '' }
+}
+
+// useScreen 按本机屏幕比例填宽高（尺寸与说明都由后端算；读不到就置灰）
+function useScreen() {
+  const s = meta.value.screen || {}
+  if (!s.fit_w) { ElMessage.warning(s.note || '读不到本机屏幕分辨率'); return }
+  sizeIdx.value = -1
+  deskW.value = s.fit_w
+  deskH.value = s.fit_h
+  refreshSizeNote()
+  ElMessage.info(s.note || '已按本机屏幕填写')
+}
+
+// applyDir 改输出目录（dir 为空串 = 恢复默认）；后端会把"老图不搬动"如实说回来，这里照转。
+async function applyDir(dir) {
+  try {
+    const r = await api.wallpaperDir(kind.value, dir)
+    if (r && r.dirs) meta.value.dirs = r.dirs
+    ElMessage.success(r && r.note ? r.note : '输出目录已更新')
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+// pickDir 选目录：桌面模式用 Wails 的原生目录选择器；浏览器里没有 ⇒ 回退到手输绝对路径。
+async function pickDir() {
+  const rt = window.runtime
+  if (rt && typeof rt.OpenDirectoryDialog === 'function') {
+    try {
+      const picked = await rt.OpenDirectoryDialog({
+        Title: '选壁纸输出目录', CanCreateDirectories: true, DefaultDirectory: curDir.value.path,
+      })
+      if (picked) await applyDir(picked)
+      return
+    } catch (e) {
+      ElMessage.error('目录选择器打开失败：' + ((e && e.message) || e))
+      return
+    }
+  }
+  try {
+    const r = await ElMessageBox.prompt(
+      '填一个绝对路径（例：D:\\壁纸）。改完只影响**以后**生成的图 —— 老目录里的图不会被搬动。',
+      '输出目录', { inputValue: curDir.value.path })
+    if (r && r.value) await applyDir(r.value)
+  } catch (e) { /* 用户取消 */ }
+}
+
+async function resetDir() { await applyDir('') }
+
+// 换分类时：把自定义宽高重置成新类别的第一档，并重算"实际会出多少"
+// （手机是竖版、桌面是横版，沿用上一类的宽高会变成"竖版尺寸出横版图"）
+watch(kind, () => {
+  const f = sizes.value[0]
+  if (f) { deskW.value = f.w; deskH.value = f.h }
+  refreshSizeNote()
+})
 
 async function writePrompt() {
   try {

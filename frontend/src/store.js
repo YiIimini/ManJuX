@@ -195,6 +195,10 @@ export const api = {
   wallpaperPrompt: (desc, kind) => req('POST', '/api/wallpapers/prompt', { desc, kind }),
   wallpaperGenerate: (body) => req('POST', '/api/wallpapers/generate', body),
   wallpaperDelete: (file) => req('DELETE', '/api/wallpapers/item?file=' + encodeURIComponent(file)),
+  // 输出目录可选 + 分辨率口径查询（2026-10-10 用户：「壁纸需用户选择生成后输出的目录，
+  // 壁纸分辨率参数多增加些」）：改目录（空串=恢复默认）、问「这个尺寸实际会出成多少」。
+  wallpaperDir: (kind, dir) => req('POST', '/api/wallpapers/dir', { kind, dir }),
+  wallpaperSize: (kind, w, h) => req('GET', `/api/wallpapers/size?kind=${kind}&w=${w}&h=${h}`),
   // 桌面壁纸 = 设成**本机系统桌面壁纸**（2026-10-10 用户「桌面壁纸可以管理设置当前系统桌面壁纸
   // （幻灯片、单图等相关功能）」）：状态 / 设上去（single 或 slideshow）/ 停轮换。
   wallpaperDesktop: () => req('GET', '/api/wallpapers/desktop'),

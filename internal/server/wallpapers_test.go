@@ -150,18 +150,23 @@ func TestCleanWallpaperPromptDropsTextAndNegationPhrases(t *testing.T) {
 func TestWallpaperSizesAre16AlignedAndBounded(t *testing.T) {
 	for _, k := range []string{wallpaperKindMobile, wallpaperKindDesktop} {
 		sizes := wallpaperSizes(k)
-		if len(sizes) < 2 {
-			t.Fatalf("%s 至少要有两档分辨率（大屏/小屏），实际 %d 档", k, len(sizes))
+		// 2026-10-10 用户：「壁纸分辨率参数多增加些」⇒ 每类至少 5 档（大屏/主流/带鱼或 16:10/小屏/试稿）
+		if len(sizes) < 5 {
+			t.Fatalf("%s 至少要有 5 档分辨率（多档可选是本轮的要求），实际 %d 档", k, len(sizes))
 		}
 		for _, s := range sizes {
-			if s.W%16 != 0 || s.H%16 != 0 {
-				t.Errorf("%s 的 %d×%d 没对齐 16（图像侧硬要求）", k, s.W, s.H)
+			if s.W%wallpaperAlign != 0 || s.H%wallpaperAlign != 0 {
+				t.Errorf("%s 的 %d×%d 没对齐 %d（图像侧硬要求）", k, s.W, s.H, wallpaperAlign)
 			}
-			if s.W < 512 || s.H < 512 || s.W > 2048 || s.H > 2048 {
-				t.Errorf("%s 的 %d×%d 超出 [512,2048]", k, s.W, s.H)
+			if s.W < wallpaperMinSide || s.H < wallpaperMinSide || s.W > wallpaperMaxSide || s.H > wallpaperMaxSide {
+				t.Errorf("%s 的 %d×%d 超出 [%d,%d]", k, s.W, s.H, wallpaperMinSide, wallpaperMaxSide)
 			}
 			if s.Label == "" {
 				t.Errorf("%s 的 %d×%d 没有给人看的标签", k, s.W, s.H)
+			}
+			// 标签**必须以真实像素开头** —— 不许"标签写 1080、实际出 1072"这种写着好看的档
+			if !strings.HasPrefix(s.Label, fmt.Sprintf("%d×%d", s.W, s.H)) {
+				t.Errorf("%s 的标签 %q 与真实像素 %d×%d 不一致（标签开头必须是实际尺寸）", k, s.Label, s.W, s.H)
 			}
 		}
 		// 画幅方向：手机=竖版（高>宽），桌面=横版（宽>高）
