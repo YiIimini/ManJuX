@@ -281,6 +281,9 @@ const producing = ref(false)
 const produceDlg = ref(null)   // { novel }
 const producePicks = ref([])   // 勾选的风格 key
 const produceHint = ref('')    // 风格附加要求（自由文本）
+// produceAutoCover：书里**没有封面图**时，按书名先生成一张封面（视频制作对话框里的复选框，**默认勾**）。
+// 用户 2026-10-10：「不能以小说名称直接创作封面吗？」—— 书名就是足够的输入，正向词由平台 LLM 写。
+const produceAutoCover = ref(true)
 
 // 一键视频创作(带重复验证,后端 409)
 // 原书风格解析结果（GET /api/novels/style）：{found, style, field, card, card_chars, hint}
@@ -293,6 +296,7 @@ function openProduce(n) {
   produceDlg.value = { novel: n }
   producePicks.value = []
   produceHint.value = ''
+  produceAutoCover.value = true
   produceScan.value = null
   // 解析这本书自带的"视频风格"字段（立项.json 的 art_style/渲染风格串/画风、设定集里的视觉风格卡）——
   // 用户 2026-10-09：「另外导入的小说也需要解析是否存在视频风格相关字段」。结果**显示在对话框里**，
@@ -351,7 +355,8 @@ async function produce(n, styles, styleHint) {
   } catch { return }
   producing.value = true
   try {
-    const r = await api.novelProduce(n.path, 0, styles || [], styleHint || '')
+    // autoCover：书里没有封面图时按书名先生成一张（对话框里那个复选框，默认勾）
+    const r = await api.novelProduce(n.path, 0, styles || [], styleHint || '', produceAutoCover.value)
     ElMessage.success(r.message || '已开始创作')
     dlg.value = null
     await refresh()
@@ -413,6 +418,26 @@ const covNovel = ref(null)
 const covMeta = ref(null)      // 配置初始值(留档正向词/尺寸/上次 seed)
 const covCands = ref([])       // 候选图
 const covForm = ref({ prompt: '', append: '', w: 896, h: 1344, sizeKey: '896x1344', seed: 0, count: 1, savePrompt: false })
+const covPromptFrom = ref('')   // 这行正词是哪来的（留档 / AI 按书名写的 / 模板兜底）—— 必须让用户看得见
+
+// aiCoverPrompt 让**平台 LLM** 按这本书写一份封面正向词（书名 + 本书风格 + 正文开头），
+// 写完直接落进上面的文本框（用户可继续改），再点「生成候选」。
+//
+// 【2026-10-10 用户「平台有LLM功能啊」】打开弹窗时给的是**按书名拼的模板词**（毫秒级、不等模型），
+// 这个按钮才是"让平台写"那一步；LLM 拿不出可用结果时后端会回模板 + 说明（from=template），
+// 前端**如实显示来源**，不假装是 AI 写的。
+async function aiCoverPrompt() {
+  if (!covNovel.value) return
+  covBusy.value = true
+  try {
+    const r = await api.novelCoverPrompt(covNovel.value.path)
+    if (r && r.prompt) covForm.value.prompt = r.prompt
+    covPromptFrom.value = r && r.from === 'llm'
+      ? '正向词：平台 LLM 按书名写' + (r.note ? `（${r.note}）` : '')
+      : `正向词：模板兜底${r && r.note ? `（${r.note}）` : ''}`
+    ElMessage.success(r && r.from === 'llm' ? '已按书名写一份正向词（可继续改）' : 'LLM 没写成，已回退模板词')
+  } catch (e) { ElMessage.error(e.message) } finally { covBusy.value = false }
+}
 
 async function openCoverDialog(n) {
   covNovel.value = n
@@ -475,6 +500,26 @@ async function applyCover(file) {
   } catch (e) { ElMessage.error(e.message) }
 }
 
+// quickCoverFromTitle 「**按书名出封面**」——菜单里的一键入口：不弹窗、不问参数，
+// 直接让后端按书名（正向词由平台 LLM 写）出 3 张候选，然后**直接打开对比视图**挑（左旧右新）。
+//
+// 【2026-10-10 用户「不能以小说名称直接创作封面吗？」】原来想出一张封面必须先开弹窗、
+// 再点「生成候选」；这条路径就是回答那句问话的：书名 → 封面，中间不需要用户做任何选择。
+// 出图是"创作"、不可逆，所以仍然**只写候选**（不自动替换现封面）——挑定「用这张」才落盘。
+async function quickCoverFromTitle(n) {
+  if (!n || n.type === 'file') { ElMessage.warning('封面重做只对书目录可用'); return }
+  const loading = ElLoading.service({ text: '按书名出封面（平台 LLM 写正向词 + 本机 Qwen-Image 出图，约 15-60 秒）…' })
+  try {
+    const r = await api.novelCoverRedo({ path: n.path, count: 3 })
+    covNovel.value = n
+    covCands.value = r.candidates || []
+    covPromptFrom.value = r && r.from ? `正向词来自：${r.from}` : ''
+    coverBust.value = Date.now()
+    ElMessage.success(`已按书名出 ${covCands.value.length} 张候选 —— 挑一张「用这张」才替换现封面`)
+    if (covCands.value.length) { cmpIndex.value = 0; cmpOpen.value = true }
+  } catch (e) { ElMessage.error(e.message) } finally { loading.close() }
+}
+
 // 候选图的预览地址(候选也在小说库内,走同一个只读接口)
 function candURL(file) {
   return '/api/novels/cover?path=' + encodeURIComponent(file) + '&t=' + coverBust.value
@@ -523,6 +568,7 @@ function viewCover(n) {
 function onCardCmd(cmd, n) {
   if (cmd === 'script') return produceScript(n)
   if (cmd === 'produce') return openProduce(n)
+  if (cmd === 'cover-title') return quickCoverFromTitle(n)   // 一键：按书名直接出封面（LLM 写词）
   if (cmd === 'cover') return openCoverDialog(n)
   if (cmd === 'hide') return toggleHidden(n)
   if (cmd === 'remove') return removeNovel(n)
@@ -615,11 +661,15 @@ function onCardCmd(cmd, n) {
                 <el-dropdown-item command="produce" :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
                 </el-dropdown-item>
-                <!-- 封面重做只对**书目录**可用:散文件小说没有 `封面/` 目录，候选图无处可放
                      （后端 cover-redo 会回 400，这里直接置灰 —— 别让用户点进去才撞墙）。
-                     没有留档正向词时后端会给一份"按书名与本书风格推的默认词"，弹窗照开、可改。 -->
+                     没有留档正向词时：一键那条会用**平台 LLM 按书名写**的正向词（模板兜底），
+                     弹窗那条给的是模板词 + 一个「AI 按书名写词」按钮。 -->
+                <el-dropdown-item command="cover-title" :disabled="n.type === 'file'"
+                                  title="以小说名称直接出封面:正向词由平台 LLM 按书名+本书风格+正文开头写,出 3 张候选直接进左右对比挑;旧封面自动备份,集项目封面一并刷新">
+                  <el-icon><Picture /></el-icon>按书名出封面
+                </el-dropdown-item>
                 <el-dropdown-item command="cover" :disabled="n.type === 'file'"
-                                  title="出几张封面候选(有留档正向词就用它;没有则给一份按书名与本书风格推的、可改的默认词),挑「用这张」才替换现封面;旧封面自动备份,集项目封面一并刷新">
+                                  title="打开封面重做弹窗:正向词/尺寸/张数/seed 都能调,还能让平台 LLM 按书名重写一份;挑「用这张」才替换现封面;旧封面自动备份,集项目封面一并刷新">
                   <el-icon><Picture /></el-icon>封面重做
                 </el-dropdown-item>
                 <el-dropdown-item command="hide" divided>
@@ -686,6 +736,17 @@ function onCardCmd(cmd, n) {
           <el-checkbox v-model="covForm.savePrompt" size="small">
             同时把新正向词存回封面留档(旧词备份为 .bak)
           </el-checkbox>
+          <!-- 【2026-10-10 用户「平台有LLM功能啊」】让**平台 LLM** 按这本书（书名 + 本书风格 +
+               正文开头）写一份封面正向词 —— 上面那份是按书名拼的模板词，这份是"创作"。
+               写完直接落在上面的文本框里（可继续改），再点「生成候选」。 -->
+          <el-button size="small" :loading="covBusy" :disabled="covMeta && covMeta.llm_ready === false"
+                     @click="aiCoverPrompt">
+            <el-icon><MagicStick /></el-icon>AI 按书名写词
+          </el-button>
+          <div v-if="covMeta && covMeta.llm_ready === false" class="text-xs" style="color:var(--mx-text3)">
+            平台 LLM 没配置（设置里填地址/密钥/模型）—— 先用上面那份模板词，或自己改。
+          </div>
+          <div v-if="covPromptFrom" class="text-xs" style="color:var(--mx-text3)">{{ covPromptFrom }}</div>
           <el-button type="primary" :loading="covBusy" @click="genCovers">
             <el-icon><MagicStick /></el-icon>生成候选{{ covForm.count > 1 ? `（${covForm.count} 张）` : '' }}
           </el-button>
@@ -1014,6 +1075,12 @@ function onCardCmd(cmd, n) {
           <el-input v-model="produceHint" type="textarea" :rows="3"
                     placeholder="例：冷暖对比要克制；夜景不要霓虹；皮肤要有真实纹理" />
         </div>
+        <!-- 【2026-10-10 用户「不能以小说名称直接创作封面吗？」】书里没有封面图时，
+             按书名先生成一张（正向词由平台 LLM 写）—— 默认勾上：书名就是足够的输入，
+             不必再让人专门跑一趟封面。关掉则只如实播报"没有封面图"（集项目退到角色定妆照兜底）。 -->
+        <el-checkbox v-model="produceAutoCover" size="small">
+          这本书没有封面图时，按书名先生成一张封面（平台 LLM 写正向词；约 1 分钟，失败会如实报出来）
+        </el-checkbox>
         <div class="text-xs" style="color:var(--mx-text3)">
           已选 {{ producePicks.length }} 项预设{{ produceHint ? ' + 附加要求' : '' }}。
           生成的风格串会写进每集输入的「全局风格:」行 —— 那是全片/跨集一致的**权威风格**，

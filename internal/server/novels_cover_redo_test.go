@@ -31,14 +31,20 @@ func TestNovelCoverRedoGuards(t *testing.T) {
 		t.Errorf("小说库之外的路径应 403,实际 %d", code)
 	}
 
-	// ③ 没有正向词:要说清"需要哪个文件",而不是含糊失败
+	// ③ **没有留档正向词不再 400**（2026-10-10 期望反转，用户两问：「不能以小说名称直接创作封面吗？」
+	// 「平台有LLM功能啊」）——原来的期望是"缺正向词 ⇒ 400 并点名缺哪个文件"，那正是**只给书名
+	// 出不了封面**的那条死路。现在没有留档词就走 `coverPromptFor`（留档 > 平台 LLM 按书名写 > 模板兜底），
+	// 测试环境没有引擎 ⇒ 表现是 503（说明它**已经拿到词、走到了出图那一步**），而不是 400。
 	code, out := doReq(t, s, "POST", "/api/novels/cover-redo", map[string]any{"path": book})
-	if code != 400 {
-		t.Fatalf("没有封面正向词应 400,实际 %d(%v)", code, out)
+	if code != 503 {
+		t.Fatalf("没有留档词时应按书名推词、一路走到引擎检查(503)，实际 %d(%v)", code, out)
 	}
-	msg, _ := out["error"].(string)
-	if !contains(msg, coverRedoPromptFile) {
-		t.Errorf("报错要点名缺哪个文件(%s),实际 %q", coverRedoPromptFile, msg)
+	if msg, _ := out["error"].(string); !strings.Contains(msg, "ComfyUI") {
+		t.Errorf("503 必须说清是引擎不可用（而不是含糊失败）：%q", msg)
+	}
+	// 顺带钉住"这台机器上确实没引擎"这件事，免得把 503 误当成功
+	if _, err := s.reg.Get("comfy"); err == nil {
+		t.Fatal("测试环境竟然装配了 comfy 引擎：本条的期望（503）不成立，夹具需要改")
 	}
 
 	// ④ 有正向词但引擎没装配(测试环境):503 且说明是引擎的问题

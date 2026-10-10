@@ -25,6 +25,10 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		// 都不给 ⇒ 保持老行为（立项 art_style 优先，其次由分镜会话自定）。
 		Styles    []string `json:"styles"`
 		StyleHint string   `json:"style_hint"`
+		// 【2026-10-10 用户「不能以小说名称直接创作封面吗？」】书里**没有封面图**时，
+		// 按书名先生成一张（词由平台 LLM 写，见 novel_cover_prompt.go）。
+		// 不传 = 默认开（用户要的就是"以书名直接出封面"）；显式传 false 则只如实播报、不出图。
+		AutoCover *bool `json:"auto_cover"`
 	}
 	if err := readBody(r, &in); err != nil || strings.TrimSpace(in.Path) == "" {
 		writeErr(w, 400, fmt.Errorf("请提供小说路径"))
@@ -199,14 +203,7 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	// 后台异步:拆集→建项目→封面→自动批量。立即返回,弹窗不等待 LLM(2-6 分钟);
 	// 进度看全局日志(30 秒心跳),分集项目创建后首页实时出现。
 	cover := coverSrc
-	// 【2026-10-10】这本书没有封面图 ⇒ **如实播报一次**（原来在下面的 applyCover 里是
-	// `if cover == "" { return }` 静默跳过：一集集建出来全都没有封面，用户不知道原因）。
-	// 放在 goroutine 之前：无论拆集成功与否，这句话都要出现，且只出现一次
-	// （applyCover 会被每批回调多次，报在那儿会刷屏）。口径与级别见 novel_cover.go
-	// 的 missingCoverMsg（「脚本创作·包导入」那条入口共用同一句）。
-	if cover == "" {
-		s.noteMissingNovelCover(strings.TrimSpace(name))
-	}
+	autoCover := in.AutoCover == nil || *in.AutoCover
 	maxEp := in.Max
 	go func() {
 		// 注册键必须与拆集内部键一致:splitNovelToProjects 会做 safeSeries 规整
@@ -221,6 +218,31 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 		// 遮蔽之后 goroutine 里后面所有用到 `name` 的地方（拆集入参、失败文案、jobSet）
 		// 都用这一份规整过的值，handler 自己那份原样不动（响应里给用户看的就该是原名）。
 		name := safeSeries(name)
+		// 【2026-10-10 用户「不能以小说名称直接创作封面吗？」】书里**没有封面图**时，
+		// **按书名先生成一张**（正向词由平台 LLM 写 —— 书名 + 本书风格 + 正文开头，见
+		// novel_cover_prompt.go）⇒ 拆出来的每一集都有封面。开关来自「视频制作」对话框，
+		// 默认开；关掉、或出图失败 ⇒ 走上一轮那句共用的"没有封面图"播报。
+		//
+		// 放在拆集之前：`applyCover` 是逐批回调的，等它去补就晚了（前几批已经建完）。
+		if cover == "" {
+			if autoCover {
+				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+					Message: fmt.Sprintf("🎨 《%s》没有封面图：按书名先生成一张（本机 Qwen-Image，约 1 分钟；可在「视频制作」里关掉）", name)})
+				if p, err := s.seedCoverFromTitle(in.Path); err == nil {
+					cover = p
+					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+						Message: fmt.Sprintf("🎨 《%s》已按书名生成封面 → 封面/%s（这批集的封面会用它）", name, filepath.Base(p))})
+				} else {
+					// 出图失败**不许静默**：说清原因，下面还有那句共用的"没有封面图"兜底说明。
+					s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn",
+						Message: fmt.Sprintf("⚠ 《%s》按书名生成封面没成功(%v)", name, err)})
+				}
+			}
+			if cover == "" {
+				// 唯一调用点：没封面（或按书名也没出成）都只说这一句（口径见 novel_cover.go）
+				s.noteMissingNovelCover(strings.TrimSpace(name))
+			}
+		}
 		// 不再注册「AI 拆集中」运行态占位:一章一档下建集是秒级的(实测 3 秒建 64 集),
 		// 占位卡只会一闪而过甚至挡住真正的书卡(2026-09-12 用户定调「AI 拆集中的占位
 		// 不需要了」)。失败态仍会记录并可见。

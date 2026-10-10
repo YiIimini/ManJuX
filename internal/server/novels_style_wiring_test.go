@@ -27,10 +27,13 @@ func TestFrontendNovelProduceWiresStyle(t *testing.T) {
 	view := readFrontend(t, "src/views/NovelsView.vue")
 
 	// ① store.js：请求体必须带 styles 与 style_hint（少一个字段 = 后端永远收到空选择）
+	// 【2026-10-10】签名多了第 5 个参数 autoCover（"书没有封面时按书名先出一张"，默认开）——
+	// 断言跟着改，但**意图不变**：风格那两个字段必须真的在请求体里。
 	for _, want := range []string{
-		"novelProduce: (path, max, styles, styleHint)",
+		"novelProduce: (path, max, styles, styleHint, autoCover)",
 		"styles: styles || []",
 		"style_hint: styleHint || ''",
+		"auto_cover: autoCover !== false",
 	} {
 		if !strings.Contains(store, want) {
 			t.Errorf("store.js 的 novelProduce 少了 %q —— 界面上选了也不会传出去", want)
@@ -46,7 +49,7 @@ func TestFrontendNovelProduceWiresStyle(t *testing.T) {
 		"async function confirmProduce()",
 		"function toggleProduceStyle(key)",
 		"const styleOptions = computed(() => G.metaStyles || [])",
-		"api.novelProduce(n.path, 0, styles || [], styleHint || '')",
+		"api.novelProduce(n.path, 0, styles || [], styleHint || '', produceAutoCover.value)",
 		"@click=\"confirmProduce\"",
 	} {
 		if !strings.Contains(view, want) {

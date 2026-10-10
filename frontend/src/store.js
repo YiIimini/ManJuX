@@ -147,12 +147,17 @@ export const api = {
   putCharacter: (id, payload) => req('PUT', `/api/projects/${encodeURIComponent(id)}/character`, payload),
   // styles/styleHint：导入制作时选的渲染风格（预设 key 多选 + 自由文本）。
   // 后端据此拼出**权威风格串**写进每集输入的「全局风格:」行；空数组 = 沿用原书/立项的风格串。
-  novelProduce: (path, max, styles, styleHint) => req('POST', '/api/novels/produce', {
+  // auto_cover：书里没有封面图时**按书名先生成一张**（默认开；用户在「视频制作」里能关掉）。
+  // 正向词由平台 LLM 写（书名 + 本书风格 + 正文开头）—— 用户 2026-10-10：「不能以小说名称直接创作封面吗？」「平台有LLM功能啊」
+  novelProduce: (path, max, styles, styleHint, autoCover) => req('POST', '/api/novels/produce', {
     path, max_episodes: max, styles: styles || [], style_hint: styleHint || '',
+    auto_cover: autoCover !== false,
   }),
   novelProduceScript: (path) => req('POST', '/api/novels/produce-script', { path }),
   // 封面重做(可配置):config 取初始值 → redo 出 N 张**候选** → apply 挑定后才落盘
   novelCoverConfig: (path) => req('GET', '/api/novels/cover-config?path=' + encodeURIComponent(path)),
+  // 让**平台 LLM** 按这本书写一份封面正向词（弹窗里的「AI 按书名写词」按钮走这条）
+  novelCoverPrompt: (path) => req('POST', '/api/novels/cover-prompt', { path }),
   novelCoverRedo: (body) => req('POST', '/api/novels/cover-redo', body),
   novelCoverApply: (path, file) => req('POST', '/api/novels/cover-apply', { path, file }),
   novelSplit: (name, text, max) => req('POST', '/api/novel-split', { name, text, max_episodes: max }),

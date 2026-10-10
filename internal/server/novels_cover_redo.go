@@ -61,25 +61,33 @@ func coverPromptPath(bookDir string) string {
 	return filepath.Join(bookDir, "封面", coverRedoPromptFile)
 }
 
-// coverSeedPrompt 这本书还没有留档正向词时，给弹窗**一份能直接改的默认词**。
+// coverSeedPrompt 这本书还没有留档正向词时，给弹窗/一键入口**一份能直接用的默认封面词**
+// —— 也就是"**以小说名称直接创作封面**"那句词（2026-10-10 用户原话：不能以小说名称直接创作封面吗？）。
 //
 // 组成部分全部来自这本书**自己声明过**的东西（唯一出处是 scanNovelStyle，见 novels_style.go），
 // 不调模型、不猜剧情：
-//   - 书名（封面至少得是"这本书"的）；
+//   - 书名 —— 而且**放进英文引号里**：官方 ON-SCREEN TEXT 的判据是「**没被英文引号括起来的文字，
+//     就是模型会画成字形的来源**」（见 project/prompt_cjk.go 顶上那段），所以"想让它出现在封面上"
+//     的字只有一种写法：放进引号。封面上有书名才像封面；
 //   - 立项.json 的 art_style / 渲染风格串 / 画风，或 设定集/视觉风格卡-*.md 里的风格串（有则用 ——
 //     封面与正片必须同一口径，否则封面跟片子看起来不像一套）；
-//   - 一条固定的竖版封面构图口径：留标题位、不出现文字/水印（图像模型画不出可用的中文字，
-//     让它"画字"只会得到一排乱码）。
+//   - 一条固定的竖版封面构图口径（下三分之一留标题位）。
 //
-// 它**不是**用户想要的成稿，只是"有个能改的起点" —— 弹窗的 hint 里如实这么写。
+// **正文必须是英文**（照平台自己的图像侧口径：出图装配只吃英文提示词，汉字注解会被当成
+// "要画的字"照抄 —— 见 pipeline/artstyle.go 里那条 StripCJK 注释）。上一版把整句写成中文，
+// 与这条口径冲突：那等于让模型把"下三分之一留出标题位置"这类**说明**也当字形画到封面上去。
+// 于是判据很干脆：**这份词里引号之外不许出现任何汉字**（引号内只有书名）。
 func coverSeedPrompt(bookDir, bookName string) string {
+	name := strings.TrimSpace(bookName)
 	var b strings.Builder
-	fmt.Fprintf(&b, "《%s》的小说封面主视觉（竖版 3:4）", strings.TrimSpace(bookName))
+	fmt.Fprintf(&b, "Vertical 3:4 poster key visual for the Chinese short drama \"《%s》\". ", name)
 	if st := strings.TrimSpace(scanNovelStyle(bookDir).Style); st != "" {
-		b.WriteString("；画面口径：" + st)
+		b.WriteString(st + ". ")
 	}
-	b.WriteString("。构图：单一主视觉居中偏上，下三分之一留出标题位置；干净背景、电影级打光；" +
-		"画面里不出现任何文字、字幕、水印与签名")
+	fmt.Fprintf(&b, "Single hero subject, centered slightly above the middle, lower third kept clean for the title; "+
+		"dramatic cinematic lighting, shallow depth of field, highly detailed. "+
+		"The cover title text \"《%s》\" typeset clearly on the poster. "+
+		"No other text, no subtitles, no watermark, no signature.", name)
 	return b.String()
 }
 
@@ -111,6 +119,8 @@ func (s *Server) handleNovelCoverConfig(w http.ResponseWriter, r *http.Request) 
 	if raw, err := os.ReadFile(coverPromptPath(bookDir)); err == nil {
 		archived = strings.TrimSpace(string(raw))
 	}
+	// 弹窗初始值走**模板**（毫秒级、离线可判），**不在这里调 LLM**：config 是打开弹窗那一下，
+	// 让它等模型几秒不值当。想要 AI 写的词，弹窗里有「AI 按书名写词」按钮（POST /cover-prompt）。
 	prompt, hint := archived, ""
 	switch {
 	case !applicable:
@@ -118,9 +128,10 @@ func (s *Server) handleNovelCoverConfig(w http.ResponseWriter, r *http.Request) 
 			"单个文件的书请到集项目里换封面"
 	case archived == "":
 		prompt = coverSeedPrompt(bookDir, bookName)
-		hint = "这本书还没有留档正向词（封面/" + coverRedoPromptFile + "）——下面是平台按**书名与本书风格**" +
-			"推的默认词，可以直接改；勾上「把新正向词存回封面留档」就会写进那个文件"
+		hint = "这本书还没有留档正向词（封面/" + coverRedoPromptFile + "）——下面是按书名推的**模板词**，" +
+			"可以直接改也可以直接出图；想要更像封面的词，点下面的「AI 按书名写词」让平台 LLM 按这本书写一份"
 	}
+	llmReady := s.llmReady()
 	cw, ch := 896, 1344
 	if p := coverInDir(bookDir); p != "" {
 		if w, h, ok := s.imageSize(p); ok {
@@ -132,6 +143,7 @@ func (s *Server) handleNovelCoverConfig(w http.ResponseWriter, r *http.Request) 
 		"has_prompt": archived != "",
 		"applicable": applicable,
 		"hint":       hint,
+		"llm_ready":  llmReady, // 「AI 按书名写词」按钮能不能用（LLM 没配置时前端置灰，别让用户点了才报错）
 		"neg":        strings.TrimSpace(readTextOr(filepath.Join(bookDir, "封面", "neg-qwen21.txt"), "")),
 		"sizes":      coverSizes(),
 		"width":      cw, "height": ch,
@@ -176,18 +188,21 @@ func (s *Server) handleNovelCoverRedo(w http.ResponseWriter, r *http.Request) {
 			"单个文件的书请到集项目里换封面", filepath.Base(bookDir)))
 		return
 	}
-	// 正向词:用户改过的优先(那是本次的意图),没给才用技能端留档
+	// 正向词两档：**弹窗里给的** > `coverPromptFor`（留档 `封面/pos-qwen21.txt` > **平台 LLM 按书名写**
+	// > 模板兜底）。三档优先级与降级说明都在 novel_cover_prompt.go 里（唯一出处）。
+	//
+	// 【2026-10-10 用户两问：不能以小说名称直接创作封面吗？／平台有LLM功能啊】
+	// 这里原来是"没有留档词就 400，让技能端先出一版" —— 也就是**只给书名出不了封面**；
+	// 而补上的那一版又只是我拼的模板句（用户当场指出平台有 LLM）。现在：书名就够，
+	// **词由平台 LLM 按书名 + 本书风格 + 正文开头写**，模板只在她不可用时兜底、且如实标注。
 	prompt := strings.TrimSpace(in.Prompt)
-	fromFile := false
+	src := "**用户给的正向词**"
 	if prompt == "" {
-		raw, err := os.ReadFile(coverPromptPath(bookDir))
-		if err != nil || strings.TrimSpace(string(raw)) == "" {
-			writeErr(w, 400, fmt.Errorf(
-				"没有正向词可用:在弹窗里写一段,或让技能端先出一版封面留下 %s(gen_cover.py)",
-				coverRedoPromptFile))
-			return
+		cp := s.coverPromptFor(bookDir)
+		prompt, src = cp.Prompt, cp.From
+		if cp.Note != "" {
+			src += "（" + cp.Note + "）"
 		}
-		prompt, fromFile = strings.TrimSpace(string(raw)), true
 	}
 	if extra := strings.TrimSpace(in.Append); extra != "" {
 		prompt = strings.TrimRight(prompt, " ,，。.") + ". " + extra
@@ -214,9 +229,9 @@ func (s *Server) handleNovelCoverRedo(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(count)*15*time.Minute)
 	defer cancel()
 
-	s.opLog("🎨 封面候选:《%s》%d 张 %d×%d(正向词%s%s)",
-		filepath.Base(bookDir), count, w0, h0,
-		map[bool]string{true: " 来自留档", false: " **用户改写**"}[fromFile],
+	// 正向词是哪来的必须**如实播报**（用户要能一眼看出这行词是 AI 写的、技能端留档的，还是兜底模板）
+	s.opLog("🎨 封面候选:《%s》%d 张 %d×%d(正向词来自:%s%s)",
+		filepath.Base(bookDir), count, w0, h0, src,
 		func() string {
 			if strings.TrimSpace(in.Append) != "" {
 				return ",附加要求:" + strings.TrimSpace(in.Append)
@@ -267,8 +282,10 @@ func (s *Server) handleNovelCoverRedo(w http.ResponseWriter, r *http.Request) {
 			s.opLog("💾 封面正向词已更新(旧词备份 %s.bak)", filepath.Base(p))
 		}
 	}
+	// from 现在是一个可读的来源串（"留档…"/"平台 LLM 按书名写"/"模板兜底…"/"**用户给的正向词**"），
+	// 前端据此显示"这行词是谁写的"；`from_file` 保留旧字段名会误导（它早就不止"文件"一种来源）。
 	writeJSON(w, 200, map[string]any{"ok": true, "candidates": out,
-		"width": w0, "height": h0, "count": len(out), "prompt": prompt, "from_file": fromFile})
+		"width": w0, "height": h0, "count": len(out), "prompt": prompt, "from": src})
 }
 
 // handleNovelCoverApply POST /api/novels/cover-apply {path,file}
@@ -297,11 +314,30 @@ func (s *Server) handleNovelCoverApply(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, fmt.Errorf("候选图必须来自这本书的封面目录"))
 		return
 	}
-	coverDir := filepath.Join(bookDir, "封面")
-	b, err := os.ReadFile(cand)
+	backup, refreshed, err := s.applyCoverCandidate(bookDir, cand)
 	if err != nil {
 		writeErr(w, 500, err)
 		return
+	}
+	dst := filepath.Join(bookDir, "封面", "封面"+strings.ToLower(filepath.Ext(cand)))
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
+		Message: fmt.Sprintf("🎨 《%s》封面已更新%s", filepath.Base(bookDir),
+			map[bool]string{true: fmt.Sprintf(",并刷新了 %d 个集项目封面", refreshed), false: ""}[refreshed > 0])})
+	writeJSON(w, 200, map[string]any{"ok": true, "cover": filepath.ToSlash(filepath.Join("封面", filepath.Base(dst))),
+		"backup": backup, "projects": refreshed})
+}
+
+// applyCoverCandidate 把一张候选图落盘为本书封面（旧封面先备份）+ 刷新这本书的集项目封面。
+// 返回（备份路径, 刷新了几个集, 错误）。
+//
+// 【为什么单独成函数·2026-10-10】"一键按书名出封面"（`seedCoverFromTitle`）与"用户挑定候选"
+// （`handleNovelCoverApply`）必须走**同一段落盘逻辑** —— 备份、按后缀落盘、刷新集项目封面这三件事
+// 一旦两处各写一遍，迟早出现"自动那张不备份"/"挑的那张不刷新集项目"这种只在一半路径上发生的缺陷。
+func (s *Server) applyCoverCandidate(bookDir, cand string) (string, int, error) {
+	coverDir := filepath.Join(bookDir, "封面")
+	b, err := os.ReadFile(cand)
+	if err != nil {
+		return "", 0, err
 	}
 	// 旧封面先备份(重做是创作行为,随时可能反悔)
 	backup := ""
@@ -316,15 +352,85 @@ func (s *Server) handleNovelCoverApply(w http.ResponseWriter, r *http.Request) {
 	}
 	dst := filepath.Join(coverDir, "封面"+strings.ToLower(filepath.Ext(cand)))
 	if err := os.WriteFile(dst, b, 0o644); err != nil {
-		writeErr(w, 500, err)
+		return backup, 0, err
+	}
+	return backup, s.refreshProjectsCover(filepath.Base(bookDir), dst, backup), nil
+}
+
+// handleNovelCoverPrompt POST /api/novels/cover-prompt {path}
+//
+// 「让**平台 LLM** 按这本书写一份封面正向词」—— 弹窗里那个「AI 按书名写词」按钮走这条。
+// 与「一键出封面」的区别只有一处：这里**强制走 LLM**（哪怕技能端留过档），因为用户的意图
+// 就是"要一份新的、AI 写的"；LLM 给不出可用结果时回**模板 + 如实说明**（不报 500 ——
+// 用户要的是"一行能用的词"，拿不到 LLM 也该给他能改的起点）。
+func (s *Server) handleNovelCoverPrompt(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Path string `json:"path"`
+	}
+	if err := readBody(r, &in); err != nil || strings.TrimSpace(in.Path) == "" {
+		writeErr(w, 400, fmt.Errorf("需要 path(小说库里的书目录)"))
 		return
 	}
-	refreshed := s.refreshProjectsCover(filepath.Base(bookDir), dst, backup)
-	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "success",
-		Message: fmt.Sprintf("🎨 《%s》封面已更新%s", filepath.Base(bookDir),
-			map[bool]string{true: fmt.Sprintf(",并刷新了 %d 个集项目封面", refreshed), false: ""}[refreshed > 0])})
-	writeJSON(w, 200, map[string]any{"ok": true, "cover": filepath.ToSlash(filepath.Join("封面", filepath.Base(dst))),
-		"backup": backup, "projects": refreshed})
+	bookDir := strings.TrimSpace(in.Path)
+	if !s.inNovelRoot(bookDir) {
+		writeErr(w, 403, fmt.Errorf("路径超出小说库范围"))
+		return
+	}
+	if fi, err := os.Stat(bookDir); err != nil || !fi.IsDir() {
+		writeErr(w, 400, fmt.Errorf("封面词只对**书目录**可用（这本是单个文件/目录不在）"))
+		return
+	}
+	name := filepath.Base(bookDir)
+	prompt, note, err := s.llmCoverPrompt(bookDir)
+	from := "llm"
+	if err != nil {
+		prompt = coverSeedPrompt(bookDir, name)
+		from = "template"
+		note = "LLM 没用上：" + err.Error()
+	}
+	s.opLog("🎨 封面正向词:《%s》来自 %s（%d 字%s）", name,
+		map[string]string{"llm": "**平台 LLM**", "template": "模板兜底"}[from],
+		len([]rune(prompt)), map[bool]string{true: "；" + note, false: ""}[note != ""])
+	writeJSON(w, 200, map[string]any{"prompt": prompt, "from": from, "note": note})
+}
+
+// seedCoverFromTitle 「**以小说名称直接创作一张封面**」：拿词（coverPromptFor：留档 > LLM > 模板）
+// → 出 1 张 → 走与「挑定候选」**同一段落盘逻辑**（旧封面先备份 + 刷新这本书的集项目封面）。
+// 返回落盘后的封面路径。
+//
+// 【2026-10-10 用户两问：不能以小说名称直接创作封面吗？／平台有LLM功能啊】
+// 一键入口（小说库菜单的「按书名出封面」、视频制作里"书没有封面时先出一张"）都走这里：
+// 书名就是足够的输入，词由**平台 LLM** 写（模板只在她不可用时兜底，且如实标注来源）。
+//
+// 拿不到引擎/出图失败/落盘失败 → 返回 error，由调用方**如实播报**（不许静默吞掉）。
+func (s *Server) seedCoverFromTitle(bookDir string) (string, error) {
+	eng, err := s.reg.Get("comfy")
+	if err != nil {
+		return "", fmt.Errorf("本地 ComfyUI 引擎不可用:%w", err)
+	}
+	cp := s.coverPromptFor(bookDir)
+	w0, h0 := normCoverSize(0, 0) // 技能端口径 896×1344（竖版）
+	candDir := filepath.Join(bookDir, "封面", coverCandidatesDir)
+	if err := os.MkdirAll(candDir, 0o755); err != nil {
+		return "", err
+	}
+	seed := pipeline.RandomSeed()
+	cand := filepath.Join(candDir, fmt.Sprintf("c%d-%d.png", seed, time.Now().UnixNano()%1000))
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	if _, err := eng.GenerateImage(ctx, cp.Prompt, "", seed, w0, h0, cand); err != nil {
+		return "", fmt.Errorf("出图失败:%w", err)
+	}
+	if _, _, err := s.applyCoverCandidate(bookDir, cand); err != nil {
+		return "", fmt.Errorf("落盘失败:%w", err)
+	}
+	note := ""
+	if cp.Note != "" {
+		note = "；" + cp.Note
+	}
+	s.opLog("🎨 已按书名生成封面:《%s》%d×%d（正向词来自:%s%s）",
+		filepath.Base(bookDir), w0, h0, cp.From, note)
+	return filepath.Join(bookDir, "封面", "封面.png"), nil
 }
 
 // normCoverSize 规整尺寸:夹到 [512,2048] 并对齐到 16 的倍数(图像侧对齐要求),
