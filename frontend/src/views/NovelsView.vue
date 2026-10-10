@@ -661,15 +661,18 @@ function onCardCmd(cmd, n) {
                 <el-dropdown-item command="produce" :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
                 </el-dropdown-item>
-                     （后端 cover-redo 会回 400，这里直接置灰 —— 别让用户点进去才撞墙）。
-                     没有留档正向词时：一键那条会用**平台 LLM 按书名写**的正向词（模板兜底），
-                     弹窗那条给的是模板词 + 一个「AI 按书名写词」按钮。 -->
+                <!-- 两个封面入口只对**书目录**可用（散文件小说没有 `封面/` 目录，候选图无处可放），
+                     置灰的原因写在 title 气泡里 —— 模板里**不写会显示出来的说明文字**。 -->
                 <el-dropdown-item command="cover-title" :disabled="n.type === 'file'"
-                                  title="以小说名称直接出封面:正向词由平台 LLM 按书名+本书风格+正文开头写,出 3 张候选直接进左右对比挑;旧封面自动备份,集项目封面一并刷新">
+                                  :title="n.type === 'file'
+                                    ? '封面只对书目录可用 —— 这本在小说库里是单个文件,请到集项目里换封面'
+                                    : '以小说名称直接出封面:正向词由平台 LLM 按书名+本书风格+正文开头写,出 3 张候选直接进左右对比挑;旧封面自动备份,集项目封面一并刷新'">
                   <el-icon><Picture /></el-icon>按书名出封面
                 </el-dropdown-item>
                 <el-dropdown-item command="cover" :disabled="n.type === 'file'"
-                                  title="打开封面重做弹窗:正向词/尺寸/张数/seed 都能调,还能让平台 LLM 按书名重写一份;挑「用这张」才替换现封面;旧封面自动备份,集项目封面一并刷新">
+                                  :title="n.type === 'file'
+                                    ? '封面只对书目录可用 —— 这本在小说库里是单个文件,请到集项目里换封面'
+                                    : '打开封面重做弹窗:正向词/尺寸/张数/seed 都能调,还能让平台 LLM 按书名重写一份;挑「用这张」才替换现封面;旧封面自动备份,集项目封面一并刷新'">
                   <el-icon><Picture /></el-icon>封面重做
                 </el-dropdown-item>
                 <el-dropdown-item command="hide" divided>

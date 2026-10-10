@@ -331,7 +331,12 @@ func TestBothCoverEntriesShareOneMessage(t *testing.T) {
 	}
 }
 
-// ⑦ 前端接线：散文件书置灰、后端那句 hint 要显示、少一层兜底。
+// ⑦ 前端接线：散文件书置灰**且置灰原因写在 tip 气泡里**、后端那句 hint 要显示、少一层兜底。
+//
+// 【2026-10-10 用户】「显示『（后端 cover-redo 会回 400…）-->』干嘛？鼠标移动上去在 tip 气泡里
+// 显示不行吗？」—— 那次是我改注释时把 `<!--` 开头那行删掉了，说明文字**渲染到了界面上**
+// （`vite build` 不报错）。所以这条门除了"接线在不在"，还钉"给人看的解释写在 title 气泡里"：
+// 注释成对由 `frontend_comment_balance_test.go` 单独管。
 func TestNovelCoverRedoFrontendWiring(t *testing.T) {
 	vue := readFrontend(t, "src/views/NovelsView.vue")
 	for _, want := range []string{
@@ -342,6 +347,20 @@ func TestNovelCoverRedoFrontendWiring(t *testing.T) {
 	} {
 		if !strings.Contains(vue, want) {
 			t.Errorf("封面重做前端缺少接线：%s", want)
+		}
+	}
+	// **两个**封面入口都要在气泡里说清"为什么点不动"（用户：「鼠标移动上去在 tip 气泡里显示不行吗？」）。
+	// 用计数而不是 Contains：只改一个、留另一个，Contains 照样绿（同型教训：判据要能咬住"少做一半"）。
+	for _, pair := range []struct {
+		snippet string
+		want    int
+	}{
+		{`:title="n.type === 'file'`, 2}, // 置灰时给原因的三元
+		{`'封面只对书目录可用`, 2},                // 那句话本身
+	} {
+		if n := strings.Count(vue, pair.snippet); n != pair.want {
+			t.Errorf("封面入口的「置灰原因写在 tip 气泡里」应出现 %d 次，实际 %d 次：%s",
+				pair.want, n, pair.snippet)
 		}
 	}
 }
