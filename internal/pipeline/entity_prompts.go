@@ -506,9 +506,15 @@ var entityProfiles = map[EntityKind]entityProfile{
 	KindScene: {
 		Label: "场景",
 		Hint:  "地点/环境:整块地方的空场环境图(无人物),渲染方法为环境插图 + 场景忠实度",
+		// 【2026-10-10 借自 chatfire-AI/huobao-drama 的场景口径】他们的 scene-prompt SKILL 明写
+		// 「这是无人物空镜——场景图中不能出现任何的人（含背影、剪影、倒影、照片里的人），
+		// 即使场景描述提到人物活动也必须剔除」。我们原来只有一句"deserted and unpeopled"，
+		// 而"像个人但不是本剧任何角色"的干扰参考正是场景图最贵的一类错（H3 会把它当身份参考）。
 		SheetFraming: "a wide establishing view of the whole location — the environment itself is the subject: " +
 			"its architecture, ground plane, sky, light and props; the place stands completely deserted and unpeopled, " +
-			"an empty stage waiting for the cast",
+			"an empty stage waiting for the cast: NO person may appear in any form — no figure, no silhouette, " +
+			"no back-of-head, no reflection in glass or water, no painted, carved or photographed portrait, " +
+			"no crowd in the far distance — even when the brief mentions people being or doing something here",
 		SheetIdentity: "\n\nSCENE FIDELITY (mandatory): the place must match the written brief EXACTLY — the same spatial layout, " +
 			"the same architecture and building materials, the same ground, vegetation and props, the same time of day, weather and " +
 			"light direction. Art style changes the RENDERING SURFACE only (material, sheen, shading); it must NEVER change the layout " +

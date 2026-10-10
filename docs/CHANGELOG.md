@@ -1,5 +1,34 @@
 # 更新日志
 
+## 借鉴 huobao-drama：按资产种类分口径（物件不再拿人像的介质词）+ 场景无人物口径（2026-10-10）
+
+专题：`docs/借鉴huobao-drama-按资产种类分口径-2026-10-10.md`。
+
+用户：「看一下有没有什么优势点的借鉴一下，进行完善优化」。**读的是它的源码与提示词文件**
+（不是 README 转述）；逐条对照后，只落地我们真缺的那两格，其余（`@角色名`→图片标记替换、
+以落库为准判成败、工具层增量改字段、白底单件道具）**我们早就有**，照实说、不重复造。
+
+**① 按资产种类分口径**（他们的 `skills/prompt-generator/{character,scene,prop}-prompt`）：
+真机证据是盘上 `prop:prop_key`（一把铜钥匙）的 image_prompt 里写着
+`next-generation 3D CG character render, realistic skin shading with visible skin texture and
+natural facial highlights` —— 道具落进了人像那一支。修法：`styleExpandFor` 加
+`else if kind == KindObject` 支（`prop render` + 材质与自然光），场景支与人物支都不动。
+
+**② 场景图"任何形态的人都不许出现"**（他们的 scene-prompt 原文）：补
+`no figure, no silhouette, no back-of-head, no reflection in glass or water, no painted, carved or
+photographed portrait, no crowd in the far distance`。理由：场景图里"像人但不是本剧角色"的东西
+会被 H3 当身份参考（吃过同型故障）。
+
+**门**：`internal/pipeline/prop_medium_kind_test.go`
+（物件必须 `prop render` 且不得含 `character render`/`skin shading`/`facial highlights`；
+**反向针**：同一条风格串给 `KindHuman` 必须仍然是人像那一套；场景取景必须含
+`unpeopled`/`no silhouette`/`no reflection`/`no crowd`）。
+**反向验证 2/2 全红**（`scratch/reverse_verify_kind_medium.ps1`）。
+
+**不照搬**（登记在文档里）：视频提示词的"3 秒分段秒级时间轴"（我们的格式由 H3 官方口径钉死）、
+多语言提示词、云模型适配器（我们是本地 H3、零按条计费）。
+**登记待办**：角色参考图"左脸特写 + 右三视图同图"布局（要动出图+挂载+编号清单，须真机 A/B）。
+**如实说明**：我没跑过那个项目，不给"它出片更好"的背书。
 ## 小说→剧本渲染为何差：一章一档快路径把「全局风格」整条丢了（2026-10-10）
 
 专题：`docs/风格空行-小说转剧本渲染差-2026-10-10.md`。

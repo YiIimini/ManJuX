@@ -97,6 +97,20 @@
 
 本窗口的对话历史**不进仓库**，所以新会话只能靠文件重建上下文。开工前按顺序读：
 
+> **最新（2026-10-10，用户「huobao-drama 有没有什么优势点可以借鉴」）：
+> `docs/借鉴huobao-drama-按资产种类分口径-2026-10-10.md`** —— 读源码/提示词文件逐条对照，
+> **只落地我们真缺的两格**：① **按资产种类分口径**（他们的 character/scene/prop 三套 SKILL）——
+> 真机证据是盘上 `prop:prop_key`（铜钥匙）的提示词里写着 `3D CG character render, realistic skin
+> shading, natural facial highlights`；修法是 `styleExpandFor` 补 `else if kind == KindObject` 支
+> （`prop render` + 材质/自然光），场景支与人物支不动；② 场景图补"任何形态的人都不许出现"
+> （`no silhouette / no reflection / no crowd…`，借他们的 scene-prompt 原文）。**门**：
+> `internal/pipeline/prop_medium_kind_test.go`（物件不得含人像介质词 + **反向针**：KindHuman 必须
+> 仍然是人像那一套；场景取景必须含那四个词），**反向验证 2/2 全红**。
+> **他们那套我们早有的**（不重复造）：`@角色名`→图片标记的确定性替换（我们有更强的
+> `PICTURE MANIFEST (authoritative)`，按实际挂载的图写清单并声明覆盖上文编号）、以落库为准判成败、
+> 工具层增量改字段、白底单件道具。**不照搬**：3 秒分段秒级时间轴（我们的格式由 H3 官方口径钉死）、
+> 多语言提示词、云模型适配器（本地 H3 / 零按条计费）。**登记待办**：角色参考图"左脸特写 + 右三视图
+> 同图"布局。**如实说**：我没跑过那个项目，不给它出片更好的背书。
 > **最新（2026-10-10，用户「帮我分析小说转剧本为什么渲染的效果如此之差」）：
 > `docs/风格空行-小说转剧本渲染差-2026-10-10.md`** —— 真机取证出的根因：**「一章一档」快路径把
 > 「全局风格」整条丢了**。书自己的风格卡写着 `NOT a plastic 3D render`（还注明 qwen2.1 是

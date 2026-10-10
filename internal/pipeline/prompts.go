@@ -1485,6 +1485,29 @@ func styleExpandFor(existingPrompt, rawStyle string, facesOn bool, kind EntityKi
 			default:
 				terms = append(terms, "photorealistic cinematic environment and set, realistic materials and natural light")
 			}
+		} else if kind == KindObject {
+			// 非人形的「物」（道具/机关/器物参考图）走**物件那一套介质词**。
+			//
+			// 【真机证据，2026-10-10】盘上 `prop:prop_key`（一把铜钥匙）的 image_prompt 里写着
+			// "next-generation 3D CG **character render, realistic skin shading** with visible skin
+			// texture and natural facial highlights" —— 给一把钥匙要求"皮肤着色 / 面部高光"，
+			// 只会把静物往"有人味"方向拉，与它自己的「白底单件静物」口径打架。
+			//
+			// 【这条分工借自 chatfire-AI/huobao-drama】他们把提示词按**资产种类**拆成三套口径
+			// （`skills/prompt-generator/{character,scene,prop}-prompt/SKILL.md`），各写各的介质与取景；
+			// 我们此前只分了"场景 vs 其它"，道具被算进了"其它"= 人像那一套。
+			// 场景支见上面（environment render），人物支见下面（character render）。
+			switch {
+			case has3D:
+				terms = append(terms, "next-generation 3D CG prop render, stylized sculpted forms, "+
+					"matte dull even finish across every surface")
+			case medium3D:
+				terms = append(terms, "next-generation 3D CG prop render, semi-realistic surfaces with "+
+					"real materials and natural light")
+			default:
+				terms = append(terms, "photorealistic product render of a single object, realistic "+
+					"materials and natural light")
+			}
 		} else if has3D {
 			// 明确要手办/虚拟人：保留"收藏人偶"材质（那是这类风格的定义）
 			terms = append(terms, "next-generation 3D CG character render, stylized BJD-inspired sculpted forms, "+
