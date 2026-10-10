@@ -484,10 +484,22 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 	// 语音纪律条款（2026-10-07，用户「配音存在乱配音」）：把「只说 <d> 里那几句、其余时间没有人声」
 	// 写成硬约束。判据来自 ASR 实测：写这一条之前，13 镜里 3 镜把同一句念了 2~3 遍、
 	// 3 镜凭空多出剧本里没有的话（详见 internal/asr/compare.go 的文件头）。
+	//
+	// 【判据源收口（2026-10-10 深度排查，用户「配音老是有问题」）】下面两条条款**都按提示词正文判**
+	// （正文才是模型读到的东西）；结构字段（`shot.dialogue`）只用来**对账** —— 在这里记一次账，
+	// 由渲染收尾处如实播报。对不上就说明上游数据坏了：台词在正文里丢了，或模型自己加了词。
+	// 对账口径：正文里的 `<d>` 真句数 vs 方案里登记的真句数（占位/示例标签不算，见 promptSpokenTexts）。
+	// 记下**是哪几镜**（光一个计数，用户不知道该去核对哪一镜）。
+	if plan != nil && shot != nil {
+		if got, want := len(promptSpokenTexts(promptOut)), len(project.PlanSpokenTexts(shot)); got != want {
+			plan.SpeechTextMismatch++
+			plan.SpeechTextMismatchShots = append(plan.SpeechTextMismatchShots, shot.ID)
+		}
+	}
 	promptOut = EnsureSpokenLinesClause(promptOut, shot)
 	// 逐**小镜头**的人声位置（2026-10-08 真机实锤：模型把"每个小镜头都要说点什么"当成规则，
 	// 把台词整体前移一格、还在空出来的那格里自编了一句假中文 —— 见 EnsureSpeechPlacementClause 的文件头）。
-	promptOut = EnsureSpeechPlacementClause(promptOut, shot, plan)
+	promptOut = EnsureSpeechPlacementClause(promptOut, shot)
 	return promptOut
 }
 
@@ -604,12 +616,17 @@ const spokenLinesMarker = "SPOKEN LINES ONLY (MANDATORY)"
 //
 // 【它是否有效，只能由重渲 + ASR 复验来说】（诚实边界）本函数保证的只是这句话**在**提示词里、
 // 且不多不少只出现一次；它能不能管住模型，要重渲一镜（每镜十几分钟 GPU）再用 ASR 听一遍才知道。
+// 【判据源（2026-10-10 深度排查，用户「配音老是有问题」）】**只看提示词正文**里的 `<d>` 标签，
+// 不看 `shot.dialogue` —— 同一个文件里 `cutSpeechMap` 早就写下这条口径（「判据完全来自正文…
+// 以**真正发给模型的文本**为准」），而本函数原先用结构字段判，于是两处口径相反时真机出现
+// 「正文三句台词 + 整镜静音条款」的自相矛盾提示词（归档第01集镜 3 实测）。
+// 结构字段与正文的对账改由唯一装配点 `ShotRenderPrompt` 记账（`plan.SpeechTextMismatch`）。
 func EnsureSpokenLinesClause(prompt string, shot *project.Shot) string {
 	if shot == nil || strings.Contains(prompt, spokenLinesMarker) {
 		return prompt
 	}
 	var body string
-	if lines := project.PlanSpokenTexts(shot); len(lines) > 0 {
+	if lines := promptSpokenTexts(prompt); len(lines) > 0 {
 		body = "the ONLY human speech in this shot is the line or lines enclosed in <d>…</d> tags. Say each of them " +
 			"exactly once, verbatim, in the order written, inside the time window it is placed in. Do NOT repeat, " +
 			"re-read, paraphrase, extend, answer or improvise any line, and do NOT add any speech that is not " +
@@ -689,6 +706,26 @@ func cutSpeechMap(prompt string) []cutSpeech {
 	return out
 }
 
+// promptSpokenTexts 提示词**正文**里的台词（`<d>…</d>` 里的内容，已剥语言标签、已排除占位/示例）。
+//
+// 【为什么要有它（2026-10-10）】人声条款的判据只能有一个来源 —— **真正发给模型的那段文字**。
+// 原先 `EnsureSpokenLinesClause` 用结构字段（`PlanSpokenTexts`）、`cutSpeechMap` 用正文，
+// 两个来源一旦相反（真机：方案 `dialogue[].text` 空串、正文有三句 `<d>`），提示词里就同时出现
+// 「三句台词」与「整镜没有人声」两句话 ⇒ 音轨不可控。这里把"从正文取台词"收成一个助手，两处共用。
+//
+// 与 `cutSpeechMap` 的区别：这个**不依赖 `[Shot N]` 分刀**（整镜一刀的提示词也要能数出台词数）。
+func promptSpokenTexts(prompt string) []string {
+	out := make([]string, 0, 4)
+	for _, d := range reDialogueTag.FindAllStringSubmatch(prompt, -1) {
+		txt := strings.TrimSpace(reSpeechLang.ReplaceAllString(d[1], ""))
+		if txt == "" || project.IsPlaceholderSpoken(txt) {
+			continue
+		}
+		out = append(out, txt)
+	}
+	return out
+}
+
 // EnsureSpeechPlacementClause 逐**小镜头**写明人声出现在哪一段（幂等）。
 //
 // 【为什么还要一条（2026-10-08 真机第01集镜头 1，ASR 实锤）】`EnsureSpokenLinesClause` 只说"整镜"：
@@ -709,27 +746,22 @@ func cutSpeechMap(prompt string) []cutSpeech {
 // 【它是否有效，只能由重渲 + ASR 复验来说】（诚实边界）本函数保证的只是这段逐段清单**在**提示词里、
 // 且只出现一次；管不管得住模型要重渲一镜再用 ASR 听（每镜约 9~11 分钟 GPU）。
 //
-// 【安全阀（2026-10-08 追加）】这条清单等于在向模型**许愿**「这一刀要念这几句」—— 数错了比不加更糟：
-// 真机就是这么错的（清单写「这一刀 4 行」，真实只有 1 行 ⇒ 模型把空出来的格子填满）。
-// 所以先与计划对账：清单里的真句数必须等于 `project.PlanSpokenTexts(shot)` 的条数；
-// 对不上就**不加这条**（宁可不逐段点名），并如实计数 `plan.SpeechPlacementSkipped` 由渲染收尾处播报。
-func EnsureSpeechPlacementClause(prompt string, shot *project.Shot, plan *project.Plan) string {
+// 【安全阀（2026-10-08 追加；2026-10-10 改成"只记账、不再丢条款"）】这条清单等于在向模型**许愿**
+// 「这一刀要念这几句」—— 数错了比不加更糟：真机就是这么错的（清单写「这一刀 4 行」，真实只有 1 行
+// ⇒ 模型把空出来的格子填满）。所以清单里的真句数会与 `project.PlanSpokenTexts(shot)` 对账。
+//
+// 但"对不上就不加清单"是**把安全阀装反了**（2026-10-10 实测）：对不上恰恰说明数据坏掉，
+// 那几镜正是最需要"台词只在这一刀念"这条约束的（归档第01集 17 镜里 7 镜对不上，全部丢了清单，
+// 而同镜的"整镜静音"条款又因为同一个坏数据被写上 ⇒ 提示词自相矛盾）。
+// 现在：**清单一律按正文写**（`cutSpeechMap` 读的就是模型要读的那段文字），对账交给唯一装配点
+// `ShotRenderPrompt` 记账（`plan.SpeechTextMismatch`），由渲染收尾处如实播报。
+func EnsureSpeechPlacementClause(prompt string, shot *project.Shot) string {
 	if shot == nil || strings.Contains(prompt, speechPlacementMarker) {
 		return prompt
 	}
 	cuts := cutSpeechMap(prompt)
 	if len(cuts) < 2 {
 		return prompt // 只有一刀 = 整镜一个时间窗，SPOKEN LINES ONLY 已经覆盖，不重复堆话
-	}
-	listed := 0
-	for _, c := range cuts {
-		listed += len(c.Lines)
-	}
-	if want := len(project.PlanSpokenTexts(shot)); listed != want {
-		if plan != nil {
-			plan.SpeechPlacementSkipped++
-		}
-		return prompt
 	}
 	speaking := 0
 	var b strings.Builder

@@ -121,20 +121,70 @@ func TestBindLineVoicesRealInnerShots(t *testing.T) {
 // TestBindLineVoicesLeavesWhatItCannotResolve 认不出来的一律不动（宁可让模型发挥，也不塞错声线）。
 func TestBindLineVoicesLeavesWhatItCannotResolve(t *testing.T) {
 	plan := realVoicePlan()
+	// ① **数不一致**（正文 2 句 / dialogue 只有 1 条）⇒ 一个字都不动。
+	// 【2026-10-10 语义收窄】旧版本用"正文 1 句 + dialogue 1 条、只是文本被模型改写"当反例 ——
+	// 那个形态现在**要绑**（数一致 ⇒ 按顺序认人，见 TestBindLineVoicesOrderFallbackWhenPlanTextIsEmpty），
+	// 因为平台的 dialogue 是有序的、"第 i 句 = 第 i 条"是确定性信息。真正"认不出"的情形收窄成
+	// **数对不上**与**没有说话人**两种 —— 那两种才是一个人都不许猜。
 	sh := &project.Shot{ID: 1, VoKind: "speech", Characters: []string{"char_qiqi"},
 		Dialogue: []project.Line{{Speaker: "祁七", Text: "名册最后一行是多少。"}},
-		H3Prompt: "… she says in a clear, cool young voice (S2) says: <d>[Chinese]台词被模型改成了别的字。</d>"}
+		H3Prompt: "… she says in a clear, cool young voice (S2) says: <d>[Chinese]台词被模型改成了别的字。</d> " +
+			"<d>[Chinese]凭空多出来的一句。</d>"}
 	out, bound, unresolved := BindLineVoices(sh.H3Prompt, plan, sh)
-	if bound != 0 || unresolved != 1 {
-		t.Fatalf("对不上的台词不该动：bound=%d unresolved=%d\n%s", bound, unresolved, out)
+	if bound != 0 || unresolved != 2 {
+		t.Fatalf("数对不上时一个字都不许动：bound=%d unresolved=%d\n%s", bound, unresolved, out)
 	}
 	if out != sh.H3Prompt {
 		t.Errorf("认不出却改了文本：\n%s", out)
+	}
+	// ② 数一致、但 dialogue 里**没有说话人** ⇒ 同样不动（不猜）。
+	noSpk := &project.Shot{ID: 2, VoKind: "speech", Characters: []string{"char_qiqi"},
+		Dialogue: []project.Line{{Text: "名册最后一行是多少。"}},
+		H3Prompt: "… says in a clear, cool young voice: <d>[Chinese]名册最后一行是多少。</d>"}
+	if _, b, u := BindLineVoices(noSpk.H3Prompt, plan, noSpk); b != 0 || u != 1 {
+		t.Errorf("没有说话人时不许猜：bound=%d unresolved=%d", b, u)
 	}
 	// 规则文本里的示例标签（`<d>…</d>`、`<d></d>`、`<d>（无）</d>`）不是台词，别当句子数。
 	rules := "MANDARIN ONLY: matching the [Chinese] tag inside each <d>…</d>; never write <d></d> or <d>（无）</d>"
 	if got, _, _ := BindLineVoices(rules, plan, sh); got != rules {
 		t.Errorf("规则文本里的示例标签被当成台词改了：\n%s", got)
+	}
+}
+
+// TestBindLineVoicesOrderFallbackWhenPlanTextIsEmpty 真机那份坏方案（`dialogue[].text` 全是空串）也要认得出人。
+//
+// 【真机取证（2026-10-10）】归档第01集 **19 处 `dialogue[].text` 是空串**（ComfyUI 侧交付文档 §10.2 记的
+// 正是这份方案）：文本对不上 ⇒ 旧实现认不出 ⇒ 那些句子只能保留模型自己写的引述（**没有权威声线**），
+// 音色逐句漂移 —— 用户听到的「配音不对人」。而对话条目的**先后顺序**是平台自己的数据，
+// 正文里的台词也是按序写的 ⇒ 数一致时"第 i 句 = dialogue 第 i 条"是确定性信息。
+func TestBindLineVoicesOrderFallbackWhenPlanTextIsEmpty(t *testing.T) {
+	plan := realVoicePlan() // 只有祁七有卡；白手套没有卡（走平台派生的默认声线）
+	sh := &project.Shot{ID: 3, VoKind: "speech", Characters: []string{"char_qiqi"},
+		Dialogue: []project.Line{{Speaker: "祁七"}, {Speaker: "白手套"}, {Speaker: "祁七"}}, // 词全空＝真机那份坏方案
+		// 夹具照真机形态：**每句台词各占一行**（真机提交版提示词就是这样，一行一句带缩进）——
+		// 挤在一行会让"引述头"跨句（`voiceClauseHead` 取的是从上一个换行到 `<d>` 的那段），
+		// 于是重绑会把前一句的 `</d>` 一起吃掉。
+		H3Prompt: "subject_definitions:\n<Subject 1> is 祁七, the android maintenance unit.\n" +
+			"detailed_description:\n[Shot 1] 祁七 (S2) says: <d>[Chinese]别碰那条链。</d>\n" +
+			"白手套 (S1) says: <d>[Chinese]一台散件，凭什么说话。</d>\n" +
+			"祁七 (S2) says: <d>[Chinese]凭它还在响。</d>\n"}
+	out, bound, unresolved := BindLineVoices(sh.H3Prompt, plan, sh)
+	if bound != 3 || unresolved != 0 {
+		t.Fatalf("三句都该按顺序认出人并绑上声线：bound=%d unresolved=%d\n%s", bound, unresolved, out)
+	}
+	// 第 1/3 句是祁七：必须出现卡上的权威声线（逐字特征串）。
+	if n := strings.Count(out, "A cool, even, slightly hollow young female voice, measured and clipped"); n != 2 {
+		t.Errorf("祁七的两句都要绑上卡上声线，实得 %d 处\n%s", n, out)
+	}
+	// 第 2 句是白手套（无卡）：也要有一条平台给的声线描述，且说话人名要写对。
+	if !strings.Contains(out, "白手套") {
+		t.Errorf("第二句的说话人应当是白手套\n%s", out)
+	}
+	// 台词文本一个字都不许被改写（只换引述里的声线）。
+	for _, line := range []string{"别碰那条链。", "一台散件，凭什么说话。", "凭它还在响。"} {
+		if !strings.Contains(out, "<d>[Chinese]"+line+"</d>") {
+			t.Errorf("台词被改写了：缺少 %q\n%s", line, out)
+		}
 	}
 }
 
@@ -330,5 +380,41 @@ func TestStripGenderTailKeepsPictureWords(t *testing.T) {
 	got3, hit3 := stripGenderTail(`<Subject 1> (S3), an older woman in her sixties with a sharp, rasping, `)
 	if !hit3 || strings.Contains(got3, "older woman") || strings.Contains(got3, "rasping") {
 		t.Errorf("词表缺词的残段必须吃掉：得到 %q（hit=%v）", got3, hit3)
+	}
+}
+
+// TestSubjectMarkerSpeakerBindsCardVoice 引述里只写 `<Subject N>` 时也要绑上**卡上权威声线**。
+//
+// 【真机取证（2026-10-10 深度排查，用户「配音老是有问题」）】归档第01集镜 3 装配后的原话：
+//
+//	<Subject 1> (S2) says: <d>[Chinese]凭它还在响。</d>
+//
+// 说话人写成了主体标记，卡上的名字（祁七）不在那一行 ⇒ 旧实现认不出 ⇒ 这句**没有权威声线**
+// （只能让模型自由发挥），用户听到的就是"这句换了个嗓子"。而"第 1 个主体是祁七"这件事就写在
+// **同一条提示词的第一节**（`subject_definitions: <Subject 1> is 祁七, …`）——
+// 平台自己能读到的确定性信息，不该放着不用。
+func TestSubjectMarkerSpeakerBindsCardVoice(t *testing.T) {
+	plan := realVoicePlan()
+	const defs = "subject_definitions:\n<Subject 1> is 祁七, the android maintenance unit " +
+		"(machine stamp U-80001): porcelain-white skin, waist-length straight hair.\n"
+	sh := &project.Shot{ID: 3, VoKind: "speech", Characters: []string{"char_qiqi"},
+		H3Prompt: defs + "detailed_description:\n[Shot 1] <Subject 1> (S2) says: <d>[Chinese]凭它还在响。</d>\n"}
+	out, bound, unresolved := BindLineVoices(sh.H3Prompt, plan, sh)
+	if bound != 1 || unresolved != 0 {
+		t.Fatalf("主体标记应当被映射回角色名并绑上卡上声线：bound=%d unresolved=%d\n%s", bound, unresolved, out)
+	}
+	// 声线原文可能被收尾处理过（`voiceClause` 会把句子末尾的句号换成冒号），所以断**开头那段特征串**。
+	if !strings.Contains(out, "A cool, even, slightly hollow young female voice, measured and clipped") {
+		t.Errorf("绑定后必须出现卡片上的权威声线（逐字）\n%s", out)
+	}
+	if strings.Contains(out, "<Subject 1> (S2) says:") {
+		t.Errorf("引述里的主体标记应当已被角色名+声线替换掉\n%s", out)
+	}
+	// 反面针：主体定义映射到的名字**没有角色卡** ⇒ 一个字都不许改（宁可认不出，也不塞错人）。
+	noCard := &project.Shot{ID: 4, VoKind: "speech", Characters: []string{"char_qiqi"},
+		H3Prompt: "subject_definitions:\n<Subject 1> is 路人甲, a passer-by.\n" +
+			"detailed_description:\n[Shot 1] <Subject 1> (S2) says: <d>[Chinese]让一让。</d>\n"}
+	if got, b, u := BindLineVoices(noCard.H3Prompt, plan, noCard); got != noCard.H3Prompt || b != 0 || u != 1 {
+		t.Errorf("映射到的名字没有角色卡 ⇒ 不许绑：bound=%d unresolved=%d\n%s", b, u, got)
 	}
 }

@@ -473,10 +473,24 @@ func BindLineVoices(prompt string, plan *project.Plan, shot *project.Shot) (stri
 		return prompt, 0, 0
 	}
 	speaker := speakerByLine(shot)
+	// 主体标记 → 角色名（提示词自己的 `subject_definitions:`）：引述里只写 `<Subject N>` 时靠它认人。
+	subjects := subjectNames(prompt)
 	narrKey := normSpoken(strings.TrimSpace(shot.Narration))
 	out := prompt
 	bound, unresolved := 0, 0
 	ms := reDialogueTag.FindAllStringSubmatchIndex(out, -1)
+	// 这一句在**真台词**里的序号（占位/示例标签不算）—— 顺序兜底要用它。
+	ordinal := map[int]int{}
+	for _, m := range ms {
+		if hasSpokenText(out[m[2]:m[3]]) {
+			ordinal[m[0]] = len(ordinal)
+		}
+	}
+	// 【顺序兜底（2026-10-10 深度排查）】`<d>` 的文本与 `dialogue[].text` 对不上时（真机那份坏方案
+	// 19 处 `text` 是空串），按**先后顺序**认人：平台的 dialogue 是**有序**的，正文里的台词也是按序写的
+	// （`EnsureSpokenLinesClause` 明写 "in the order written"）。
+	// 只在**真句数完全一致**时才启用 —— 数不对就一个字都不猜（宁可认不出，也不塞错人）。
+	orderSpeakers := orderSpeakerFallback(shot, len(ordinal))
 	// 从后往前改：前面的下标不受后面改写影响。
 	for i := len(ms) - 1; i >= 0; i-- {
 		content := out[ms[i][2]:ms[i][3]]
@@ -485,6 +499,11 @@ func BindLineVoices(prompt string, plan *project.Plan, shot *project.Shot) (stri
 		}
 		key := normSpoken(content)
 		sp := speaker[key]
+		if strings.TrimSpace(sp) == "" {
+			if k, ok := ordinal[ms[i][0]]; ok && k < len(orderSpeakers) {
+				sp = orderSpeakers[k]
+			}
+		}
 		if strings.TrimSpace(sp) == "" {
 			if name, ok := innerSpeakerOf(out, ms[i][0], plan, shot, narrKey, key); ok {
 				sp = name
@@ -495,6 +514,13 @@ func BindLineVoices(prompt string, plan *project.Plan, shot *project.Shot) (stri
 			//（真机就是那么把女主的内心音配成男声的）。统一落到平台的旁白标签 ⇒
 			// `defaultVoiceFor` 给一个**跨镜一致的默认音色**（现在是中性；系统镜走合成音）。
 			sp = narrationLabel(shot.VoKind)
+		}
+		if strings.TrimSpace(sp) == "" {
+			// 引述里只有主体标记（`<Subject 1> (S2) says:`）：用提示词自己的 subject_definitions 映射回
+			// 角色名 —— 真机就是这么丢掉那句台词的权威声线的（见 subjectNames 的文件头）。
+			if name, ok := subjectSpeakerOf(out, ms[i][0], subjects, plan); ok {
+				sp = name
+			}
 		}
 		if strings.TrimSpace(sp) == "" {
 			unresolved++
@@ -558,6 +584,33 @@ func innerSpeakerOf(prompt string, dIdx int, plan *project.Plan, shot *project.S
 	return hit, true
 }
 
+// orderSpeakerFallback 顺序兜底：正文里的**真句数**与 `dialogue` 条数**完全一致**时，
+// 按先后顺序给出每句的说话人（否则回 nil = 一个字都不猜）。
+//
+// 【为什么需要它（2026-10-10 深度排查，用户「配音老是有问题」）】认人的第一判据是"`<d>` 的文本与
+// `dialogue[].text` 逐字对得上"（`speakerByLine`）—— 而真机撞到过 **19 处 `dialogue[].text` 是空串**
+// 的方案（归档第01集，见 ComfyUI 侧交付文档 §10.2）：文本对不上 ⇒ 那些句子**认不出说话人** ⇒
+// 只能保留模型自己写的引述（没有权威声线）⇒ 音色逐句漂移。而平台的 `dialogue` 是**有序**的，
+// 正文里的台词也是按序写的（`EnsureSpokenLinesClause` 明写 "in the order written"），
+// 所以"第 i 句 = dialogue 第 i 条"是在**数一致**这个前提下的确定性信息。
+//
+// 纪律：数不一致 ⇒ nil（宁可认不出，也不塞错人）。绑不绑还得看那句说话人有没有权威声线
+// （`voiceFor` 兜底），所以这里只负责"说出说话人是谁"。
+func orderSpeakerFallback(shot *project.Shot, spokenCount int) []string {
+	if shot == nil || spokenCount <= 0 || spokenCount != len(shot.Dialogue) {
+		return nil
+	}
+	out := make([]string, 0, len(shot.Dialogue))
+	for _, l := range shot.Dialogue {
+		name := strings.TrimSpace(l.Speaker)
+		if name == "" {
+			return nil // 有一条没有说话人 ⇒ 整条兜底作废（不猜）
+		}
+		out = append(out, name)
+	}
+	return out
+}
+
 // isNarrationLine 这一句 `<d>` 是不是本镜的旁白/内心音原文（归一化后一致或互相包含）。
 func isNarrationLine(narrKey, lineKey string) bool {
 	if narrKey == "" || lineKey == "" {
@@ -583,6 +636,63 @@ func voiceClauseHead(prompt string, dIdx int) string {
 	}
 	lineStart := strings.LastIndex(prompt[:dIdx], "\n") + 1
 	return prompt[lineStart:dIdx]
+}
+
+// reSubjectMark 提示词自己的主体标记（`<Subject 1>`…）。
+var reSubjectMark = regexp.MustCompile(`<Subject\s*\d+>`)
+
+// reSubjectDef 主体定义行：`<Subject 1> is 祁七, the android …`（名字取到第一个逗号/括号前）。
+var reSubjectDef = regexp.MustCompile(`<Subject\s*\d+>\s+is\s+([^,，（(]+)`)
+
+// subjectNames 提示词 `subject_definitions:` 那一节里"第 N 个主体是谁"（`<Subject 1>` → 祁七）。
+//
+// 【为什么能确定性做到（2026-10-10 深度排查，用户「配音老是有问题」）】真机装配后的引述里出现过
+//
+//	`<Subject 1> (S2) says: <d>[Chinese]凭它还在响。</d>`
+//
+// —— 说话人写成了**主体标记**，卡上的名字（祁七）不在那一行里，于是 `BindLineVoices` 认不出，
+// 这一句就**没有权威声线**（只能让模型自由发挥）。而"第 1 个主体是祁七"这件事就写在**同一条提示词的
+// 第一节**（`subject_definitions:`）—— 平台自己能读到的确定性信息，不该放着不用。
+func subjectNames(prompt string) map[string]string {
+	out := map[string]string{}
+	for _, m := range reSubjectDef.FindAllStringSubmatch(prompt, -1) {
+		mark := reSubjectMark.FindString(m[0])
+		name := strings.TrimSpace(m[1])
+		if mark == "" || name == "" {
+			continue
+		}
+		out[mark] = name
+	}
+	return out
+}
+
+// subjectSpeakerOf 引述里**只有** `<Subject N>` 时，用提示词自己的主体定义映射回角色名。
+//
+// 判据保守（与本仓一贯口径：宁可认不出，也不塞错人）：命中必须**恰好一个**、而且**必须有角色卡** ——
+// 没有卡的名字（路人/家丁）即使映射出来了也不绑（`cardVoiceOf` 会拦）。
+func subjectSpeakerOf(prompt string, dIdx int, subjects map[string]string, plan *project.Plan) (string, bool) {
+	if len(subjects) == 0 || plan == nil {
+		return "", false
+	}
+	head := voiceClauseHead(prompt, dIdx)
+	if head == "" {
+		return "", false
+	}
+	hit, n := "", 0
+	for _, mark := range reSubjectMark.FindAllString(head, -1) {
+		name := strings.TrimSpace(subjects[mark])
+		if name == "" || name == hit {
+			continue
+		}
+		if _, ok := cardVoiceOf(plan, name); !ok {
+			continue // 没有角色卡的主体：不进绑定（宁可不给音色，也不塞错人）
+		}
+		hit, n = name, n+1
+	}
+	if n != 1 {
+		return "", false
+	}
+	return hit, true
 }
 
 // hasVoiceWord 这段引述里有没有"说话/声音"类词（避免把纯画面描述当引述）。

@@ -45,7 +45,7 @@ func TestSpeechPlacementClauseMarksTheSilentCut(t *testing.T) {
 		{Speaker: "舱内系统", Text: "硬件钢印 U-80001。"},
 		{Speaker: "舱内系统", Text: "该编号不存在，予以静默。"},
 	}}
-	got := EnsureSpeechPlacementClause(realShot1Prompt, shot, nil)
+	got := EnsureSpeechPlacementClause(realShot1Prompt, shot)
 	if !strings.Contains(got, speechPlacementMarker) {
 		t.Fatal("逐刀的人声位置条款没进提示词")
 	}
@@ -77,7 +77,7 @@ func TestSpeechPlacementClauseMarksTheSilentCut(t *testing.T) {
 		t.Error("两句台词被写到同一刀里了")
 	}
 	// 幂等：装配点会被调用两次（渲染 + 2K/重绘/音频驱动）。
-	twice := EnsureSpeechPlacementClause(got, shot, nil)
+	twice := EnsureSpeechPlacementClause(got, shot)
 	if twice != got {
 		t.Error("已含条款的提示词应原样返回（幂等）")
 	}
@@ -88,7 +88,7 @@ func TestSpeechPlacementClauseMarksTheSilentCut(t *testing.T) {
 func TestSpeechPlacementClauseSkipsSingleCut(t *testing.T) {
 	single := "detailed_description:\nCold 3D CG.\n\n[Shot 1] At 00:00.000 the shot opens. 舱内系统 says: <d>[Chinese]读我的钢印。</d>\n"
 	shot := &project.Shot{ID: 1, Duration: 5, H3Prompt: single}
-	if got := EnsureSpeechPlacementClause(single, shot, nil); got != single {
+	if got := EnsureSpeechPlacementClause(single, shot); got != single {
 		t.Errorf("单刀镜不该加逐刀清单，实得：\n%s", tailOf(got, 1400))
 	}
 }
@@ -98,7 +98,7 @@ func TestSpeechPlacementClauseAllSilent(t *testing.T) {
 	silent := "detailed_description:\nCold 3D CG.\n\n[Shot 1] At 00:00.000 the bay stands empty. Static Shot.\n\n" +
 		"[Shot 2] At 00:03.000 the camera drifts left. Slow Pan.\n"
 	shot := &project.Shot{ID: 2, Duration: 7, H3Prompt: silent}
-	got := EnsureSpeechPlacementClause(silent, shot, nil)
+	got := EnsureSpeechPlacementClause(silent, shot)
 	if !strings.Contains(got, "heard in exactly 0") {
 		t.Errorf("没有台词的镜应写明 0 段有人声：\n%s", tailOf(got, 1400))
 	}
@@ -162,7 +162,7 @@ func TestSpeechPlacementCountsOnlyRealLines(t *testing.T) {
 		{Speaker: "邮局同事", Text: "又是那个人?"},
 		{Speaker: "周", Text: "十一月底,还能是谁。"},
 	}}
-	got := EnsureSpeechPlacementClause(realShot1HeadWithCuts+realShot1LastCutWithClauses, shot, nil)
+	got := EnsureSpeechPlacementClause(realShot1HeadWithCuts+realShot1LastCutWithClauses, shot)
 	if !strings.Contains(got, speechPlacementMarker) {
 		t.Fatal("逐刀清单没进提示词")
 	}
@@ -181,28 +181,65 @@ func TestSpeechPlacementCountsOnlyRealLines(t *testing.T) {
 	}
 }
 
-// TestSpeechPlacementSafetyValve 清单数出来的真句数与方案**对不上**时宁可不加 ——
-// 数错比不写更糟（真机就是被写错的那一版坑的）；不加要如实计数，由渲染收尾处播报。
-func TestSpeechPlacementSafetyValve(t *testing.T) {
+// TestSpeechPlacementWritesEvenWhenPlanCountsDiffer 逐刀清单**不再因为「对不上账」而丢掉**。
+//
+// 【2026-10-10 语义反转（深度排查，用户「配音老是有问题」）】旧实现是"数出来的真句数与方案对不上
+// 就不加清单"（当时叫安全阀）。真机实测证明它装反了：对不上恰恰说明数据坏掉（归档第01集 17 镜里
+// 7 镜对不上），而那几镜正是最需要「台词只在这一刀念」这条约束的 —— 更糟的是同一个坏数据还会让
+// 「整镜静音」条款被写上，于是提示词自相矛盾。现在：**清单一律按正文写**（正文才是模型读到的），
+// 对账只用来**如实记账 + 播报**（记账在唯一装配点 ShotRenderPrompt，见下面两条）。
+func TestSpeechPlacementWritesEvenWhenPlanCountsDiffer(t *testing.T) {
 	// 提示词里有 2 句 <d>，而方案的 dialogue 只有 1 句 ⇒ 对不上。
 	prompt := "[Shot 1] At 00:00.000 opening. Static Shot.\n" +
 		"[Shot 2] At 00:02.500 a. 沈砚 (S1) says: <d>[Chinese]读我的钢印。</d>\n" +
 		"[Shot 3] At 00:05.000 b. 沈砚 (S1) says: <d>[Chinese]这句不在方案里。</d>\n"
 	shot := &project.Shot{ID: 1, Duration: 9, Dialogue: []project.Line{{Speaker: "沈砚", Text: "读我的钢印。"}}}
-	plan := &project.Plan{}
-	if got := EnsureSpeechPlacementClause(prompt, shot, plan); got != prompt {
-		t.Errorf("对账不上时不该加逐刀清单，实得：\n%s", tailOf(got, 800))
+	if got := EnsureSpeechPlacementClause(prompt, shot); !strings.Contains(got, speechPlacementMarker) {
+		t.Errorf("对不上账也必须写逐刀清单 —— 丢掉它等于把这镜「台词只在这一刀念」的约束拆了：\n%s", tailOf(got, 600))
 	}
-	if plan.SpeechPlacementSkipped != 1 {
-		t.Errorf("跳过的镜数要如实计数（SpeechPlacementSkipped），实得 %d", plan.SpeechPlacementSkipped)
-	}
-	// 对得上时必须加（把第二句补进计划）。
+	// 对得上时当然也要写（正常路径不许被这个改动堵死）。
 	shot.Dialogue = append(shot.Dialogue, project.Line{Speaker: "沈砚", Text: "这句不在方案里。"})
-	plan2 := &project.Plan{}
-	if got := EnsureSpeechPlacementClause(prompt, shot, plan2); !strings.Contains(got, speechPlacementMarker) {
-		t.Error("对账对得上时应该加清单（安全阀不能把正常路径也堵死）")
+	if got := EnsureSpeechPlacementClause(prompt, shot); !strings.Contains(got, speechPlacementMarker) {
+		t.Error("对得上时应该加清单")
 	}
-	if plan2.SpeechPlacementSkipped != 0 {
-		t.Error("正常路径不该记跳过")
+}
+
+// TestSpeechTextMismatchIsAccounted 对不上的事件要**如实记账**（判据源是正文，结构字段只对账）。
+//
+// 夹具＝真机那份坏方案的形态：正文三句 `<d>`，而 `dialogue` 的词全是空串。
+func TestSpeechTextMismatchIsAccounted(t *testing.T) {
+	proj, plan, shot := specFixture()
+	shot.H3Prompt = "detailed_description:\nGUOFENG. [Shot 1] a. 祁七 (S2) says: <d>[Chinese]别碰那条链。</d> " +
+		"<Subject 1> (S2) says: <d>[Chinese]凭它还在响。</d>\n" +
+		"[Shot 2] At 00:02.500 b. 白手套 (S1) says: <d>[Chinese]一台散件，凭什么说话。</d>\n"
+	shot.Dialogue = []project.Line{{Speaker: "祁七"}, {Speaker: "白手套"}, {Speaker: "祁七"}} // 词全空 = 真机那份坏方案
+	_ = ShotRenderPrompt(proj, plan, &shot)
+	if plan.SpeechTextMismatch != 1 {
+		t.Errorf("正文 3 句 vs 结构 0 句 ⇒ 必须记 1 次对不上，实得 %d", plan.SpeechTextMismatch)
+	}
+	if len(plan.SpeechTextMismatchShots) != 1 || plan.SpeechTextMismatchShots[0] != shot.ID {
+		t.Errorf("要记下**是哪一镜**（播报时点名），实得 %v", plan.SpeechTextMismatchShots)
+	}
+	// 账对得上时不许误报（夹具照真实形态：正文里的 <d> 与 dialogue 逐字一致）。
+	proj2, plan2, _ := specFixture()
+	ok := project.Shot{ID: 9, H3Prompt: "detailed_description:\n[Shot 1] 沈砚 (S1) says: <d>[Chinese]读我的钢印。</d>\n",
+		Dialogue: []project.Line{{Speaker: "沈砚", Text: "读我的钢印。"}}}
+	_ = ShotRenderPrompt(proj2, plan2, &ok)
+	if plan2.SpeechTextMismatch != 0 {
+		t.Errorf("账对得上时不该报，实得 %d", plan2.SpeechTextMismatch)
+	}
+}
+
+// TestSpeechTextMismatchIsReported 渲染收尾必须把这件事播出来（不许只记账、静默）。
+func TestSpeechTextMismatchIsReported(t *testing.T) {
+	src := readSrc(t, "stages_render.go")
+	for _, want := range []string{"plan.SpeechTextMismatch > 0", "shotIDsText(plan.SpeechTextMismatchShots)", "台词账对不上"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("渲染收尾少了播报 %q —— 对不上就等于数据坏了，用户有权知道", want)
+		}
+	}
+	// 旧字段名必须已经不在了（免得两处各说一套）。
+	if strings.Contains(src, "SpeechPlacementSkipped") {
+		t.Errorf("渲染阶段还在用旧字段 SpeechPlacementSkipped（语义已换成 SpeechTextMismatch）")
 	}
 }

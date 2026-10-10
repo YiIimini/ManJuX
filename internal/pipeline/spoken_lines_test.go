@@ -21,6 +21,10 @@ import (
 func TestEnsureSpokenLinesClauseReachesTheRenderedPrompt(t *testing.T) {
 	proj, plan, shot := specFixture()
 	shot.Dialogue = []project.Line{{Speaker: "沈砚", Text: "读我的钢印。"}}
+	// 【夹具必须照真实形态（2026-10-10）】真机里这句台词**就在正文的 `<d>` 标签里**（H3 只认这个通道）。
+	// 正文里没有 `<d>`、只在结构字段里写台词，是"数据坏了"的形态 —— 那种形态现在会被对账点名，
+	// 而条款按正文写（本门测的正是"条款进了渲染提示词"，所以夹具必须是正常形态）。
+	shot.H3Prompt += " 沈砚 (S1) says: <d>[Chinese]读我的钢印。</d>"
 	got := ShotRenderPrompt(proj, plan, &shot)
 	if !strings.Contains(got, spokenLinesMarker) {
 		t.Fatal("渲染提示词里没有语音纪律条款 —— 模型会继续在空档里自己填话")
@@ -70,7 +74,12 @@ func TestEnsureSpokenLinesClauseOnSilentShot(t *testing.T) {
 	}
 	// 只有旁白（画外音）也算"有人声要说"，走的仍是有台词那一版。
 	shot.Narration = "舱内只剩下嗡鸣。"
-	if got := EnsureSpokenLinesClause("X", &shot); !strings.Contains(got, "the ONLY human speech in this shot is") {
+	// 【夹具必须照真实形态（2026-10-10）】旁白在提示词里**也是**一个 `<d>` 标签（H3 只认这个通道），
+	// 所以给它一段真实的旁白行 —— 拿 "X" 这种空正文当夹具测的是"结构字段里有没有旁白"，
+	// 而判据现在只看正文（那正是本轮修的方向）。
+	vo := "detailed_description:\nCold 3D CG. [Shot 1] 祁七 (S2) says in an off-screen voiceover: " +
+		"<d>[Chinese]舱内只剩下嗡鸣。</d> while her lips remain completely closed.\n"
+	if got := EnsureSpokenLinesClause(vo, &shot); !strings.Contains(got, "the ONLY human speech in this shot is") {
 		t.Error("有旁白的镜头属于「有人声要说」，应拿到「只念这些」那一版")
 	}
 	// nil 镜头：不 panic、不塞条款（没有镜头就没有可说的台词）。
@@ -79,4 +88,34 @@ func TestEnsureSpokenLinesClauseOnSilentShot(t *testing.T) {
 	}
 	_ = proj
 	_ = plan
+}
+
+// TestSpokenLinesClauseJudgesFromPromptBodyNotPlan 判据是**提示词正文**，不是结构字段。
+//
+// 【真机取证（2026-10-10 深度排查，用户「配音老是有问题」）】夹具＝归档第01集镜 3 的原话：
+// 方案里 `dialogue[].text` 全是**空串**（19 处空台词那份坏方案），而正文里有三句
+// `<d>[Chinese]…</d>`（声线还都绑好了）。旧实现拿结构字段判 ⇒ 判成"整镜没有台词"，
+// 于是同一条提示词里**同时**写着「三句台词」和「this shot has NO spoken dialogue at all,
+// no <d> tag, the human voice track stays silent for the whole shot」。
+// H3 听哪一条没有保证 ⇒ 音轨不可控（用户听到的正是"配音老是有问题"）。
+func TestSpokenLinesClauseJudgesFromPromptBodyNotPlan(t *testing.T) {
+	body := "detailed_description:\nCold 3D CG. " +
+		"[Shot 1] 祁七 (S2) says: <d>[Chinese]别碰那条链。</d> " +
+		"[Shot 2] At 00:02.500 白手套 (S1) says: <d>[Chinese]一台散件，凭什么说话。</d> " +
+		"<Subject 1> (S2) says: <d>[Chinese]凭它还在响。</d>\n"
+	shot := &project.Shot{ID: 3, Duration: 9,
+		Dialogue: []project.Line{{Speaker: "祁七"}, {Speaker: "白手套"}, {Speaker: "祁七"}}} // 词全空＝真机那份坏方案
+	got := EnsureSpokenLinesClause(body, shot)
+	if !strings.Contains(got, "the ONLY human speech in this shot is") {
+		t.Error("正文里有三句 <d> 台词，就必须拿到「只念这几句」那一版")
+	}
+	if strings.Contains(got, "NO spoken dialogue at all") {
+		t.Errorf("正文里明明有三句台词，却写了「整镜没有任何台词」—— 两条条款自相矛盾，音轨不可控：\n%s", tailOf(got, 700))
+	}
+	// 反面：正文里一句真台词都没有（只有示例标签）⇒ 必须是"整镜没有人声"那一版。
+	silent := "detailed_description:\nCold 3D CG. [Shot 1] the bay stands empty. Static Shot.\n" +
+		"SPOKEN LINES ONLY: never write <d>…</d> or <d>（无）</d> yourself.\n"
+	if got := EnsureSpokenLinesClause(silent, &project.Shot{ID: 4}); !strings.Contains(got, "NO spoken dialogue at all") {
+		t.Error("正文里没有真台词（只有示例标签）⇒ 该拿到「整镜没有人声」那一版")
+	}
 }

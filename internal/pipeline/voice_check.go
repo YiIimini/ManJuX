@@ -121,10 +121,11 @@ func submittedVoiceLines(proj *project.Project, plan *project.Plan, shot *projec
 	if plan == nil || shot == nil {
 		return nil
 	}
-	rb, un, sp := plan.VoiceRebound, plan.VoiceUnresolved, plan.SpeechPlacementSkipped
+	rb, un, sp, sps := plan.VoiceRebound, plan.VoiceUnresolved, plan.SpeechTextMismatch, plan.SpeechTextMismatchShots
 	vcs := plan.VoiceClashStripped
 	out := ShotRenderPrompt(proj, plan, shot)
-	plan.VoiceRebound, plan.VoiceUnresolved, plan.SpeechPlacementSkipped = rb, un, sp
+	plan.VoiceRebound, plan.VoiceUnresolved, plan.SpeechTextMismatch = rb, un, sp
+	plan.SpeechTextMismatchShots = sps
 	plan.VoiceClashStripped = vcs
 	return VoiceLinesFromPrompt(out)
 }

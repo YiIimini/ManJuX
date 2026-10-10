@@ -14,7 +14,12 @@ import (
 func TestZZProbeVoiceBinding(t *testing.T) {
 	root := filepath.Join("..", "..", "data", "projects")
 	// 【2026-10-10】探针要能指向**当前在查的那一集**（不必改代码就能换项目）：
-	// $env:MANJUX_PROBE_PROJECT="<项目 id>" —— 在 data/projects/*/ 下按 id 找一层。
+	// $env:MANJUX_PROBE_PROJECT="<项目 id>" —— 在 <root>/*/ 下按 id 找一层。
+	// $env:MANJUX_PROBE_ROOT="<另一个 store 根>" —— 查归档/临时拷贝时用
+	// （data/_archived/ 下的项目不在 data/projects 里，不给这个口子就读不到它）。
+	if v := strings.TrimSpace(os.Getenv("MANJUX_PROBE_ROOT")); v != "" {
+		root = v
+	}
 	id := "顺其自然（真实事迹短片）·第01集·顺其自然"
 	dir := filepath.Join(root, "顺其自然（真实事迹短片）", id)
 	if v := strings.TrimSpace(os.Getenv("MANJUX_PROBE_PROJECT")); v != "" {
@@ -39,13 +44,13 @@ func TestZZProbeVoiceBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prevRebound, prevSkip, prevUnres := plan.VoiceRebound, plan.SpeechPlacementSkipped, plan.VoiceUnresolved
+	prevRebound, prevMismatch, prevUnres := plan.VoiceRebound, plan.SpeechTextMismatch, plan.VoiceUnresolved
 	for i := range plan.Shots {
 		sh := plan.Shots[i]
 		out := ShotRenderPrompt(proj, plan, &plan.Shots[i])
-		t.Logf("=== 镜 %-3d 重绑 +%d 未认 +%d 清单跳过 +%d 清单在=%v",
+		t.Logf("=== 镜 %-3d 重绑 +%d 未认 +%d 台词账对不上 +%d 清单在=%v",
 			sh.ID, plan.VoiceRebound-prevRebound, plan.VoiceUnresolved-prevUnres,
-			plan.SpeechPlacementSkipped-prevSkip, strings.Contains(out, speechPlacementMarker))
+			plan.SpeechTextMismatch-prevMismatch, strings.Contains(out, speechPlacementMarker))
 		// 【2026-10-10】要查"是不是装配把同一句写了两遍"时，把整段提交版提示词打出来：
 		// $env:MANJUX_PROBE_DUMP=1（可配 $env:MANJUX_PROBE_SHOT=<镜号> 只看那一镜）。
 		if os.Getenv("MANJUX_PROBE_DUMP") == "1" {
@@ -53,7 +58,7 @@ func TestZZProbeVoiceBinding(t *testing.T) {
 				t.Logf("---- 提交版提示词（镜 %d，%d 字）----\n%s", plan.Shots[i].ID, len([]rune(out)), out)
 			}
 		}
-		prevRebound, prevSkip, prevUnres = plan.VoiceRebound, plan.SpeechPlacementSkipped, plan.VoiceUnresolved
+		prevRebound, prevMismatch, prevUnres = plan.VoiceRebound, plan.SpeechTextMismatch, plan.VoiceUnresolved
 		cut := out
 		if k := strings.Index(cut, onScreenTextMarker); k >= 0 {
 			cut = cut[:k]
