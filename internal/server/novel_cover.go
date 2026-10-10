@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -87,9 +88,7 @@ func (s *Server) applyNovelCover(book string, ids []string, root string) int {
 	}
 	src := s.novelCoverFor(root, book)
 	if src == "" {
-		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-			Message: "ℹ 这本书没有封面图(约定 `<书目录>/封面/*.png`),项目封面暂用角色定妆照兜底 —— " +
-				"放一张 `<书目录>/封面/封面.png` 再重新导入即可"})
+		s.noteMissingNovelCover(strings.TrimSpace(book))
 		return 0
 	}
 	ext := strings.ToLower(filepath.Ext(src))
@@ -137,4 +136,25 @@ func hasAnyCover(assetsDir string) bool {
 		}
 	}
 	return false
+}
+
+// missingCoverMsg 与 noteMissingNovelCover:「这本书没有封面图」这件事**只有一句话、一个级别**。
+//
+// 【为什么要收成一处·2026-10-10】两条入口（「一键视频创作」LLM 拆集 / 「脚本创作·包导入」）都会
+// 遇到"书没有封面图"，而平台此前**两处口径不同**：包导入那条会如实说一句，而一键视频创作那条
+// 在 `applyCover` 里是 **`if cover == "" { return }` 静默跳过** —— 一集集建出来全都没有封面，
+// 用户完全不知道原因（这正是 2026-09-29 审计同型缺陷的另一半：那次修的是"写失败要报"，
+// 这次修的是"**根本没有来源**也要报"）。同一个问题在两条路径上说起来像两个不同的问题，
+// 就是这条规矩（AGENTS.md：口径只许有一份）要防的事。
+//
+// 级别取 **warn**：不是错误，但必须让用户看见 —— 封面是作品的招牌，缺了它集项目会退到
+// 「首个角色定妆照」（制作中间物）兜底。
+func missingCoverMsg(book string) string {
+	return fmt.Sprintf("⚠ 《%s》没有封面图（小说库约定 `<书目录>/封面/*.png`）——集项目封面会退到"+
+		"「首个角色定妆照」兜底。两个办法：① 放一张 `<书目录>/封面/封面.png` 再重新导入；"+
+		"② 用小说库的「封面重做」出图 → 点「用这张」（它会一并刷新这本书的集项目封面）", book)
+}
+
+func (s *Server) noteMissingNovelCover(book string) {
+	s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: missingCoverMsg(book)})
 }

@@ -420,6 +420,10 @@ async function openCoverDialog(n) {
   try {
     const c = await api.novelCoverConfig(n.path)
     covMeta.value = c
+    // 【2026-10-10】散文件小说（小说库根下直接放一个 .md/.docx）没有 `封面/` 目录，
+    // 候选图无处可放 —— 后端标 applicable=false 并给一句 hint，这里直接把话说明白，
+    // 不要打开一个"点了生成必然失败"的弹窗（菜单项也已置灰，这条是兜底）。
+    if (c.applicable === false) { ElMessage.error(c.hint || '这本书不支持封面重做'); return }
     covForm.value = {
       prompt: c.prompt || '',
       append: '',
@@ -433,7 +437,7 @@ async function openCoverDialog(n) {
     // 重新出图才能比)。候选目录里的老图也能直接进对比视图,省一次 GPU。
     covCands.value = c.candidates || []
     covOpen.value = true
-  } catch (e) { ElMessage.error(e.message) } // 没有正向词/越界:原样展示后端那句话
+  } catch (e) { ElMessage.error(e.message) } // 越界/后端异常:原样展示后端那句话
 }
 
 // 尺寸预设选择(自定义时用下面两个数字输入)
@@ -611,8 +615,11 @@ function onCardCmd(cmd, n) {
                 <el-dropdown-item command="produce" :disabled="producing">
                   <el-icon><VideoCamera /></el-icon>视频制作
                 </el-dropdown-item>
-                <el-dropdown-item command="cover"
-                                  title="用封面目录里的正向词(pos-qwen21.txt)重新生成封面;旧封面自动备份,集项目封面一并刷新">
+                <!-- 封面重做只对**书目录**可用:散文件小说没有 `封面/` 目录，候选图无处可放
+                     （后端 cover-redo 会回 400，这里直接置灰 —— 别让用户点进去才撞墙）。
+                     没有留档正向词时后端会给一份"按书名与本书风格推的默认词"，弹窗照开、可改。 -->
+                <el-dropdown-item command="cover" :disabled="n.type === 'file'"
+                                  title="出几张封面候选(有留档正向词就用它;没有则给一份按书名与本书风格推的、可改的默认词),挑「用这张」才替换现封面;旧封面自动备份,集项目封面一并刷新">
                   <el-icon><Picture /></el-icon>封面重做
                 </el-dropdown-item>
                 <el-dropdown-item command="hide" divided>
@@ -638,7 +645,13 @@ function onCardCmd(cmd, n) {
       <div class="flex gap-3" style="min-height:300px">
         <!-- 左:参数 -->
         <div class="flex flex-col gap-2" style="width:340px;flex:none">
-          <div class="text-xs" style="color:var(--mx-text3)">正向词(留档 <code>pos-qwen21.txt</code>;改了直接用改过的)</div>
+          <!-- 【2026-10-10】这本书**没有留档正向词**时后端不再把弹窗关在门外：它会给一份
+               "按书名与本书风格推的默认词"（c.prompt）＋一句 hint（c.hint，说清当前状态与下一步）。
+               所以这里有 hint 就显示 —— 用户一眼知道手上这行词是哪来的、存不存得回去。 -->
+          <div v-if="covMeta?.hint" class="text-xs" style="color:var(--mx-amber);line-height:1.5">{{ covMeta.hint }}</div>
+          <div class="text-xs" style="color:var(--mx-text3)">
+            正向词（{{ covMeta?.has_prompt === false ? '平台推的默认词,可直接改' : '留档 pos-qwen21.txt' }}）
+          </div>
           <el-input v-model="covForm.prompt" type="textarea" :rows="9" placeholder="英文正向词" />
           <div class="text-xs" style="color:var(--mx-text3)">附加要求(可选,追加到正向词末尾)</div>
           <el-input v-model="covForm.append" size="small" placeholder="例:黄昏逆光,更有烟火气;主角换成正脸" />

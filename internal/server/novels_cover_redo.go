@@ -61,21 +61,65 @@ func coverPromptPath(bookDir string) string {
 	return filepath.Join(bookDir, "封面", coverRedoPromptFile)
 }
 
+// coverSeedPrompt 这本书还没有留档正向词时，给弹窗**一份能直接改的默认词**。
+//
+// 组成部分全部来自这本书**自己声明过**的东西（唯一出处是 scanNovelStyle，见 novels_style.go），
+// 不调模型、不猜剧情：
+//   - 书名（封面至少得是"这本书"的）；
+//   - 立项.json 的 art_style / 渲染风格串 / 画风，或 设定集/视觉风格卡-*.md 里的风格串（有则用 ——
+//     封面与正片必须同一口径，否则封面跟片子看起来不像一套）；
+//   - 一条固定的竖版封面构图口径：留标题位、不出现文字/水印（图像模型画不出可用的中文字，
+//     让它"画字"只会得到一排乱码）。
+//
+// 它**不是**用户想要的成稿，只是"有个能改的起点" —— 弹窗的 hint 里如实这么写。
+func coverSeedPrompt(bookDir, bookName string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "《%s》的小说封面主视觉（竖版 3:4）", strings.TrimSpace(bookName))
+	if st := strings.TrimSpace(scanNovelStyle(bookDir).Style); st != "" {
+		b.WriteString("；画面口径：" + st)
+	}
+	b.WriteString("。构图：单一主视觉居中偏上，下三分之一留出标题位置；干净背景、电影级打光；" +
+		"画面里不出现任何文字、字幕、水印与签名")
+	return b.String()
+}
+
 // handleNovelCoverConfig GET /api/novels/cover-config?path=<书目录>
 //
 // 配置弹窗的初始值:现状正词、上次用的参数、可选尺寸、现封面尺寸与最近候选。
+//
+// 【2026-10-10 改】这本书**没有留档正向词**时，原来回 **400** —— 于是弹窗根本打不开，
+// 而弹窗本身支持"直接写一份词再生成"（cover-redo 认 in.Prompt），候选对比视图里也专门写着
+// 「这本书还没有封面」（CoverCompare.vue）：也就是说 **既没有封面、又没有留档词** 恰恰是
+// 封面重做最该顶用的场合，却成了唯一走不通的场合（用户被卡在"先让技能端生成一次"那一步）。
+// 现在一律 200：留档词没有就**按这本书自己声明过的东西推一份默认词**（coverSeedPrompt，
+// 不猜内容、不调模型），并把状态用 has_prompt / hint 明说，由用户在弹窗里改。
 func (s *Server) handleNovelCoverConfig(w http.ResponseWriter, r *http.Request) {
 	bookDir := strings.TrimSpace(r.URL.Query().Get("path"))
 	if !s.inNovelRoot(bookDir) {
 		writeErr(w, 403, fmt.Errorf("路径超出小说库范围"))
 		return
 	}
-	raw, err := os.ReadFile(coverPromptPath(bookDir))
-	if err != nil || strings.TrimSpace(string(raw)) == "" {
-		writeErr(w, 400, fmt.Errorf(
-			"这本书没有封面正向词(%s):先让技能端生成一次封面(gen_cover.py),或在这儿直接写一份再生成",
-			coverPromptPath(bookDir)))
-		return
+	bookName := filepath.Base(bookDir)
+	// 书必须是**目录**：`封面/`（留档词、候选图、meta 都在这儿）只在目录下成立。
+	// 单个文件的书做不了封面重做 —— 如实标 applicable=false 并说清原因（前端据此置灰），
+	// 而不是让用户点进去、出图时再撞一个 500。
+	var applicable bool
+	if fi, err := os.Stat(bookDir); err == nil && fi.IsDir() {
+		applicable = true
+	}
+	archived := ""
+	if raw, err := os.ReadFile(coverPromptPath(bookDir)); err == nil {
+		archived = strings.TrimSpace(string(raw))
+	}
+	prompt, hint := archived, ""
+	switch {
+	case !applicable:
+		hint = "这本书在小说库里是**单个文件**（或目录已不在了）——封面重做只对**书目录**可用；" +
+			"单个文件的书请到集项目里换封面"
+	case archived == "":
+		prompt = coverSeedPrompt(bookDir, bookName)
+		hint = "这本书还没有留档正向词（封面/" + coverRedoPromptFile + "）——下面是平台按**书名与本书风格**" +
+			"推的默认词，可以直接改；勾上「把新正向词存回封面留档」就会写进那个文件"
 	}
 	cw, ch := 896, 1344
 	if p := coverInDir(bookDir); p != "" {
@@ -84,10 +128,13 @@ func (s *Server) handleNovelCoverConfig(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	writeJSON(w, 200, map[string]any{
-		"prompt": strings.TrimSpace(string(raw)),
-		"neg":    strings.TrimSpace(readTextOr(filepath.Join(bookDir, "封面", "neg-qwen21.txt"), "")),
-		"sizes":  coverSizes(),
-		"width":  cw, "height": ch,
+		"prompt":     prompt,
+		"has_prompt": archived != "",
+		"applicable": applicable,
+		"hint":       hint,
+		"neg":        strings.TrimSpace(readTextOr(filepath.Join(bookDir, "封面", "neg-qwen21.txt"), "")),
+		"sizes":      coverSizes(),
+		"width":      cw, "height": ch,
 		"last_seed":  lastCoverSeed(bookDir),
 		"candidates": listCoverCandidates(bookDir),
 	})
@@ -117,8 +164,16 @@ func (s *Server) handleNovelCoverRedo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fi, err := os.Stat(bookDir)
-	if err != nil || !fi.IsDir() {
+	if err != nil {
 		writeErr(w, 400, fmt.Errorf("书目录不存在:%s", bookDir))
+		return
+	}
+	if !fi.IsDir() {
+		// 散文件小说（小说库根下直接放一个 .md/.docx）：没有书目录、也就没有 `封面/` 目录，
+		// 候选图无处可放。如实说清**是哪一类书不行** —— 原来只报"书目录不存在"，
+		// 而它明明就在那儿（同一个 400 里两件事，用户不知道该改哪一件）。
+		writeErr(w, 400, fmt.Errorf("这本书在小说库里是**单个文件**（%s）：封面重做只对**书目录**可用；"+
+			"单个文件的书请到集项目里换封面", filepath.Base(bookDir)))
 		return
 	}
 	// 正向词:用户改过的优先(那是本次的意图),没给才用技能端留档
