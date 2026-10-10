@@ -7,7 +7,7 @@
 // 用法：
 //
 //	go run ./cmd/clipfix -project "<项目 id>"            # 只干跑，列出会剪什么
-//	go run ./cmd/clipfix -project "<项目 id>" -apply    # 真剪（原地替换，幂等）
+//	go run ./cmd/clipfix -project "<项目 id>" -apply    # 真剪（**已处理过的也重剪**，存量修复）
 package main
 
 import (
@@ -112,7 +112,8 @@ func main() {
 			continue
 		}
 		shot, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "shot_"), ".mp4"))
-		removed, n, longRuns, err := compose.StripBlackFlash(ctx, ffm, p, 0)
+		// 走 Force：存量片段带着"已处理过"标记（旧判据下只剪掉了一部分），普通入口会静默跳过。
+		removed, n, longRuns, err := compose.ForceStripBlackFlash(ctx, ffm, p, 0)
 		if err != nil {
 			fmt.Printf("      ✕ 镜头 %d 剪失败: %v\n", shot, err)
 			continue

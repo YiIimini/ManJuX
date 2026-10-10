@@ -1,5 +1,52 @@
 # 更新日志
 
+## 视频渲染画面：全网补丁调研 + 黑闪单帧残留修复（2026-10-10）
+
+专题：`docs/视频渲染画面-全网补丁调研与黑闪单帧残留修复-2026-10-10.md`。用户原话：「全网找一下有没有视频渲染画面相关的补丁」。
+两件事：**全网调研**（逐仓库核实原话 + 成本模型）＋**真机取证咬出并修掉自己那条"剪黑闪"补丁的一个真缺陷**。
+
+**① 上游没有"专修画面"的补丁可捡**：`comfyanonymous/ComfyUI` 已改名 `Comfy-Org/ComfyUI`；从我们在用的 **v0.39.1**
+到最新 **v0.39.2** 只有 6 个 commit（4 个 Partner Nodes + 模板版本 + 版本号），**触及
+vae/minimax/h3/attention/quant/temporal/color 的 commit 数 = 0** ⇒ **不为画面升本体**。master 越过 v0.39.2 的 39 条里
+画面相关的 4 条（`#16881` 已合但晚于 tag；`#16889`/`#16890`/`#16933` open）＋ `#16420`（W4A8 + LoRA：
+`The LoRA delta therefore silently never applies.`）**登记给 ComfyUI 侧的下一次交付**。官方权重 HF `Comfy-Org/MiniMax-H3`
+自 **2026-09-29**、上游 `MiniMaxAI/MiniMax-H3` 自 **08-13** 都没动过；`thu-ml/SageAttention` 最新 tag 仍是 v2.2.0（本机在用）。
+
+**② 社区候选全部"要装第三方节点 + 两遍采样"，且无一为我们的链（int8 剪枝底模 + Turbo LoRA + 8 步）做过验收**
+⇒ 按纪律**不给背书、不接**：`xmarre/MiniMax-H3-Flow-Aligned-Regenerate`（21★，自述**不**复刻未开源的
+H3-Regenerate-2K、需 VDN-H3-Plus、示例不用 Turbo LoRA）、`bingling360/ComfyUI-minimaxH3-SequenceForge`（26★，
+接缝直接切上一段 latent 尾帧、示例栈与我们**同型**，带 `H3SeamDoctor` **只测不改**）、`flywhale-666/ComfyUI-H3-upgrade-kit`（7★）、
+`bbaudio-2025/Comfyui-MMH3-UltimateUpscale`（233★，作者自曝 `This project was vibe-coded by AI`）、
+`Smite79/MiniMax-H3-LongVideos`（license 禁再分发 / 自述 WIP）、权重 `LBH-123-AI/Minimax_h3_latent_Upscaler`
+（**254,501** 下载、2026-09-17、691 MB 起）；时域那一族 `karcsiha/comfyUi-deflicker`（4★ MIT，输入是解码后 IMAGE，
+自述 `Warning: can cause ghosting.`）、`ChenyangLEI/All-In-One-Deflicker`（765★ 论文级）等同类。
+**唯一能解"量化底模 ⇒ quality 档必然回退 turbo"的是** `Deno2026/comfyui-deno-custom-nodes`（189★ GPL-3.0）的
+`(Deno) MiniMax H3 Acc LoRA Loader`（直接加载官方 Acc-8Step + PDD 头；对 pruned 模型要借"非剪枝底模的 FP32 time_embedder"
+做桥，找不到就 `warns once, skips those 50 AdaLN updates`）—— 但**本机没有非剪枝底模** ⇒ **不接**。
+**安全记录**：`taupe-feed617/Herrgotts-H3-Infinite-Continuation-Suite`（2★）是 81★ `HerrgottMargott` 那支的近重复，
+README 把"下载"指向**仓内二进制 zip** 并教用户绕过 SmartScreen ⇒ **不碰**。
+
+**③ 真机取证（7 镜已渲产物，度量而非观感）**：逐帧 YAVG ⇒ 5/7 镜本来就很稳（dP95 ≤1.34、≥3 跳变 ≤4 次）；
+只有镜 1 的 `dMax=47.19` 异常 —— 平台自己的 VLM 读帧原话「第127帧：**纯黑帧**，无任何可见画面内容」「属于画面故障（黑帧）」
+「该镜头画面不可用」。A/B 也做了：`deflicker` 在镜 3 上确实更稳（dMax 11.69→4.97、≥3 跳变 21→11）但 **SSIM Y=0.9893**
+⇒ 画面被改动可观、且会砍掉有意的明暗变化，`atadenoise`/`hqdn3d` 对亮度跳几乎无作用 ⇒ **不进交付默认**。
+
+**④ 本轮修掉的缺陷（代码）**：真机镜 1 的黑段 `5.291667~5.458333`（4 帧）**只剪掉 3 帧**——判据拿**日志里 `%.6f` 打印的秒**
+当窗口，而那一帧真实 pts 是 `127/24＝5.2916666…`（比打印值**小**）⇒ **最黑那一帧永远落在窗口外**（成品片段实测：
+帧数 192→**189**、最暗帧仍是 16.1@f127），而音频按整段秒值切 ⇒ **音轨比画面多切一帧**（复现：视频 7.875s / 音频 7.84s）。
+修法：`frameSpan` 换成**整数帧窗口**（视频 `between(n,i0,i1)`、音频 `between(t,i0/fps,(i1+1)/fps)`，误差 1e-5 帧），
+`removed` 按**帧数**算（不许虚报）；新增 `ForceStripBlackFlash` **绕开"已处理过"标记**（存量片段走普通入口会静默什么都不做，
+而 `cmd/clipfix` 的全部意义就是修存量）并把 `cmd/clipfix` 接过去。
+**真机探针**（`MANJUX_PROBE_CLIP`，跑在**副本**上）：改前 `黑段=[5.291667 5.333333] 最暗 16.09@f127` ⇒
+改后 `黑段=[] 最暗 23.78`、时长 7.9000→7.8333s。
+
+**门** 6 条（单位门：真机秒值必须换成 `127..130`；端到端门**按帧数造真机形态黑段**，断言"一帧黑都不剩"＋
+**画面与音轨都少 4 帧**；另有 marker / clipfix 接线门）；**反向验证 6/6 全红后还原为绿**
+（`scratch/reverse_verify_blackflash.ps1`），其中**咬出我自己一条门太软**（原来只量画面时长 ⇒ "音轨整段不切"照样绿 ⇒ 补 `audioDur`）。
+
+**边界**：不接任何第三方画面补丁（无实测背书）；**存量片段不会自动重剪**（含用户这一集已渲的 7 条）⇒ 要修走
+`go run ./cmd/clipfix -project "<项目 id>" -apply`；latent 放大/接缝续接留作**待拍板**（判据：一镜 A/B 抽帧 + 出片耗时对比）；
+`#16881` 等上游 H3 画面修复要等 ComfyUI 侧交付。
 ## 配音组装：判据源收口 + 主体标记认人（2026-10-10）
 
 专题：`docs/配音组装-判据源收口与主体标记认人-2026-10-10.md`。用户原话：「配音老是有问题，请看一下

@@ -127,6 +127,40 @@ Go 的 `sync.Mutex` **不可重入**。这一轮 `deskRotateOnce` 在**持有 `d
 
 本窗口的对话历史**不进仓库**，所以新会话只能靠文件重建上下文。开工前按顺序读：
 
+> **最新一轮（2026-10-10，用户「全网找一下有没有视频渲染画面相关的补丁」）：
+> `docs/视频渲染画面-全网补丁调研与黑闪单帧残留修复-2026-10-10.md`** —— 两件事：**全网调研**（逐仓库核实原话 +
+> 成本模型）＋ **真机取证咬出并修掉自己那条"剪黑闪"补丁的一个真缺陷**。① **上游**：`comfyanonymous/ComfyUI`
+> 已改名 **`Comfy-Org/ComfyUI`**（旧名调 `search/issues` 恒 422、默认分支是 `master`）；v0.39.1→v0.39.2 只 6 个 commit
+> （4 个 Partner Nodes + 模板版本 + 版本号），**触及 vae/minimax/h3/attention/quant/temporal/color 的 = 0** ⇒
+> **不为画面升本体**；master 越过 v0.39.2 的 39 条里画面相关 4 条（`#16881` 已合但晚于 tag、`#16889`/`#16890`/`#16933` open）
+> ＋ `#16420`（`The LoRA delta therefore silently never applies.`）**登记给 ComfyUI 侧下一次交付**。HF 官方
+> `Comfy-Org/MiniMax-H3` 自 **09-29**、`MiniMaxAI/MiniMax-H3` 自 **08-13** 未动；`SageAttention` 最新 tag 仍是
+> **v2.2.0**（本机在用）⇒ "以为有补丁"的几种常见误判都排掉了。② **候选**：`xmarre/…Flow-Aligned-Regenerate`（21★，
+> 自述**不**复刻未开源的 H3-Regenerate-2K、需 VDN-H3-Plus、示例不用 Turbo LoRA）、`bingling360/…SequenceForge`（26★，
+> 接缝直接切上一段 latent 尾帧、*示例栈与我们同型*：pruned int8 + Turbo 1.0 + 8 步、带 `H3SeamDoctor` **只测不改**）、
+> `flywhale-666/…upgrade-kit`（7★）、`bbaudio-2025/…UltimateUpscale`（233★，自曝 `vibe-coded by AI`）、
+> `Smite79/…LongVideos`（license 禁再分发 + 自述 WIP）、权重 `LBH-123-AI/Minimax_h3_latent_Upscaler`（**254,501** 下载 /
+> 09-17 / 691 MB 起）、时域族 `karcsiha/comfyUi-deflicker`（4★ MIT，输入是解码后 IMAGE，自述 `can cause ghosting`）——
+> **全部要装第三方节点 + 两遍采样，且无一为我们的链做过验收 ⇒ 不给背书、不接**；唯一能解"量化底模 ⇒ quality 档回退 turbo"
+> 的是 `Deno2026/comfyui-deno-custom-nodes`（189★ GPL-3.0）的 Acc LoRA Loader（对 pruned 模型要借**非剪枝底模的
+> FP32 time_embedder** 做桥，找不到就"跳过 50 条 AdaLN 更新"）—— 本机**没有非剪枝底模** ⇒ **不接**。**安全记录**：
+> `taupe-feed617/…Continuation-Suite`（2★）是 81★ `HerrgottMargott` 那支的近重复，README 广告**仓内二进制 zip**
+> 并教用户绕过 SmartScreen ⇒ **不碰**。③ **真机零成本事实**：ffmpeg 9.0.1 已带 `deflicker/atadenoise/hqdn3d/deband/cas`；
+> 7 镜实测帧间亮度跳（5/7 镜 dP95 ≤1.34、≥3 跳变 ≤4 次），`deflicker` 在镜 3 上确实更稳（dMax 11.69→4.97、jump 21→11）
+> 但 **SSIM Y=0.9893** ⇒ **不进交付默认**（与"不做时域降噪"既有口径一致），要上就按镜 + 抽帧 A/B。
+> ④ **真机咬出并修掉的缺陷**（本轮代码改动）：镜 1 黑段 `5.291667~5.458333`（4 帧）**只剪掉 3 帧** —— 判据拿
+> **日志里 `%.6f` 打印的秒**当窗口，而那一帧真实 pts 是 `127/24＝5.2916666…`（比打印值**小**）⇒ **最黑那一帧（YAVG 16.1）
+> 永远落在窗口外**（成品片段实测 192→**189** 帧、最暗帧仍是 16.1@f127），音频又按整段秒值切 ⇒ **音轨比画面多切一帧**
+> （复现：视频 7.875s / 音频 7.84s）。修法：`frameSpan` 换**整数帧窗口**（视频 `between(n,i0,i1)`、音频
+> `between(t,i0/fps,(i1+1)/fps)`）、`removed` 按**帧数**算；新增 `ForceStripBlackFlash` **绕开"已处理过"标记**
+> （存量片段走普通入口会静默什么都不做，而 `cmd/clipfix` 的全部意义正是修存量）并把 `cmd/clipfix` 接过去。
+> ⑤ **真机探针**（`MANJUX_PROBE_CLIP`，跑在**副本**上，绝不动用户数据）：改前 `黑段=[5.291667 5.333333] 最暗 16.09@f127`
+> ⇒ 改后 `黑段=[] 最暗 23.78`、7.9000→7.8333s。**门** 6 条（单位门：真机秒值必须换成 127..130；
+> 端到端门**按帧数造真机形态黑段**，断言"一帧不剩"＋**画面与音轨都少 4 帧**）；**反向验证 6/6 全红后还原为绿**
+> （`scratch/reverse_verify_blackflash.ps1`），其中**咬出我自己一条门太软**（原来只量画面时长 ⇒ "音轨整段不切"照样绿 ⇒ 补 `audioDur`）。
+> **边界**：不接任何第三方画面补丁；**存量片段不会自动重剪**（含用户这一集已渲的 7 条）⇒ 要修走
+> `go run ./cmd/clipfix -project "<项目 id>" -apply`；latent 放大 / latent 接缝续接留作**待拍板**（判据：一镜 A/B 抽帧 + 出片耗时对比）。
+
 > **最新一轮（2026-10-10，用户「配音老是有问题，请看一下分镜脚本转 h3 提示词时是否组装存在问题，
 > 请深度排查优化」）：`docs/配音组装-判据源收口与主体标记认人-2026-10-10.md`** —— 排查方式＝
 > **拿真实方案走真实装配逐镜打印提交版提示词**（探针新增 `MANJUX_PROBE_ROOT`）。三处组装缺陷：

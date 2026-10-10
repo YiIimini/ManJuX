@@ -2,9 +2,11 @@ package compose
 
 import (
 	"context"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -261,4 +263,181 @@ func TestClipPostProcessMarkersExpire(t *testing.T) {
 	if before == after {
 		t.Errorf("同大小同时间戳、内容变了一个字节，指纹却没变（%s）—— 标记会误判\"处理过了\"", before)
 	}
+}
+
+// TestFrameSpanSnapsRealBlackRunToWholeFrames 帧窗口的判据本体：真机那一处黑闪的秒值是 `%.6f`
+// 打印值（black_start:5.291667），而那一帧真实 pts 是 127/24＝5.2916666… ⇒ 换帧必须落在这 4 帧上。
+//
+// 【为什么必须是单位门】夹具里若用 `d=1.0` 这种**二进制精确**的时间戳（旧门就是这么造的），
+// 窗口边界恰好落在帧上，"最黑那一帧被漏掉"根本不会现形 —— 真机用的是 127/24 这种循环小数才逼得出来。
+func TestFrameSpanSnapsRealBlackRunToWholeFrames(t *testing.T) {
+	cases := []struct {
+		name string
+		run  BlackRun
+		fps  float64
+		i0   int
+		i1   int
+		ok   bool
+	}{
+		// 真机 2026-10-10《星纪山海：我在废土养神兽》第01集镜 1（24fps）
+		{"真机镜1黑段", BlackRun{5.291667, 5.458333}, 24, 127, 130, true},
+		// 起点被舍到偏大/偏小 1e-6 秒（同型误差的另一侧）都不许漏帧、也不许多吃帧
+		{"起点略偏大", BlackRun{5.291668, 5.458333}, 24, 127, 130, true},
+		{"起点略偏小", BlackRun{5.291666, 5.458333}, 24, 127, 130, true},
+		// 真机 2026-10-08《顺其自然》那一集的另外两条
+		{"真机片头黑", BlackRun{0, 0.208333}, 24, 0, 4, true},
+		{"真机镜13黑", BlackRun{2.416667, 2.541667}, 24, 58, 60, true},
+		// 短到落在同一帧里 ⇒ 丢帧丢不出这一段
+		{"同一帧内", BlackRun{1.0, 1.004}, 24, 0, 0, false},
+	}
+	for _, c := range cases {
+		i0, i1, ok := frameSpan(c.run, c.fps)
+		if ok != c.ok || (ok && (i0 != c.i0 || i1 != c.i1)) {
+			t.Errorf("%s：%v ⇒ 期望 (%d,%d,%v)，实得 (%d,%d,%v)", c.name, c.run, c.i0, c.i1, c.ok, i0, i1, ok)
+		}
+	}
+	// fps<=0 ＝ 调用方没给（stages_render 传的就是 0）⇒ 按缺省帧率换帧
+	if i0, i1, ok := frameSpan(BlackRun{5.291667, 5.458333}, 0); !ok || i0 != 127 || i1 != 130 {
+		t.Errorf("fps=0 应按缺省 %.0ffps 换帧，实得 (%d,%d,%v)", defaultClipFPS, i0, i1, ok)
+	}
+}
+
+// TestStripBlackFlashCutsRealMachineBlackRun 端到端（真机形态）：黑段起点落在 127/24（日志打印成
+// 5.291667）上时，**4 帧全黑必须一帧不剩地剪掉**，而且"声称剪掉的秒数"必须等于画面**实际少掉的秒数**
+// （音轨按同一批帧切：少切一帧 ＝ 画面还在黑，多切一帧 ＝ 音画错位）。
+//
+// 【夹具为什么按帧数造】旧门用 `color=...:d=1.0` 造黑段 —— 那段时间戳是二进制精确值、窗口边界恰好落在帧上，
+// 所以"最黑那一帧漏剪"永远不现形；真机是 127/24＝5.2916666…（循环小数）才把它逼出来。
+func TestStripBlackFlashCutsRealMachineBlackRun(t *testing.T) {
+	f := ffexe(t)
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "real.mp4")
+	// 24fps：灰 127 帧 → 纯黑 4 帧 → 灰 61 帧 ＝ 192 帧 / 8.000s；带 48k 音轨（音画要一起量）。
+	args := []string{"-y", "-v", "error",
+		"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=24:d=20",
+		"-f", "lavfi", "-i", "color=c=black:s=320x240:r=24:d=20",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:d=20",
+		"-filter_complex", "[0:v]trim=end_frame=127,setpts=PTS-STARTPTS[a];" +
+			"[1:v]trim=end_frame=4,setpts=PTS-STARTPTS[b];" +
+			"[0:v]trim=start_frame=127:end_frame=188,setpts=PTS-STARTPTS[c];" +
+			"[a][b][c]concat=n=3:v=1:a=0[v]",
+		"-map", "[v]", "-map", "2:a", "-t", "8.0",
+		"-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p",
+		"-c:a", "aac", "-ar", "48000", "-ac", "2", p}
+	if _, err := f.Run(ctx, args...); err != nil {
+		t.Skipf("造夹具失败（%v）", err)
+	}
+	runs, err := DetectBlackRuns(ctx, f, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("夹具没造出黑段（%v）—— 这条门就等于没跑", runs)
+	}
+	if runs[0].Start < 5.29 || runs[0].Start > 5.30 {
+		t.Fatalf("夹具黑段起点该≈5.2917（真机那一处），实得 %.6f", runs[0].Start)
+	}
+	adur0 := audioDur(t, p) // 音轨也要量（反向验证咬出来的：只量画面会漏掉"音轨没切/多切"）
+	before, err := f.Probe(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, n, _, err := StripBlackFlash(ctx, f, p, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("应剪 1 段，实得 %d", n)
+	}
+	if want := 4.0 / 24; removed < want-0.005 || removed > want+0.005 {
+		t.Errorf("4 帧全黑应剪掉 %.4fs，实得 %.4fs", want, removed)
+	}
+	if again, err := DetectBlackRuns(ctx, f, p); err != nil || len(again) != 0 {
+		t.Errorf("剪完必须一帧黑都不剩，实得 %v（err=%v）—— 改前最黑那一帧会漏在窗口外", again, err)
+	}
+	after, err := f.Probe(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := before.Duration - after.Duration; math.Abs(got-4.0/24) > 0.5/24 {
+		t.Errorf("画面实际少掉的秒数（%.4fs）必须等于声称剪掉的（%.4fs）—— 不等就是虚报",
+			got, removed)
+	}
+	if cut := adur0 - audioDur(t, p); math.Abs(cut-4.0/24) > 0.06 {
+		t.Errorf("音轨也必须切掉同一批帧（%.4fs），实得 %.4fs —— 音轨没切/多切都会音画错位", 4.0/24, cut)
+	}
+}
+
+// TestForceStripBlackFlashIgnoresMarker 存量修复入口：片段带着"已处理过"标记时普通入口不动它，
+// Force 入口必须照样把剩下的黑剪掉（cmd/clipfix 全靠这条 —— 它要修的正是"标记有效、黑还在"的片段）。
+func TestForceStripBlackFlashIgnoresMarker(t *testing.T) {
+	f := ffexe(t)
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "clip.mp4")
+	args := []string{"-y", "-v", "error",
+		"-f", "lavfi", "-i", "color=c=white:s=320x240:r=24:d=1.0",
+		"-f", "lavfi", "-i", "color=c=black:s=320x240:r=24:d=0.25",
+		"-f", "lavfi", "-i", "color=c=white:s=320x240:r=24:d=1.75",
+		"-filter_complex", "[0:v][1:v][2:v]concat=n=3:v=1:a=0[v]",
+		"-map", "[v]", "-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", p}
+	if _, err := f.Run(ctx, args...); err != nil {
+		t.Skipf("造夹具失败（%v）", err)
+	}
+	// 假装"旧版处理过"：标记有效（指纹与文件对得上），黑段其实还在。
+	if err := writeClipMarker(p+".noblack", p, "假装旧版处理过"); err != nil {
+		t.Fatal(err)
+	}
+	if _, n, _, err := StripBlackFlash(ctx, f, p, 24); err != nil || n != 0 {
+		t.Errorf("带有效标记时普通入口应什么都不做（n=%d, err=%v）", n, err)
+	}
+	if runs, err := DetectBlackRuns(ctx, f, p); err != nil || len(runs) == 0 {
+		t.Fatalf("夹具的黑段这时应当还在（runs=%v, err=%v）", runs, err)
+	}
+	removed, n, _, err := ForceStripBlackFlash(ctx, f, p, 24)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || removed <= 0 {
+		t.Errorf("Force 入口必须绕开标记照剪（n=%d, removed=%.3f）", n, removed)
+	}
+	if again, err := DetectBlackRuns(ctx, f, p); err != nil || len(again) != 0 {
+		t.Errorf("Force 剪完不该还有黑段（%v, err=%v）", again, err)
+	}
+}
+
+// TestClipFixBypassesProcessedMarkerInSource cmd/clipfix 的存在意义是修**存量**片段，而那些片段带着
+// "已处理过"标记 ⇒ 它必须走 Force 入口（走普通入口 ＝ 声称修了、实际一个字节都没动）。
+func TestClipFixBypassesProcessedMarkerInSource(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "cmd", "clipfix", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	if !strings.Contains(src, "compose.ForceStripBlackFlash(") {
+		t.Error("clipfix 必须走 compose.ForceStripBlackFlash：存量片段带着\"已处理过\"标记，普通入口会静默跳过")
+	}
+	if strings.Contains(src, "compose.StripBlackFlash(") {
+		t.Error("clipfix 不该再调普通入口 compose.StripBlackFlash（它会被标记挡住，等于没修）")
+	}
+}
+
+// audioDur 量一条视频里音轨的时长（秒）。为什么必须单独量：黑闪切除要让画面与音轨丢掉**同一批帧**，
+// 只量画面时长差会把"音轨整段没切 / 多切一帧"放过去 —— 2026-10-10 反向验证当场咬出这条门太软。
+func audioDur(t *testing.T, path string) float64 {
+	t.Helper()
+	ffp, err := exec.LookPath("ffprobe")
+	if err != nil {
+		t.Skip("本机找不到 ffprobe，跳过音轨时长比对")
+	}
+	out, err := exec.Command(ffp, "-v", "error", "-select_streams", "a:0",
+		"-show_entries", "stream=duration", "-of", "csv=p=0", path).Output()
+	if err != nil {
+		t.Fatalf("量音轨时长失败: %v", err)
+	}
+	s := strings.TrimSpace(strings.Split(strings.TrimSpace(string(out)), "\n")[0])
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		t.Fatalf("音轨时长解析失败（%q）: %v", s, err)
+	}
+	return v
 }

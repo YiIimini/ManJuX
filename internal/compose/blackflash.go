@@ -3,6 +3,7 @@ package compose
 import (
 	"context"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -33,8 +34,14 @@ import (
 //   - 更长的黑段**不剪** —— 整段黑/黑尾是 H3 的真实失效，也是计划里就写明"沉在黑暗里"时该有的样子，
 //     那属于质检该报、用户该看到的，不能在这里悄悄改掉。
 //
-// 剪辑是**确定性**的：ffmpeg `blackdetect` 找段、`select/aselect` 按同一批时间区间同步切视频与音频，
-// 再重编码一次（x264 crf 与成片同档）。不调任何模型。
+// 剪辑是**确定性**的：ffmpeg `blackdetect` 找段，`select/aselect` 按**同一批帧**同步切视频与音频
+// （切的是帧号窗口，不是日志里那个四舍五入过的秒值 —— 见 frameSpan），再重编码一次（x264 crf 与成片同档）。
+// 不调任何模型。
+//
+// 【2026-10-10 真机修正：原来只剪掉一部分黑闪】真机镜 1 报 black_start:5.291667 black_end:5.458333
+// （0.1667s ＝ 4 帧），而那一帧真实 pts 是 127/24＝5.2916666…、**比打印值小** ⇒ 原来按秒切的窗口把
+// **最黑的那一帧**（YAVG 16.1，其余三帧 17.1/19.3/21.7）漏在外面：成品片段实测只少 3 帧、"无故一黑"
+// 照旧，且音轨按整段多切了一帧。现在一律换整数帧号窗口。
 const (
 	maxBlackRunSec   = 0.5
 	maxBlackTotalSec = 1.0
@@ -43,6 +50,8 @@ const (
 	blackPicTh = 0.98
 	// blackMinDur 短于这个的黑段忽略（=1 帧级噪声，不动）。
 	blackMinDur = 0.02
+	// defaultClipFPS 片段帧率缺省值（调用方传 0 时用它；合成侧同样强制 24fps）。
+	defaultClipFPS = 24.0
 )
 
 // BlackRun 一段全黑（秒）。
@@ -89,6 +98,28 @@ func strippableBlackRuns(runs []BlackRun, maxRun, maxTotal float64) []BlackRun {
 		out = append(out, r)
 	}
 	return out
+}
+
+// frameSpan 把一段黑（秒）换成**整数帧窗口** [i0,i1]（含两端，0-based 输入帧序号）。
+//
+// 【为什么必须换成帧号（2026-10-10 真机，缺陷就在这）】黑段的秒值是 ffmpeg 用 `%.6f` 打印出来的
+// **四舍五入**结果：真机《星纪山海：我在废土养神兽》第01集镜 1 报的是 `black_start:5.291667`，
+// 而那一帧的真实 pts 是 127/24＝5.2916666…，**比打印值小**。拿打印值当窗口下界，最黑的那一帧
+// 正好卡在窗口外 —— 0.1667s（4 帧）的黑只剪掉 3 帧，观众看到的"无故一黑"照旧留在成片里；
+// 音频却按整段 0.1667s 切 ⇒ 音轨比画面**多切一帧**（2026-10-10 实测复现：视频 189 帧/7.875s、
+// 音频 7.84s）。换成帧号窗口后，同样的 6 位小数误差只值 1e-5 帧，取整结果唯一、稳定。
+//
+// 第二返回值 false ＝ 这一段短到落在同一帧里（丢帧丢不出它），调用方跳过、也不许虚报剪了多少。
+func frameSpan(r BlackRun, fps float64) (int, int, bool) {
+	if fps <= 0 {
+		fps = defaultClipFPS
+	}
+	i0 := int(math.Floor(r.Start*fps + 0.5))
+	i1 := int(math.Floor(r.End*fps+0.5)) - 1
+	if i0 < 0 || i1 < i0 {
+		return 0, 0, false
+	}
+	return i0, i1, true
 }
 
 // DetectBlackRuns 找出片段里的黑段（确定性：ffmpeg blackdetect，不调模型）。
@@ -144,25 +175,40 @@ func StripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (r
 	if len(cut) == 0 {
 		return 0, 0, longRuns, nil
 	}
-	// 同一批时间区间同时作用在视频与音频上（不然会音画不同步）。
-	var terms []string
-	for _, r := range cut {
-		terms = append(terms, fmt.Sprintf("between(t,%.6f,%.6f)", r.Start, r.End))
-		removed += r.Dur()
-	}
-	expr := strings.Join(terms, "+")
+	// 视频按**帧号**切、音频按**同一批帧换出来的时间**切 —— 两者丢的是同一批帧，所以画面与音轨
+	// 少掉的时长逐字相等（少切一帧就是"画面还在黑、音轨已经过去"；多切一帧就是音画错位）。
+	// 为什么不能直接拿日志里的秒值去比：见 frameSpan 的注释（真机那一处就栽在这）。
 	if fps <= 0 {
-		fps = 24
+		fps = defaultClipFPS
 	}
+	var vTerms, aTerms []string
+	cutFrames := 0
+	for _, r := range cut {
+		i0, i1, ok := frameSpan(r, fps)
+		if !ok {
+			continue // 短到落在同一帧里：丢帧丢不出这一段，不碰
+		}
+		vTerms = append(vTerms, fmt.Sprintf("between(n,%d,%d)", i0, i1))
+		aTerms = append(aTerms, fmt.Sprintf("between(t,%.9f,%.9f)", float64(i0)/fps, float64(i1+1)/fps))
+		cutFrames += i1 - i0 + 1
+	}
+	if len(vTerms) == 0 {
+		return 0, 0, longRuns, nil
+	}
+	vExpr := strings.Join(vTerms, "+")
+	aExpr := strings.Join(aTerms, "+")
+	nRuns := len(vTerms)
+	// 剪掉多少秒按**帧数**算，不按日志里那个四舍五入过的秒值算（否则会虚报）。
+	removed = float64(cutFrames) / fps
 	tmp := filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".noblack.tmp.mp4")
 	args := []string{"-y", "-hide_banner", "-loglevel", "error", "-i", path,
 		// `select` 只丢帧、不重排时间戳；必须再 `setpts=N/(fps*TB)` 把留下的帧压紧，
 		// 否则 CFR 会把丢掉的时长用重复帧补回来（实测：时长一点没变 ⇒ 剪辑等于没做）。
-		"-vf", fmt.Sprintf("select='not(%s)',setpts=N/(%.6f*TB)", expr, fps),
+		"-vf", fmt.Sprintf("select='not(%s)',setpts=N/(%.6f*TB)", vExpr, fps),
 		"-fps_mode", "cfr", "-r", strconv.FormatFloat(fps, 'f', 6, 64),
 		"-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p"}
 	if hasAudio, _ := hasAudioStream(ctx, f, path); hasAudio {
-		args = append(args, "-af", fmt.Sprintf("aselect='not(%s)',asetpts=N/SR/TB", expr),
+		args = append(args, "-af", fmt.Sprintf("aselect='not(%s)',asetpts=N/SR/TB", aExpr),
 			"-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2")
 	} else {
 		args = append(args, "-an")
@@ -177,8 +223,24 @@ func StripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (r
 		os.Remove(tmp)
 		return 0, 0, longRuns, err
 	}
-	return removed, len(cut), longRuns, writeClipMarker(marker, path,
-		fmt.Sprintf("clip black-flash stripped: %d run(s), %.3fs", len(cut), removed))
+	return removed, nRuns, longRuns, writeClipMarker(marker, path,
+		fmt.Sprintf("clip black flash stripped: %d run(s), %.3fs", nRuns, removed))
+}
+
+// ForceStripBlackFlash 与 StripBlackFlash 同一条链，只是**绕过"已处理过"标记**。
+//
+// 【为什么要有它（2026-10-10）】片段是按标记判幂等的（`clipMarkerValid`），而**存量片段**可能是在
+// 旧判据下处理过的：标记有效、可窗口边缘那一帧黑还在（真机镜 1 就是"剪了 3 帧、留下最黑那帧"）。
+// 走普通入口会直接 `return` 什么都不做 —— 而 `cmd/clipfix` 的全部意义正是修存量，所以它必须走这条。
+// 剪完仍会重写标记（内容是新的，标记也跟着刷新）。
+func ForceStripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (float64, int, []BlackRun, error) {
+	if f == nil || strings.TrimSpace(path) == "" {
+		return 0, 0, nil, nil
+	}
+	if err := os.Remove(path + ".noblack"); err != nil && !os.IsNotExist(err) {
+		return 0, 0, nil, err
+	}
+	return StripBlackFlash(ctx, f, path, fps)
 }
 
 // hasAudioStream 这条片段有没有音轨。
