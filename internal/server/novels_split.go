@@ -161,7 +161,33 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 			series = safe
 		}
 	}
+	// 风格来源**在快路径之前**就定死（两档）：用户在导入时选的 > 立项.json 的 art_style；
+	// 都没有才轮到"补缺沿用"与"LLM 首段自生成"（后者见下面分层拆解那一支的兜底）。
+	//
+	// 【2026-10-10 真机事故】这三档原来只写在分层拆解分支的 `if ci == 0` 里，而
+	// **一章一档快路径在下面第 266 行就 return 了** —— 快路径建出来的每一集，createSeg
+	// 读到的 globalStyle 恒为空 ⇒ 真机那一批 **48 集全被写成「全局风格:」（空行）**。
+	// 后果不是"少一句话"：剧本会话见空行就自己编风格（`sysOutputFull__OUTPUT.md` 只规定
+	// 「源文里有就逐字照抄」，空了没人管），真机那本编成「半写实绘画风，**3D CG 质感**」
+	// —— 与本书风格卡写明的「NOT a plastic 3D render」正相反；平台随后按 medium3D 展开成
+	// "next-generation 3D CG character render…"，出图就成了塑料娃娃（平台自己的 VLM 读图原话：
+	// 「皮肤蜡感、磨皮重」「像 3D 塑料娃娃，不像真人定妆」）。
+	// 判据：novels_fastpath_style_test.go（把这一段挪回分层拆解那一支，那条测试就红）。
 	globalStyle := ""
+	if style.Style != "" {
+		globalStyle = style.Style
+		label := "🎨 视频渲染风格锁定(立项.json art_style):"
+		if style.From == "user" {
+			label = fmt.Sprintf("🎨 视频渲染风格锁定(你在导入时选的 %s):", style.presetNames())
+		}
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: label + clampRunes(style.Style, 80)})
+	} else if gapStyle != "" {
+		// 自动补缺:风格沿用保留集,防重拆尾部风格漂移
+		globalStyle = gapStyle
+		s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
+			Message: "🎨 视频渲染风格沿用保留分集(补缺模式防漂移)"})
+	}
 	var epsAll []string // 全部集(含补缺命中的已有集)
 	var lastEp epItem   // 跨段前情(上一集概要,供 SaveSource 前情提要)
 	if gapPrev.Ep > 0 { // 自动补缺:前情从保留区末集续
@@ -411,23 +437,10 @@ func (s *Server) splitNovelToProjects(ctx context.Context, name, text string, ma
 		}
 		if ci == 0 {
 			fixSeries(res.book)
-			// 风格来源两档（见 novels_style.go 的 importStyle）：**用户在导入时选的** 优先，
-			// 其次才是立项.json 的 art_style（老行为）；都没有才用 LLM 首段生成的风格。
-			// 播报必须说清**是哪一档** —— 说成"立项 art_style"而实际是用户选的，就是假播报。
-			if style.Style != "" {
-				globalStyle = style.Style
-				label := "🎨 视频渲染风格锁定(立项.json art_style):"
-				if style.From == "user" {
-					label = fmt.Sprintf("🎨 视频渲染风格锁定(你在导入时选的 %s):", style.presetNames())
-				}
-				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-					Message: label + clampRunes(style.Style, 80)})
-			} else if gapStyle != "" {
-				// 自动补缺:风格沿用保留集,防重拆尾部风格漂移
-				globalStyle = gapStyle
-				s.bus.Publish(pipeline.Event{Phase: "novel", Level: "info",
-					Message: "🎨 视频渲染风格沿用保留分集(补缺模式防漂移)"})
-			} else {
+			// 风格在前面**已经按两档定死**了（用户在导入时选的 / 立项.json art_style / 补缺沿用）。
+			// 这里只在"两档都没有"时才拿 LLM 首段自生成的风格兜底 —— 否则会把已锁定的风格
+			// 覆盖成 LLM 自编的那一句（真机事故见下面 globalStyle 声明处的长注释）。
+			if globalStyle == "" {
 				globalStyle = res.style
 			}
 		}
