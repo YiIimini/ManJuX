@@ -218,7 +218,7 @@ func collectManuscript(bookDir string) ([]string, int) {
 	var rest []string
 	walk := func(root string) {
 		_ = filepath.WalkDir(root, func(p string, e os.DirEntry, err error) error {
-			if err != nil || e.IsDir() || !hasTxtExt(p) {
+			if err != nil || e.IsDir() || !isNovelTextFile(p) {
 				return nil
 			}
 			rel := strings.ToLower(filepath.ToSlash(p))

@@ -1,5 +1,38 @@
 # 更新日志
 
+## 小说库新增文本格式：`.docx` / `.epub` 真读进来（2026-10-10）
+
+专题：`docs/小说库新增文本格式-2026-10-10.md`。用户：「小说库解析新增文本格式，请实现功能」。
+
+**取证**：盘上真机那本书《离婚后，千亿前夫跪求复合》的正文**就是 8 个 `.docx`**（标准 Word 导出：
+zip + `word/document.xml`），而小说库的格式判据 `hasTxtExt` 写死 `".md" || ".txt"` ⇒ 书卡列
+**0 章 / 0 字**、点「视频制作」只得到「小说正文过短(0 字,预处理后)」；就算把扩展名加进去，旧读取点是
+**裸 `os.ReadFile`**，也只会把 zip 二进制当正文喂给拆集 LLM。
+
+**修法（判据与取正文各收一处）**：新增 `internal/server/novel_formats.go` ——
+`isNovelTextFile`（**唯一格式判据**，替掉 `hasTxtExt`）+ `readNovelTextFile`（**唯一取正文入口**，
+按扩展名解码）+ `docxPlainText`（抽 `word/document.xml`：同段多个 `w:t` **直接拼**、段落换行、
+`w:tab`→空格、`w:br`→换行、`w:del`/`w:instrText` 不算正文）+ `epubPlainText`/`xhtmlPlainText`
+（`container.xml` → OPF → **按 spine 顺序**抽 xhtml，剔 `script/style/head`，`&nbsp;` 用
+`xml.HTMLEntity` 还原）+ `novelUnsupportedReport`（不读的格式**逐条点名**）+ `fullBookFile`
+（「全本」取第一个**可读正文**文件，旧实现只看 `Glob[0]`，目录里排到封面图就整份跳过）+
+`novelFileChars`（容器格式**真解一遍再数**，按字节估会把 1.7 万字的书写成"4 万字"）。
+**只用标准库** `archive/zip` + `encoding/xml` ⇒ 不引新依赖、不要求用户装外部工具。
+六处读取点（`novels.go` 书卡/详情/阅读、`novel_format.go` 章节册清单、`novels_produce.go` 拆集前合并）
+全部改走它；读不出来的册**连原因一起报**；不支持的格式在导入时点名（不许静默跳过）。
+
+**真机探针**（`zz_probe_novel_formats_live_test.go`，`MANJUX_LIVE_PROBE=1`）：那 8 个 `.docx`
+**8/8 读出**；`collectManuscript` 按章号排到 1..8；合并成书 17577 字 / 章头 8 行 / `SplitChapters`
+**8 章**（章序 1..8 全对）；书卡 **8 章 17571 字**（改前 0 章 0 字）。
+
+**门** `internal/server/novel_formats_test.go`（9 条：格式识别、docx run 合并与段落（判据钉到
+`countChapterHeads`/`SplitChapters`）、epub spine 顺序与实体、不支持格式报错、章节册按章号排、
+全本跳过非正文、点名文案、HTTP 三面端到端（读回来是正文不是 `PK…`）、判据单一出处（过滤注释行））。
+**反向验证 9/9 全红**（`scratch/reverse_verify_novel_formats.ps1`，含"改坏后是编译错不算变红"的判据）。
+**边界**：`.pdf/.doc/.rtf/.wps/.mobi/.azw3/.html/.htm` 是**永久边界**（要新依赖），但每次点名；
+`.epub` 只用合成夹具验过（盘上没有真 epub 样本）；老门 `novel_detail_chapters_test.go` 的夹具
+从 `全本.epub` 换成 `全本.pdf`（epub 现在读得出来了）。**不用重拷文件**，重启 app 后打开小说库即生效。
+
 ## 定妆照肩上的 Q 型小人（别人的外形不许进图像提示词）+ 分镜参考哪张 + 三视图改叫角色板（2026-10-10）
 
 专题：`docs/肩上小人-别人的外形不进图像提示词-2026-10-10.md`。

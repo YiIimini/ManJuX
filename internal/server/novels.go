@@ -82,12 +82,12 @@ func (s *Server) handleNovels(w http.ResponseWriter, r *http.Request) {
 		full := filepath.Join(root, e.Name())
 		if e.IsDir() {
 			out = append(out, s.scanNovelDir(full, e.Name()))
-		} else if strings.HasSuffix(strings.ToLower(e.Name()), ".md") || strings.HasSuffix(strings.ToLower(e.Name()), ".txt") {
+		} else if isNovelTextFile(e.Name()) {
 			st, _ := e.Info()
 			out = append(out, novelItem{
 				Name: strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())),
 				Path: full, Type: "file",
-				Chars: int(st.Size() / 3), Chapters: 1,
+				Chars: novelFileChars(full, st.Size()), Chapters: 1,
 				Produced: s.novelProduced(strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))),
 			})
 		}
@@ -143,26 +143,18 @@ func sortNovels(items []novelItem, desc bool) {
 // scanNovelDir 一本书(子文件夹):全本优先,正文分卷为章节;封面取「封面」内首图。
 func (s *Server) scanNovelDir(dir, name string) novelItem {
 	it := novelItem{Name: name, Path: dir, Type: "dir"}
-	// 全本
-	var fullbook string
-	if fbs, err := filepath.Glob(filepath.Join(dir, "全本", "*")); err == nil {
-		for _, f := range fbs {
-			if hasTxtExt(f) {
-				fullbook = f
-				break
-			}
-		}
-	}
-	// 章节文件(正文/** 的 md/txt;无正文目录时全目录扫描,忽略素材/设定)
+	// 全本（取「全本」目录里第一个**可读正文**文件；判定收在 fullBookFile 一处）
+	fullbook := fullBookFile(dir)
+	// 章节文件(正文/** 的正文册 .md/.txt/.docx/.epub;无正文目录时全目录扫描,忽略素材/设定)
 	chapDirs := []string{filepath.Join(dir, "正文")}
 	walk := func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		if hasTxtExt(p) {
+		if isNovelTextFile(p) {
 			it.Chapters++
 			if st, e := d.Info(); e == nil {
-				it.Chars += int(st.Size() / 3)
+				it.Chars += novelFileChars(p, st.Size())
 			}
 		}
 		return nil
@@ -180,7 +172,7 @@ func (s *Server) scanNovelDir(dir, name string) novelItem {
 	}
 	if fullbook != "" {
 		if st, err := os.Stat(fullbook); err == nil {
-			it.Chars = int(st.Size() / 3) // 全本字数覆盖章节累加
+			it.Chars = novelFileChars(fullbook, st.Size()) // 全本字数覆盖章节累加
 		}
 	}
 	// 封面:封面/ 内第一张图
@@ -317,27 +309,27 @@ func (s *Server) handleNovelDetail(w http.ResponseWriter, r *http.Request) {
 	// 章节清单
 	var chapters []novelChapter
 	if fi.IsDir() {
-		if fbs, _ := filepath.Glob(filepath.Join(p, "全本", "*")); len(fbs) > 0 && hasTxtExt(fbs[0]) {
-			st, _ := os.Stat(fbs[0])
-			chapters = append(chapters, novelChapter{Path: fbs[0], Name: "📖 全本 · " + filepath.Base(fbs[0]), KB: st.Size() / 1024, Chars: int(st.Size() / 3)})
+		if fb := fullBookFile(p); fb != "" {
+			st, _ := os.Stat(fb)
+			chapters = append(chapters, novelChapter{Path: fb, Name: "📖 全本 · " + filepath.Base(fb), KB: st.Size() / 1024, Chars: novelFileChars(fb, st.Size())})
 		}
 		roots := []string{filepath.Join(p, "正文")}
 		if _, err := os.Stat(roots[0]); err != nil {
 			roots[0] = p
 		}
 		_ = filepath.WalkDir(roots[0], func(fp string, e os.DirEntry, err error) error {
-			if err != nil || e.IsDir() || !hasTxtExt(fp) {
+			if err != nil || e.IsDir() || !isNovelTextFile(fp) {
 				return nil
 			}
 			st, _ := e.Info()
 			rel, _ := filepath.Rel(p, fp)
 			rel = filepath.ToSlash(rel) // 前端按 / 分层建目录树(Windows 反斜杠会整条平铺)
-			chapters = append(chapters, novelChapter{Path: fp, Name: rel, KB: st.Size() / 1024, Chars: int(st.Size() / 3)})
+			chapters = append(chapters, novelChapter{Path: fp, Name: rel, KB: st.Size() / 1024, Chars: novelFileChars(fp, st.Size())})
 			return nil
 		})
 		sort.Slice(chapters, func(i, j int) bool { return chapters[i].Path < chapters[j].Path })
 	} else {
-		chapters = append(chapters, novelChapter{Path: p, Name: filepath.Base(p), KB: fi.Size() / 1024, Chars: int(fi.Size() / 3)})
+		chapters = append(chapters, novelChapter{Path: p, Name: filepath.Base(p), KB: fi.Size() / 1024, Chars: novelFileChars(p, fi.Size())})
 	}
 	// **空切片必须是 []，不能是 null**（2026-09-30 深度审计）：一本书的目录里没有
 	// .md/.txt（只有 epub / 图片 / 空目录）时 `chapters` 是 nil，Go 把它 marshal 成 `null`；
@@ -352,21 +344,34 @@ func (s *Server) handleNovelDetail(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleNovelRead GET /api/novels/read?path= 读章节正文(截断 400KB 防巨文件)。
+//
+// 正文**按扩展名解码**（.docx/.epub 是 zip 容器，见 novel_formats.go）：
+// 旧实现是裸 os.ReadFile —— 给 .docx 就把 zip 二进制当文本回给界面。
 func (s *Server) handleNovelRead(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Query().Get("path")
 	if !s.inNovelRoot(p) {
 		writeErr(w, 403, fmt.Errorf("路径超出小说库范围"))
 		return
 	}
-	raw, err := os.ReadFile(p)
+	if !isNovelTextFile(p) {
+		// 不支持的格式**逐条说清楚**：既不假装读到了，也不把二进制回给阅读框。
+		writeErr(w, 400, fmt.Errorf("这个文件不是平台可读的正文格式（%s）；平台可读：%s",
+			filepath.Base(p), novelTextExtsHint()))
+		return
+	}
+	text, err := readNovelTextFile(p)
 	if err != nil {
-		writeErr(w, 404, err)
+		if os.IsNotExist(err) {
+			writeErr(w, 404, err)
+			return
+		}
+		writeErr(w, 500, err)
 		return
 	}
 	const limit = 400 << 10
-	text := string(raw)
+	full := len([]rune(text))
 	truncated := false
-	if len(raw) > limit {
+	if len(text) > limit {
 		// 按 rune 截断避免切坏中文
 		runes := []rune(text)
 		maxRunes := limit / 3
@@ -375,7 +380,7 @@ func (s *Server) handleNovelRead(w http.ResponseWriter, r *http.Request) {
 			truncated = true
 		}
 	}
-	writeJSON(w, 200, map[string]any{"text": text, "truncated": truncated, "chars": len([]rune(string(raw)))})
+	writeJSON(w, 200, map[string]any{"text": text, "truncated": truncated, "chars": full})
 }
 
 // handleNovelProduce POST /api/novels/produce {path, max_episodes?}

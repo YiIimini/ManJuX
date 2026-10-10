@@ -10,13 +10,18 @@ import (
 // 小说详情的 `chapters` **必须是数组，不能是 null**（2026-09-30 深度审计）。
 //
 // 【现场】`handleNovelDetail` 里是 `var chapters []novelChapter`：当一本书的目录里
-// 没有 .md/.txt（只有 epub / 图片 / 空目录）时它保持 nil，Go 把 nil 切片 marshal 成 `null`，
-// 而详情弹窗直接读 `dlg.chapters.length`（NovelsView 三处）⇒ 点开就整页炸
-// `Cannot read properties of null (reading 'length')`，弹窗内容一个字都不显示
+// 没有一个**可读正文**文件（只有图片 / 空目录 / 平台不读的格式）时它保持 nil，
+// Go 把 nil 切片 marshal 成 `null`，而详情弹窗直接读 `dlg.chapters.length`（NovelsView 三处）
+// ⇒ 点开就整页炸 `Cannot read properties of null (reading 'length')`，弹窗内容一个字都不显示
 // （`main.js` 的错误兜底只把异常文案贴出来）。
 //
 // 判据：不带正文章的目录，`chapters` 要回 **[]**（空数组），而不是 null。
 // 与 `project.HealPlan` 那条"空切片也要是 []"同一口径 —— 收在产出侧一处。
+//
+// 【2026-10-10 更新夹具】这份夹具原来用的是 `全本.epub` —— 那时 `.epub` 属于"平台不读"，
+// 现在 `.epub`/`.docx` 已经能读（见 novel_formats.go），再拿它当"没有可读正文"就不成立了
+// （实测这条门当场变红：目录里列出了 1 项「📖 全本 · 全本.epub」）。所以夹具换成
+// `.pdf` —— 它是**永久边界**里的格式（要版式解析器），语义与原来一致：文件在、但读不出正文。
 func TestNovelDetailChaptersIsArrayNotNull(t *testing.T) {
 	s := newTestServer(t)
 	if s.novelRoot() == "" {
@@ -27,7 +32,8 @@ func TestNovelDetailChaptersIsArrayNotNull(t *testing.T) {
 	if err := os.MkdirAll(book, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(book, "全本.epub"), []byte("x"), 0o644); err != nil {
+	// 真形态：只有一本"平台不读"的电子书、没有可读正文的目录（用户从别处拷来的书常常就是这样）
+	if err := os.WriteFile(filepath.Join(book, "全本.pdf"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 

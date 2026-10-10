@@ -45,6 +45,12 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 	if fi.IsDir() {
 		it := s.scanNovelDir(in.Path, filepath.Base(in.Path))
 		name, coverSrc = it.Name, it.Cover
+		// 【2026-10-10】格式不支持时**逐条点名**（判据见 novel_formats.go 的
+		// novelUnsupportedReport）：用户该看到的是"哪几个文件没有读入"，
+		// 而不是对着「小说正文过短(0 字)」猜原因。
+		if rep := novelUnsupportedReport(in.Path, 3); rep != "" {
+			s.bus.Publish(pipeline.Event{Phase: "novel", Level: "warn", Message: rep})
+		}
 		// 合并正文章节(分册文件);内容无章头的册从文件名注入章头,
 		// 保证章界(切块/CHAPTERS/【本集原文】附着全依赖章头)。
 		// 「哪些算正文册」与「按什么顺序」由 collectManuscript 唯一决定 ——
@@ -59,12 +65,14 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 				// 【2026-09-28 审计 A10】原来是 `b, _ := os.ReadFile(p)` —— 读不出的章
 				// **只写一个章头、正文整段消失**，而册数照按 `len(paths)` 报（"64 册"）。
 				// 用户拿到的是一本缺章的书，界面却在说"64 册已读入"，事后无从查起。
-				b, err := os.ReadFile(p)
+				// 【2026-10-10】取正文改走 readNovelTextFile（.docx/.epub 要按扩展名解码），
+				// 并把**原因**一起报出来："文件被占用"与"格式不支持"必须能分开看。
+				b, err := readNovelTextFile(p)
 				if err != nil {
-					unread = append(unread, filepath.Base(p))
+					unread = append(unread, fmt.Sprintf("%s（%s）", filepath.Base(p), clampRunes(err.Error(), 40)))
 					continue
 				}
-				sb.WriteString(ensureChapterHead(filepath.Base(p), string(b)))
+				sb.WriteString(ensureChapterHead(filepath.Base(p), b))
 				sb.WriteString("\n\n")
 				read++
 			}
@@ -76,13 +84,13 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			}
 			return sb.String(), read
 		}
-		if fbs, _ := filepath.Glob(filepath.Join(in.Path, "全本", "*")); len(fbs) > 0 && hasTxtExt(fbs[0]) {
-			b, err := os.ReadFile(fbs[0])
+		if fb := fullBookFile(in.Path); fb != "" {
+			b, err := readNovelTextFile(fb)
 			if err != nil {
 				writeErr(w, 500, err)
 				return
 			}
-			full := NormalizeNovelText(b)
+			full := NormalizeNovelText([]byte(b))
 			merged, nFiles := readMerged()
 			// 数据源:**优先「正文」一章一档**(2026-09-12 用户定调「为什么还是解析的
 			// 全本?不是有正文目录里每章一个文档的」)。分章文件的章号与标题由**文件名**
@@ -102,13 +110,18 @@ func (s *Server) handleNovelProduce(w http.ResponseWriter, r *http.Request) {
 			text, _ = readMerged()
 		}
 	} else {
+		if !isNovelTextFile(in.Path) {
+			writeErr(w, 400, fmt.Errorf("这个文件不是平台可读的正文格式（%s）；平台可读：%s",
+				filepath.Base(in.Path), novelTextExtsHint()))
+			return
+		}
 		name = strings.TrimSuffix(filepath.Base(in.Path), filepath.Ext(in.Path))
-		b, err := os.ReadFile(in.Path)
+		b, err := readNovelTextFile(in.Path)
 		if err != nil {
 			writeErr(w, 500, err)
 			return
 		}
-		text = string(b)
+		text = b
 	}
 	// 文本预处理:不管源文件什么编码/格式,统一转干净 UTF-8 纯文本
 	// (编码检测/BOM/不可见字符/智能引号/Markdown 装饰/空行压缩)

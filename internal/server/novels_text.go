@@ -19,11 +19,6 @@ func failNote(n int) string {
 	return ""
 }
 
-func hasTxtExt(p string) bool {
-	n := strings.ToLower(filepath.Ext(p))
-	return n == ".md" || n == ".txt"
-}
-
 // projectConfigDefault 新项目默认参数(与创建项目接口一致:全局默认引擎优先)。
 func (s *Server) projectConfigDefault() project.ProjectConfig {
 	cfg := project.ProjectConfig{Params: project.DefaultStageParams()}

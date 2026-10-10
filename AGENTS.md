@@ -97,6 +97,24 @@
 
 本窗口的对话历史**不进仓库**，所以新会话只能靠文件重建上下文。开工前按顺序读：
 
+> **最新一轮（2026-10-10，用户「小说库解析新增文本格式，请实现功能」）：`docs/小说库新增文本格式-2026-10-10.md`**
+> —— 盘上真机那本书《离婚后，千亿前夫跪求复合》的正文就是 8 个 `.docx`，而小说库原来只认 `.md`/`.txt`：
+> 书卡列 **0 章 / 0 字**，点「视频制作」只得一句「小说正文过短(0 字,预处理后)」。**修法**：判据与取正文
+> 各收一处 —— `internal/server/novel_formats.go` 的 `isNovelTextFile`（**唯一格式判据**，替掉只认纯文本的
+> `hasTxtExt`）+ `readNovelTextFile`（**唯一读取入口**，按扩展名解码：`.txt/.text/.md/.markdown` 直读、
+> `.docx` 抽 `word/document.xml`、`.epub` 按 OPF **spine 顺序**抽 xhtml；只用 `archive/zip`+`encoding/xml`，
+> **不引新依赖**）；六处读取点（`novels.go` 书卡/详情/阅读、`novel_format.go` 章节册清单、`novels_produce.go`
+> 拆集前合并）全部改走它。**边界如实点名**：`.pdf/.doc/.rtf/.wps/.mobi/.azw3/.html/.htm` 不读，但
+> `novelUnsupportedReport` 会把**文件名与数量**播出来（不许静默跳过）；「全本」取值从 `Glob[0]`（目录里
+> 排到封面图就整份跳过）收成 `fullBookFile`；书卡字数对容器格式**真解一遍再数**（按字节估会把 1.7 万字的
+> 书写成"4 万字"）。**真机探针**（`zz_probe_novel_formats_live_test.go`，`MANJUX_LIVE_PROBE=1`）：
+> 那 8 个 `.docx` 8/8 读出、`collectManuscript` 按章号排到 1..8、合并后 17577 字/章头 8 行/SplitChapters 8 章、
+> 书卡 8 章 17571 字（改前是 0 章 0 字）。**门** `novel_formats_test.go`（格式识别、docx run 合并与段落、
+> epub spine 顺序与实体、不支持的格式报错、章节册按章号排、全本跳过非正文、点名文案、HTTP 三面端到端、
+> 判据单一出处）。**反向验证 9/9 全红**（`scratch/reverse_verify_novel_formats.ps1`）。
+> **边界**：`.epub` 只用**合成夹具**验过（盘上没有真 epub 样本）；`novelDetailChapters` 那条老门的夹具
+> 从 `全本.epub` 换成 `全本.pdf`（epub 现在读得出来了，语义不变）。
+>
 > **最新一轮（2026-10-10，用户「咋每个角色的定妆照肩膀上都有三个Q型人物？另外三视图更换为角色板显示更详细，
 > 咨询一下分镜角色是参考三视图还是参考的定妆照啊？」）：`docs/肩上小人-别人的外形不进图像提示词-2026-10-10.md`**
 > ① **肩上三个 Q 型小人 = 真画面级缺陷**：真机卡里 `CAST DISTINCTNESS` 与 FACE ID 的 `NOT:` 清单都在列
