@@ -3,6 +3,7 @@ package pipeline
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -12,8 +13,17 @@ import (
 // zz_probe_voice_live_test.go 探针：拿真机 plan 走**真实装配**，逐句打印"绑成了哪条声线"。
 func TestZZProbeVoiceBinding(t *testing.T) {
 	root := filepath.Join("..", "..", "data", "projects")
+	// 【2026-10-10】探针要能指向**当前在查的那一集**（不必改代码就能换项目）：
+	// $env:MANJUX_PROBE_PROJECT="<项目 id>" —— 在 data/projects/*/ 下按 id 找一层。
 	id := "顺其自然（真实事迹短片）·第01集·顺其自然"
 	dir := filepath.Join(root, "顺其自然（真实事迹短片）", id)
+	if v := strings.TrimSpace(os.Getenv("MANJUX_PROBE_PROJECT")); v != "" {
+		id = v
+		dir = ""
+		if m, _ := filepath.Glob(filepath.Join(root, "*", id)); len(m) > 0 {
+			dir = m[0]
+		}
+	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Skip("没有真机项目，跳过探针")
 	}
@@ -36,6 +46,13 @@ func TestZZProbeVoiceBinding(t *testing.T) {
 		t.Logf("=== 镜 %-3d 重绑 +%d 未认 +%d 清单跳过 +%d 清单在=%v",
 			sh.ID, plan.VoiceRebound-prevRebound, plan.VoiceUnresolved-prevUnres,
 			plan.SpeechPlacementSkipped-prevSkip, strings.Contains(out, speechPlacementMarker))
+		// 【2026-10-10】要查"是不是装配把同一句写了两遍"时，把整段提交版提示词打出来：
+		// $env:MANJUX_PROBE_DUMP=1（可配 $env:MANJUX_PROBE_SHOT=<镜号> 只看那一镜）。
+		if os.Getenv("MANJUX_PROBE_DUMP") == "1" {
+			if want := strings.TrimSpace(os.Getenv("MANJUX_PROBE_SHOT")); want == "" || want == strconv.Itoa(plan.Shots[i].ID) {
+				t.Logf("---- 提交版提示词（镜 %d，%d 字）----\n%s", plan.Shots[i].ID, len([]rune(out)), out)
+			}
+		}
 		prevRebound, prevSkip, prevUnres = plan.VoiceRebound, plan.SpeechPlacementSkipped, plan.VoiceUnresolved
 		cut := out
 		if k := strings.Index(cut, onScreenTextMarker); k >= 0 {

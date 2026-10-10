@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,6 +23,13 @@ func TestZZProbeSpeechLive(t *testing.T) {
 	root := filepath.Join("..", "..", "data", "projects")
 	id := "顺其自然（真实事迹短片）·第01集·顺其自然"
 	dir := filepath.Join(root, "顺其自然（真实事迹短片）", id)
+	if v := strings.TrimSpace(os.Getenv("MANJUX_PROBE_PROJECT")); v != "" {
+		id = v
+		dir = ""
+		if m, _ := filepath.Glob(filepath.Join(root, "*", id)); len(m) > 0 {
+			dir = m[0]
+		}
+	}
 	if _, err := os.Stat(dir); err != nil {
 		t.Skip("没有那份真机项目，跳过")
 	}

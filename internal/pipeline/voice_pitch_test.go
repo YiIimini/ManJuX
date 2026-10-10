@@ -201,6 +201,20 @@ func TestVoiceCheckIsWiredAtBothEnds(t *testing.T) {
 	}
 }
 
+// TestRetryExhaustedMessageNamesBothKinds 重出轮数用满时的收尾文案必须**点名两类缺陷**。
+//
+// 【2026-10-10 用户「配音还是存在问题，声不对人，重复配音」】原来只写「音色与角色卡不符」——
+// 于是平台明明判出并重出过"念重了/多念了"（真机镜 4 实测 `就凭你？三千万的别墅？` 念了两遍），
+// 用户从那句话里读不出来，只能当成"平台没看见重复配音"。
+func TestRetryExhaustedMessageNamesBothKinds(t *testing.T) {
+	src := readSrc(t, "stages_render.go")
+	for _, want := range []string{"音色与角色卡不符", "语音念重了/多念了", "重复配音"} {
+		if !strings.Contains(src, want) {
+			t.Errorf("重出用满的收尾文案必须点名两类缺陷（缺 %q）—— 只写\"音色\"会让用户以为平台没看见重复配音", want)
+		}
+	}
+}
+
 // readSrc 读本包（或给定相对路径）的源码，用于接线断言。
 func readSrc(t *testing.T, rel string) string {
 	t.Helper()

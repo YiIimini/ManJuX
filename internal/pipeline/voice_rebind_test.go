@@ -234,3 +234,101 @@ func textOf(prompt string) string {
 	}
 	return rest[:j]
 }
+
+// —— 2026-10-10：用户「配音还是存在问题，声不对人，重复配音」——
+//
+// 真机（《离婚后，千亿前夫跪求复合》第01集，11 镜 / 15 句）取证：装配把**卡上权威声线**
+// 追加在**模型自编声线**的右边，而左扩只在"每个词都在声线词表里"时才吃 —— 表里缺一个词
+// （真机命中的是 older / rasping / drawling / smiling）就整段留下，于是音频条件里同时有两句
+// **互相矛盾**的声线（H3 把这段文字当音频条件，不是契约）。下面的夹具就是那 3 条原话，一字不改。
+
+// cardVoiceGuMu / cardVoiceSuYa 角色卡上的 voice（逐字，与 plan.characters 一致）。
+const (
+	cardVoiceGuMu = "An elderly, sharp, nagging female voice with a nasal edge and a dry rasp; " +
+		"she talks over people and never lowers her volume."
+	cardVoiceSuYa = "A sweet, breathy, sing-song young female voice that turns shrill and whining " +
+		"the instant she loses her footing."
+)
+
+func TestBindLineVoicesEatsModelVoiceLeftovers(t *testing.T) {
+	cases := []struct {
+		name     string
+		speaker  string
+		card     string
+		line     string
+		raw      string   // 模型自己写的那句引述（真机原话）
+		mustGone []string // 一个字都不许留下（否则与卡上声线同时进音频条件）
+	}{
+		{
+			name: "顾母（older/rasping 不在词表里）", speaker: "顾母", card: cardVoiceGuMu,
+			line:     "赶紧签！别耽误我抱孙子。",
+			raw:      `<Subject 1> (S3), an older woman in her sixties with a sharp, rasping, impatient voice, says: `,
+			mustGone: []string{"older woman", "sharp, rasping", "impatient voice"},
+		},
+		{
+			name: "苏雅（twenties/soft/drawling）", speaker: "苏雅", card: cardVoiceSuYa,
+			line:     "姐姐，五万块，够你买房了。",
+			raw:      `<Subject 2> (S2), twenties, soft, drawling, smiling voice, says: `,
+			mustGone: []string{"twenties", "drawling", "smiling voice"},
+		},
+		{
+			name: "苏雅（a young woman … smiling voice，动词还带尾巴）", speaker: "苏雅", card: cardVoiceSuYa,
+			line:     "你们……知道她是谁吗？",
+			raw:      `<Subject 2> (S2), a young woman in her twenties with a soft, drawling, smiling voice, says with the smile gone out of it: `,
+			mustGone: []string{"young woman", "drawling", "smiling voice"},
+		},
+	}
+	for _, c := range cases {
+		plan := &project.Plan{Characters: []project.Character{
+			{ID: "char_x", Name: c.speaker, Kind: "human", Voice: c.card},
+		}}
+		shot := &project.Shot{
+			ID: 1, VoKind: "speech", Characters: []string{"char_x"},
+			Dialogue: []project.Line{{Speaker: c.speaker, Text: c.line}},
+			H3Prompt: c.raw + "<d>[Chinese]" + c.line + "</d>",
+		}
+		out, bound, unresolved := BindLineVoices(shot.H3Prompt, plan, shot)
+		if bound != 1 || unresolved != 0 {
+			t.Errorf("%s：应重绑 1 句、认不出 0 句，实得 bound=%d unresolved=%d\n%s", c.name, bound, unresolved, out)
+		}
+		// ① 卡上声线必须**逐字**在里面（末尾句号被 embedVoice 吞掉，与既有口径一致）
+		// ① 卡上声线必须**逐字**在里面（末尾句号被 embedVoice 吞掉，与既有口径一致）
+		if !strings.Contains(out, c.speaker+" says in ") ||
+			!strings.Contains(normLoose(out), normLoose(strings.TrimRight(c.card, "."))) {
+			t.Errorf("%s：没绑上卡上权威声线：\n%s", c.name, out)
+		}
+		for _, bad := range c.mustGone {
+			if strings.Contains(strings.ToLower(out), strings.ToLower(bad)) {
+				t.Errorf("%s：模型自编的声线还留在提示词里（%q）—— 这正是「声不对人」的来源：\n%s", c.name, bad, out)
+			}
+		}
+		// ③ 一句台词只许有一个声线子句（两个 says in 就是把两句声线都喂给了模型）
+		if n := strings.Count(out, " says in "); n != 1 {
+			t.Errorf("%s：这句台词出现了 %d 个声线子句（应恰好 1 个）：\n%s", c.name, n, out)
+		}
+	}
+}
+
+// TestStripGenderTailKeepsPictureWords 反面针：**画面描述一个字都不许删**。
+//
+// 判据刻意保守 —— 性别证据右边只要还有"画面段"（含画面名词/主体标记），就整句不动：
+// 宁可漏删一处声线残留（用户顶多听到一次音色漂移），也不能删掉画面内容（那是不可逆的创作损失）。
+func TestStripGenderTailKeepsPictureWords(t *testing.T) {
+	// 性别证据右边跟着画面段（one hand / table）⇒ 一个字都不动（尾部多余逗号会被修掉，内容必须原样）
+	head := `<Subject 1> (S3), an older woman, one hand resting on the table, `
+	got, hit := stripGenderTail(head)
+	if hit || !strings.Contains(got, "an older woman") || !strings.Contains(got, "one hand resting on the table") {
+		t.Errorf("右边还有画面描述时不许动它：\n得到 %q（hit=%v）", got, hit)
+	}
+	// 画面名词在**被吃的段**里 ⇒ 同样不许吃
+	head2 := `<Subject 2> (S2), a young woman with her hand on the frame, `
+	if got2, _ := stripGenderTail(head2); !strings.Contains(got2, "a young woman") ||
+		!strings.Contains(got2, "hand on the frame") {
+		t.Errorf("被吃的段里含画面名词时不许吃：\n得到 %q", got2)
+	}
+	// 反面：纯声线残段必须吃掉（真机那 3 条就是这一类）
+	got3, hit3 := stripGenderTail(`<Subject 1> (S3), an older woman in her sixties with a sharp, rasping, `)
+	if !hit3 || strings.Contains(got3, "older woman") || strings.Contains(got3, "rasping") {
+		t.Errorf("词表缺词的残段必须吃掉：得到 %q（hit=%v）", got3, hit3)
+	}
+}

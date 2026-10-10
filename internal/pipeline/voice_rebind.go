@@ -52,6 +52,9 @@ import (
 const (
 	syntheticVoiceDefault = "a flat, sexless synthetic voice, even-paced and breathless"
 	genericVoiceDefault   = "a natural, clearly articulated Mandarin voice, steady and even"
+	// leftoverVoiceMaxWords "词表缺词"造成的残段能有多大（真机实测 2~7 个词：rasping / soft, drawling,
+	// smiling voice / an older woman in her sixties with a sharp）。声线描述都是短句，长句是画面描述。
+	leftoverVoiceMaxWords = 8
 )
 
 // 一句台词标签；语言标签（[Chinese]/[English]…）不算台词内容。
@@ -186,9 +189,35 @@ func voiceOrGenderWords(seg string) bool {
 	return true
 }
 
-// stripGenderTail 从 head 尾部往前吃掉"纯声线/性别描述"的段，直到遇到画面描述为止。
+// stripGenderTail 从 head 尾部往前吃掉"模型自己写的声线/性别描述"，直到遇到画面描述为止。
 // 返回（新 head, 是否吃掉了带性别词的段）。
+//
+// 【2026-10-10 用户「配音还是存在问题，声不对人，重复配音」—— 真机又留下 4 处残句】
+// 旧实现**逐段**从右往左吃，一遇到"词表里没有的词"就 break。真机第01集
+// （《离婚后，千亿前夫跪求复合》，11 镜）实测四种残留，全都落在同一个形状上：
+// 词表缺一个词 ⇒ 整段留着 ⇒ 它和卡上权威声线**同时**进了音频条件（H3 拿这段文字当音频条件）：
+//
+//	镜 3/4 顾母：<Subject 1> (S3), an older woman in her sixties with a sharp, rasping, 顾母 says in <卡上女声>:  ← older/rasping 不在表里
+//	镜 2   苏雅：<Subject 2> (S2), twenties, soft, drawling, 苏雅 says in <卡上女声>:                        ← drawling 不在表里
+//	镜 8   苏雅：<Subject 2> (S2), a young woman in her twenties with a soft, drawling, smiling voice, 苏雅 says…  ← drawling/smiling
+//
+// 新判据**不再靠穷举词表**（穷举永远漏词，漏一个就等于没修）：
+//
+//	① 老规则照旧先走一遍（整段都是声线词 ⇒ 吃）；
+//	② 剩下的尾部里找一段**"性别/年龄证据"**（含性别/年龄词、且不含画面词、且不含主体标记）——
+//	   那就是"模型自己写的性别描述"，正是与卡上声线打架的那一段；
+//	③ 从证据段**往右**吃到尾（表里缺词的残段才算数：无画面词、无主体标记、≤ leftoverVoiceMaxWords 个词）；
+//	④ 往左仍然只吃"整段都是声线词"的段（画面描述一个字都不许动）。
+//
+// 找不到性别证据 ⇒ **一个字都不动**（宁可漏删，也不删画面）。
 func stripGenderTail(head string) (string, bool) {
+	trimmed, hit := eatPureVoiceTail(head)
+	trimmed2, hit2 := eatGenderRun(trimmed)
+	return trimmed2, hit || hit2
+}
+
+// eatPureVoiceTail 老规则：从尾部逐段吃掉"纯声线/性别描述"（表内词），遇到别的段就停。
+func eatPureVoiceTail(head string) (string, bool) {
 	parts, starts := splitByPause(head)
 	cut := len(parts)
 	hitGender := false
@@ -215,6 +244,91 @@ func stripGenderTail(head string) (string, bool) {
 		return "", hitGender
 	}
 	return strings.TrimRight(head[:starts[cut]], " \t,;、，"), hitGender
+}
+
+// eatGenderRun 新规则：尾部里只要存在"性别/年龄证据"段，就从那一段往右吃到尾
+// （右半是"词表缺词"造成的残段 —— 真机的 older/rasping/drawling/smiling 全在这一类里）。
+func eatGenderRun(head string) (string, bool) {
+	parts, starts := splitByPause(head)
+	// 尾部空段（左起的尾随分隔符）先跳过
+	end := len(parts)
+	for end > 0 && strings.TrimSpace(parts[end-1]) == "" {
+		end--
+	}
+	if end == 0 {
+		return head, false
+	}
+	// ① 最靠右的"性别证据"段
+	g := -1
+	for i := end - 1; i >= 0; i-- {
+		if genderEvidence(parts[i]) {
+			g = i
+			break
+		}
+	}
+	if g < 0 {
+		return head, false
+	}
+	// ② 往右吃残段（表里缺词的段），直到遇到画面词/主体标记
+	for i := g + 1; i < len(parts); i++ {
+		if strings.TrimSpace(parts[i]) == "" {
+			continue
+		}
+		if !leftoverVoiceSegment(parts[i]) {
+			return head, false // 右边还有别的东西 ⇒ 整段留着，不冒险
+		}
+	}
+	// ③ 往左只吃"整段都是声线词"的段（画面描述一个字都不动）
+	cut := g
+	for cut > 0 && allVoiceWords(parts[cut-1]) {
+		cut--
+	}
+	if cut == 0 {
+		return "", true
+	}
+	return strings.TrimRight(head[:starts[cut]], " \t,;、，"), true
+}
+
+// genderEvidence 这一段是不是"模型自己写的性别/年龄描述"（可以整段吃掉）：
+// 含性别/年龄词、且不含画面词、且不含主体标记。
+func genderEvidence(seg string) bool {
+	if strings.TrimSpace(seg) == "" || hasSubjectMarker(seg) || hasPictureWord(seg) {
+		return false
+	}
+	return reGenderAge.MatchString(seg)
+}
+
+// leftoverVoiceSegment "词表缺词"造成的残段能不能跟着性别证据一起吃掉：
+// 不含画面词、不含主体标记、词数 ≤ leftoverVoiceMaxWords（声线描述都是短句）。
+func leftoverVoiceSegment(seg string) bool {
+	if strings.TrimSpace(seg) == "" || hasSubjectMarker(seg) || hasPictureWord(seg) {
+		return false
+	}
+	return len(strings.Fields(seg)) <= leftoverVoiceMaxWords
+}
+
+// hasSubjectMarker 段里有没有"绝不许吃掉"的标记：主体编号 <Subject N>、说话人 id (Sx)、任何数字。
+func hasSubjectMarker(seg string) bool {
+	if strings.ContainsAny(seg, "<>") || reSpeakerID.MatchString(seg) {
+		return true
+	}
+	for _, r := range seg {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
+}
+
+// hasPictureWord 段里有没有画面名词（有 ⇒ 这一段是画面描述，一个字都不许删）。
+func hasPictureWord(seg string) bool {
+	for _, w := range strings.Fields(seg) {
+		lw := strings.ToLower(strings.Trim(w, ".,;:!?()[]\"'"))
+		if pictureWords[lw] {
+			return true
+		}
+	}
+	return false
 }
 
 // 平台默认也必须有：真机那个「舱内AI」不是角色卡（全片反复出现的说话人），

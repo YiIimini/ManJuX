@@ -1,5 +1,40 @@
 # 更新日志
 
+## 配音「声不对人/重复配音」+ 所有弹窗不许超出父级窗口（2026-10-10）
+
+专题：`docs/配音声线残句与弹窗尺寸-2026-10-10.md`。用户原话：「配音还是存在问题，版不对人，重复配音，
+进行排查处理，别把其它地方改错了；另外小说封面重制弹窗窗口固定大小，别超过父级窗口，所有的弹窗都需要这样要求」。
+**只动两处**：配音的声线绑定 + 弹窗的全局尺寸。
+
+**① 「声不对人」的根因（真机取证，不是猜）**：对象是用户刚在渲的那一集（`离婚后，千亿前夫跪求复合·第01集`，11 镜）。
+`zz_probe_voice_live_test.go` 走**真实装配**打印出来的引述是：
+`<Subject 1> (S3), an older woman in her sixties with a sharp, rasping, 顾母 says in <卡上女声>: …` ——
+**卡上权威声线与模型自编声线同时在场**（H3 把这段文字当**音频条件**）。左扩规则"每个词都在声线词表里才吃"
+一遇到表里没有的词就停：真机命中 `older / rasping / drawling / smiling` ⇒ 11 镜里 4 句带残句。
+**修法**（`internal/pipeline/voice_rebind.go`）：不再靠穷举词表，改成"**先找性别/年龄证据、再往两边吃**"；
+画面词/主体标记一律不动（找不到证据就一个字不改）。**同一条探针改后复核**：15 句全部收成一句声线、
+逐字等于角色卡原文，自编声线一处不剩。
+
+**② 「重复配音」：判了、也重出过，但收尾文案只说"音色"**。ASR 对账（`zz_probe_speech_live_test.go`）
+在用户刚渲的镜 4 上实测 `音轨: 就凭你,三千万的别墅?` **repeat（同一句念两遍）** + 林晚那句 missing/倒装；
+镜 2 多出一句剧本没有的话。处置链本来就在（`repeat/extra` ⇒ 换种子重出，最多 2 轮），
+但 `stages_render.go` 的收尾只写「音色与角色卡不符」⇒ 改成点名两类：
+**音色与角色卡不符或语音念重了/多念了（重复配音/多念）**。
+
+**③ 弹窗**：用户点名封面重制弹窗（固定 880px，小窗口顶出去）并要求所有弹窗都这样 ⇒
+**一处全局收口**（`frontend/src/style.css` 的元素级 `.el-dialog`/`.el-drawer`）：
+`max-width: calc(100vw - 32px)` + `max-height: calc(100vh - 48px)` + 头脚固定、**主体内部滚**
+（只夹高度不给滚动会把按钮静默裁掉）。封面弹窗**保留定宽**（用户口径：固定大小、不超父级）。
+三个探针也改成可指向当前在查的那一集（`$env:MANJUX_PROBE_PROJECT`）—— 此前 id 写死在已删除的项目上。
+
+**门**：`TestBindLineVoicesEatsModelVoiceLeftovers`（夹具＝真机那 3 条原话）、
+`TestStripGenderTailKeepsPictureWords`（画面描述一个字不许删）、`TestRetryExhaustedMessageNamesBothKinds`、
+`TestAllDialogsAreBoundedByParentWindow`、`TestCoverRedoDialogKeepsFixedSize`。
+**反向验证 7/7 全红**（`scratch/reverse_verify_voice_dialog.ps1`）。
+**边界**：同镜男女混合的音色仍判不了（要按 ASR 时间段逐句归属，本轮没做）；重复配音不能根治
+（H3 不听，只能判出来+有界重出+如实摆出来，真机镜 4 两轮都没修好）；配音修复**没有重渲验证**（ComfyUI 不在跑）；
+弹窗是 CSS 层修复，**没在真窗口量像素**。
+
 ## 封面上只许有书名一处文字：口径收一处 + 出图后判文字（2026-10-10）
 
 专题：`docs/封面只许书名一处文字-出图后判文字-2026-10-10.md`。用户原话：「封面文字内容版本需要优化」。

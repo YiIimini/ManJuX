@@ -739,10 +739,13 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 				return c.runRenderPass(ctx, proj, bad, engineOverride,
 					voiceRetryNextSeed(seedOverride, pass), pass+1, acc)
 			}
+			// 【2026-10-10 用户「配音还是存在问题…重复配音」】两类缺陷要**点名**，不能只说"音色"：
+			// 音色＝卡上男/女声念成了另一种嗓子；语音＝念重了/多念了（重复配音）。
+			// 只说"音色与角色卡不符"时，用户以为平台没看见"重复念"这件事（其实判了、也重出过）。
 			c.emit(proj.ID, PhaseRender, 0, "warn", 100,
-				"🎙 已换种子重出 %d 轮，仍有 %d 镜的音色与角色卡不符（%s）—— 保留最后一次的产物。"+
-					"提示词里的声线是逐字写对的（是 H3 没照做），再试请在故事板勾选这几镜重渲；"+
-					"实测基频见 output/qc_report.json",
+				"🎙 已换种子重出 %d 轮，仍有 %d 镜的音色与角色卡不符或语音念重了/多念了（%s）—— 保留最后一次的产物。"+
+					"（音色＝卡上男/女声念成了另一种嗓子；语音＝重复配音/多念）提示词里的声线与台词是逐字写对的"+
+					"（是 H3 没照做），再试请在故事板勾选这几镜重渲；实测基频与转写见 output/qc_report.json",
 				maxVoiceRetryPasses, len(bad), shotIDList(bad))
 		}
 	}

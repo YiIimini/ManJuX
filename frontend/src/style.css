@@ -734,6 +734,27 @@ body::after {
    个性化:主题与玻璃拟态(2026-09-07)
    ============================================================ */
 /* EP 弹层玻璃化:对话框/抽屉跟随面板透明度 */
+/* 【2026-10-10 用户「小说封面重制弹窗窗口固定大小，别超过父级窗口，所有的弹窗都需要这样要求」】
+   所有弹窗一律**不许超出父级窗口**：宽高都用 max-* 夹住（两侧各留 16/24px 余量），
+   内容在**弹窗内部滚动**（头/脚固定、body 滚）。
+   写在这里（元素级 `.el-dialog` / `.el-drawer`）而**不是**逐个弹窗加类名：新增弹窗自动受这条约束 ——
+   "记得给每个弹窗套一层"这种约定，漏一次就是用户窗口被顶爆一次（封面重制那个 880px 就是这么撞的）。 */
+.el-dialog {
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.el-dialog__header,
+.el-dialog__footer { flex: none; }
+.el-dialog__body { min-height: 0; overflow: auto; }
+/* 抽屉同理：从右侧拉出来的那一层也不许顶出窗口 */
+.el-drawer {
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}
+
 .el-dialog, .el-drawer {
   background:
     linear-gradient(175deg, rgba(255, 255, 255, .03), rgba(0, 0, 0, .12)),
