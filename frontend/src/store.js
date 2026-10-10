@@ -188,6 +188,13 @@ export const api = {
   sysmon: () => req('GET', '/api/sysmon'),
   window: (action) => req('POST', `/api/window/${encodeURIComponent(action)}`),
   quit: () => req('POST', '/api/quit'),
+  // 壁纸库（2026-10-10 用户「新增"壁纸库"，分类"手机壁纸"和"桌面壁纸"，新增用户描述然后结合LLM
+  // 生成提示词后编辑进行文生图（分辨率配置、是否同时生成移动端和桌面端等相关参数配置）」）。
+  wallpapers: () => req('GET', '/api/wallpapers'),
+  // 「AI 写词」：**强制走 LLM**（拿不到就回通用构图词 + 如实说明，200 不报错）
+  wallpaperPrompt: (desc, kind) => req('POST', '/api/wallpapers/prompt', { desc, kind }),
+  wallpaperGenerate: (body) => req('POST', '/api/wallpapers/generate', body),
+  wallpaperDelete: (file) => req('DELETE', '/api/wallpapers/item?file=' + encodeURIComponent(file)),
 
   // ── 以下为原先散落在各视图里的裸 fetch,统一收口到 api 层 ──
   // 收口的意义:错误处理、URL 编码、请求头三件事只写一遍;

@@ -374,6 +374,13 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("POST /api/novels/cover-prompt", s.handleNovelCoverPrompt)
 	m.HandleFunc("POST /api/novels/cover-redo", s.handleNovelCoverRedo)
 	m.HandleFunc("POST /api/novels/cover-apply", s.handleNovelCoverApply)
+	// 壁纸库（2026-10-10 用户：「新增"壁纸库"，分类"手机壁纸"和"桌面壁纸"，新增用户描述然后结合LLM
+	// 生成提示词后编辑进行文生图（分辨率配置、是否同时生成移动端和桌面端等相关参数配置）」）。
+	m.HandleFunc("GET /api/wallpapers", s.handleWallpapers)
+	m.HandleFunc("GET /api/wallpapers/image", s.handleWallpaperImage)
+	m.HandleFunc("POST /api/wallpapers/prompt", s.handleWallpaperPrompt)
+	m.HandleFunc("POST /api/wallpapers/generate", s.handleWallpaperGenerate)
+	m.HandleFunc("DELETE /api/wallpapers/item", s.handleWallpaperDelete)
 	m.HandleFunc("GET /api/novels/detail", s.handleNovelDetail)
 	m.HandleFunc("GET /api/novels/script", s.handleNovelScript)
 	m.HandleFunc("GET /api/novels/read", s.handleNovelRead)

@@ -13,6 +13,7 @@ import PromptDrawer from './components/PromptDrawer.vue'
 import OutputsView from './views/OutputsView.vue'
 import NovelsView from './views/NovelsView.vue'
 import ComfyView from './views/ComfyView.vue'
+import WallpapersView from './views/WallpapersView.vue'
 import MediaViewer from './components/MediaViewer.vue'
 import StageDetailDrawer from './components/StageDetailDrawer.vue'
 import ShotTuneDialog from './components/ShotTuneDialog.vue'
@@ -32,6 +33,7 @@ const NAV_BASE = [
   { id: 'project', label: '工作台',  icon: 'Film' },
   { id: 'library', label: '资产库',  icon: 'Collection' },
   { id: 'outputs', label: '作品库',  icon: 'VideoCamera' },
+  { id: 'wallpapers', label: '壁纸库', icon: 'Picture' },
   { id: 'comfy',   label: 'ComfyUI', icon: 'Cpu' },
 ]
 const navPrefs = JSON.parse(localStorage.getItem('mx-nav') || 'null')
@@ -419,6 +421,7 @@ const env = computed(() => G.status?.env)
         <LibraryView v-else-if="G.view === 'library'" />
         <NovelsView v-else-if="G.view === 'novels'" />
         <OutputsView v-else-if="G.view === 'outputs'" />
+        <WallpapersView v-else-if="G.view === 'wallpapers'" />
         <ComfyView v-else-if="G.view === 'comfy'" />
         <SettingsView v-else-if="G.view === 'settings'" />
 

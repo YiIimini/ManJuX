@@ -346,9 +346,9 @@ func cleanCoverPrompt(raw, bookName string) (prompt, note string, ok bool) {
 		if untitled > 0 {
 			why = append(why, fmt.Sprintf("正文里另有书名 %d 处已去掉（书名只由平台那一句承担）", untitled))
 		}
-		note = appendCoverNote(note, strings.Join(why, "、"))
+		note = appendNote(note, strings.Join(why, "、"))
 	} else if !hasCoverTitle(before, bookName) {
-		note = appendCoverNote(note, "模型没写书名句，平台按口径补上")
+		note = appendNote(note, "模型没写书名句，平台按口径补上")
 	}
 	// 补完再核一次（书名句本身也得成句）；任一步不过 ⇒ 不可用
 	if !coverPromptUsable(cleaned) {
@@ -357,8 +357,8 @@ func cleanCoverPrompt(raw, bookName string) (prompt, note string, ok bool) {
 	return cleaned, note, true
 }
 
-// appendCoverNote 把一句说明接在 Note 后面（空的时候不加分隔符）——同一处收口，免得每种情况各拼一遍。
-func appendCoverNote(note, add string) string {
+// appendNote 把一句说明接在 Note 后面（空的时候不加分隔符）——同一处收口，免得每种情况各拼一遍。
+func appendNote(note, add string) string {
 	add = strings.TrimSpace(add)
 	if add == "" {
 		return note
