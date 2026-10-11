@@ -154,8 +154,11 @@ func noteNoAutoRetry(onProgress func(int, string)) {
 	}
 }
 
+// Name 引擎名（**唯一出处**：注册名、caps 表、训练区间判据都引它，别在各处写 "api"）。
+const Name = "api"
+
 // Name 引擎名。
-func (e *Engine) Name() string { return "api" }
+func (e *Engine) Name() string { return Name }
 
 // Available 检查 API Key 已配置(轻量,不真调 API)。
 func (e *Engine) Available(ctx context.Context) error {
@@ -741,6 +744,17 @@ func submitDuration(lengthFrames int) (sec int, adjusted bool) {
 	want := lengthFrames / 24
 	sec = clampDuration(want)
 	return sec, sec != want
+}
+
+// SubmittedFrames 这 N 帧计划在**云端**实际会生成多少帧。
+//
+// 【为什么要有（2026-10-11）】训练区间判据（`pipeline.trainRangeNote`）必须按"喂给模型的帧数"判，
+// 而两端的口径**不一样**：本地是 17k+5 网格（`comfyengine.SeamRenderLength`），云端只吃整数秒且
+// 被夹在 5~15 秒（`clampDuration`）⇒ 计划 **5.0 秒（120 帧）**在云端提交的是 **120 帧**（低于训练下限 124），
+// 而在本地对齐后正好是 **124 帧**（在区间内）。差这一档，结论就相反 —— 所以这条口径只能从**引擎自己**取。
+func SubmittedFrames(lengthFrames int) int {
+	sec, _ := submitDuration(lengthFrames)
+	return sec * 24
 }
 
 func orDefault(s, def string) string {

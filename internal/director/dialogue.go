@@ -126,13 +126,29 @@ func DialogueOverflow(sh project.Shot) string {
 		MaxShotSeconds, MaxShotSeconds)
 }
 
-// FitDialogueDurations 逐镜把时长抬到"装得下台词"。
+// FitDialogueDurations 逐镜把时长抬到"装得下台词"，并且**不短于 minSeconds**。
 //
 // 返回被调整的镜头数与明细(供日志如实回显)。只**加长**、绝不缩短:缩短会引入新的
 // 截断,而加长的代价只是一点渲染时间。已经够长的镜头原样不动(仅把短于下限的抬到下限)。
-func FitDialogueDurations(plan *project.Plan) (adjusted int, details []string) {
+//
+// 【minSeconds 为什么要由调用方给（2026-10-11，用户：「渲染出来的视频很不如意」）】
+// 这条路有**两类调用方，下限不一样**，混用一个数就会犯两个方向相反的错：
+//
+//	· 平台自己生成（`stages_script`）⇒ 传 `GenMinShotSeconds`(5)。生成侧的口径本来就是 5
+//	  （提示词按 5 渲染、云端 <5 会被静默抬到 5、本地 4 秒只对齐到 107 帧 = 不在训练区间），
+//	  而这里原来用的是**窗口**下限 4 ⇒ 无台词/短台词镜会被定成 4 秒，等于平台自己产出
+//	  "喂给模型的帧数不在 H3 训练区间里"的镜（通病：首帧正常、中后段散/糊）。
+//	· 导入技能端的包（`planPostProcess`）⇒ 传 0（= 窗口下限 4）。技能端旧包里有整批 4 秒镜
+//	  （真产物夹具有 35 个），把它们**悄悄抬长**就是单方面改契约（那是版本级改动，要两侧同改），
+//	  而且违反"导入时应当空转、不静默改用户的东西"。
+//
+// 传 0 或负数 = 用窗口下限（`MinShotSeconds`）。
+func FitDialogueDurations(plan *project.Plan, minSeconds int) (adjusted int, details []string) {
 	if plan == nil {
 		return 0, nil
+	}
+	if minSeconds < MinShotSeconds {
+		minSeconds = MinShotSeconds
 	}
 	// cutsDroveIt 记下"这条时长是被切镜需求抬起来的"镜号 —— 播报里要说清是台词还是切镜抬的，
 	// 否则用户看到"4→7 秒"不知道原因。
@@ -151,13 +167,16 @@ func FitDialogueDurations(plan *project.Plan) (adjusted int, details []string) {
 			want = floors
 			cutsDroveIt = append(cutsDroveIt, sh.ID)
 		}
+		if want < minSeconds {
+			want = minSeconds
+		}
 		if want > MaxShotSeconds {
 			want = MaxShotSeconds
 		}
 		if sh.Duration >= want {
-			if sh.Duration < MinShotSeconds {
-				details = append(details, fmt.Sprintf("镜 %d:%d→%d 秒(补足时长下限)", sh.ID, sh.Duration, MinShotSeconds))
-				sh.Duration = MinShotSeconds
+			if sh.Duration < minSeconds {
+				details = append(details, fmt.Sprintf("镜 %d:%d→%d 秒(补足时长下限)", sh.ID, sh.Duration, minSeconds))
+				sh.Duration = minSeconds
 				adjusted++
 			}
 			continue

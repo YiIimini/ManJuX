@@ -186,7 +186,10 @@ func (s *Server) deleteShot(w http.ResponseWriter, r *http.Request) {
 // 这是双侧共组能成立的前提(2026-09-26)。返回调整明细与溢出警告,调用方负责如实回显:
 // **静默改用户的方案 = 撒谎**,静默放过装不下的台词 = 成片截断。
 func (s *Server) planPostProcess(id string, plan *project.Plan) (details, overflow []string) {
-	_, details = director.FitDialogueDurations(plan)
+	// 导入路径的下限是**窗口下限**(0 ⇒ MinShotSeconds=4)：技能端旧包里有整批 4 秒镜（真产物夹具有
+	// 35 个），在这里把它们抬长就是单方面改契约（版本级改动要两侧同改）——导入应当**空转**。
+	// 生成路径（stages_script）传的是 GenMinShotSeconds(5)：平台自己的产物必须落在 H3 训练区间里。
+	_, details = director.FitDialogueDurations(plan, 0)
 	voiceovers := 0
 	for i := range plan.Shots {
 		plan.Shots[i].H3Prompt = pipeline.EnsureChineseDialogue(plan.Shots[i].H3Prompt)

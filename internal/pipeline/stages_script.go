@@ -180,7 +180,10 @@ func (c *Coordinator) runScript(ctx context.Context, proj *project.Project) erro
 	for _, msg := range project.SceneCoverageIssues(plan, plan.BriefScenes) {
 		c.emit(proj.ID, PhaseScript, 0, "warn", 16, "🎬 %s", msg)
 	}
-	if n, details := director.FitDialogueDurations(plan); n > 0 {
+	// 生成路径的下限是 **GenMinShotSeconds**(5)：生成侧口径本来就是 5（提示词按 5 渲染、云端 <5 会被
+	// 抬到 5、本地 4 秒只对齐到 107 帧 = 不在训练区间），用窗口下限 4 会让平台自己产出"喂给模型的
+	// 帧数不在 H3 训练区间里"的镜（2026-10-11，用户：「渲染出来的视频很不如意」）。
+	if n, details := director.FitDialogueDurations(plan, director.GenMinShotSeconds); n > 0 {
 		c.emit(proj.ID, PhaseScript, 0, "info", 15, "⏱ 台词时长预算:%d 镜时长已调整(%s)", n, strings.Join(details, ";"))
 	}
 	for _, sh := range plan.Shots {

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/YiIimini/ManJuX/internal/engine"
 	"github.com/YiIimini/ManJuX/internal/project"
 )
 
@@ -46,7 +47,8 @@ func TestFitDialogueDurations(t *testing.T) {
 		{ID: 2, Duration: 8, Dialogue: []project.Line{{Text: "短句"}}},                    // 够长,不动
 		{ID: 3, Duration: 2, Dialogue: nil},                                             // 太短,抬到下限
 	}}
-	n, details := FitDialogueDurations(plan)
+	// 传**窗口下限**：这条门测的是"装不下就抬、只加不减"这条逻辑本身（与下标无关）。
+	n, details := FitDialogueDurations(plan, MinShotSeconds)
 	if n != 2 {
 		t.Fatalf("应调整 2 个镜头,实际 %d(%v)", n, details)
 	}
@@ -63,7 +65,7 @@ func TestFitDialogueDurations(t *testing.T) {
 	if !strings.Contains(strings.Join(details, ";"), "台词装得下") {
 		t.Errorf("调整明细应说明原因:%v", details)
 	}
-	if FitDialogueDurations(nil); false {
+	if FitDialogueDurations(nil, MinShotSeconds); false {
 		t.Error("nil 方案不应 panic")
 	}
 }
@@ -74,7 +76,7 @@ func TestFitDialogueDurationsClampsAtCeiling(t *testing.T) {
 	plan := &project.Plan{Shots: []project.Shot{
 		{ID: 1, Duration: 4, Dialogue: []project.Line{{Text: long}}},
 	}}
-	FitDialogueDurations(plan)
+	FitDialogueDurations(plan, MinShotSeconds)
 	if plan.Shots[0].Duration != MaxShotSeconds {
 		t.Fatalf("应抬到上限 %d 秒,实际 %d", MaxShotSeconds, plan.Shots[0].Duration)
 	}
@@ -121,7 +123,7 @@ func TestCutsFloorRaisesDuration(t *testing.T) {
 		{ID: 1, Duration: 4, H3Prompt: h3(4)},
 		{ID: 2, Duration: 9, H3Prompt: h3(2)}, // 已经够长，不动
 	}}
-	n, details := FitDialogueDurations(plan)
+	n, details := FitDialogueDurations(plan, MinShotSeconds)
 	if n != 1 {
 		t.Fatalf("只该调整 1 镜，实际 %d(%v)", n, details)
 	}
@@ -133,5 +135,38 @@ func TestCutsFloorRaisesDuration(t *testing.T) {
 	}
 	if !strings.Contains(details[0], "切镜需要") {
 		t.Errorf("明细要说清是「切镜需要」抬的，实际 %q", details[0])
+	}
+}
+
+// TestFitDialogueDurationsKeepsGenerationFloorOnTrainingGrid 生成路径的产物必须落在 H3 训练区间里。
+//
+// 【为什么要有（2026-10-11，用户：「渲染出来的视频很不如意」）】这条路原来**只有**一个下限（窗口下限 4 秒），
+// 于是无台词/短台词镜会被平台自己定成 4 秒 ⇒ 本地对齐后只喂 107 帧、云端 120 帧，**都不在训练区间
+// （124–362 帧）里** —— 平台自己产出"画面容易在中后段散/糊"的镜。生成侧的口径本来就是 5 秒
+// （`GenMinShotSeconds`：提示词按它渲染、云端 <5 会静默抬到 5、本地 4 秒只对齐成 107 帧）。
+//
+// 而**导入技能端的包**（`planPostProcess`）必须保持窗口下限、一个字都不改：旧包整批 4 秒镜是**合法形态**
+// （真产物夹具有 35 个），悄悄抬长＝单方面改契约（版本级改动要两侧同改）。
+func TestFitDialogueDurationsKeepsGenerationFloorOnTrainingGrid(t *testing.T) {
+	// 平台自己生成：无台词镜 4 秒 ⇒ 抬到 5 秒（= 120 帧；本地对齐后 124 帧，正好进训练区间）。
+	gen := &project.Plan{Shots: []project.Shot{{ID: 1, Duration: 4}}}
+	if n, details := FitDialogueDurations(gen, GenMinShotSeconds); n != 1 {
+		t.Fatalf("生成路径该把 4 秒的无台词镜抬到生成下限 %d 秒，实际调整 %d 镜(%v)",
+			GenMinShotSeconds, n, details)
+	}
+	if got := gen.Shots[0].Duration; got != GenMinShotSeconds {
+		t.Errorf("生成路径该抬到 %d 秒，实际 %d", GenMinShotSeconds, got)
+	}
+	if frames := engine.AlignLength(gen.Shots[0].Duration * 24); frames < engine.H3TrainMinFrames {
+		t.Errorf("生成路径的产物对齐后是 %d 帧，仍在训练区间之外（下限 %d 帧）",
+			frames, engine.H3TrainMinFrames)
+	}
+	// 导入技能端的包：同一个镜**一个字都不许改**。
+	imp := &project.Plan{Shots: []project.Shot{{ID: 1, Duration: 4}}}
+	if n, details := FitDialogueDurations(imp, 0); n != 0 {
+		t.Errorf("导入路径必须空转（4 秒镜是旧包合法形态），实际调整 %d 镜(%v)", n, details)
+	}
+	if imp.Shots[0].Duration != 4 {
+		t.Errorf("导入路径把用户的 4 秒镜改成了 %d 秒 —— 静默改用户的方案就是撒谎", imp.Shots[0].Duration)
 	}
 }
