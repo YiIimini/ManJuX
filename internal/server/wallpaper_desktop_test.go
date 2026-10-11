@@ -697,6 +697,22 @@ func TestWallpaperDesktopPicksFrontendWiring(t *testing.T) {
 			t.Errorf("前端缺 %q（勾选多张 / 全选 / 清空 / 范围说明 四件事之一）", n)
 		}
 	}
+	// 模板用到的 handler **必须顶格定义**（顶层）。2026-10-11 真机报「B.picked is not a function」：
+	// 那几个 handler 被插进了 `stopDesk` 的**函数体里**（插入点少跳了一个换行），模板拿不到 ⇒ 一进页面
+	// 就报错；而 `vite build` 与上面那串"字符串在不在"的断言**全过**（同型事故 2026-09-29 白屏）。
+	// 判据：每个 handler 的声明必须出现在**行首、零缩进**。
+	for _, decl := range []string{
+		"\nfunction picked(",
+		"\nasync function savePicks(",
+		"\nasync function togglePick(",
+		"\nasync function pickAll(",
+		"\nasync function pickNone(",
+	} {
+		if !strings.Contains(vue, decl) {
+			t.Errorf("模板用的 handler 必须**顶格**定义：%q 不在行首（嵌在别的函数里 ⇒ 模板拿不到，运行时报 B.xxx is not a function）",
+				strings.TrimPrefix(decl, "\n"))
+		}
+	}
 	js := readFrontend(t, "src/store.js")
 	if !strings.Contains(js, "wallpaperDesktopPicks") {
 		t.Error("store.js 缺 wallpaperDesktopPicks —— 勾选存不下去，刷新就丢")

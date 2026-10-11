@@ -391,6 +391,7 @@ async function stopDesk() {
     desk.value = await api.wallpaperDesktopStop()
     ElMessage.success('已停止轮换（系统停在最后一张）')
   } catch (e) { ElMessage.error(e.message) }
+}
 
 // 轮换范围（后端唯一出处：picks 为空 = 全部参与）：
 // 缩略图右上角那个勾选框就是"只在我勾的这几张里换"的入口 —— 勾选即写后端，立刻生效。
@@ -419,7 +420,6 @@ async function pickAll() {
 }
 
 async function pickNone() { await savePicks([]) }
-}
 
 function view(it) {
   // 复用全站的大图预览（与作品库/资产库同一套缩放平移）：items + index 是它认的形状
