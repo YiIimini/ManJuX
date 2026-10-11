@@ -41,26 +41,26 @@ func TestParseBlackRunsRealLog(t *testing.T) {
 
 func TestStrippableBlackRuns(t *testing.T) {
 	short := []BlackRun{{0, 0.208333}, {4.458333, 4.541667}, {2.416667, 2.541667}}
-	if got := strippableBlackRuns(short, maxBlackRunSec, maxBlackTotalSec); len(got) != 3 {
+	if got := strippableBlackRuns(short, MaxBlackRunSec, MaxBlackTotalSec); len(got) != 3 {
 		t.Errorf("真机那三段短黑都该剪，实得 %d 段：%v", len(got), got)
 	}
 	// 长黑段不剪（真机那种"整镜黑/暗场"必须留给质检报，不能在这里悄悄改）
 	long := []BlackRun{{0, 2.0}, {5.0, 6.5}}
-	if got := strippableBlackRuns(long, maxBlackRunSec, maxBlackTotalSec); len(got) != 0 {
+	if got := strippableBlackRuns(long, MaxBlackRunSec, MaxBlackTotalSec); len(got) != 0 {
 		t.Errorf("长黑段不该剪，实得 %v", got)
 	}
 	// 累计上限：4 段 0.4s 只剪前两段（0.8s ≤ 1.0s）
 	many := []BlackRun{{0, 0.4}, {2, 2.4}, {4, 4.4}, {6, 6.4}}
-	if got := strippableBlackRuns(many, maxBlackRunSec, maxBlackTotalSec); len(got) != 2 {
+	if got := strippableBlackRuns(many, MaxBlackRunSec, MaxBlackTotalSec); len(got) != 2 {
 		t.Errorf("累计上限 1.0s 内只该剪 2 段，实得 %d：%v", len(got), got)
 	}
 	// 一帧级噪声（<0.02s）不动
-	if got := strippableBlackRuns([]BlackRun{{1.0, 1.01}}, maxBlackRunSec, maxBlackTotalSec); len(got) != 0 {
+	if got := strippableBlackRuns([]BlackRun{{1.0, 1.01}}, MaxBlackRunSec, MaxBlackTotalSec); len(got) != 0 {
 		t.Errorf("一帧级噪声不该动：%v", got)
 	}
 	// 混合：短的剪、长的留着
 	mixed := []BlackRun{{0, 0.2}, {3.0, 6.0}, {7.0, 7.13}}
-	if got := strippableBlackRuns(mixed, maxBlackRunSec, maxBlackTotalSec); len(got) != 2 {
+	if got := strippableBlackRuns(mixed, MaxBlackRunSec, MaxBlackTotalSec); len(got) != 2 {
 		t.Errorf("混合时该剪那两段短的，实得 %v", got)
 	}
 }
@@ -407,14 +407,21 @@ func TestForceStripBlackFlashIgnoresMarker(t *testing.T) {
 
 // TestClipFixBypassesProcessedMarkerInSource cmd/clipfix 的存在意义是修**存量**片段，而那些片段带着
 // "已处理过"标记 ⇒ 它必须走 Force 入口（走普通入口 ＝ 声称修了、实际一个字节都没动）。
+//
+// 【2026-10-11 加严】它现在走的是 `ForceStripBlackFlashMax`（多一个"单段上限"参数，供
+// `-max-black` 显式放宽用）—— 这条门因此要同时钉两件事：① 走 Force 那条链；② **上限从算好的
+// limit 传进去**（不许又写死 0，否则 `-max-black` 是个摆设）。
 func TestClipFixBypassesProcessedMarkerInSource(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "cmd", "clipfix", "main.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := string(raw)
-	if !strings.Contains(src, "compose.ForceStripBlackFlash(") {
-		t.Error("clipfix 必须走 compose.ForceStripBlackFlash：存量片段带着\"已处理过\"标记，普通入口会静默跳过")
+	if !strings.Contains(src, "compose.ForceStripBlackFlashMax(") {
+		t.Error("clipfix 必须走 compose.ForceStripBlackFlashMax：存量片段带着\"已处理过\"标记，普通入口会静默跳过")
+	}
+	if !strings.Contains(src, "compose.ForceStripBlackFlashMax(ctx, ffm, p, 0, limit)") {
+		t.Error("clipfix 没把算好的单段上限（limit）传进去 —— `-max-black` 会变成摆设")
 	}
 	if strings.Contains(src, "compose.StripBlackFlash(") {
 		t.Error("clipfix 不该再调普通入口 compose.StripBlackFlash（它会被标记挡住，等于没修）")
@@ -440,4 +447,95 @@ func audioDur(t *testing.T, path string) float64 {
 		t.Fatalf("音轨时长解析失败（%q）: %v", s, err)
 	}
 	return v
+}
+
+// TestForceStripBlackFlashMaxRelaxesOnlyWhenAsked 默认上限一个字不改；显式放宽才剪更长的段。
+//
+// 【为什么要有（2026-10-11 真机）】真机《星纪山海》第01集的两处**镜首纯黑**是 0.542s（镜 11）与
+// 0.583s（镜 15）—— 只比默认上限（0.5 秒）多一点点，按设计不剪（"整段黑可能是计划里写明的暗场"）。
+// 这一轮给用户的出口是 `cmd/clipfix -max-black <秒>`（**显式**）：这条门就是钉住
+// ① 默认仍不剪 ② 给了上限就真剪掉 ③ 剪完一帧黑都不剩。
+//
+// 夹具**照真机形态造**：纯黑**头** 13 帧（13/24 ＝ 0.5417s，与真机镜 11 的 `black_start:0
+// black_end:0.541667` 一字不差）后面接灰帧。
+func TestForceStripBlackFlashMaxRelaxesOnlyWhenAsked(t *testing.T) {
+	if MaxBlackRunSec != 0.5 || MaxBlackTotalSec != 1.0 {
+		t.Fatalf("平台默认上限被改了：单段 %.2f / 累计 %.2f（真机定的是 0.5 / 1.0 —— 改默认要重跑真机并写进文档）",
+			MaxBlackRunSec, MaxBlackTotalSec)
+	}
+	// 判据面（纯函数）：真机那两段的秒数逐字贴进来。
+	for _, c := range []struct {
+		name    string
+		r       BlackRun
+		defOk   bool // 默认上限下会不会剪
+		relaxOk bool // 放宽到 0.6 秒后会不会剪
+	}{
+		{"镜 11 开头 0.5417s", BlackRun{Start: 0, End: 0.541667}, false, true},
+		{"镜 15 开头 0.5833s", BlackRun{Start: 0, End: 0.583333}, false, true},
+		{"2026-10-10 镜 1 的短黑闪 0.1667s", BlackRun{Start: 5.291667, End: 5.458333}, true, true},
+	} {
+		def, _ := BlackRunVerdictWith(c.r, 0) // 0 ＝ 平台默认
+		if def != c.defOk {
+			t.Errorf("%s：默认上限下判成 %v，该是 %v", c.name, def, c.defOk)
+		}
+		relax, _ := BlackRunVerdictWith(c.r, 0.6)
+		if relax != c.relaxOk {
+			t.Errorf("%s：放宽到 0.6 秒后判成 %v，该是 %v", c.name, relax, c.relaxOk)
+		}
+	}
+
+	f := ffexe(t)
+	ctx := context.Background()
+	build := func(t *testing.T) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "blackhead.mp4")
+		args := []string{"-y", "-v", "error",
+			"-f", "lavfi", "-i", "color=c=black:s=320x240:r=24:d=20",
+			"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=24:d=20",
+			"-filter_complex", "[0:v]trim=end_frame=13,setpts=PTS-STARTPTS[a];" +
+				"[1:v]trim=end_frame=60,setpts=PTS-STARTPTS[b];" +
+				"[a][b]concat=n=2:v=1:a=0[v]",
+			"-map", "[v]", "-t", "3.0",
+			"-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", p}
+		if _, err := f.Run(ctx, args...); err != nil {
+			t.Skipf("造夹具失败（%v）", err)
+		}
+		runs, err := DetectBlackRuns(ctx, f, p)
+		if err != nil || len(runs) != 1 || runs[0].End < 0.50 || runs[0].End > 0.60 {
+			t.Fatalf("夹具没造出「镜首 13 帧纯黑」的形态（runs=%v err=%v）—— 这条门等于没跑", runs, err)
+		}
+		return p
+	}
+
+	// ① 默认：不动（黑段还在，且**如实报出**"没剪"）。
+	p := build(t)
+	removed, n, longRuns, err := ForceStripBlackFlashMax(ctx, f, p, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 0 || n != 0 {
+		t.Errorf("默认上限下不该剪（这一段 0.54s > %.2fs），实得剪掉 %d 段 %.4fs", MaxBlackRunSec, n, removed)
+	}
+	if len(longRuns) != 1 {
+		t.Errorf("默认上限下必须**如实报出**这一段没剪，实得 %v", longRuns)
+	}
+	if again, err := DetectBlackRuns(ctx, f, p); err != nil || len(again) != 1 {
+		t.Errorf("默认跑完黑段必须原样还在，实得 %v（err=%v）", again, err)
+	}
+
+	// ② 显式放宽到 0.6 秒：真剪掉，且一帧黑都不剩。
+	p = build(t)
+	removed, n, longRuns, err = ForceStripBlackFlashMax(ctx, f, p, 24, 0.6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 || removed < 0.5 {
+		t.Errorf("放宽到 0.6 秒后该剪掉 1 段（≈0.54s），实得 %d 段 %.4fs（longRuns=%v）", n, removed, longRuns)
+	}
+	if len(longRuns) != 0 {
+		t.Errorf("这一段按 0.6 秒的上限算**已经被剪了**，不该再报成\"没剪的长黑段\"：%v", longRuns)
+	}
+	if again, err := DetectBlackRuns(ctx, f, p); err != nil || len(again) != 0 {
+		t.Errorf("放宽剪完必须一帧黑都不剩，实得 %v（err=%v）", again, err)
+	}
 }

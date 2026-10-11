@@ -32,6 +32,8 @@ func main() {
 	exeDir := flag.String("exedir", ".", "exe 目录")
 	projID := flag.String("project", "", "项目 id；空 = projects 目录下最近修改的一个")
 	apply := flag.Bool("apply", false, "真的剪（不带这个参数只列出会剪什么）")
+	maxBlack := flag.Float64("max-black", 0,
+		"单段黑场的上限（秒）；0 = 平台默认（0.5）—— 只在你要显式剪掉更长的黑段时才给（如 0.6）")
 	flag.Parse()
 
 	mgr, err := config.NewManager(*settings, *exeDir)
@@ -89,7 +91,19 @@ func main() {
 		files = append(files, e.Name())
 	}
 	sort.Strings(files)
-	fmt.Printf("项目 %s\n片段 %d 条（%s）\napply=%v\n", id, len(files), clipsDir, *apply)
+	// 本次的**单段上限**（唯一出处 compose.MaxBlackRunSec；-max-black 显式放宽时以它为准）。
+	limit := *maxBlack
+	if limit <= 0 {
+		limit = compose.MaxBlackRunSec
+	}
+	fmt.Printf("项目 %s\n片段 %d 条（%s）\napply=%v\n单段上限 %.2f 秒%s（累计上限 %.1f 秒）\n",
+		id, len(files), clipsDir, *apply, limit,
+		func() string {
+			if *maxBlack > 0 {
+				return " ← -max-black 显式放宽（默认 " + strconv.FormatFloat(compose.MaxBlackRunSec, 'f', 2, 64) + "）"
+			}
+			return "（平台默认）"
+		}(), compose.MaxBlackTotalSec)
 
 	ctx := context.Background()
 	totalShots, totalSec := 0, 0.0
@@ -104,16 +118,23 @@ func main() {
 			continue
 		}
 		var parts []string
+		willCut := 0
 		for _, r := range runs {
+			// 会不会被剪，**问同一条口径**（BlackRunVerdictWith）—— 干跑说的就是真跑会做的。
+			if ok, _ := compose.BlackRunVerdictWith(r, limit); ok {
+				willCut++
+			}
 			parts = append(parts, fmt.Sprintf("%.3f~%.3fs", r.Start, r.End))
 		}
-		fmt.Printf("  %-18s 黑段 %d 处: %s\n", name, len(runs), strings.Join(parts, ", "))
+		fmt.Printf("  %-18s 黑段 %d 处（按上限 %.2f 秒会剪 %d 段）: %s\n",
+			name, len(runs), limit, willCut, strings.Join(parts, ", "))
 		if !*apply {
 			continue
 		}
 		shot, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(name, "shot_"), ".mp4"))
 		// 走 Force：存量片段带着"已处理过"标记（旧判据下只剪掉了一部分），普通入口会静默跳过。
-		removed, n, longRuns, err := compose.ForceStripBlackFlash(ctx, ffm, p, 0)
+		// 上限用本次算好的 limit（-max-black 显式放宽时就是它；没给就是平台默认）。
+		removed, n, longRuns, err := compose.ForceStripBlackFlashMax(ctx, ffm, p, 0, limit)
 		if err != nil {
 			fmt.Printf("      ✕ 镜头 %d 剪失败: %v\n", shot, err)
 			continue

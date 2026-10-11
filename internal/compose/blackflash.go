@@ -30,7 +30,7 @@ import (
 // 把黑闪剪掉之后，同样的采样点落回画面本体（实测 0.47 一档）。
 //
 // 【边界：什么剪、什么不剪】只需要"短"这一个判据，且**宁可漏不可误剪**：
-//   - 单段 ≤ maxBlackRunSec（0.5s）且累计 ≤ maxBlackTotalSec（1.0s）⇒ 剪（这是故障，不是内容）；
+//   - 单段 ≤ MaxBlackRunSec（0.5s）且累计 ≤ MaxBlackTotalSec（1.0s）⇒ 剪（这是故障，不是内容）；
 //   - 更长的黑段**不剪** —— 整段黑/黑尾是 H3 的真实失效，也是计划里就写明"沉在黑暗里"时该有的样子，
 //     那属于质检该报、用户该看到的，不能在这里悄悄改掉。
 //
@@ -43,8 +43,12 @@ import (
 // **最黑的那一帧**（YAVG 16.1，其余三帧 17.1/19.3/21.7）漏在外面：成品片段实测只少 3 帧、"无故一黑"
 // 照旧，且音轨按整段多切了一帧。现在一律换整数帧号窗口。
 const (
-	maxBlackRunSec   = 0.5
-	maxBlackTotalSec = 1.0
+	// MaxBlackRunSec / MaxBlackTotalSec **平台自动剪**的上限（唯一出处）：单段 ≤ 0.5 秒且累计 ≤ 1.0 秒
+	// 才剪。**导出**是因为体检的播报与 `cmd/clipfix` 的显式放宽都要引它 —— 别在别处再写一遍 0.5。
+	// 默认值一个字不改：更长的黑段**按设计**不碰（整段黑/黑尾可能是计划里就写明的暗场，
+	// "那是质检该报的"—— 2026-10-11 起成片体检会点名，用户可显式放宽去剪）。
+	MaxBlackRunSec   = 0.5
+	MaxBlackTotalSec = 1.0
 	// blackPixTh 像素判黑的亮度阈值（0-1，官方默认 0.10）；pic_th 要求整帧 98% 像素都黑才算。
 	blackPixTh = 0.10
 	blackPicTh = 0.98
@@ -76,17 +80,28 @@ func BlackDetectFilter() string {
 //
 // 【为什么要有（2026-10-11 真机）】真机《星纪山海：我在废土养神兽》第01集 16 镜里，
 // 镜 11 开头 `black_start:0 black_end:0.541667`、镜 15 开头 0.583333s 是**纯黑**；
-// 它们都比 maxBlackRunSec（0.5s）长 ⇒ 渲染期的黑闪切除**按设计不碰**（宁可漏不可误剪），
+// 它们都比 MaxBlackRunSec（0.5s）长 ⇒ 渲染期的黑闪切除**按设计不碰**（宁可漏不可误剪），
 // 只在渲染日志里留一句 warn。而成片体检此前一处都不提这件事 —— 「开头半秒黑」只能等用户自己看见。
 // 这个函数把**同一条口径**（阈值就取自本文件）交给体检，让它如实播报并说清为什么没被剪。
-func BlackRunVerdict(r BlackRun) (bool, string) {
+// maxRun ≤ 0 ＝ 用平台默认（MaxBlackRunSec）。
+func BlackRunVerdict(r BlackRun) (bool, string) { return BlackRunVerdictWith(r, MaxBlackRunSec) }
+
+// BlackRunVerdictWith 同 BlackRunVerdict，但用调用方给的**单段上限**（`cmd/clipfix -max-black` 显式放宽时用）。
+//
+// 为什么上限要能传进来：真机镜 11/15 的黑段是 0.542s / 0.583s —— **刚好落在默认 0.5 秒上面**，
+// 按设计不剪（宁可漏不可误剪）。这类"差一点点"的情况不该逼用户去重渲（GPU 几分钟）或在别的软件里手剪，
+// 所以给一条**显式**的路（默认一字不改，用户自己决定放宽到多少）。
+func BlackRunVerdictWith(r BlackRun, maxRun float64) (bool, string) {
+	if maxRun <= 0 {
+		maxRun = MaxBlackRunSec
+	}
 	if r.Dur() < blackMinDur {
 		return false, fmt.Sprintf("短于 %.0f 毫秒的抖动，平台本来就不碰", blackMinDur*1000)
 	}
-	if r.Dur() > maxBlackRunSec {
-		return false, fmt.Sprintf("比平台自动剪的短黑闪上限（%.1f 秒）还长，所以它**留在成片里**", maxBlackRunSec)
+	if r.Dur() > maxRun {
+		return false, fmt.Sprintf("比自动剪的单段上限（%.2f 秒）还长，所以它**留在成片里**", maxRun)
 	}
-	return true, fmt.Sprintf("单段够短（≤%.1f 秒），渲染期平台本该剪掉它", maxBlackRunSec)
+	return true, fmt.Sprintf("单段够短（≤%.2f 秒），渲染期平台本该剪掉它", maxRun)
 }
 
 // blackDetectRe 解析 ffmpeg `blackdetect` 的日志行。
@@ -170,7 +185,19 @@ func DetectBlackRuns(ctx context.Context, f *ff.FF, path string) ([]BlackRun, er
 //
 // 返回剪掉的秒数、段数与**没剪**的长黑段（后者由调用方如实播报，见 Stripped / Unstripped）。
 // 已经处理过的片段用同名标记跳过（幂等，与 NormalizeClipAudio 同一套路）。
-func StripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (removed float64, runs int, longRuns []BlackRun, err error) {
+// 判据用**平台默认**上限（MaxBlackRunSec / MaxBlackTotalSec）；要显式放宽走 ForceStripBlackFlashMax。
+func StripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (float64, int, []BlackRun, error) {
+	return stripBlackFlash(ctx, f, path, fps, MaxBlackRunSec, MaxBlackTotalSec)
+}
+
+// stripBlackFlash 本体：**唯一的剪辑实现**（上限由调用方给，避免"放宽后的剪法"再写一遍）。
+func stripBlackFlash(ctx context.Context, f *ff.FF, path string, fps, maxRun, maxTotal float64) (removed float64, runs int, longRuns []BlackRun, err error) {
+	if maxRun <= 0 {
+		maxRun = MaxBlackRunSec
+	}
+	if maxTotal <= 0 {
+		maxTotal = MaxBlackTotalSec
+	}
 	if f == nil || strings.TrimSpace(path) == "" {
 		return 0, 0, nil, nil
 	}
@@ -189,12 +216,13 @@ func StripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (r
 		_ = writeClipMarker(marker, path, "clip black-flash checked: none")
 		return 0, 0, nil, nil
 	}
-	cut := strippableBlackRuns(found, maxBlackRunSec, maxBlackTotalSec)
+	cut := strippableBlackRuns(found, maxRun, maxTotal)
 	for _, r := range found {
 		if r.Dur() < blackMinDur {
 			continue
 		}
-		if r.Dur() > maxBlackRunSec {
+		// "没剪的长黑段"按**本次用的上限**算（放宽到 0.6 秒时，0.54/0.58 秒那两段就算被剪掉了）。
+		if r.Dur() > maxRun {
 			longRuns = append(longRuns, r)
 		}
 	}
@@ -260,13 +288,23 @@ func StripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (r
 // 走普通入口会直接 `return` 什么都不做 —— 而 `cmd/clipfix` 的全部意义正是修存量，所以它必须走这条。
 // 剪完仍会重写标记（内容是新的，标记也跟着刷新）。
 func ForceStripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float64) (float64, int, []BlackRun, error) {
+	return ForceStripBlackFlashMax(ctx, f, path, fps, 0)
+}
+
+// ForceStripBlackFlashMax 同 ForceStripBlackFlash，但单段上限由调用方给（`cmd/clipfix -max-black <秒>`）。
+//
+// 【为什么要有它（2026-10-11 真机）】真机《星纪山海》第01集的两处**镜首纯黑**是 0.542s 与 0.583s ——
+// 比默认上限（0.5 秒）只多一点点，按设计不剪、成片里"开头半秒黑"照旧。这类差一点点的段子不该逼用户
+// 重渲（GPU 几分钟）或在别的软件里手剪，所以给一条**显式**的路：默认一个字不改（maxRun ≤ 0 ⇒ 平台默认），
+// 用户自己决定放宽到多少（仍受**累计** ≤ MaxBlackTotalSec 的约束，防一次剪掉太多内容）。
+func ForceStripBlackFlashMax(ctx context.Context, f *ff.FF, path string, fps, maxRun float64) (float64, int, []BlackRun, error) {
 	if f == nil || strings.TrimSpace(path) == "" {
 		return 0, 0, nil, nil
 	}
 	if err := os.Remove(path + ".noblack"); err != nil && !os.IsNotExist(err) {
 		return 0, 0, nil, err
 	}
-	return StripBlackFlash(ctx, f, path, fps)
+	return stripBlackFlash(ctx, f, path, fps, maxRun, MaxBlackTotalSec)
 }
 
 // hasAudioStream 这条片段有没有音轨。

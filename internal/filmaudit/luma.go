@@ -195,10 +195,21 @@ func lumaFindings(in Input) []Finding {
 		}
 		for _, r := range L.Blacks {
 			strippable, why := compose.BlackRunVerdict(r)
-			advice := "要么重出这一镜，要么剪辑时把这一段掐掉"
-			if strippable {
+			// 建议要**可执行**：长黑段不是"自己想办法"，而是给一条能直接粘的命令。
+			// 上限按这一段往上报一格（0.5417 ⇒ 0.6）；但超过**累计**上限的段平台任何档位都剪不了，
+			// 那时不许给这条命令（给了也剪不掉 = 撒谎）。
+			suggest := math.Ceil(r.Dur()*10) / 10
+			advice := ""
+			switch {
+			case strippable:
 				advice = "这一段够短，渲染期平台**本该**剪掉它（这条片段大概是剪之前就落盘的）—— " +
-					"跑一次 `go run ./cmd/clipfix -project <书名> -apply` 就能修好"
+					"跑一次 `go run ./cmd/clipfix -project \"<项目 id>\" -apply` 就能修好"
+			case suggest <= compose.MaxBlackTotalSec:
+				advice = fmt.Sprintf("要么重出这一镜，要么**显式放宽**上限把它剪掉："+
+					"`go run ./cmd/clipfix -project \"<项目 id>\" -max-black %.1f -apply`", suggest)
+			default:
+				advice = fmt.Sprintf("这一段比**累计上限 %.1f 秒**还长，平台任何档位都不会剪它 —— "+
+					"要么重出这一镜，要么在别的软件里手工剪", compose.MaxBlackTotalSec)
 			}
 			out = append(out, Finding{Level: "warn", Where: fmt.Sprintf("shot %d", p.Shots[i].ID),
 				Msg: fmt.Sprintf("这一镜有 **%.2fs 的纯黑**（从 %.2fs 起）—— %s；%s", r.Dur(), r.Start, why, advice)})

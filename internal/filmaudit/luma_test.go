@@ -265,6 +265,11 @@ func TestLumaFindingsNamesBlackRunsWithComposeVerdict(t *testing.T) {
 		if strings.Contains(longMsgs[i], shortWhy) {
 			t.Errorf("镜 %d 的播报用了短黑闪那一支的话术（口径/阈值变了）：%s", []int{11, 15}[i], longMsgs[i])
 		}
+		// 建议必须**可执行**：长黑段给一条能直接粘的命令（`-max-black`），否则用户只能重渲或手剪。
+		// 上限不给 0.6 也没关系，但命令里必须有这个开关，且必须点到 clipfix。
+		if !strings.Contains(longMsgs[i], "-max-black") || !strings.Contains(longMsgs[i], "cmd/clipfix") {
+			t.Errorf("镜 %d 的黑场播报没给出可执行的命令（-max-black / cmd/clipfix）：%s", []int{11, 15}[i], longMsgs[i])
+		}
 	}
 
 	// 短黑闪（真机 2026-10-10 镜 1：black_start:5.291667 black_end:5.458333，0.1667s）：
@@ -285,6 +290,30 @@ func TestLumaFindingsNamesBlackRunsWithComposeVerdict(t *testing.T) {
 	}
 	if strings.Contains(msg, "重出这一镜") {
 		t.Errorf("短黑闪不该让用户重出（那不是引擎的问题，是没剪），实际：%s", msg)
+	}
+
+	// 短黑闪那一支**不许**带 -max-black（它本该被默认上限剪掉，让用户去放宽上限就等于承认默认坏了）。
+	if strings.Contains(msg, "-max-black") {
+		t.Errorf("短黑闪不该要用户放宽上限（平台本来就该剪掉它），实际：%s", msg)
+	}
+	// 超过**累计**上限的段（真机没遇到，但形态合法）：平台任何档位都剪不了 ⇒ 不许给那条命令（给了也剪不掉）。
+	ls = realLuma()
+	ls[0].Blacks = []compose.BlackRun{{Start: 0, End: 1.2}} // 1.2s > 累计上限 1.0s
+	var huge string
+	for _, f := range lumaFindings(Input{Plan: &project.Plan{Shots: realShots()}, Luma: ls}) {
+		if f.Where == "shot 1" && strings.Contains(f.Msg, "纯黑") {
+			huge = f.Msg
+		}
+	}
+	if huge == "" {
+		t.Fatal("1.2 秒的黑段没被报出来")
+	}
+	if strings.Contains(huge, "-max-black") {
+		t.Errorf("这一段超过**累计**上限（%.1f 秒），平台任何档位都剪不了 —— 不该给 -max-black 那条命令（给了也剪不掉）：%s",
+			compose.MaxBlackTotalSec, huge)
+	}
+	if !strings.Contains(huge, "累计") {
+		t.Errorf("超累计上限的那一段该说清是累计上限卡住的：%s", huge)
 	}
 }
 
