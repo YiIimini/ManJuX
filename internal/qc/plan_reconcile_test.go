@@ -156,3 +156,57 @@ func hasWarn(r *Report, kw string) bool {
 	}
 	return false
 }
+
+// TestStrippedBlackFlashIsNotCountedAsTruncation 平台自己剪掉的黑闪不算"产物被截断"。
+//
+// 【为什么要有（2026-10-11）】黑闪切除的默认单段上限抬到 0.6 秒之后，一次就能剪掉 0.58 秒 ——
+// 若质检还按"实测比计划短 0.5 秒 = 残片"判，就会把**平台自己的剪辑**报成"请重渲该镜"。
+// 真机形态：镜 15 计划 9s、渲出 9.5s，剪掉 0.583s 黑闪后只剩 8.92s。
+//
+// 判据：同样的实测时长，**带不带** StrippedSec 结论相反 —— 两个"短"判据（全局下限 + 与计划对账）
+// 都要把它加回去；没传（= 没剪过）时旧行为一个字不变。
+func TestStrippedBlackFlashIsNotCountedAsTruncation(t *testing.T) {
+	f := newFF(t)
+	dir := t.TempDir()
+	clip := makeClip(t, dir, 5, 5, "white", "white") // 实测 ≈5.0s
+
+	// ① 与计划对账：剪前 5.583s、计划 5.6s ⇒ 剪掉黑闪后剩 5.0s，不该判"截断"。
+	rep := Check(context.Background(), f, 1, clip, Params{
+		MinDuration: 1, MaxDuration: 60, DarkRatioFail: 0.9,
+		ExpectedDuration: 5.6, StrippedSec: 0.583,
+	})
+	for _, s := range append(append([]string{}, rep.Problems...), rep.Warnings...) {
+		if strings.Contains(s, "计划") {
+			t.Errorf("剪掉的秒数加回去之后与计划一致，不该有任何对账消息：%q", s)
+		}
+	}
+	if math.Abs(rep.StrippedSec-0.583) > 1e-9 {
+		t.Errorf("报告里要如实留痕剪掉了几秒，实得 %.3f", rep.StrippedSec)
+	}
+
+	// ② 反证（把"加回去"那一步拿掉就该判负 —— 说明这条门真的在咬东西，不是摆设）：
+	rep = Check(context.Background(), f, 1, clip, Params{
+		MinDuration: 1, MaxDuration: 60, DarkRatioFail: 0.9,
+		ExpectedDuration: 5.6,
+	})
+	if !hasProblem(rep, "时长短于计划") {
+		t.Errorf("剪掉的秒数没传进来时，5.0s vs 计划 5.6s 该判「短于计划」：%v", rep.Problems)
+	}
+	if rep.StrippedSec != 0 {
+		t.Errorf("没剪过的片段不该在报告里说有剪（实得 %.3f）", rep.StrippedSec)
+	}
+
+	// ③ 全局下限那条同样要减：4 秒镜对齐后 4.46s，剪掉 0.6s 只剩 3.86s < 下限。
+	rep = Check(context.Background(), f, 1, clip, Params{
+		MinDuration: 5.5, MaxDuration: 60, DarkRatioFail: 0.9, StrippedSec: 0.583,
+	})
+	if hasProblem(rep, "时长过短") {
+		t.Errorf("剪掉的黑闪不该让产物被判「时长过短」：%v", rep.Problems)
+	}
+	rep = Check(context.Background(), f, 1, clip, Params{
+		MinDuration: 5.5, MaxDuration: 60, DarkRatioFail: 0.9,
+	})
+	if !hasProblem(rep, "时长过短") {
+		t.Errorf("不传剪掉秒数时该判「时长过短」（否则下限那道门被这次改动放空了）：%v", rep.Problems)
+	}
+}

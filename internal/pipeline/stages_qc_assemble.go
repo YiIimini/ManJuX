@@ -151,9 +151,13 @@ func (c *Coordinator) runQC(ctx context.Context, proj *project.Project) error {
 			// (计划下限是 4s),画幅/帧率此前只被"记录"、从不与规格核对 ——
 			// 合成对画幅差异是 scale+pad(补黑边)、对帧率是强制 fps=24,全是静默兜底。
 			ExpectedDuration: float64(shot.Duration),
-			ExpectWidth:      proj.Config.Params.Render.Width,
-			ExpectHeight:     proj.Config.Params.Render.Height,
-			ExpectFPS:        24, // 渲染帧数口径即 shot.Duration*24,见 stages_render.go 的 shotFrames
+			// 平台自己剪掉的黑闪秒数：**短**的那一侧对账要把它加回去（默认单段上限 0.6 秒，
+			// 一次就能剪掉 0.58 秒 ⇒ 不加回去就会被判"产物被截断、请重渲该镜"，白烧一次 GPU）。
+			// 唯一出处 = 片段自己的 .noblack 标记（见 compose.StrippedBlackSec）。
+			StrippedSec:  compose.StrippedBlackSec(full),
+			ExpectWidth:  proj.Config.Params.Render.Width,
+			ExpectHeight: proj.Config.Params.Render.Height,
+			ExpectFPS:    24, // 渲染帧数口径即 shot.Duration*24,见 stages_render.go 的 shotFrames
 		})
 		if vlmClient != nil && r.OK {
 			// 【2026-10-08 深度排查】原来这里只看 `vlmClient != nil`，既不看限流静默期、

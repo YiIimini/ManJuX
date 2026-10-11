@@ -2,6 +2,7 @@ package compose
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"os/exec"
@@ -449,93 +450,170 @@ func audioDur(t *testing.T, path string) float64 {
 	return v
 }
 
-// TestForceStripBlackFlashMaxRelaxesOnlyWhenAsked 默认上限一个字不改；显式放宽才剪更长的段。
+// TestForceStripBlackFlashDefaultCutsRealHeadsAndKeepsLongOnes 默认上限 0.6 秒：判据面 + 端到端。
 //
-// 【为什么要有（2026-10-11 真机）】真机《星纪山海》第01集的两处**镜首纯黑**是 0.542s（镜 11）与
-// 0.583s（镜 15）—— 只比默认上限（0.5 秒）多一点点，按设计不剪（"整段黑可能是计划里写明的暗场"）。
-// 这一轮给用户的出口是 `cmd/clipfix -max-black <秒>`（**显式**）：这条门就是钉住
-// ① 默认仍不剪 ② 给了上限就真剪掉 ③ 剪完一帧黑都不剩。
+// 【为什么要有（2026-10-11，用户「说了有优势的你直接做」）】真机《星纪山海》第01集的两处**镜首纯黑**
+// 是 0.5417s（镜 11）与 0.5833s（镜 15）。默认上限从 0.5 抬到 0.6 之后这两段**该被默认剪掉** ——
+// 用户跑 `cmd/clipfix -project <id> -apply`（不带任何参数）就能修掉成片里的"开头半秒黑"。
+// 但保护不能撤：比默认更长的黑段仍然不碰（真机这一集没有 >0.6s 的镜首黑 ⇒ 用 22 帧＝0.9167s 造**分支夹具**）。
 //
-// 夹具**照真机形态造**：纯黑**头** 13 帧（13/24 ＝ 0.5417s，与真机镜 11 的 `black_start:0
+// 夹具照真机形态造：纯黑**头** 13 帧（13/24 ＝ 0.5417s，与真机镜 11 的 `black_start:0
 // black_end:0.541667` 一字不差）后面接灰帧。
-func TestForceStripBlackFlashMaxRelaxesOnlyWhenAsked(t *testing.T) {
-	if MaxBlackRunSec != 0.5 || MaxBlackTotalSec != 1.0 {
-		t.Fatalf("平台默认上限被改了：单段 %.2f / 累计 %.2f（真机定的是 0.5 / 1.0 —— 改默认要重跑真机并写进文档）",
+func TestForceStripBlackFlashDefaultCutsRealHeadsAndKeepsLongOnes(t *testing.T) {
+	if MaxBlackRunSec != 0.6 || MaxBlackTotalSec != 1.0 {
+		t.Fatalf("平台默认上限被改了：单段 %.2f / 累计 %.2f（真机定的是 0.6 / 1.0 —— 改默认要重跑真机并写进文档）",
 			MaxBlackRunSec, MaxBlackTotalSec)
 	}
 	// 判据面（纯函数）：真机那两段的秒数逐字贴进来。
 	for _, c := range []struct {
 		name    string
 		r       BlackRun
-		defOk   bool // 默认上限下会不会剪
-		relaxOk bool // 放宽到 0.6 秒后会不会剪
+		defOk   bool // 默认上限（0.6s）下会不会剪
+		relaxOk bool // 放宽到 1.0 秒（累计上限）后会不会剪
 	}{
-		{"镜 11 开头 0.5417s", BlackRun{Start: 0, End: 0.541667}, false, true},
-		{"镜 15 开头 0.5833s", BlackRun{Start: 0, End: 0.583333}, false, true},
+		{"镜 11 开头 0.5417s", BlackRun{Start: 0, End: 0.541667}, true, true},
+		{"镜 15 开头 0.5833s", BlackRun{Start: 0, End: 0.583333}, true, true},
 		{"2026-10-10 镜 1 的短黑闪 0.1667s", BlackRun{Start: 5.291667, End: 5.458333}, true, true},
+		{"分支夹具 0.9167s（真机这一集没有这个值）", BlackRun{Start: 0, End: 0.916667}, false, true},
 	} {
 		def, _ := BlackRunVerdictWith(c.r, 0) // 0 ＝ 平台默认
 		if def != c.defOk {
 			t.Errorf("%s：默认上限下判成 %v，该是 %v", c.name, def, c.defOk)
 		}
-		relax, _ := BlackRunVerdictWith(c.r, 0.6)
+		relax, _ := BlackRunVerdictWith(c.r, MaxBlackTotalSec)
 		if relax != c.relaxOk {
-			t.Errorf("%s：放宽到 0.6 秒后判成 %v，该是 %v", c.name, relax, c.relaxOk)
+			t.Errorf("%s：放宽到 %.1f 秒后判成 %v，该是 %v", c.name, MaxBlackTotalSec, relax, c.relaxOk)
 		}
 	}
 
 	f := ffexe(t)
 	ctx := context.Background()
-	build := func(t *testing.T) string {
+	build := func(t *testing.T, blackFrames, grayFrames int) string {
 		t.Helper()
 		p := filepath.Join(t.TempDir(), "blackhead.mp4")
 		args := []string{"-y", "-v", "error",
 			"-f", "lavfi", "-i", "color=c=black:s=320x240:r=24:d=20",
 			"-f", "lavfi", "-i", "color=c=gray:s=320x240:r=24:d=20",
-			"-filter_complex", "[0:v]trim=end_frame=13,setpts=PTS-STARTPTS[a];" +
-				"[1:v]trim=end_frame=60,setpts=PTS-STARTPTS[b];" +
+			"-filter_complex", fmt.Sprintf("[0:v]trim=end_frame=%d,setpts=PTS-STARTPTS[a];", blackFrames) +
+				fmt.Sprintf("[1:v]trim=end_frame=%d,setpts=PTS-STARTPTS[b];", grayFrames) +
 				"[a][b]concat=n=2:v=1:a=0[v]",
 			"-map", "[v]", "-t", "3.0",
 			"-c:v", "libx264", "-crf", "18", "-pix_fmt", "yuv420p", p}
 		if _, err := f.Run(ctx, args...); err != nil {
 			t.Skipf("造夹具失败（%v）", err)
 		}
-		runs, err := DetectBlackRuns(ctx, f, p)
-		if err != nil || len(runs) != 1 || runs[0].End < 0.50 || runs[0].End > 0.60 {
-			t.Fatalf("夹具没造出「镜首 13 帧纯黑」的形态（runs=%v err=%v）—— 这条门等于没跑", runs, err)
-		}
 		return p
 	}
 
-	// ① 默认：不动（黑段还在，且**如实报出**"没剪"）。
-	p := build(t)
-	removed, n, longRuns, err := ForceStripBlackFlashMax(ctx, f, p, 0, 0)
+	// ① 真机形态（镜首 13 帧纯黑 ＝ 0.5417s）：**默认**就该剪掉，且一帧黑都不剩。
+	p := build(t, 13, 60)
+	runs, err := DetectBlackRuns(ctx, f, p)
+	if err != nil || len(runs) != 1 || runs[0].End < 0.50 || runs[0].End > 0.60 {
+		t.Fatalf("夹具没造出「镜首 13 帧纯黑」的形态（runs=%v err=%v）—— 这条门等于没跑", runs, err)
+	}
+	before, err := f.Probe(p)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 0 || n != 0 {
-		t.Errorf("默认上限下不该剪（这一段 0.54s > %.2fs），实得剪掉 %d 段 %.4fs", MaxBlackRunSec, n, removed)
-	}
-	if len(longRuns) != 1 {
-		t.Errorf("默认上限下必须**如实报出**这一段没剪，实得 %v", longRuns)
-	}
-	if again, err := DetectBlackRuns(ctx, f, p); err != nil || len(again) != 1 {
-		t.Errorf("默认跑完黑段必须原样还在，实得 %v（err=%v）", again, err)
-	}
-
-	// ② 显式放宽到 0.6 秒：真剪掉，且一帧黑都不剩。
-	p = build(t)
-	removed, n, longRuns, err = ForceStripBlackFlashMax(ctx, f, p, 24, 0.6)
+	removed, n, longRuns, err := ForceStripBlackFlashMax(ctx, f, p, 24, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 || removed < 0.5 {
-		t.Errorf("放宽到 0.6 秒后该剪掉 1 段（≈0.54s），实得 %d 段 %.4fs（longRuns=%v）", n, removed, longRuns)
+		t.Errorf("默认（%.2fs）下该剪掉 1 段（≈0.54s），实得 %d 段 %.4fs", MaxBlackRunSec, n, removed)
 	}
 	if len(longRuns) != 0 {
-		t.Errorf("这一段按 0.6 秒的上限算**已经被剪了**，不该再报成\"没剪的长黑段\"：%v", longRuns)
+		t.Errorf("这一段在默认上限之内、已经被剪了，不该再报成\"没剪的长黑段\"：%v", longRuns)
 	}
 	if again, err := DetectBlackRuns(ctx, f, p); err != nil || len(again) != 0 {
+		t.Errorf("剪完必须一帧黑都不剩，实得 %v（err=%v）", again, err)
+	}
+	after, err := f.Probe(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := before.Duration - after.Duration; d < 0.50 || d > 0.60 {
+		t.Errorf("实测剪掉的时长该≈0.5417s（前 %.3f → 后 %.3f）", before.Duration, after.Duration)
+	}
+	// 质检对账就靠这个数：标记里写的秒数必须被 StrippedBlackSec 读回来（否则质检会把
+	// 平台自己剪掉的这 0.54 秒报成"产物被截断、请重渲该镜"）。
+	// 标记里存的是 3 位小数（`%.3f`，与盘上存量标记同格式）⇒ 允许 1 毫秒的取整差。
+	if got := StrippedBlackSec(p); math.Abs(got-removed) > 1e-3 {
+		t.Errorf("标记里的秒数 %.3fs 与实剪 %.3fs 不一致（质检按这个数对账）", got, removed)
+	}
+
+	// ② 长黑段（22 帧 ＝ 0.9167s，**分支夹具**：真机这一集最长的镜首黑是 0.5833s）：
+	// 默认**不碰**且如实报出来；显式放宽到累计上限（1.0 秒）才剪。
+	pl := build(t, 22, 60)
+	if runs, err := DetectBlackRuns(ctx, f, pl); err != nil || len(runs) != 1 || runs[0].End < 0.85 || runs[0].End > 0.98 {
+		t.Fatalf("长黑段夹具没造成（runs=%v err=%v）", runs, err)
+	}
+	removed2, n2, longRuns2, err := ForceStripBlackFlashMax(ctx, f, pl, 24, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n2 != 0 || removed2 != 0 {
+		t.Errorf("比默认上限长的黑段不该剪（实得 %d 段 / %.3fs）", n2, removed2)
+	}
+	if len(longRuns2) != 1 {
+		t.Errorf("长黑段必须如实报出来（那是质检该报的）：%v", longRuns2)
+	}
+	if again, err := DetectBlackRuns(ctx, f, pl); err != nil || len(again) != 1 {
+		t.Errorf("默认跑完长黑段必须原样还在，实得 %v（err=%v）", again, err)
+	}
+	if got := StrippedBlackSec(pl); got != 0 {
+		t.Errorf("没剪的片段不该说剪掉了 %.3fs（质检会算错）", got)
+	}
+	removed3, n3, _, err := ForceStripBlackFlashMax(ctx, f, pl, 24, MaxBlackTotalSec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n3 != 1 || removed3 < 0.85 {
+		t.Errorf("放宽到 %.1f 秒后该剪掉 1 段（≈0.92s），实得 %d 段 %.4fs", MaxBlackTotalSec, n3, removed3)
+	}
+	if again, err := DetectBlackRuns(ctx, f, pl); err != nil || len(again) != 0 {
 		t.Errorf("放宽剪完必须一帧黑都不剩，实得 %v（err=%v）", again, err)
+	}
+}
+
+// TestStrippedBlackSecFollowsMarker 剪掉几秒的唯一出处 = 片段自己的 `.noblack` 标记（含三态）。
+//
+// 【为什么要有】质检用这个数把"平台自己剪掉的秒数"加回实测时长再与本镜计划对账；
+// 读错任一种情况都会出事：① 没剪过却说剪了 ⇒ 掩掉真的"产物被截断"；② 剪了却说没剪 ⇒
+// 反被自己报成"请重渲该镜"（白烧 GPU）；③ 片段被重渲覆盖后仍按旧标记算 ⇒ 同②。
+func TestStrippedBlackSecFollowsMarker(t *testing.T) {
+	f := ffexe(t)
+	ctx := context.Background()
+	p := filepath.Join(t.TempDir(), "clip.mp4")
+	args := []string{"-y", "-v", "error",
+		"-f", "lavfi", "-i", "color=c=gray:s=160x120:r=24:d=2.0",
+		"-pix_fmt", "yuv420p", p}
+	if _, err := f.Run(ctx, args...); err != nil {
+		t.Skipf("造夹具失败（%v）", err)
+	}
+	// ① 没有标记 ⇒ 0（没剪过）
+	if got := StrippedBlackSec(p); got != 0 {
+		t.Errorf("没有标记时该是 0，实得 %.3f", got)
+	}
+	// ② "查过、没有黑闪"的标记 ⇒ 0（没有要加回去的秒数）
+	if err := writeClipMarker(p+".noblack", p, "clip black-flash checked: none"); err != nil {
+		t.Fatal(err)
+	}
+	if got := StrippedBlackSec(p); got != 0 {
+		t.Errorf("「checked: none」的标记该是 0，实得 %.3f", got)
+	}
+	// ③ 剪过的标记 ⇒ 读回那个数（0.250s 是用户那一集 shot_011 标记里的原话）
+	if err := writeClipMarker(p+".noblack", p, "clip black flash stripped: 2 run(s), 0.250s"); err != nil {
+		t.Fatal(err)
+	}
+	if got := StrippedBlackSec(p); math.Abs(got-0.25) > 1e-6 {
+		t.Errorf("剪过的标记该读回 0.250s，实得 %.3f", got)
+	}
+	// ④ 片段被重渲覆盖（内容变了）⇒ 标记失效 ⇒ 0（不许按旧标记算）
+	if _, err := f.Run(ctx, append(args[:len(args)-1], "-t", "1.0", p)...); err != nil {
+		t.Skipf("重造夹具失败（%v）", err)
+	}
+	if got := StrippedBlackSec(p); got != 0 {
+		t.Errorf("片段被覆盖后旧标记已失效，该是 0，实得 %.3f", got)
 	}
 }

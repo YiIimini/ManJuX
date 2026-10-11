@@ -202,8 +202,11 @@ func lumaFindings(in Input) []Finding {
 			advice := ""
 			switch {
 			case strippable:
-				advice = "这一段够短，渲染期平台**本该**剪掉它（这条片段大概是剪之前就落盘的）—— " +
-					"跑一次 `go run ./cmd/clipfix -project \"<项目 id>\" -apply` 就能修好"
+				// 两种可能：这条片段是"剪之前"落盘的（存量），或那一次自检没做成
+				// （真机 shot_015 连 .noblack 标记都没有）。两种情况都用同一条命令修 ——
+				// 且**不许**给放宽上限的命令（那等于说平台默认坏了）。
+				advice = "这一段够短，渲染期平台**本该**剪掉它（这条片段要么是剪之前就落盘的、" +
+					"要么那一次自检没做成）—— 跑一次 `go run ./cmd/clipfix -project \"<项目 id>\" -apply` 就能修好"
 			case suggest <= compose.MaxBlackTotalSec:
 				advice = fmt.Sprintf("要么重出这一镜，要么**显式放宽**上限把它剪掉："+
 					"`go run ./cmd/clipfix -project \"<项目 id>\" -max-black %.1f -apply`", suggest)

@@ -214,6 +214,10 @@ func realShots() []project.Shot {
 var realMeans = []float64{88.5597, 73.1167, 66.5361, 92.1762, 67.7053, 63.1552, 72.1747, 91.7435, 86.327, 82.152, 52.9516, 62.1594, 66.355, 64.3827, 40.1896, 48.1049}
 
 // realLuma 把真机那 16 镜拼成体检入参（黑场只有镜 11/15 有，与 blackdetect 报的一字不差）。
+//
+// 【2026-10-11 注】这两处（0.5417s / 0.5833s）**已经落在默认单段上限（0.6 秒）之内** ⇒ 按现口径是
+// "渲染期本该被剪掉"；落盘的片段里还留着它们，说明那是剪之前渲的（镜 15 连 .noblack 标记都没有）。
+// 体检因此走"去跑 clipfix"那一支，见 ⑤。
 func realLuma() []ShotLuma {
 	ls := make([]ShotLuma, len(realMeans))
 	for i, m := range realMeans {
@@ -269,68 +273,77 @@ func TestLumaFindingsReportsSameSceneOnly(t *testing.T) {
 	}
 }
 
-// ⑤ 黑场：真机那两处（都比自动剪的上限长）必须点名，且**理由与阈值都来自 compose**（同一条口径）；
-// 短黑闪（真机 2026-10-10 镜 1 的 5.291667~5.458333）走另一条话术：本该被剪、去跑 clipfix。
+// ⑤ 黑场：真机那两处（0.5417s / 0.5833s）**落在默认单段上限 0.6 秒之内** ⇒ 走"去跑 clipfix"那一支；
+// 比默认更长的那种（真机这一集没有 >0.6s 的黑场 ⇒ 分支夹具）走"要么重出、要么显式放宽"那一支。
 func TestLumaFindingsNamesBlackRunsWithComposeVerdict(t *testing.T) {
-	in := Input{Plan: &project.Plan{Shots: realShots()}, Luma: realLuma()}
-	var shots, longMsgs []string
-	for _, f := range lumaFindings(in) {
-		if strings.Contains(f.Msg, "纯黑") {
-			shots = append(shots, f.Where)
-			longMsgs = append(longMsgs, f.Msg)
+	blackMsgs := func(ls []ShotLuma) map[string]string {
+		got := map[string]string{}
+		for _, f := range lumaFindings(Input{Plan: &project.Plan{Shots: realShots()}, Luma: ls}) {
+			if strings.Contains(f.Msg, "纯黑") {
+				got[f.Where] = f.Msg
+			}
 		}
+		return got
 	}
-	if strings.Join(shots, " ") != "shot 11 shot 15" {
-		t.Fatalf("真机 16 镜里只有镜 11/15 有纯黑（blackdetect 报的），实际报了 %v", shots)
+	// 真机 16 镜里只有镜 11/15 有纯黑（blackdetect 报的）。
+	real := blackMsgs(realLuma())
+	if len(real) != 2 || real["shot 11"] == "" || real["shot 15"] == "" {
+		t.Fatalf("真机 16 镜里只有镜 11/15 有纯黑，实际报了 %v", real)
 	}
-	// 理由串必须**就是** compose 那条口径给的，而且必须是「太长 ⇒ 不会剪」那一支：
-	// 把 compose 的上限调大（0.5 → 0.9 秒）时这两段会翻成「本该剪掉」的话术 ⇒ 这道门必须变红。
-	// （原来这里断言的是子串 "0.5" —— 播报里的 "0.54s" 正好把它蒙过去，反向验证当场咬出这处摆设。）
-	_, shortWhy := compose.BlackRunVerdict(compose.BlackRun{Start: 0, End: 0.2})
+	// 理由串必须**就是** compose 那条口径给的，而且必须是「够短 ⇒ 本该剪掉」那一支：
+	// 把 compose 的单段上限调回 0.5 秒，这两段就翻成「太长 ⇒ 不会剪」⇒ 这道门必须变红。
+	// （原来这里断言的是子串 "0.5" —— 播报里的 "0.54s" 正好把它蒙过去，反向验证当场咬出那处摆设。）
 	for i, r := range []compose.BlackRun{{Start: 0, End: 0.541667}, {Start: 0, End: 0.583333}} {
+		who := []string{"shot 11", "shot 15"}[i]
+		msg := real[who]
 		strippable, why := compose.BlackRunVerdict(r)
-		if strippable {
-			t.Fatalf("compose 把 %.2fs 判成「会自动剪」—— 真机这两段就是渲染期没剪、留在成片里的", r.Dur())
+		if !strippable {
+			t.Fatalf("compose 把 %.2fs 判成「不会自动剪」—— 默认单段上限（%.2fs）该把它剪掉",
+				r.Dur(), compose.MaxBlackRunSec)
 		}
 		if why == "" {
 			t.Fatal("compose.BlackRunVerdict 没给理由 —— 体检就只能编一句")
 		}
-		if !strings.Contains(longMsgs[i], why) {
-			t.Errorf("镜 %d 的黑场理由不是 compose 那条口径给的\n  实际：%s\n  该含：%s", []int{11, 15}[i], longMsgs[i], why)
+		if !strings.Contains(msg, why) {
+			t.Errorf("%s 的黑场理由不是 compose 那条口径给的\n  实际：%s\n  该含：%s", who, msg, why)
 		}
-		if strings.Contains(longMsgs[i], shortWhy) {
-			t.Errorf("镜 %d 的播报用了短黑闪那一支的话术（口径/阈值变了）：%s", []int{11, 15}[i], longMsgs[i])
+		// 这一支的话术：平台本该剪掉它 ⇒ 给一条能直接粘的命令。不许要用户放宽上限（那等于说默认坏了），
+		// 也不许让他重出这一镜（那不是引擎的问题，是没剪）。
+		if !strings.Contains(msg, "cmd/clipfix") || !strings.Contains(msg, "-apply") {
+			t.Errorf("%s 该告诉用户跑一次 clipfix 就能修好：%s", who, msg)
 		}
-		// 建议必须**可执行**：长黑段给一条能直接粘的命令（`-max-black`），否则用户只能重渲或手剪。
-		// 上限不给 0.6 也没关系，但命令里必须有这个开关，且必须点到 clipfix。
-		if !strings.Contains(longMsgs[i], "-max-black") || !strings.Contains(longMsgs[i], "cmd/clipfix") {
-			t.Errorf("镜 %d 的黑场播报没给出可执行的命令（-max-black / cmd/clipfix）：%s", []int{11, 15}[i], longMsgs[i])
+		if strings.Contains(msg, "-max-black") {
+			t.Errorf("%s 落在默认上限之内，不该要用户放宽上限：%s", who, msg)
+		}
+		if strings.Contains(msg, "重出这一镜") {
+			t.Errorf("%s 不该让用户重出（那不是引擎的问题，是没剪）：%s", who, msg)
 		}
 	}
 
-	// 短黑闪（真机 2026-10-10 镜 1：black_start:5.291667 black_end:5.458333，0.1667s）：
-	// 这一段**够短**，渲染期本该剪掉 ⇒ 话术是"去跑 clipfix"，不是"重出这一镜"。
+	// 短黑闪（真机 2026-10-10 镜 1：black_start:5.291667 black_end:5.458333，0.1667s）走的是同一支。
 	ls := realLuma()
 	ls[0].Blacks = []compose.BlackRun{{Start: 5.291667, End: 5.458333}}
-	var msg string
-	for _, f := range lumaFindings(Input{Plan: &project.Plan{Shots: realShots()}, Luma: ls}) {
-		if f.Where == "shot 1" && strings.Contains(f.Msg, "纯黑") {
-			msg = f.Msg
-		}
-	}
+	msg := blackMsgs(ls)["shot 1"]
 	if msg == "" {
 		t.Fatal("短黑闪没被报出来（真机镜 1 那一段就是这么漏掉的）")
 	}
 	if !strings.Contains(msg, "clipfix") {
 		t.Errorf("短黑闪该告诉用户去跑 clipfix（平台本该剪掉它），实际：%s", msg)
 	}
-	if strings.Contains(msg, "重出这一镜") {
-		t.Errorf("短黑闪不该让用户重出（那不是引擎的问题，是没剪），实际：%s", msg)
-	}
-
-	// 短黑闪那一支**不许**带 -max-black（它本该被默认上限剪掉，让用户去放宽上限就等于承认默认坏了）。
 	if strings.Contains(msg, "-max-black") {
 		t.Errorf("短黑闪不该要用户放宽上限（平台本来就该剪掉它），实际：%s", msg)
+	}
+
+	// 比默认单段上限更长的段（**分支夹具**：真机这一集没有 >0.6s 的黑场，最长的是 0.5833s）⇒
+	// 走"显式放宽"那一支（上限往上报一格：0.8167 ⇒ 0.9）。
+	ls = realLuma()
+	ls[0].Blacks = []compose.BlackRun{{Start: 0, End: 0.816667}}
+	msg = blackMsgs(ls)["shot 1"]
+	if msg == "" {
+		t.Fatal("0.82s 的黑段没被报出来")
+	}
+	if !strings.Contains(msg, "-max-black 0.9") || !strings.Contains(msg, "cmd/clipfix") {
+		t.Errorf("比默认上限长的黑段该给显式放宽到 0.9 秒的命令：%s", msg)
 	}
 	// 超过**累计**上限的段（真机没遇到，但形态合法）：平台任何档位都剪不了 ⇒ 不许给那条命令（给了也剪不掉）。
 	ls = realLuma()

@@ -30,7 +30,7 @@ import (
 // 把黑闪剪掉之后，同样的采样点落回画面本体（实测 0.47 一档）。
 //
 // 【边界：什么剪、什么不剪】只需要"短"这一个判据，且**宁可漏不可误剪**：
-//   - 单段 ≤ MaxBlackRunSec（0.5s）且累计 ≤ MaxBlackTotalSec（1.0s）⇒ 剪（这是故障，不是内容）；
+//   - 单段 ≤ MaxBlackRunSec（0.6s）且累计 ≤ MaxBlackTotalSec（1.0s）⇒ 剪（这是故障，不是内容）；
 //   - 更长的黑段**不剪** —— 整段黑/黑尾是 H3 的真实失效，也是计划里就写明"沉在黑暗里"时该有的样子，
 //     那属于质检该报、用户该看到的，不能在这里悄悄改掉。
 //
@@ -43,11 +43,19 @@ import (
 // **最黑的那一帧**（YAVG 16.1，其余三帧 17.1/19.3/21.7）漏在外面：成品片段实测只少 3 帧、"无故一黑"
 // 照旧，且音轨按整段多切了一帧。现在一律换整数帧号窗口。
 const (
-	// MaxBlackRunSec / MaxBlackTotalSec **平台自动剪**的上限（唯一出处）：单段 ≤ 0.5 秒且累计 ≤ 1.0 秒
-	// 才剪。**导出**是因为体检的播报与 `cmd/clipfix` 的显式放宽都要引它 —— 别在别处再写一遍 0.5。
-	// 默认值一个字不改：更长的黑段**按设计**不碰（整段黑/黑尾可能是计划里就写明的暗场，
-	// "那是质检该报的"—— 2026-10-11 起成片体检会点名，用户可显式放宽去剪）。
-	MaxBlackRunSec   = 0.5
+	// MaxBlackRunSec / MaxBlackTotalSec **平台自动剪**的上限（唯一出处）：单段 ≤ 0.6 秒且累计 ≤ 1.0 秒
+	// 才剪。**导出**是因为体检的播报与 `cmd/clipfix` 的显式放宽都要引它 —— 别在别处再写一遍 0.6。
+	//
+	// 【为什么是 0.6 而不是 0.5（2026-10-11，用户「说了有优势的你直接做」）】真机《星纪山海》第01集里
+	// 那两处**镜首纯黑**是 0.5417s（镜 11）与 0.5833s（镜 15）：0.5 秒的上限下它们"差一点点"被放过，
+	// 成片里就是"开头半秒黑"。取证过的三条支持抬到 0.6：① 这两镜的提示词都**没写**"从黑暗亮起"
+	// （镜 11「the iron door is kicked in…」、镜 15「Cave reveal…」），而且都是从纯黑（Y=16.0）平缓爬出
+	// ⇒ 是引擎的起步黑底，不是剧情；② 剪的是**片段**（4 秒镜对齐后 4.46s，剪掉 0.6 秒仍有 3.86s），
+	// 而质检的"短于计划"判据会把平台自己剪掉的秒数**加回去**再对账（qc.Params.StrippedSec，
+	// 秒数的唯一出处就是本文件写的那个标记）⇒ 不会反被自己报成"产物被截断、请重渲"；
+	// ③ 保护没撤：**超过 0.6 秒的长黑段一律不碰**（那可能是计划里写明的暗场/黑尾，"那是质检该报的"），
+	// 累计仍卡在 1.0 秒。
+	MaxBlackRunSec   = 0.6
 	MaxBlackTotalSec = 1.0
 	// blackPixTh 像素判黑的亮度阈值（0-1，官方默认 0.10）；pic_th 要求整帧 98% 像素都黑才算。
 	blackPixTh = 0.10
@@ -79,18 +87,18 @@ func BlackDetectFilter() string {
 // BlackRunVerdict 这段黑在**平台口径**下算不算「渲染期会被自动剪掉的故障黑闪」；第二返回值是给人看的理由。
 //
 // 【为什么要有（2026-10-11 真机）】真机《星纪山海：我在废土养神兽》第01集 16 镜里，
-// 镜 11 开头 `black_start:0 black_end:0.541667`、镜 15 开头 0.583333s 是**纯黑**；
-// 它们都比 MaxBlackRunSec（0.5s）长 ⇒ 渲染期的黑闪切除**按设计不碰**（宁可漏不可误剪），
-// 只在渲染日志里留一句 warn。而成片体检此前一处都不提这件事 —— 「开头半秒黑」只能等用户自己看见。
-// 这个函数把**同一条口径**（阈值就取自本文件）交给体检，让它如实播报并说清为什么没被剪。
+// 镜 11 开头 black_start:0 black_end:0.541667、镜 15 开头 0.583333s 是**纯黑**，
+// 而落盘的片段里这两段都还在（shot_011 的标记只记了另外剪掉的 0.25 秒、shot_015 连标记都没有 ⇒
+// 那一次自检根本没做成）。成片体检此前一处都不提这件事 —— 「开头半秒黑」只能等用户自己看见。
+// 这个函数把**同一条口径**（阈值就取自本文件）交给体检：既报"会不会被剪"，也报"为什么没剪"。
 // maxRun ≤ 0 ＝ 用平台默认（MaxBlackRunSec）。
 func BlackRunVerdict(r BlackRun) (bool, string) { return BlackRunVerdictWith(r, MaxBlackRunSec) }
 
 // BlackRunVerdictWith 同 BlackRunVerdict，但用调用方给的**单段上限**（`cmd/clipfix -max-black` 显式放宽时用）。
 //
-// 为什么上限要能传进来：真机镜 11/15 的黑段是 0.542s / 0.583s —— **刚好落在默认 0.5 秒上面**，
-// 按设计不剪（宁可漏不可误剪）。这类"差一点点"的情况不该逼用户去重渲（GPU 几分钟）或在别的软件里手剪，
-// 所以给一条**显式**的路（默认一字不改，用户自己决定放宽到多少）。
+// 为什么上限要能传进来：总有比默认上限再长一点的段子（默认 0.6 秒下就是 0.62s 这种"差一点点"），
+// 这类段子不该逼用户去重渲（GPU 几分钟）或在别的软件里手剪 ⇒ 给一条**显式**的路，
+// 让用户自己决定放宽到多少（仍受**累计** ≤ MaxBlackTotalSec 的约束）。
 func BlackRunVerdictWith(r BlackRun, maxRun float64) (bool, string) {
 	if maxRun <= 0 {
 		maxRun = MaxBlackRunSec
@@ -221,7 +229,7 @@ func stripBlackFlash(ctx context.Context, f *ff.FF, path string, fps, maxRun, ma
 		if r.Dur() < blackMinDur {
 			continue
 		}
-		// "没剪的长黑段"按**本次用的上限**算（放宽到 0.6 秒时，0.54/0.58 秒那两段就算被剪掉了）。
+		// "没剪的长黑段"按**本次用的上限**算（上限之内的段子上一步已经剪掉了，剩下的都是超过上限的）。
 		if r.Dur() > maxRun {
 			longRuns = append(longRuns, r)
 		}
@@ -291,12 +299,12 @@ func ForceStripBlackFlash(ctx context.Context, f *ff.FF, path string, fps float6
 	return ForceStripBlackFlashMax(ctx, f, path, fps, 0)
 }
 
-// ForceStripBlackFlashMax 同 ForceStripBlackFlash，但单段上限由调用方给（`cmd/clipfix -max-black <秒>`）。
+// ForceStripBlackFlashMax 同 ForceStripBlackFlash，但单段上限由调用方给（cmd/clipfix -max-black <秒>）。
 //
-// 【为什么要有它（2026-10-11 真机）】真机《星纪山海》第01集的两处**镜首纯黑**是 0.542s 与 0.583s ——
-// 比默认上限（0.5 秒）只多一点点，按设计不剪、成片里"开头半秒黑"照旧。这类差一点点的段子不该逼用户
-// 重渲（GPU 几分钟）或在别的软件里手剪，所以给一条**显式**的路：默认一个字不改（maxRun ≤ 0 ⇒ 平台默认），
-// 用户自己决定放宽到多少（仍受**累计** ≤ MaxBlackTotalSec 的约束，防一次剪掉太多内容）。
+// 【为什么要有它（2026-10-11 真机）】默认上限从 0.5 抬到 0.6 之后，真机那两段镜首纯黑
+// （镜 11 的 0.5417s / 镜 15 的 0.5833s）走**默认**就能剪掉 —— 用户跑
+// `cmd/clipfix -project <id> -apply` 不带任何参数即可。这条显式上限留给"比默认上限再长一点"的存量段子：
+// 体检报到多长，用户自己决定放宽到多少（maxRun ≤ 0 ⇒ 用平台默认；仍受**累计** ≤ MaxBlackTotalSec 约束）。
 func ForceStripBlackFlashMax(ctx context.Context, f *ff.FF, path string, fps, maxRun float64) (float64, int, []BlackRun, error) {
 	if f == nil || strings.TrimSpace(path) == "" {
 		return 0, 0, nil, nil
@@ -314,4 +322,40 @@ func hasAudioStream(ctx context.Context, f *ff.FF, path string) (bool, error) {
 		return false, err
 	}
 	return info.HasAudio, nil
+}
+
+// strippedSecRe 从 `.noblack` 标记里取"这次剪掉了几秒"。
+var strippedSecRe = regexp.MustCompile(`stripped: \d+ run\(s\), ([0-9.]+)s`)
+
+// StrippedBlackSec 这条片段**已经被平台的黑闪切除**剪掉了几秒（0 ＝ 没剪过 / 没有标记 / 标记已失效）。
+//
+// 【为什么要有（2026-10-11）】质检有一条判据是"实测时长 vs 本镜计划时长"（比计划短 0.5 秒以上
+// ⇒ 判「产物被截断，请重渲该镜」）。而黑闪切除**是平台自己剪的**：上限抬到 0.6 秒之后，
+// 一次剪掉 0.58 秒就会让那条判据把平台自己的动作报成"片段被截断" —— 用户白白重渲一镜（GPU 几分钟）。
+// 所以质检必须能拿到"剪了多少"，把它**加回**实测时长再与计划对账（见 qc.Params.StrippedSec）。
+//
+// 口径唯一：秒数就写在标记里（writeClipMarker 写的那一行），不另存一份到清单、也不许调用方推算。
+// 只有标记**有效**（= 盘上这份片段就是被处理过的那一份）时才认；片段重渲会让标记失效 ⇒
+// 重新剪、重新写，读到的自然是新值（"查过、没有黑闪"的标记没有秒数 ⇒ 返回 0）。
+func StrippedBlackSec(clip string) float64 {
+	if strings.TrimSpace(clip) == "" {
+		return 0
+	}
+	marker := clip + ".noblack"
+	if !clipMarkerValid(marker, clip) {
+		return 0
+	}
+	raw, err := os.ReadFile(marker)
+	if err != nil {
+		return 0
+	}
+	m := strippedSecRe.FindSubmatch(raw)
+	if m == nil {
+		return 0
+	}
+	sec, err := strconv.ParseFloat(string(m[1]), 64)
+	if err != nil || sec <= 0 {
+		return 0
+	}
+	return sec
 }

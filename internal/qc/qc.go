@@ -45,6 +45,9 @@ type Report struct {
 	ExpectedSpeechSec float64 `json:"expected_speech_sec,omitempty"`
 	// ExpectedDuration 本镜计划时长(秒,0 = 调用方没给);与实测时长对账用(审计 M29)。
 	ExpectedDuration float64 `json:"expected_duration,omitempty"`
+	// StrippedSec 质检时平台自己剪掉了多少秒黑闪（0 = 没剪；见 Params.StrippedSec）。
+	// 留痕是为了让报告能解释"为什么实测比计划短、却没判不合格"。
+	StrippedSec float64 `json:"stripped_sec,omitempty"`
 	// Speech 语音核对(可选,见 speech.go):ASR 转写这一镜的音轨,再与计划台词逐句对账 ——
 	// 判「念的是不是那句台词」(重复/自造/漏念)。它是**听出来的**结论,只标 warn 不拦批次;
 	// 没装 ASR 时 Skipped 里如实写"没验过"。
@@ -84,6 +87,14 @@ type Params struct {
 	// 一律判"通过",而计划侧的合法区间是 4–10s;本地引擎按 17k+5 向上对齐、
 	// 云端按整秒抬升,同一集混渲时每镜时长口径还会差 0.25~1s。
 	ExpectedDuration float64
+	// StrippedSec 平台**自己**从这份产物上剪掉的秒数（黑闪切除，0 = 没剪过 / 调用方没给）。
+	//
+	// 【为什么需要它（2026-10-11）】"短于计划"那条判据本意是抓"产物被截断/还是旧时长"，
+	// 而黑闪切除是**平台自己剪的**：默认单段上限抬到 0.6 秒之后，一次剪掉 0.58 秒就会被
+	// 报成"产物被截断,请重渲该镜" —— 用户白白重渲一镜。所以"短"的那一侧对账要把这个数
+	// 加回去（秒数的唯一出处 = compose.StrippedBlackSec，从片段自己的 .noblack 标记里读；
+	// 没标记 / 标记已失效一律 0 = 不加不减）。
+	StrippedSec float64
 	// ExpectWidth/ExpectHeight/ExpectFPS 成片规格;>0 时核对(0 = 不核对)。
 	//
 	// 为什么需要(审计 M28):此前只是"记录"了宽高,从不与规格核对,而合成侧对
@@ -100,6 +111,11 @@ type Params struct {
 // 云端按整秒抬升,4 秒镜实际 5s(+1.0)。所以:
 //   - 短的容差很小:产物**不该**短于计划(对齐只会变长),短了就是截断或旧时长残留;
 //   - 长的容差放到 0.8s:把云端的整秒抬升如实报出来,但不惊动本地那 0.67s 的对齐差。
+//
+// 【2026-10-11:短的那一侧要先减掉"平台自己剪的"】黑闪切除会主动剪掉 ≤0.6s 的镜首黑段 ——
+// 那是平台的动作、不是"产物被截断",所以实测时长要先把 Params.StrippedSec **加回**再比
+// (两个"短"判据都加),否则会把平台自己的剪辑报成故障、骗用户白重渲一镜;
+// 两条"长"的判据仍按实测值判(剪完只会更短,不会因此多报"偏长")。
 const (
 	plannedShortfallTolerable = 0.15 // 容器取整的噪声
 	plannedShortfallFail      = 0.5  // 明显短于计划 = 残片/旧产物
@@ -185,8 +201,17 @@ func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Re
 			r.Warnings = append(r.Warnings, "人声时长分析失败:"+err.Error())
 		}
 	}
-	if info.Duration < p.MinDuration {
-		r.Problems = append(r.Problems, fmt.Sprintf("时长过短 %.1fs(应≥%.0fs)", info.Duration, p.MinDuration))
+	// 黑闪切除是**平台自己**从这份产物上剪的（秒数唯一出处 compose.StrippedBlackSec）：
+	// 剪掉的秒数必须**先加回**再判"短" —— 否则默认单段上限 0.6 秒一次就能剪掉 0.58 秒，
+	// 会被下面两条判据报成"产物被截断、请重渲该镜"，用户白白重渲一镜（GPU 几分钟）。
+	effDur := info.Duration + p.StrippedSec
+	trimNote := ""
+	if p.StrippedSec > 0 {
+		r.StrippedSec = p.StrippedSec
+		trimNote = fmt.Sprintf("(其中平台自己剪掉 %.2fs 黑闪,剪前 %.1fs)", p.StrippedSec, effDur)
+	}
+	if effDur < p.MinDuration {
+		r.Problems = append(r.Problems, fmt.Sprintf("时长过短 %.1fs(应≥%.0fs)%s", effDur, p.MinDuration, trimNote))
 	}
 	if info.Duration > p.MaxDuration {
 		r.Warnings = append(r.Warnings, fmt.Sprintf("时长偏长 %.1fs", info.Duration))
@@ -194,15 +219,15 @@ func Check(ctx context.Context, f *ff.FF, shotID int, path string, p Params) *Re
 	// 与**本镜计划**对账(审计 M29):全局阈值只拦得住 3s 以下的残片。
 	if p.ExpectedDuration > 0 {
 		r.ExpectedDuration = p.ExpectedDuration
-		diff := info.Duration - p.ExpectedDuration
+		diff := effDur - p.ExpectedDuration
 		switch {
 		case diff < -plannedShortfallFail:
 			r.Problems = append(r.Problems, fmt.Sprintf(
-				"时长短于计划 %.1fs(计划 %.1fs,实测 %.1fs):产物被截断,或仍是改动前的旧时长 —— 请重渲该镜",
-				-p.ExpectedDuration+info.Duration, p.ExpectedDuration, info.Duration))
+				"时长短于计划 %.1fs(计划 %.1fs,实测 %.1fs)%s:产物被截断,或仍是改动前的旧时长 —— 请重渲该镜",
+				-p.ExpectedDuration+effDur, p.ExpectedDuration, info.Duration, trimNote))
 		case diff < -plannedShortfallTolerable:
 			r.Warnings = append(r.Warnings, fmt.Sprintf(
-				"时长略短于计划 %.1fs(计划 %.1fs,实测 %.1fs)", -diff, p.ExpectedDuration, info.Duration))
+				"时长略短于计划 %.1fs(计划 %.1fs,实测 %.1fs)%s", -diff, p.ExpectedDuration, info.Duration, trimNote))
 		case diff > plannedOverrunWarn:
 			r.Warnings = append(r.Warnings, fmt.Sprintf(
 				"时长超出计划 %.1fs(计划 %.1fs,实测 %.1fs):本地按 17k+5 帧对齐、云端按整秒抬升,超出部分会拉长整集节奏",
