@@ -120,41 +120,59 @@ func TestSummarizeLumaOnRealWindow(t *testing.T) {
 	}
 }
 
-// ③ 判「闪」：真机 16 镜的实测值逐镜对（该报的报、不该报的不报），外加两条阈值的边界。
-func TestLumaFlickerMatchesRealSixteenShots(t *testing.T) {
-	// 真机 16 镜（shot_001..016.mp4）的 (95 分位, ≥3 的大跳次数) —— 逐帧 YAVG 直算。
+// ③ 判「闪」：**两批真机片段**的实测值逐条对（该报的报、不该报的不报），外加两条阈值的边界。
+//
+// 第一批＝平台的 16 条成品片段（`clips/shot_001..016.mp4`）；第二批＝ComfyUI 原档 22 条
+// （`<ComfyUI>/output/manjux/*.mp4`，含同一镜的重出变体）。**两批都要过**，是因为阈值只在一批上
+// 校准过（那是这一项当时的边界）—— 现在把第二批的真值也钉进门里。
+//
+// 第二批最有说服力的一条：镜 6 有三条变体 —— `_00001`（3.53/15）与 `_00002`（3.16/16）都判「闪」，
+// 而最终留下的 `_00003`（1.64/2）不闪 ⇒ 判据与"平台自己重出到干净为止"这件事**对上了**。
+func TestLumaFlickerMatchesRealClips(t *testing.T) {
 	real := []struct {
-		shot        int
+		name        string
 		p95, big    float64
 		wantFlicker bool
 	}{
-		{1, 8.9332, 22, true},
-		{2, 0.8425, 4, false},
-		{3, 0.3244, 2, false},
-		{4, 0.9149, 2, false},
-		{5, 0.7269, 2, false},
-		{6, 1.6783, 2, false},
-		{7, 0.4012, 0, false},
-		{8, 0.9191, 2, false},
-		{9, 0.5691, 2, false},
-		{10, 0.6351, 2, false},
-		{11, 6.2709, 29, true},
-		{12, 0.5594, 2, false},
-		{13, 0.6562, 2, false},
-		{14, 0.7362, 2, false},
-		{15, 1.1322, 1, false},
-		{16, 0.9372, 1, false},
+		// 第一批：平台成品片段（16 条，逐帧 YAVG 直算）。
+		{"clips/shot_001", 8.9332, 22, true},
+		{"clips/shot_002", 0.8425, 4, false},
+		{"clips/shot_003", 0.3244, 2, false},
+		{"clips/shot_004", 0.9149, 2, false},
+		{"clips/shot_005", 0.7269, 2, false},
+		{"clips/shot_006", 1.6783, 2, false},
+		{"clips/shot_007", 0.4012, 0, false},
+		{"clips/shot_008", 0.9191, 2, false},
+		{"clips/shot_009", 0.5691, 2, false},
+		{"clips/shot_010", 0.6351, 2, false},
+		{"clips/shot_011", 6.2709, 29, true},
+		{"clips/shot_012", 0.5594, 2, false},
+		{"clips/shot_013", 0.6562, 2, false},
+		{"clips/shot_014", 0.7362, 2, false},
+		{"clips/shot_015", 1.1322, 1, false},
+		{"clips/shot_016", 0.9372, 1, false},
+		// 第二批：ComfyUI 原档（22 条，含重出变体）—— 只列有代表性的 10 条（4 条判闪 + 6 条不闪）。
+		{"raw/shot_1_00001_", 9.91, 26, true},
+		{"raw/shot_6_00001_", 3.53, 15, true},
+		{"raw/shot_6_00002_", 3.16, 16, true},
+		{"raw/shot_6_00003_（重出到干净的那一条）", 1.64, 2, false},
+		{"raw/shot_11_00001_", 6.21, 33, true},
+		{"raw/shot_7_00001_", 0.40, 0, false},
+		{"raw/shot_10_00001_", 0.63, 2, false},
+		{"raw/shot_14_00002_", 0.96, 3, false},
+		{"raw/shot_15_00001_", 1.13, 1, false},
+		{"raw/shot_16_00001_", 0.94, 1, false},
 	}
 	for _, c := range real {
 		got, why := LumaFlicker(ShotLuma{Frames: 200, P95Step: c.p95, BigSteps: int(c.big)})
 		if got != c.wantFlicker {
-			t.Errorf("真机镜 %d（95 分位 %.4f、大跳 %.0f 次）判成了 %v，该是 %v", c.shot, c.p95, c.big, got, c.wantFlicker)
+			t.Errorf("%s（95 分位 %.4f、大跳 %.0f 次）判成了 %v，该是 %v", c.name, c.p95, c.big, got, c.wantFlicker)
 		}
 		if got && why == "" {
-			t.Errorf("判「闪」却没说为什么（镜 %d）—— 用户看不到依据", c.shot)
+			t.Errorf("判「闪」却没说为什么（%s）—— 用户看不到依据", c.name)
 		}
 		if !got && why != "" {
-			t.Errorf("没判「闪」却给了理由（镜 %d）：%s", c.shot, why)
+			t.Errorf("没判「闪」却给了理由（%s）：%s", c.name, why)
 		}
 	}
 	// 阈值边界：判据是「**超过**」（`>`），正好等于阈值的**不算**闪 —— 真机镜 3（大跳 2 次、
@@ -230,6 +248,24 @@ func TestLumaFindingsReportsSameSceneOnly(t *testing.T) {
 				t.Errorf("%s 跨越了场次（夜戏接日戏），不该报 —— 那是内容不是故障", bad)
 			}
 		}
+	}
+
+	// 第二批（ComfyUI 原档）同一份方案的实测均值：**同一对镜、两次渲染，判据跟着数据走** ——
+	// 原档里镜 1→2 只差 13.6（不报），而平台成品版是 15.4（报）。这条一起钉住，
+	// 免得哪天有人把阈值改成"看着差不多"。
+	rawMeans := []float64{86.71, 73.12, 66.54, 92.18, 67.71, 63.46, 72.17, 91.74, 86.33, 76.11, 52.05, 62.16, 66.35, 67.30, 40.19, 48.10}
+	raw := make([]ShotLuma, len(rawMeans))
+	for i, m := range rawMeans {
+		raw[i] = ShotLuma{Frames: 200, Mean: m, Min: m, P95Step: 0.5}
+	}
+	var rawPairs []string
+	for _, f := range lumaFindings(Input{Plan: &project.Plan{Shots: realShots()}, Luma: raw}) {
+		if strings.Contains(f.Msg, "平均亮度差") {
+			rawPairs = append(rawPairs, f.Where)
+		}
+	}
+	if got, wantRaw := strings.Join(rawPairs, " "), "shot 3,4 shot 4,5 shot 7,8"; got != wantRaw {
+		t.Errorf("原档那批该报 3 处（镜 1→2 只差 13.6，不该报）%q，实际 %q", wantRaw, got)
 	}
 }
 
