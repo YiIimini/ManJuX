@@ -261,24 +261,41 @@ func TestProduceDocxBookBuildsEpisodesAndReportsMissingCover(t *testing.T) {
 		t.Fatalf("视频制作应接受这本书（8 个 .docx 分章），实际 %d（%v）", code, out)
 	}
 
-	// 后台异步建集：轮询等它出现（快路径是秒级的，最多等 20 秒）
+	// 后台异步建集：轮询等到**正文真的落盘**为止（快路径是秒级的，最多等 20 秒）。
+	//
+	// 【为什么要等"写完了"而不是只等"目录出现了"（2026-10-11 修偶发红）】建集是**异步**的：
+	// 目录先出现、`source.txt` 之后才写。原来只轮询到"8 个目录都在"就往下断言 ⇒ 最后建的那一集
+	// 正文还没落盘时就被判"缺该章正文特征串"，全量自检里约 1/3 概率红（而单跑这条 30 遍全过 ——
+	// 典型的**等待条件太松**）。现在等到**每一集的正文里都有它自己那一章的正文特征串**为止。
 	series := safeSeries(bookName)
 	var ids []string
 	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
+	for {
 		ids = ids[:0]
 		for _, p := range s.store.List() {
 			if strings.HasPrefix(p.ID, series+"·第") {
 				ids = append(ids, p.ID)
 			}
 		}
-		if len(ids) >= len(titles) {
+		ready := len(ids) >= len(titles)
+		if ready {
+			for i := range titles {
+				id := fmt.Sprintf("%s·第%02d集·%s", series, i+1, safeSeries(titles[i]))
+				src, err := s.store.LoadSource(id)
+				if err != nil || !strings.Contains(src, markers[i]) {
+					ready = false // 这一集还在写：继续等（不是在下面判负）
+					break
+				}
+			}
+		}
+		if ready || time.Now().After(deadline) {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	// 集数本身也要判（8 个 .docx 分章应建成 8 集）—— 与上面的等待无关，是这条门原本的判据。
 	if len(ids) != len(titles) {
-		t.Fatalf("8 个 .docx 分章应建成 8 集，实得 %d：%v", len(ids), ids)
+		t.Fatalf("%d 个 .docx 分章应建成 %d 集，实得 %d：%v", len(titles), len(titles), len(ids), ids)
 	}
 
 	// 判据落在**建出来的 source.txt**：每集的【本集原文】必须是那一章（.docx 被真读进来了）

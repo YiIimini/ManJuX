@@ -108,16 +108,20 @@ type PitchFinding struct {
 // "没验过"与"验过且相符"必须在报告里分得开（与 SpeechReport 同一条纪律）。
 // 量到的数字照样填进 MedianHz/VoicedSec/各带占比，便于人工复核。
 type VoicePitchReport struct {
-	Checked   bool           `json:"checked"`
-	Skipped   string         `json:"skipped,omitempty"`
-	Error     string         `json:"error,omitempty"`
-	Expected  VoiceGender    `json:"expected,omitempty"`
-	MedianHz  float64        `json:"median_hz,omitempty"`
-	VoicedSec float64        `json:"voiced_sec,omitempty"`
-	MalePct   float64        `json:"male_pct,omitempty"`
-	MidPct    float64        `json:"mid_pct,omitempty"`
-	FemalePct float64        `json:"female_pct,omitempty"`
-	Findings  []PitchFinding `json:"findings,omitempty"`
+	Checked   bool        `json:"checked"`
+	Skipped   string      `json:"skipped,omitempty"`
+	Error     string      `json:"error,omitempty"`
+	Expected  VoiceGender `json:"expected,omitempty"`
+	MedianHz  float64     `json:"median_hz,omitempty"`
+	VoicedSec float64     `json:"voiced_sec,omitempty"`
+	MalePct   float64     `json:"male_pct,omitempty"`
+	MidPct    float64     `json:"mid_pct,omitempty"`
+	FemalePct float64     `json:"female_pct,omitempty"`
+	// PerLine 同镜多说话人时**逐句**判过的句数（>0 ＝ 走的是逐句那条路，见 pitch_lines.go）。
+	// 为什么要有它：那种情况下"卡上是女声"这种整镜口径的摘要会**说错话**（镜里还有男声/中性声线），
+	// 摘要必须能分开报（见 VoicePitchSummary）。
+	PerLine  int            `json:"per_line,omitempty"`
+	Findings []PitchFinding `json:"findings,omitempty"`
 }
 
 // VoicePitchSkipped 构造"没判"的结论。
@@ -137,26 +141,16 @@ func VoicePitchFailed(err error) *VoicePitchReport {
 // Bad 判负（有 finding）。
 func (r *VoicePitchReport) Bad() bool { return r != nil && len(r.Findings) > 0 }
 
-// MeasureVoicePitch 量这一镜的音轨基频，与 lines 里的权威声线对一遍。
+// MeasureVoicePitch 量这一镜的音轨基频，与 lines 里的权威声线对一遍（**整镜口径**）。
 //
 // lines 为空 ⇒ 不判（本镜没人说话时调用方也不该调它，这里兜一层）。
+//
+// 【同镜多个说话人时它判不了】"整镜基频"把两个人的声音搅在一起 ⇒ 那两个分支只如实说"不判"。
+// 想真判这种镜得走**逐句**那条路（`MeasureVoicePitchMixed`，要 ASR 词流，见 pitch_lines.go）——
+// 调用方可以用 `VoiceLinesNeedPerLine` 先问一句要不要退过去。
 func MeasureVoicePitch(ctx context.Context, f *ff.FF, clip string, lines []VoiceLine) *VoicePitchReport {
-	expected, neutral, mixed := GenderUnknown, false, false
-	var expectedVoice string
-	for _, l := range lines {
-		g := GenderOfVoice(l.Voice)
-		if g == GenderUnknown {
-			neutral = true
-			continue
-		}
-		if expected == GenderUnknown {
-			expected, expectedVoice = g, strings.TrimSpace(l.Voice)
-			continue
-		}
-		if expected != g {
-			mixed = true
-		}
-	}
+	// "整镜能不能判"的判定只有一处（voiceExpectation，与 VoiceLinesNeedPerLine 共用）。
+	expected, expectedVoice, mixed, neutral := voiceExpectation(lines)
 	switch {
 	case len(lines) == 0:
 		return VoicePitchSkipped("本镜没有需要核对音色的台词")
@@ -201,21 +195,19 @@ func MeasureVoicePitch(ctx context.Context, f *ff.FF, clip string, lines []Voice
 	// Checked=true / Findings 空 / 摘要"音色核对通过：卡上是女声，实测中位基频 151 Hz" ——
 	// **把"其实没判"说成了"验过且相符"**。三态（通过 / 判负 / 不判）在报告里必须分得开，
 	// 否则用户看不出"这一条根本没验"（与 SpeechReport 同一条纪律）。
-	if rep.MedianHz >= VoiceMaleMaxHz && rep.MedianHz < VoiceFemaleMinHz {
-		rep.Skipped = fmt.Sprintf("实测中位基频 %.0f Hz 落在男女重叠带（%.0f–%.0f Hz），不判音色",
-			rep.MedianHz, VoiceMaleMaxHz, VoiceFemaleMinHz)
+	// 判据本体在 pitch_lines.go 的 genderVerdict（**整镜与逐句共用同一套带位与措辞**，改阈值只需改一处）。
+	//
+	// 重叠带必须落成 Checked=false + Skipped：原来这条只写在文件头注释里，实测（2026-10-08 审查发现）
+	// "女卡 + 音轨 150 Hz"得到 Checked=true / Findings 空 / 摘要"音色核对通过：卡上是女声，实测
+	// 中位基频 151 Hz" —— **把"其实没判"说成了"验过且相符"**。三态（通过 / 判负 / 不判）必须分得开。
+	finding, why := genderVerdict(expected, expectedVoice, rep.MedianHz, rep.VoicedSec, "")
+	if why != "" {
+		rep.Skipped = why
 		return rep
 	}
 	rep.Checked = true
-	switch {
-	case expected == GenderFemale && rep.MedianHz < VoiceMaleMaxHz:
-		rep.Findings = append(rep.Findings, PitchFinding{Kind: "voice-gender", Detail: fmt.Sprintf(
-			"卡上写的是**女声**（%s），念出来却是男声带（中位基频 %.0f Hz < %.0f Hz，可靠基频 %.1fs）—— "+
-				"提示词里这条声线是逐字写对的，H3 没照做；换种子重出这一镜", expectedVoice, rep.MedianHz, VoiceMaleMaxHz, rep.VoicedSec)})
-	case expected == GenderMale && rep.MedianHz >= VoiceFemaleMinHz:
-		rep.Findings = append(rep.Findings, PitchFinding{Kind: "voice-gender", Detail: fmt.Sprintf(
-			"卡上写的是**男声**（%s），念出来却是女声带（中位基频 %.0f Hz ≥ %.0f Hz，可靠基频 %.1fs）—— "+
-				"提示词里这条声线是逐字写对的，H3 没照做；换种子重出这一镜", expectedVoice, rep.MedianHz, VoiceFemaleMinHz, rep.VoicedSec)})
+	if finding != nil {
+		rep.Findings = append(rep.Findings, *finding)
 	}
 	return rep
 }
@@ -237,6 +229,10 @@ func VoicePitchSummary(r *VoicePitchReport) string {
 		return "音色核对跳过：" + r.Skipped
 	}
 	if len(r.Findings) == 0 {
+		// 逐句那条路（同镜多说话人）**不能**用"卡上是女声"这种整镜口径说话 —— 镜里还有别的说话人。
+		if r.PerLine > 0 {
+			return fmt.Sprintf("音色核对通过（同镜多说话人，逐句判了 %d 句）", r.PerLine)
+		}
 		want := "男声"
 		if r.Expected == GenderFemale {
 			want = "女声"

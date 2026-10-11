@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/asr"
+	"github.com/YiIimini/ManJuX/internal/filmaudit"
 	"github.com/YiIimini/ManJuX/internal/project"
 	"github.com/YiIimini/ManJuX/internal/qc"
 )
@@ -208,12 +209,26 @@ func (c *Coordinator) qualityRetryTargets(ctx context.Context, proj *project.Pro
 }
 
 // voicePitchForQC 质检侧的同一套判据（在**镜级原始产物**上量，与语音核对同一位置）。
+//
+// 【同镜多说话人：整镜判不了就退到逐句】（2026-10-11）整镜基频把两个人的声音搅在一起 ⇒ 老代码只能
+// "不判"（真机镜 9/13 就是这么被跳过的：星澜＋小狗、星澜＋星兽残魂）。而 QC 阶段**刚刚跑过 ASR**
+// （见 stages_qc_assemble.go：语音核对在本函数之前），逐词时间轴就在盘上 ⇒ 可以按**每一句自己的
+// 时间窗**量（`qc.MeasureVoicePitchMixed`）。只在能认出来的那几句上判，认不出的一律不判。
+//
+// 渲染期那条路（qualityRetryTargets）**不**走这个分支：那时片段刚渲完、ASR 还没转写，没有词流可用。
 func voicePitchForQC(ctx context.Context, c *Coordinator, proj *project.Project, plan *project.Plan,
 	shot *project.Shot, clip string) *qc.VoicePitchReport {
 	if c.ff == nil {
 		return qc.VoicePitchSkipped("本机没有 ffmpeg（量不了基频）")
 	}
-	return qc.MeasureVoicePitch(ctx, c.ff, clip, submittedVoiceLines(proj, plan, shot))
+	lines := submittedVoiceLines(proj, plan, shot)
+	rep := qc.MeasureVoicePitch(ctx, c.ff, clip, lines)
+	if qc.VoiceLinesNeedPerLine(lines) {
+		if per := qc.MeasureVoicePitchMixed(ctx, c.ff, clip, filmaudit.ASRSidecarPath(clip), lines); per != nil && per.Checked {
+			return per
+		}
+	}
+	return rep
 }
 
 // qualityRetryNote 重出轮次的播报文案（判据与文案同源，便于测试钉住）。
