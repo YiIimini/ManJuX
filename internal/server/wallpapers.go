@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -68,39 +69,57 @@ type wallpaperSize struct {
 	Label string `json:"label"`
 }
 
-// wallpaperSizes 分类的分辨率档（2026-10-10 用户：「壁纸分辨率参数多增加些」）。
+// wallpaperSizes 分类的分辨率档。
 //
-// 两条硬约束（不是我的偏好，是图像侧的）：**每条边 16 对齐**、**夹在 [512,2048]**。
-// 所以这里**不可能**有 2K/4K 档（2560/3440/3840/7680 全都超过上限 2048）——
-// 想要"和屏幕一样大"的观感，用 `sizeForScreen`（保持屏幕比例、把最长边压到 2048）。
-// 门 `TestWallpaperSizesAre16AlignedAndBounded` 直接喂这个函数，并且要求**标签开头的尺寸 == 实际像素**
-// （不许标签写 1080、实际出 1072 这种"写着好看"的档）。
+// 【2026-10-11 用户：「桌面壁纸的带鱼屏分辨率默认好低，增加高分辨率的」】档位重排 + 抬高：
+//   - 每档都**32 对齐**（与图像侧 snap32 同口径）⇒ 标签写什么就出什么（旧表里 1280×720 / 1200×1920 /
+//     1920×1200 / 768×1360 都会被引擎悄悄落成 704/1184/1184/1344 —— 那是"写着好看"的档，本轮全部改掉）。
+//   - 括号里的耗时是**真机实测**（同一 prompt/seed）：2560×1440 = 42s、3424×1440 = 60s、
+//     3840×2144 = 129s、1440×3104 = 60s —— 写出来让用户按需挑，别让他先花两分钟才发现慢。
+//   - 第一档＝缺省档（`normWallpaperSize(0,0)` 回落到它）：桌面取 2560×1440（够用又不慢）；
+//     "想要和屏幕一样大"仍用「按本机屏幕」（现在会出 3424×1440）。
+//
+// 门 `TestWallpaperSizesAre16AlignedAndBounded` 直接喂这个函数：每类 ≥5 档、32 对齐、在 [512,4096] 内、
+// **标签开头的尺寸 == 实际像素**。
 func wallpaperSizes(kind string) []wallpaperSize {
 	if normWallpaperKind(kind) == wallpaperKindDesktop {
 		return []wallpaperSize{
-			{W: 2048, H: 1152, Label: "2048×1152（16:9 最大档 · 出图上限 2048）"},
-			{W: 1920, H: 1088, Label: "1920×1088（16:9 主流桌面）"},
-			{W: 1920, H: 1200, Label: "1920×1200（16:10 桌面）"},
-			{W: 2048, H: 864, Label: "2048×864（21:9 带鱼屏 · 3440×1440 一类）"},
-			{W: 1600, H: 896, Label: "1600×896（16:9 小桌面/笔记本）"},
-			{W: 1280, H: 720, Label: "1280×720（省显存 · 快速试稿）"},
+			{W: 2560, H: 1440, Label: "2560×1440（2K 16:9 · 实测 42 秒）"},
+			{W: 3424, H: 1440, Label: "3424×1440（21:9 带鱼屏 · 3440×1440 一类 · 实测 60 秒）"},
+			{W: 3840, H: 2144, Label: "3840×2144（≈4K 16:9 · 实测 129 秒）"},
+			{W: 2048, H: 1152, Label: "2048×1152（16:9 中档）"},
+			{W: 1920, H: 1088, Label: "1920×1088（FHD 16:9 主流桌面）"},
+			{W: 1920, H: 1184, Label: "1920×1184（16:10 桌面）"},
+			{W: 2048, H: 864, Label: "2048×864（21:9 带鱼屏小档 · 省显存）"},
+			{W: 1600, H: 896, Label: "1600×896（小桌面/笔记本）"},
+			{W: 1280, H: 704, Label: "1280×704（省显存 · 快速试稿）"},
 		}
 	}
 	return []wallpaperSize{
 		{W: 1088, H: 1920, Label: "1088×1920（9:16 主流手机）"},
-		{W: 1200, H: 1920, Label: "1200×1920（5:8 大屏手机）"},
+		{W: 1216, H: 1920, Label: "1216×1920（5:8 大屏手机）"},
+		{W: 1440, H: 3104, Label: "1440×3104（2K 竖屏手机 · 实测 60 秒）"},
 		{W: 896, H: 1600, Label: "896×1600（9:16 小屏手机）"},
-		{W: 768, H: 1360, Label: "768×1360（9:15 竖版小档）"},
-		{W: 720, H: 1280, Label: "720×1280（省显存 · 快速试稿）"},
+		{W: 768, H: 1344, Label: "768×1344（4:7 竖版小档）"},
+		{W: 704, H: 1280, Label: "704×1280（省显存 · 快速试稿）"},
 	}
 }
 
-// normWallpaperSize 规整分辨率：缺省/非法回落到该分类的第一档；否则夹到 [512,2048] 并对齐 16。
+// normWallpaperSize 规整分辨率：缺省/非法回落到该分类的第一档；否则交给 fitWallpaperSize。
 func normWallpaperSize(kind string, w, h int) (int, int) {
 	def := wallpaperSizes(kind)[0]
 	if w <= 0 || h <= 0 {
 		return def.W, def.H
 	}
+	return fitWallpaperSize(w, h)
+}
+
+// fitWallpaperSize 把任意尺寸压进平台口径 —— **唯一出处**（`normWallpaperSize` 与 `sizeForScreen`
+// 都走它；同一件事写两遍迟早分叉，本仓栽过）。
+//
+// 三步：① 每条边夹到 [wallpaperMinSide, wallpaperMaxSide]；② 按 wallpaperAlign **向下**对齐
+// （与图像侧 `snap32` 同规则）；③ 超过 wallpaperMaxPixels 就按比例缩（保比例），缩完再对齐、再保下限。
+func fitWallpaperSize(w, h int) (int, int) {
 	clamp := func(v int) int {
 		if v < wallpaperMinSide {
 			v = wallpaperMinSide
@@ -110,12 +129,17 @@ func normWallpaperSize(kind string, w, h int) (int, int) {
 		}
 		return v - v%wallpaperAlign
 	}
-	return clamp(w), clamp(h)
+	cw, ch := clamp(w), clamp(h)
+	if int64(cw)*int64(ch) > int64(wallpaperMaxPixels) {
+		f := math.Sqrt(float64(wallpaperMaxPixels) / (float64(cw) * float64(ch)))
+		cw, ch = clamp(int(float64(cw)*f)), clamp(int(float64(ch)*f))
+	}
+	return cw, ch
 }
 
 // wallpaperSizeNote 给界面显示"**实际会出成多少**"。
 //
-// 为什么必须有它：用户填 3440×1440 时，平台会夹到 2048、再对齐 16 ⇒ 实际出的是别的尺寸。
+// 为什么必须有它：用户填的尺寸可能被 ①夹上限 ②对齐 32 ③像素预算按比例缩 —— 实际出的是别的尺寸。
 // 界面若照用户填的显示，就是"写着 3440、出的是 2048"——那是骗人。改了什么一律写出来。
 func wallpaperSizeNote(kind string, w, h int) string {
 	first := wallpaperSizes(kind)[0]
@@ -126,7 +150,7 @@ func wallpaperSizeNote(kind string, w, h int) string {
 	if aw == w && ah == h {
 		return ""
 	}
-	why := make([]string, 0, 2)
+	why := make([]string, 0, 4)
 	if w > wallpaperMaxSide || h > wallpaperMaxSide {
 		why = append(why, fmt.Sprintf("单边上限 %d", wallpaperMaxSide))
 	}
@@ -135,6 +159,10 @@ func wallpaperSizeNote(kind string, w, h int) string {
 	}
 	if w%wallpaperAlign != 0 || h%wallpaperAlign != 0 {
 		why = append(why, fmt.Sprintf("%d 对齐", wallpaperAlign))
+	}
+	if int64(w)*int64(h) > int64(wallpaperMaxPixels) {
+		why = append(why, fmt.Sprintf("像素预算 %.0f 万（真机实测最大跑过 3840×2144 ≈ 824 万像素 / 129 秒）",
+			float64(wallpaperMaxPixels)/10000))
 	}
 	return fmt.Sprintf("你填的是 %d×%d，按平台口径（%s）**实际出 %d×%d**", w, h, strings.Join(why, "、"), aw, ah)
 }
@@ -166,11 +194,11 @@ func (s *Server) handleWallpaperSize(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// sizeForScreen 把屏幕分辨率映射成**平台能出的**壁纸尺寸：保持屏幕宽高比、最长边压到上限、
-// 两边对齐 16、并夹在 [512,2048] 内。返回 (宽, 高, 人话说明)；屏幕读不到 ⇒ (0,0,"") 由调用方兜。
+// sizeForScreen 把屏幕分辨率映射成**平台能出的**壁纸尺寸：保持屏幕宽高比、压进上限与像素预算、
+// 两边对齐 32、并夹在 [512,4096] 内。返回 (宽, 高, 人话说明)；屏幕读不到 ⇒ (0,0,"") 由调用方兜。
 //
-// 例（真机 3440×1440 带鱼屏）：出 2048×848 —— 说明里必须写清"屏幕是 3440×1440、上限 2048 ⇒ 出 2048×848"，
-// 别让用户以为出的是原始尺寸。纯函数 ⇒ 门直接喂（不需要真屏幕）。
+// 例（真机 3440×1440 带鱼屏）：出 **3424×1440**（32 对齐落在 3424 上）—— 说明里必须写清
+// 「屏幕是 3440×1440、按平台口径出 3424×1440」，别让用户以为出的是原始尺寸。纯函数 ⇒ 门直接喂。
 func sizeForScreen(sw, sh int) (int, int, string) {
 	if sw <= 0 || sh <= 0 {
 		return 0, 0, ""
@@ -185,21 +213,22 @@ func sizeForScreen(sw, sh int) (int, int, string) {
 			h = wallpaperMaxSide
 		}
 	}
-	align := func(v int) int {
-		v = v - v%wallpaperAlign
-		if v < wallpaperMinSide {
-			v = wallpaperMinSide
-		}
-		return v
-	}
-	w, h = align(w), align(h)
+	w, h = fitWallpaperSize(w, h)
 	note := fmt.Sprintf("本机屏幕 %d×%d", sw, sh)
-	if sw > wallpaperMaxSide || sh > wallpaperMaxSide {
+	switch {
+	case sw > wallpaperMaxSide || sh > wallpaperMaxSide:
 		note += fmt.Sprintf("；平台出图单边上限 %d ⇒ 按屏幕比例出 %d×%d", wallpaperMaxSide, w, h)
-	} else {
-		note += fmt.Sprintf(" ⇒ 按屏幕比例出 %d×%d（已对齐 %d）", w, h, wallpaperAlign)
+	case sw != w || sh != h:
+		note += fmt.Sprintf(" ⇒ 按平台口径（%d 对齐%s）出 %d×%d", wallpaperAlign, budgetNoteSuffix(), w, h)
+	default:
+		note += fmt.Sprintf(" ⇒ 按屏幕比例出 %d×%d", w, h)
 	}
 	return w, h, note
+}
+
+// budgetNoteSuffix 像素预算那句话尾巴（只在说明里用；没超预算就是空串）。
+func budgetNoteSuffix() string {
+	return fmt.Sprintf("、像素预算 %.0f 万", float64(wallpaperMaxPixels)/10000)
 }
 
 // ── 提示词口径（唯一出处） ────────────────────────────────────────────────

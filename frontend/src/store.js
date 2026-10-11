@@ -204,6 +204,8 @@ export const api = {
   wallpaperDesktop: () => req('GET', '/api/wallpapers/desktop'),
   wallpaperDesktopApply: (body) => req('POST', '/api/wallpapers/desktop/apply', body),
   wallpaperDesktopStop: () => req('POST', '/api/wallpapers/desktop/stop', {}),
+  // 「轮换只在我勾的那几张里换」：files 为空数组 = 清空选择（回到全部参与）
+  wallpaperDesktopPicks: (files) => req('POST', '/api/wallpapers/desktop/picks', { files }),
 
   // ── 以下为原先散落在各视图里的裸 fetch,统一收口到 api 层 ──
   // 收口的意义:错误处理、URL 编码、请求头三件事只写一遍;

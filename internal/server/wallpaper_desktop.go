@@ -90,8 +90,10 @@ type desktopState struct {
 	File        string `json:"file"`         // 选中的那张（幻灯片模式下＝起点）
 	IntervalMin int    `json:"interval_min"` // 幻灯片间隔（分钟）
 	Shuffle     bool   `json:"shuffle"`      // 幻灯片顺序偏好
-	LastSet     string `json:"last_set"`     // 最近一次真正设上去的那张
-	Applied     string `json:"applied"`      // RFC3339
+	// Picks **只让这些参与轮换**（绝对路径；空 = 桌面分类全部）。用户要的就是"随机只在我喜欢的那几张里换"。
+	Picks   []string `json:"picks,omitempty"`
+	LastSet string   `json:"last_set"` // 最近一次真正设上去的那张
+	Applied string   `json:"applied"`  // RFC3339
 }
 
 // desktopStatePath 状态文件路径。
@@ -250,15 +252,49 @@ func (s *Server) deskRotateInterval() time.Duration {
 	return time.Duration(normDeskInterval(s.deskState().IntervalMin)) * time.Minute
 }
 
-// deskSeqBuild 排一条轮换序列（= 清单按顺序偏好排好，取路径）。
+// deskSeqBuild 排一条轮换序列（= **参与轮换的那批**按顺序偏好排好，取路径）。
+//
+// 参与集合＝`st.Picks`（用户在缩略图上勾的那些）；**空 = 桌面分类全部**（老行为，兼容）。
+// Picks 里已经不在盘上的项**不进序列**（由 `deskPicksFilter` 挑出来、状态里如实点名；不在这里刷日志）。
 func (s *Server) deskSeqBuild(seed int64) []string {
 	st := s.deskState()
-	files := deskOrder(s.listWallpapers(wallpaperKindDesktop), st.Shuffle, seed)
+	cand, _ := deskPicksFilter(s.listWallpapers(wallpaperKindDesktop), st.Picks)
+	files := deskOrder(cand, st.Shuffle, seed)
 	out := make([]string, 0, len(files))
 	for _, f := range files {
 		out = append(out, f.File)
 	}
 	return out
+}
+
+// deskPicksFilter 按"只让勾过的参与"过滤清单 —— 纯函数（门直接喂它，不碰磁盘）。
+//
+// 三态：① `picks` 为空 ⇒ **全部**参与（与老行为一致）；② 勾过的项按清单顺序留下；
+// ③ 勾过但已不在盘上/已不属于这一类的 ⇒ 进 `missing`（**如实点名**，不是静默丢掉）。
+func deskPicksFilter(all []wallpaperItem, picks []string) ([]wallpaperItem, []string) {
+	if len(picks) == 0 {
+		return all, nil
+	}
+	key := func(p string) string { return strings.ToLower(filepath.Clean(p)) }
+	want := make(map[string]bool, len(picks))
+	for _, p := range picks {
+		want[key(p)] = true
+	}
+	var out []wallpaperItem
+	kept := make(map[string]bool, len(all))
+	for _, it := range all {
+		if want[key(it.File)] {
+			out = append(out, it)
+			kept[key(it.File)] = true
+		}
+	}
+	var missing []string
+	for _, p := range picks {
+		if !kept[key(p)] {
+			missing = append(missing, filepath.Base(p))
+		}
+	}
+	return out, missing
 }
 
 // deskStartRotation 起轮换：**先停旧的**（保证同一时刻只有一条 goroutine 在换图）。
@@ -364,26 +400,33 @@ func (s *Server) deskRotateOnce() (string, error) {
 
 // wallpaperDesktopStatus GET /api/wallpapers/desktop 的形状。
 type wallpaperDesktopStatus struct {
-	Supported        bool   `json:"supported"` // 本平台能不能改系统桌面壁纸
-	Mode             string `json:"mode"`      // single / slideshow
-	File             string `json:"file"`      // 选中的那张
-	LastSet          string `json:"last_set"`  // 最近一次真设上去的那张
-	IntervalMin      int    `json:"interval_min"`
-	Shuffle          bool   `json:"shuffle"`
-	OrderLabel       string `json:"order_label"`
-	Running          bool   `json:"running"` // 平台轮换现在在不在跑
-	Current          string `json:"current"` // 系统现在的桌面壁纸（读不到＝空）
-	CurrentInLibrary bool   `json:"current_in_library"`
-	CurrentName      string `json:"current_name,omitempty"`
-	Count            int    `json:"count"` // 桌面分类里有多少张
-	Note             string `json:"note,omitempty"`
-	NativeNote       string `json:"native_note,omitempty"` // 系统自己那套幻灯片的提醒（只读来的）
+	Supported        bool     `json:"supported"`     // 本平台能不能改系统桌面壁纸
+	Picks            []string `json:"picks"`         // 参与轮换的那几张（空 = 全部；前端勾选即写这里）
+	PicksCount       int      `json:"picks_count"`   // 其中**现在还在盘上**的张数
+	PicksMissing     []string `json:"picks_missing"` // 勾过但已不在盘上的（如实点名，不静默）
+	PicksNote        string   `json:"picks_note,omitempty"`
+	Mode             string   `json:"mode"`     // single / slideshow
+	File             string   `json:"file"`     // 选中的那张
+	LastSet          string   `json:"last_set"` // 最近一次真设上去的那张
+	IntervalMin      int      `json:"interval_min"`
+	Shuffle          bool     `json:"shuffle"`
+	OrderLabel       string   `json:"order_label"`
+	Running          bool     `json:"running"` // 平台轮换现在在不在跑
+	Current          string   `json:"current"` // 系统现在的桌面壁纸（读不到＝空）
+	CurrentInLibrary bool     `json:"current_in_library"`
+	CurrentName      string   `json:"current_name,omitempty"`
+	Count            int      `json:"count"` // 桌面分类里有多少张
+	Note             string   `json:"note,omitempty"`
+	NativeNote       string   `json:"native_note,omitempty"` // 系统自己那套幻灯片的提醒（只读来的）
 }
 
 // deskStatus 组一份状态（唯一出处；GET / apply / stop 三个响应共用）。
+// deskStatus 组一份状态（唯一出处；GET / apply / stop / picks 四个响应共用）。
 func (s *Server) deskStatus() wallpaperDesktopStatus {
 	st := s.deskState()
 	cur := s.deskCurrent()
+	all := s.listWallpapers(wallpaperKindDesktop)
+	eff, missing := deskPicksFilter(all, st.Picks)
 	out := wallpaperDesktopStatus{
 		Supported:   s.deskSupported(),
 		Mode:        st.Mode,
@@ -394,7 +437,17 @@ func (s *Server) deskStatus() wallpaperDesktopStatus {
 		OrderLabel:  deskOrderLabel(st.Shuffle),
 		Running:     s.deskRunning(),
 		Current:     cur,
-		Count:       len(s.listWallpapers(wallpaperKindDesktop)),
+		Count:       len(all),
+		Picks:       st.Picks,
+		PicksCount:  len(eff),
+		PicksNote:   deskPicksNote(len(st.Picks), len(eff), missing),
+	}
+	out.PicksMissing = append([]string{}, missing...)
+	if out.PicksMissing == nil {
+		out.PicksMissing = []string{}
+	}
+	if out.Picks == nil {
+		out.Picks = []string{}
 	}
 	if cur != "" && s.wallpaperKindOfPath(cur) == wallpaperKindDesktop {
 		out.CurrentInLibrary = true
@@ -411,13 +464,14 @@ func deskNote(st wallpaperDesktopStatus) string {
 		return fmt.Sprintf("本平台不支持改系统桌面壁纸（只有 Windows 有系统桌面壁纸；这台是 %s）", runtime.GOOS)
 	}
 	if st.Mode == deskModeSlideshow && st.Running {
-		return fmt.Sprintf("平台自己在轮换：每 %d 分钟换一张（%s）—— 只在平台运行期间生效，退出平台就停在最后一张（Windows 自己那套幻灯片配置平台一个字节都没动）",
-			st.IntervalMin, st.OrderLabel)
+		return fmt.Sprintf("平台自己在轮换：每 %d 分钟换一张（%s，%s）—— 只在平台运行期间生效，退出平台就停在最后一张（Windows 自己那套幻灯片配置平台一个字节都没动）",
+			st.IntervalMin, st.OrderLabel, deskPicksShort(st))
 	}
 	if st.Mode == deskModeSlideshow {
-		return fmt.Sprintf("上次选的是幻灯片（每 %d 分钟、%s），但平台重启后不会自己接着轮 —— 点「开始轮换」即可继续", st.IntervalMin, st.OrderLabel)
+		return fmt.Sprintf("上次选的是幻灯片（每 %d 分钟、%s，%s），但平台重启后不会自己接着轮 —— 点「开始轮换」即可继续",
+			st.IntervalMin, st.OrderLabel, deskPicksShort(st))
 	}
-	return "点某张图上的「设为壁纸」立即生效；想让它自己换，就用「幻灯片轮换」（间隔 + 顺序/随机）"
+	return "点某张图上的「设为壁纸」立即生效；想让它自己换，就用「幻灯片轮换」（间隔 + 顺序/随机；缩略图上勾选＝只在这些里换）"
 }
 
 // ── HTTP ────────────────────────────────────────────────────────────────
@@ -496,5 +550,83 @@ func (s *Server) handleWallpaperDesktopStop(w http.ResponseWriter, r *http.Reque
 	st := s.deskUpdate(func(x *desktopState) { x.Mode = deskModeSingle })
 	s.opLog("🖼 桌面壁纸轮换已停（系统里停在最后一张%s）",
 		map[bool]string{true: "：" + filepath.Base(st.LastSet), false: ""}[st.LastSet != ""])
+	writeJSON(w, 200, s.deskStatus())
+}
+
+// ── 轮换范围：只在我勾的那几张里换（2026-10-11 用户：「随机桌面壁纸用户不能选择喜欢的多个壁纸？」）──
+
+// deskPicksShort 轮换范围的一句话（放进 deskNote 的括号里）。
+func deskPicksShort(st wallpaperDesktopStatus) string {
+	if len(st.Picks) == 0 {
+		return fmt.Sprintf("全部 %d 张", st.Count)
+	}
+	return fmt.Sprintf("只在你勾的 %d 张里换", st.PicksCount)
+}
+
+// deskPicksNote 轮换范围的长说明（含"勾过但不在盘上"的点名）。
+func deskPicksNote(picked, eff int, missing []string) string {
+	base := "轮换范围：桌面分类**全部**壁纸（只想在自己喜欢的那几张里换 ⇒ 在缩略图上勾选）"
+	if picked > 0 {
+		base = fmt.Sprintf("轮换范围：**你勾选的 %d 张**（其中 %d 张现在还在盘上）", picked, eff)
+	}
+	if len(missing) > 0 {
+		base += fmt.Sprintf("；这些勾过的已不在盘上，轮换会跳过：%s", strings.Join(missing, "、"))
+	}
+	return base
+}
+
+// handleWallpaperDesktopPicks POST /api/wallpapers/desktop/picks {files:[...]}
+//
+// 「顺序/随机换图只在我挑的那几张里换」；**空数组 = 清空选择**（回到"全部参与"）。
+//
+// 纪律三条：① 只收**桌面分类里且在盘上**的图（越界 / 手机分类 / 不在盘上 ⇒ 400 点名，状态一个字节不动）；
+// ② 选择变了而轮换正在跑 ⇒ **立刻按新集合重排**（否则用户要等到下一轮才看见效果）；
+// ③ 轮换时序列里出现已删掉的图 ⇒ 由 deskRotateOnce 如实播报并跳过（这里不预筛盘上的变化）。
+func (s *Server) handleWallpaperDesktopPicks(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Files []string `json:"files"`
+	}
+	if err := readBody(r, &in); err != nil {
+		writeErr(w, 400, fmt.Errorf("请求体解析失败：%w", err))
+		return
+	}
+	var picks []string
+	for _, p := range in.Files {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		switch k := s.wallpaperKindOfPath(p); {
+		case k == "":
+			writeErr(w, 403, fmt.Errorf("「%s」不在壁纸的输出目录里（若你改过输出目录，老目录里的图就不再属于这一类）", filepath.Base(p)))
+			return
+		case k != wallpaperKindDesktop:
+			writeErr(w, 400, fmt.Errorf("「%s」是手机壁纸（竖版），不能进桌面轮换 —— 轮换只换桌面壁纸", filepath.Base(p)))
+			return
+		}
+		if _, err := os.Stat(p); err != nil {
+			writeErr(w, 404, fmt.Errorf("「%s」不在盘上：%w", filepath.Base(p), err))
+			return
+		}
+		dup := false
+		for _, q := range picks {
+			if sameFile(q, p) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			picks = append(picks, p)
+		}
+	}
+	st := s.deskUpdate(func(x *desktopState) { x.Picks = picks })
+	if st.Mode == deskModeSlideshow && s.deskRunning() {
+		s.deskStartRotation() // 立刻按新集合重排（stop 在锁外做完再重建）
+	}
+	if len(picks) == 0 {
+		s.opLog("🖼 桌面壁纸轮换范围改回**全部**桌面壁纸（清空了选择）")
+	} else {
+		s.opLog("🖼 桌面壁纸轮换只在勾选的 %d 张里换", len(picks))
+	}
 	writeJSON(w, 200, s.deskStatus())
 }

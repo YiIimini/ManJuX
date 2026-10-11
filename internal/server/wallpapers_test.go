@@ -147,27 +147,43 @@ func TestCleanWallpaperPromptDropsTextAndNegationPhrases(t *testing.T) {
 
 // ── ② 分辨率（喂本体） ───────────────────────────────────────────────
 
-func TestWallpaperSizesAre16AlignedAndBounded(t *testing.T) {
+// TestWallpaperSizesAre32AlignedAndWithinBudget 档位表的判据（门直接喂 `wallpaperSizes` 本体）。
+//
+// 【2026-10-11】原来这条叫 `...16Aligned...`、按「16 对齐 + 上限 2048」判 —— 而真机图像侧是
+// `imagegen.go` 的 `snap32`（**向下**取整到 32），上限也抬到了 4096（用户：「桌面壁纸的带鱼屏分辨率
+// 默认好低，增加高分辨率的」）。判据跟着改：每类 ≥5 档、**至少一档单边 ≥2048**、32 对齐、
+// 在 [512,4096] 内、不超像素预算、**标签开头的尺寸 == 实际像素**。
+func TestWallpaperSizesAre32AlignedAndWithinBudget(t *testing.T) {
 	for _, k := range []string{wallpaperKindMobile, wallpaperKindDesktop} {
 		sizes := wallpaperSizes(k)
-		// 2026-10-10 用户：「壁纸分辨率参数多增加些」⇒ 每类至少 5 档（大屏/主流/带鱼或 16:10/小屏/试稿）
 		if len(sizes) < 5 {
-			t.Fatalf("%s 至少要有 5 档分辨率（多档可选是本轮的要求），实际 %d 档", k, len(sizes))
+			t.Fatalf("%s 至少要有 5 档分辨率（多档可选是用户的要求），实际 %d 档", k, len(sizes))
 		}
+		big := 0
 		for _, s := range sizes {
 			if s.W%wallpaperAlign != 0 || s.H%wallpaperAlign != 0 {
-				t.Errorf("%s 的 %d×%d 没对齐 %d（图像侧硬要求）", k, s.W, s.H, wallpaperAlign)
+				t.Errorf("%s 的 %d×%d 没对齐 %d（图像侧 snap32 是同一口径）", k, s.W, s.H, wallpaperAlign)
 			}
 			if s.W < wallpaperMinSide || s.H < wallpaperMinSide || s.W > wallpaperMaxSide || s.H > wallpaperMaxSide {
 				t.Errorf("%s 的 %d×%d 超出 [%d,%d]", k, s.W, s.H, wallpaperMinSide, wallpaperMaxSide)
 			}
+			if int64(s.W)*int64(s.H) > int64(wallpaperMaxPixels) {
+				t.Errorf("%s 的 %d×%d 超过像素预算 %.0f 万（真机只验到 824 万）",
+					k, s.W, s.H, float64(wallpaperMaxPixels)/10000)
+			}
 			if s.Label == "" {
 				t.Errorf("%s 的 %d×%d 没有给人看的标签", k, s.W, s.H)
 			}
-			// 标签**必须以真实像素开头** —— 不许"标签写 1080、实际出 1072"这种写着好看的档
+			// 标签**必须以真实像素开头** —— 不许"标签写 720、实际出 704"这种写着好看的档
 			if !strings.HasPrefix(s.Label, fmt.Sprintf("%d×%d", s.W, s.H)) {
 				t.Errorf("%s 的标签 %q 与真实像素 %d×%d 不一致（标签开头必须是实际尺寸）", k, s.Label, s.W, s.H)
 			}
+			if s.W >= 2048 || s.H >= 2048 {
+				big++
+			}
+		}
+		if big == 0 {
+			t.Errorf("%s 一档 ≥2K 的都没有 —— 用户要的「增加高分辨率的」没落地", k)
 		}
 		// 画幅方向：手机=竖版（高>宽），桌面=横版（宽>高）
 		if k == wallpaperKindMobile && sizes[0].H <= sizes[0].W {
@@ -176,18 +192,64 @@ func TestWallpaperSizesAre16AlignedAndBounded(t *testing.T) {
 		if k == wallpaperKindDesktop && sizes[0].W <= sizes[0].H {
 			t.Errorf("桌面壁纸第一档必须是横版：%d×%d", sizes[0].W, sizes[0].H)
 		}
-		// 缺省/非法 ⇒ 回落到该分类第一档；越界 ⇒ 夹住并对齐
+		// 缺省/非法 ⇒ 回落到该分类第一档
 		if w, h := normWallpaperSize(k, 0, 0); w != sizes[0].W || h != sizes[0].H {
 			t.Errorf("%s 不给尺寸时应回落到 %d×%d，实得 %d×%d", k, sizes[0].W, sizes[0].H, w, h)
 		}
-		if w, h := normWallpaperSize(k, 3000, 3000); w != 2048 || h != 2048 {
-			t.Errorf("越界尺寸应夹到 2048，实得 %d×%d", w, h)
+		// 过小 ⇒ 抬到下限（且下限本身是对齐的）
+		if w, h := normWallpaperSize(k, 100, 100); w != wallpaperMinSide || h != wallpaperMinSide {
+			t.Errorf("过小尺寸应抬到 %d，实得 %d×%d", wallpaperMinSide, w, h)
 		}
-		if w, h := normWallpaperSize(k, 100, 100); w != 512 || h != 512 {
-			t.Errorf("过小尺寸应抬到 512，实得 %d×%d", w, h)
+		// 自定义：对齐 32（不是夹成方图、也不是照抄用户填的）
+		if w, h := normWallpaperSize(k, 1000, 1000); w != 992 || h != 992 {
+			t.Errorf("自定义 1000×1000 应对齐到 992×992（32 的倍数），实得 %d×%d", w, h)
 		}
-		if w, h := normWallpaperSize(k, 1000, 1000); w%16 != 0 || h%16 != 0 {
-			t.Errorf("自定义尺寸也要对齐 16，实得 %d×%d", w, h)
+	}
+}
+
+// TestFitWallpaperSizeMatchesEngineSnap32 尺寸口径的**唯一出处**：真机实测过的几组必须逐字复现
+// （图像侧 `snap32` 向下取整 ⇒ 3440→3424、2160→2144、3120→3104；2560×1440 原样）。
+//
+// 这几组数字是 2026-10-11 真机跑出来的（`cmd/imagecheck -w 3440 -h 1440` 等，落盘像素实测），
+// 不是推算 —— "平台承诺的尺寸"必须与"引擎真正出的尺寸"逐字一致，否则就是写着好看。
+func TestFitWallpaperSizeMatchesEngineSnap32(t *testing.T) {
+	type fitCase struct {
+		inW, inH, wantW, wantH int
+		why                    string
+	}
+	cases := []fitCase{
+		{3440, 1440, 3424, 1440, "真机带鱼屏：落盘实测 3424×1440"},
+		{3840, 2160, 3840, 2144, "≈4K：落盘实测 3840×2144"},
+		{1440, 3120, 1440, 3104, "手机 2K：落盘实测 1440×3104"},
+		{2560, 1440, 2560, 1440, "2K 16:9：两侧都对齐 32，原样"},
+		{512, 512, 512, 512, "下限原样"},
+		{100, 100, 512, 512, "过小抬到下限"},
+		{9999, 19, 4096, 512, "越界：单边夹上限、另边抬下限"},
+	}
+	for _, c := range cases {
+		w, h := fitWallpaperSize(c.inW, c.inH)
+		if w != c.wantW || h != c.wantH {
+			t.Errorf("fitWallpaperSize(%d×%d) = %d×%d，想要 %d×%d（%s）", c.inW, c.inH, w, h, c.wantW, c.wantH, c.why)
+		}
+	}
+	// 像素预算：4096×4096（1678 万像素）必须被按比例缩到预算内、仍是 32 对齐、且保比例（方图还是方图）
+	w, h := fitWallpaperSize(4096, 4096)
+	if int64(w)*int64(h) > int64(wallpaperMaxPixels) {
+		t.Errorf("4096×4096 应被像素预算缩下来（实得 %d×%d = %.0f 万像素）", w, h, float64(w*h)/10000)
+	}
+	if w%wallpaperAlign != 0 || h%wallpaperAlign != 0 {
+		t.Errorf("预算缩完仍要 32 对齐（实得 %d×%d）", w, h)
+	}
+	if w != h {
+		t.Errorf("按比例缩要保比例（方图还是方图，实得 %d×%d）", w, h)
+	}
+	// 同一件事只能有一份口径：normWallpaperSize 对同一输入必须与 fitWallpaperSize 逐字一致
+	for _, c := range [][2]int{{3440, 1440}, {3840, 2160}, {1000, 1000}} {
+		w1, h1 := normWallpaperSize(wallpaperKindDesktop, c[0], c[1])
+		w2, h2 := fitWallpaperSize(c[0], c[1])
+		if w1 != w2 || h1 != h2 {
+			t.Errorf("normWallpaperSize 与 fitWallpaperSize 对 %d×%d 结论不同（%d×%d vs %d×%d）—— 两份口径分叉了",
+				c[0], c[1], w1, h1, w2, h2)
 		}
 	}
 }

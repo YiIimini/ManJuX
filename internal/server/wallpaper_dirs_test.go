@@ -76,8 +76,10 @@ func TestSizeForScreenKeepsAspectAndLimit(t *testing.T) {
 			t.Errorf("屏幕 %d×%d 比例 %.3f，出图 %d×%d 比例 %.3f —— 跑偏超过 3%%", c.sw, c.sh, sr, w, h, wr)
 		}
 	}
-	if _, _, note := sizeForScreen(3440, 1440); !strings.Contains(note, "上限") {
-		t.Errorf("超过上限的屏幕必须在说明里点名上限：%q", note)
+	// 真机带鱼屏：现在上限抬到 4096，「按本机屏幕」应当给出**接近原生**的 3424×1440（32 对齐落在这里），
+	// 并如实说清是按平台口径算的（用户最容易被"写着 3440、出的是别的东西"糊弄）
+	if _, _, note := sizeForScreen(3440, 1440); !strings.Contains(note, "3424×1440") || !strings.Contains(note, "32 对齐") {
+		t.Errorf("带鱼屏必须在说明里给出**真实出货尺寸**与口径：%q", note)
 	}
 	if w, h, note := sizeForScreen(0, 0); w != 0 || h != 0 || note != "" {
 		t.Errorf("读不到屏幕 ⇒ 应当回 (0,0,\"\")，界面据此置灰；实得 %d,%d,%q", w, h, note)
@@ -85,17 +87,30 @@ func TestSizeForScreenKeepsAspectAndLimit(t *testing.T) {
 }
 
 func TestWallpaperSizeNoteTellsTheTruth(t *testing.T) {
-	if note := wallpaperSizeNote(wallpaperKindDesktop, 2048, 1152); note != "" {
+	if note := wallpaperSizeNote(wallpaperKindDesktop, 2560, 1440); note != "" {
 		t.Errorf("按口径能原样出的尺寸不该有说明（否则用户会以为被改了）：%q", note)
 	}
+	// 真机带鱼屏：3440/1440 都对齐不到 32 ⇒ 实出 3424×1440（不是被"夹上限"，是对齐）
 	note := wallpaperSizeNote(wallpaperKindDesktop, 3440, 1440)
-	for _, want := range []string{"3440×1440", "2048×1440", "上限"} {
+	for _, want := range []string{"3440×1440", "3424×1440", "对齐"} {
+		if !strings.Contains(note, want) {
+			t.Errorf("带鱼屏说明里必须出现 %q，实际 %q", want, note)
+		}
+	}
+	// 超过单边上限：要同时说清上限与实出尺寸
+	note = wallpaperSizeNote(wallpaperKindDesktop, 6000, 2000)
+	for _, want := range []string{"4096", "上限"} {
 		if !strings.Contains(note, want) {
 			t.Errorf("超上限时说明里必须出现 %q，实际 %q", want, note)
 		}
 	}
-	if note := wallpaperSizeNote(wallpaperKindDesktop, 1000, 600); !strings.Contains(note, "992×592") {
-		t.Errorf("没对齐时要说出实际尺寸（1000→992、600→592），实际 %q", note)
+	// 超过**像素预算**（4096×4096 = 1678 万像素，真机没验过这个量级）⇒ 按比例缩并说明为什么
+	note = wallpaperSizeNote(wallpaperKindDesktop, 4096, 4096)
+	if !strings.Contains(note, "像素预算") {
+		t.Errorf("超预算时必须如实说清是预算挡的（不许静默缩小），实际 %q", note)
+	}
+	if note := wallpaperSizeNote(wallpaperKindDesktop, 1000, 600); !strings.Contains(note, "992×576") {
+		t.Errorf("没对齐时要说出实际尺寸（1000→992、600→576），实际 %q", note)
 	}
 	if note := wallpaperSizeNote(wallpaperKindMobile, 0, 0); !strings.Contains(note, "第一档") {
 		t.Errorf("没填尺寸要说明走的是第一档，实际 %q", note)
@@ -107,10 +122,10 @@ func TestWallpaperSizeNoteTellsTheTruth(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("尺寸口径接口应当 200，实际 %d（%v）", code, body)
 	}
-	if int(body["w"].(float64)) != 2048 || int(body["h"].(float64)) != 1440 {
-		t.Errorf("3440×1440 该被夹成 2048×1440，实际 %v×%v", body["w"], body["h"])
+	if int(body["w"].(float64)) != 3424 || int(body["h"].(float64)) != 1440 {
+		t.Errorf("真机带鱼屏 3440×1440 该给 3424×1440（32 对齐），实际 %v×%v", body["w"], body["h"])
 	}
-	if note, _ := body["note"].(string); !strings.Contains(note, "上限") {
+	if note, _ := body["note"].(string); !strings.Contains(note, "对齐") {
 		t.Errorf("这一处也要如实说清为什么变了：%q", note)
 	}
 }
@@ -279,8 +294,10 @@ func TestWallpaperScreenEndpointReportsWhatWillBeMade(t *testing.T) {
 	if int(sc["fit_w"].(float64)) != wantW || int(sc["fit_h"].(float64)) != wantH {
 		t.Errorf("screen.fit 要是 %d×%d（界面直接填这个），实际 %v", wantW, wantH, sc)
 	}
-	if note, _ := sc["note"].(string); !strings.Contains(note, "上限") {
-		t.Errorf("要如实说清上限（不然用户以为能出 3440 宽）：%q", note)
+	// 上限抬到 4096 之后，真机 3440×1440 的屏幕**不再被夹**，但仍要如实说清"出的是 3424×1440 以及为什么"
+	// （32 对齐/像素预算这套口径就是用户最容易觉得"我写 3440 你怎么出别的"的地方）
+	if note, _ := sc["note"].(string); !strings.Contains(note, "3424×1440") || !strings.Contains(note, "32 对齐") {
+		t.Errorf("要如实说清实际出货尺寸与口径（不然用户以为能出 3440 宽）：%q", note)
 	}
 	lim, _ := body["limits"].(map[string]any)
 	if lim == nil || int(lim["max_side"].(float64)) != wallpaperMaxSide || int(lim["align"].(float64)) != wallpaperAlign {

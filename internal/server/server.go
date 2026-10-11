@@ -426,6 +426,7 @@ func (s *Server) registerAPI(m *http.ServeMux) {
 	m.HandleFunc("GET /api/wallpapers/desktop", s.handleWallpaperDesktop)
 	m.HandleFunc("POST /api/wallpapers/desktop/apply", s.handleWallpaperDesktopApply)
 	m.HandleFunc("POST /api/wallpapers/desktop/stop", s.handleWallpaperDesktopStop)
+	m.HandleFunc("POST /api/wallpapers/desktop/picks", s.handleWallpaperDesktopPicks)
 	m.HandleFunc("GET /api/novels/detail", s.handleNovelDetail)
 	m.HandleFunc("GET /api/novels/script", s.handleNovelScript)
 	m.HandleFunc("GET /api/novels/read", s.handleNovelRead)

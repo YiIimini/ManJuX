@@ -484,3 +484,221 @@ func TestWallpaperDesktopFrontendWiring(t *testing.T) {
 		t.Errorf("WallpapersView.vue 要显示 native_note（Windows 自己那套幻灯片可能把平台设的图换掉）")
 	}
 }
+
+// ── 轮换范围：只勾几张（2026-10-11 用户：「随机桌面壁纸用户不能选择喜欢的多个壁纸？」）──
+
+// TestDeskPicksFilterIsThreeState 判据喂**纯函数本体**（picks 空 ⇒ 全部；勾过的留下；勾过但没了 ⇒ 点名）。
+func TestDeskPicksFilterIsThreeState(t *testing.T) {
+	all := []wallpaperItem{
+		{File: `D:\wp\a.png`}, {File: `D:\wp\b.png`}, {File: `D:\wp\c.png`},
+	}
+	// ① 空 picks = 全部参与（与老行为一致 —— 不勾也能轮换）
+	if out, miss := deskPicksFilter(all, nil); len(out) != 3 || len(miss) != 0 {
+		t.Errorf("picks 为空应=全部参与（实得 %d 张、缺失 %v）", len(out), miss)
+	}
+	// ② 只勾两张 ⇒ 序列里只有这两张，且**按清单顺序**（不是按勾选顺序）
+	out, miss := deskPicksFilter(all, []string{`D:\wp\c.png`, `D:\wp\b.png`})
+	if len(out) != 2 || len(miss) != 0 {
+		t.Fatalf("勾两张应留下两张（实得 %d 张、缺失 %v）", len(out), miss)
+	}
+	if filepath.Base(out[0].File) != "b.png" || filepath.Base(out[1].File) != "c.png" {
+		t.Errorf("留下的顺序应按清单顺序（b 在 c 前），实得 %s、%s", filepath.Base(out[0].File), filepath.Base(out[1].File))
+	}
+	// ③ 勾过但盘上没了/已不属于这一类 ⇒ 进 missing（如实点名），**不许静默丢掉**
+	out, miss = deskPicksFilter(all, []string{`D:\wp\b.png`, `D:\wp\gone.png`})
+	if len(out) != 1 || filepath.Base(out[0].File) != "b.png" {
+		t.Errorf("只剩 b 在盘上，实得 %d 张", len(out))
+	}
+	if len(miss) != 1 || miss[0] != "gone.png" {
+		t.Errorf("丢了的那张必须点名（实得 %v）", miss)
+	}
+	// ④ 大小写/路径写法不同但同一张 ⇒ 认得出是同一张（Windows 盘符大小写不敏感）
+	if out2, _ := deskPicksFilter(all, []string{`d:\WP\B.PNG`}); len(out2) != 1 {
+		t.Errorf("同一张图的大小写写法应当认得出（实得 %d 张）", len(out2))
+	}
+}
+
+// TestWallpaperDesktopRotatesOnlyPicks 端到端：勾了两张 ⇒ 轮换**只在这两张里换**（跨过一整轮再断言），
+// 清空选择 ⇒ 改回全部（同样要跨过一整轮才看得见）。
+func TestWallpaperDesktopRotatesOnlyPicks(t *testing.T) {
+	s := newTestServer(t)
+	a := deskFixture(t, s, "wp-desktop-20261011-100000-aa.png", "2026-10-11T10:00:00Z")
+	b := deskFixture(t, s, "wp-desktop-20261011-110000-bb.png", "2026-10-11T11:00:00Z")
+	c := deskFixture(t, s, "wp-desktop-20261011-120000-cc.png", "2026-10-11T12:00:00Z")
+
+	var mu sync.Mutex
+	var set []string
+	s.setDesktopWallpaper = func(x string) error {
+		mu.Lock()
+		set = append(set, x)
+		mu.Unlock()
+		return nil
+	}
+	s.deskTick = 15 * time.Millisecond
+	setCount := func() int { mu.Lock(); defer mu.Unlock(); return len(set) }
+	snapshot := func() []string { mu.Lock(); defer mu.Unlock(); return append([]string{}, set...) }
+	waitFor := func(n int) bool {
+		deadline := time.Now().Add(6 * time.Second)
+		for time.Now().Before(deadline) {
+			if setCount() >= n {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return false
+	}
+
+	// 勾 b、c 两张（a 不勾）
+	code, body := doReq(t, s, "POST", "/api/wallpapers/desktop/picks", map[string]any{"files": []string{b, c}})
+	if code != 200 {
+		t.Fatalf("勾选应 200，实际 %d：%v", code, body)
+	}
+	if n, _ := body["picks_count"].(float64); int(n) != 2 {
+		t.Errorf("picks_count 应是 2，实际 %v", body["picks_count"])
+	}
+	code, body = doReq(t, s, "POST", "/api/wallpapers/desktop/apply",
+		map[string]any{"file": b, "mode": "slideshow", "interval_min": 30, "shuffle": false})
+	if code != 200 {
+		t.Fatalf("开轮换应 200，实际 %d：%v", code, body)
+	}
+	base := setCount()
+	// 跨过一整轮（只选了 2 张 ⇒ 至少换 4 次才算走完一轮 + 重排）
+	if !waitFor(base + 4) {
+		t.Fatalf("轮换没动起来（只记录了 %d 次）", setCount())
+	}
+	for _, got := range snapshot() {
+		if got == "" {
+			continue
+		}
+		if !sameFile(got, b) && !sameFile(got, c) {
+			t.Errorf("勾了 b/c 两张，轮换却设了没勾的 %s —— 用户的选择没生效", filepath.Base(got))
+		}
+	}
+	// 清空选择 ⇒ 回到全部（没勾过的 a 必须重新出现）
+	code, body = doReq(t, s, "POST", "/api/wallpapers/desktop/picks", map[string]any{"files": []string{}})
+	if code != 200 {
+		t.Fatalf("清空应 200，实际 %d：%v", code, body)
+	}
+	if n, _ := body["picks_count"].(float64); int(n) != 3 {
+		t.Errorf("清空后 picks_count 应回到 3（全部），实际 %v", body["picks_count"])
+	}
+	if !waitFor(setCount() + 4) {
+		t.Fatalf("清空后轮换没继续（只记录了 %d 次）", setCount())
+	}
+	sawA := false
+	for _, got := range snapshot() {
+		if sameFile(got, a) {
+			sawA = true
+		}
+	}
+	if !sawA {
+		t.Error("清空勾选后应当重新轮到没勾过的 a.png（跨过一整轮仍没出现 ⇒ 选择没被清掉）")
+	}
+	s.deskStopRotation()
+}
+
+// TestWallpaperDesktopPicksEndpointValidates 端点纪律：越界/手机分类/盘上没有 ⇒ 点名 403/400/404，
+// 且**一个字节都不许写状态**；正常 ⇒ 去重后落盘并回读。
+func TestWallpaperDesktopPicksEndpointValidates(t *testing.T) {
+	s := newTestServer(t)
+	desk := deskFixture(t, s, "wp-desktop-20261011-100000-aa.png", "2026-10-11T10:00:00Z")
+	mob := filepath.Join(s.wallpaperDirOf(wallpaperKindMobile), "wp-mobile-20261011-100000-mm.png")
+	writeFile(t, mob, []byte("PNG-FAKE-mobile"))
+
+	type pickCase struct {
+		name string
+		file string
+		want int
+		word string
+	}
+	cases := []pickCase{
+		{"手机分类的图不能进桌面轮换", mob, 400, "手机壁纸"},
+		{"库外路径", filepath.Join(t.TempDir(), "x.png"), 403, "不在壁纸的输出目录里"},
+		{"盘上没有", filepath.Join(s.wallpaperDirOf(wallpaperKindDesktop), "wp-desktop-20261011-999999-zz.png"), 404, "不在盘上"},
+	}
+	for _, c := range cases {
+		code, body := doReq(t, s, "POST", "/api/wallpapers/desktop/picks", map[string]any{"files": []string{c.file}})
+		if code != c.want {
+			t.Errorf("%s：应 %d，实际 %d（%v）", c.name, c.want, code, body)
+			continue
+		}
+		if msg := errTextOf(body); !strings.Contains(msg, c.word) {
+			t.Errorf("%s：错误里必须点名原因（想要 %q），实际 %q", c.name, c.word, msg)
+		}
+	}
+	if _, err := os.ReadFile(desktopStatePath(s.wallpaperRoot())); err == nil {
+		t.Error("校验失败时不许写状态 —— 界面会显示「已勾选」，实际什么都没变")
+	}
+	// 正常：同一张传两遍 ⇒ 去重成一张
+	code, body := doReq(t, s, "POST", "/api/wallpapers/desktop/picks", map[string]any{"files": []string{desk, desk}})
+	if code != 200 {
+		t.Fatalf("正常勾选应 200，实际 %d：%v", code, body)
+	}
+	if picks, _ := body["picks"].([]any); len(picks) != 1 {
+		t.Errorf("同一张传两遍要去重（实得 %v）", picks)
+	}
+	if note, _ := body["picks_note"].(string); !strings.Contains(note, "你勾选的 1 张") {
+		t.Errorf("状态里要说清轮换范围（实得 %q）", note)
+	}
+}
+
+// TestWallpaperDesktopPicksMissingIsReported 勾过的那张被删掉：状态里**点名**、序列里没有它，
+// 剩下还有一张时轮换照常（不空转）。
+func TestWallpaperDesktopPicksMissingIsReported(t *testing.T) {
+	s := newTestServer(t)
+	keep := deskFixture(t, s, "wp-desktop-20261011-100000-aa.png", "2026-10-11T10:00:00Z")
+	gone := deskFixture(t, s, "wp-desktop-20261011-110000-bb.png", "2026-10-11T11:00:00Z")
+	if code, body := doReq(t, s, "POST", "/api/wallpapers/desktop/picks",
+		map[string]any{"files": []string{keep, gone}}); code != 200 {
+		t.Fatalf("勾选应 200，实际 %d：%v", code, body)
+	}
+	if err := os.Remove(gone); err != nil {
+		t.Fatal(err)
+	}
+	code, body := doReq(t, s, "GET", "/api/wallpapers/desktop", nil)
+	if code != 200 {
+		t.Fatalf("状态应 200，实际 %d", code)
+	}
+	miss, _ := body["picks_missing"].([]any)
+	if len(miss) != 1 || miss[0] != filepath.Base(gone) {
+		t.Fatalf("被删的那张必须在 picks_missing 里点名（实得 %v）", miss)
+	}
+	if n, _ := body["picks_count"].(float64); int(n) != 1 {
+		t.Errorf("picks_count 只算还在盘上的（应 1，实得 %v）", body["picks_count"])
+	}
+	if note, _ := body["picks_note"].(string); !strings.Contains(note, filepath.Base(gone)) {
+		t.Errorf("说明里要点名哪张没了（实得 %q）", note)
+	}
+	seq := s.deskSeqBuild(1)
+	if len(seq) != 1 || !sameFile(seq[0], keep) {
+		t.Errorf("序列里只该剩还在盘上的那张（实得 %v）", seq)
+	}
+	if _, err := s.deskRotateOnce(); err != nil {
+		t.Errorf("还有一张可用时轮换不该失败：%v", err)
+	}
+}
+
+// TestWallpaperDesktopPicksFrontendWiring 前端接线（咬**标记**，不数文案里的词）：
+// 缩略图上要有勾选框、顶部要有"全选/清空"与轮换范围说明，store.js 里有那个新端点。
+func TestWallpaperDesktopPicksFrontendWiring(t *testing.T) {
+	vue := readFrontend(t, "src/views/WallpapersView.vue")
+	needles := []string{
+		`class="wp-pick"`,
+		`@change="togglePick(it)"`,
+		`@click.stop`,
+		`@click="pickAll"`,
+		`@click="pickNone"`,
+		"参与轮换",
+		"desk.picks_note",
+		"wallpaperDesktopPicks",
+	}
+	for _, n := range needles {
+		if !strings.Contains(vue, n) {
+			t.Errorf("前端缺 %q（勾选多张 / 全选 / 清空 / 范围说明 四件事之一）", n)
+		}
+	}
+	js := readFrontend(t, "src/store.js")
+	if !strings.Contains(js, "wallpaperDesktopPicks") {
+		t.Error("store.js 缺 wallpaperDesktopPicks —— 勾选存不下去，刷新就丢")
+	}
+}

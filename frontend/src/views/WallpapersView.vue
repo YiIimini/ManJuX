@@ -112,7 +112,16 @@
               <el-button size="small" :disabled="!desk.running" @click="stopDesk">停止轮换</el-button>
             </template>
           </div>
+          <div v-if="desk.supported !== false" class="flex items-center gap-2 flex-wrap mt-1">
+            <span class="timecode" style="font-size:10px" title="在缩略图右上角勾选＝只在这些里轮换；一个都不勾＝全部参与">参与轮换</span>
+            <span class="timecode" style="font-size:10px">
+              {{ desk.picks.length ? '已选 ' + desk.picks.length + ' / 共 ' + desk.count + ' 张' : '全部 ' + desk.count + ' 张' }}
+            </span>
+            <el-button size="small" text @click="pickAll">全选</el-button>
+            <el-button size="small" text :disabled="!desk.picks.length" @click="pickNone">清空</el-button>
+          </div>
           <div class="text-xs mt-1" style="color:var(--mx-text3)">{{ desk.note }}</div>
+          <div v-if="desk.picks_note" class="text-xs mt-1" style="color:var(--mx-text3)">{{ desk.picks_note }}</div>
           <div v-if="desk.native_note" class="text-xs mt-1" style="color:var(--mx-warn, #d19a66)">{{ desk.native_note }}</div>
         </div>
         <div class="flex-1 overflow-y-auto tree-scroll">
@@ -121,12 +130,17 @@
           </div>
           <div class="wp-grid">
             <div v-for="it in items" :key="it.file" class="wp-item">
-              <img :src="imgURL(it.file)" :alt="it.prompt"
-                   :title="`${it.w}×${it.h} · seed ${it.seed}\n${it.prompt}`"
-                   @click="view(it)" />
+              <div class="wp-thumb">
+                <img :src="imgURL(it.file)" :alt="it.prompt"
+                     :title="`${it.w}×${it.h} · seed ${it.seed}\n${it.prompt}`"
+                     @click="view(it)" />
+                <span v-if="isCurrent(it)" class="wp-badge" title="系统当前的桌面壁纸就是这张">系统壁纸</span>
+                <el-checkbox v-if="kind === 'desktop'" class="wp-pick" :model-value="picked(it)"
+                             title="勾上＝轮换只在这些里换（可多选；一个都不勾＝全部）"
+                             @change="togglePick(it)" @click.stop />
+              </div>
               <div class="flex items-center gap-2 mt-1">
                 <span class="timecode" style="font-size:10px">{{ it.w }}×{{ it.h }}</span>
-                <span v-if="isCurrent(it)" class="wp-badge" title="系统当前的桌面壁纸就是这张">系统壁纸</span>
                 <div class="flex-1"></div>
                 <el-button v-if="kind === 'desktop'" size="small" text
                            title="把这张立刻设成当前系统桌面壁纸（单图）"
@@ -178,6 +192,8 @@ const desk = ref({
   supported: true, mode: 'single', running: false, file: '', current: '',
   current_in_library: false, current_name: '', interval_min: 30, shuffle: false,
   order_label: '', note: '', native_note: '',
+  // 轮换范围（后端唯一出处）：picks 为空 = 全部参与
+  picks: [], picks_count: 0, picks_missing: [], picks_note: '', count: 0,
 })
 const deskMin = ref(30)
 const deskShuffle = ref(false)
@@ -375,6 +391,34 @@ async function stopDesk() {
     desk.value = await api.wallpaperDesktopStop()
     ElMessage.success('已停止轮换（系统停在最后一张）')
   } catch (e) { ElMessage.error(e.message) }
+
+// 轮换范围（后端唯一出处：picks 为空 = 全部参与）：
+// 缩略图右上角那个勾选框就是"只在我勾的这几张里换"的入口 —— 勾选即写后端，立刻生效。
+function picked(it) {
+  return (desk.value.picks || []).some(p => baseName(p).toLowerCase() === baseName(it.file).toLowerCase())
+}
+
+async function savePicks(files) {
+  try {
+    desk.value = await api.wallpaperDesktopPicks(files)
+    ElMessage.success(desk.value.picks.length
+      ? `轮换范围：已选 ${desk.value.picks.length} 张`
+      : '轮换范围：全部桌面壁纸')
+  } catch (e) { ElMessage.error(e.message) }
+}
+
+async function togglePick(it) {
+  const rest = (desk.value.picks || []).filter(p => baseName(p).toLowerCase() !== baseName(it.file).toLowerCase())
+  if (rest.length === (desk.value.picks || []).length) rest.push(it.file) // 原来没勾 ⇒ 现在勾上
+  await savePicks(rest)
+}
+
+async function pickAll() {
+  if (!items.value.length) { ElMessage.warning('这一类还没有壁纸'); return }
+  await savePicks(items.value.map(x => x.file))
+}
+
+async function pickNone() { await savePicks([]) }
 }
 
 function view(it) {
@@ -418,12 +462,34 @@ defineExpose({ load })
   background: var(--mx-bg2, #14141a);
 }
 
-/* 「当前系统壁纸」小角标 */
+/* 「当前系统壁纸」角标：**压在缩略图封面上**（2026-10-11 用户：「系统壁纸标签直接放图片封面上」）。
+   原来它跟尺寸、按钮挤在同一行的 flex 里，窄卡片上会被挤成一字一行（看着像竖排字）—— 现在脱离文档流。 */
+.wp-thumb {
+  position: relative;
+  line-height: 0;
+}
 .wp-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
   font-size: 10px;
-  padding: 0 4px;
+  line-height: 16px;
+  padding: 0 5px;
   border-radius: 3px;
   color: var(--mx-accent, #7aa2f7);
   border: 1px solid var(--mx-accent, #7aa2f7);
+  background: var(--mx-bg1, #0b0b0e);
+  opacity: 0.92;
+}
+
+/* 轮换范围的勾选框：同样压在封面上（右上角），不占布局宽度 */
+.wp-pick {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  padding: 2px;
+  border-radius: 3px;
+  background: var(--mx-bg1, #0b0b0e);
+  opacity: 0.9;
 }
 </style>
