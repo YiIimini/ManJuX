@@ -482,6 +482,12 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 		// 每个角色应只占 1 张),二是出问题时能立刻判断是不是参考图少了。
 		c.emit(proj.ID, PhaseRender, shot.ID, "info", base, "镜头 %d/%d 渲染开始(%s,%ds,seed=%d,参考图 %d 张:%s)",
 			shot.ID, len(shots), mode, shot.Duration, seed, len(refs), refComposition(refs))
+		if n := trainRangeNote(wantFrames, seamHere); n != "" {
+			// 训练区间之外的提交**必须如实说**（这是"画面不如意"的确定性根因之一），
+			// 但只在**真的要渲这一镜**时播报 —— 断点续跑跳过的镜头不重复刷屏（与上面 seamNote 同一纪律）。
+			// seamHere 要一起传：接缝那一镜多渲 22 帧 pinned 头，喂给模型的长度因此不同。
+			c.emit(proj.ID, PhaseRender, shot.ID, "warn", base, "%s", n)
+		}
 		if seamNote != "" {
 			// 断开**必须如实播报**(甲3-④):不许静默降级 —— 用户要能从日志里看出
 			// "这一镜为什么没接",而不是只见"有的接了、有的没接"。
@@ -884,6 +890,41 @@ const planShortenSeconds = 6
 // 收成一个函数是因为它有两个消费者:提交给引擎的 Job.Length,以及"这个已有产物还能
 // 不能复用"的判据。以前只有前者,后者缺位 —— 于是"改了时长却跳过重渲"能一路走到成片。
 func shotFrames(shot project.Shot) int { return shot.Duration * 24 }
+
+// trainRangeNote 这一镜**真正喂给模型的帧数**落在 H3 训练区间之外时，给用户的一句话（空 = 在区间内）。
+//
+// 【为什么要有（2026-10-11，用户：「渲染出来的视频很不如意」）】官方节点把训练区间标注成
+// 124–362 帧（5.17–15.08 秒）。计划 4 秒 ⇒ 对齐到 17k+5 网格后只喂 **107 帧 = 4.46 秒**，
+// **不在训练区间里** —— 这类镜的通病是「首帧正常、中后段散/糊」。平台不能把窗口下限抬上去
+// （技能端旧包整批 4 秒镜，抬了就是整本拒收；见 engine.H3TrainMinFrames 的说明），
+// 所以判据只在**这里如实播报**：用户至少知道「这一镜为什么看起来崩」，并且知道该拉到多少秒。
+//
+// 判据用 `comfyengine.SeamRenderLength`（**唯一出处**：它内部就是 `engine.AlignLength`）：
+// `shotFrames` 只给「计划帧数」，真正喂给模型的是对齐后的值 —— 拿计划值判会**漏报**
+// （4.0s 的 96 帧对齐后是 107，两者都低于下限，但 5.0s 的 120 帧对齐后是 **124**，
+// 正好在区间内、不该报）。接缝那一镜喂的是 AlignLength(L+22)（多渲 22 帧 pinned 头、
+// 渲完再裁掉）⇒ 它反而**够长**：这里不许自己再算一遍那个 +22（两处公式迟早分叉）。
+//
+// 云端引擎（h3api）的抬秒是另一条口径（4 秒抬成 5 秒 = 120 帧，仍低于下限）：**判定不变**，
+// 只是数字差一档，所以这里按平台的 17k+5 网格说，不去冒充云端那个数。
+func trainRangeNote(plannedFrames int, seamHere bool) string {
+	if plannedFrames <= 0 {
+		return ""
+	}
+	submit := comfyengine.SeamRenderLength(plannedFrames, seamHere)
+	if submit < engine.H3TrainMinFrames {
+		return fmt.Sprintf("⚠ 这一镜太短：喂给模型的只有 %d 帧(%.2fs)，低于 H3 的训练下限 %d 帧(%.2fs) —— "+
+			"这一类镜画面容易在中后段散/糊；把这一镜拉到 %.1f 秒以上（对齐后正好 %d 帧），或拆成两镜",
+			submit, float64(submit)/24, engine.H3TrainMinFrames, float64(engine.H3TrainMinFrames)/24,
+			float64(engine.H3TrainMinFrames)/24, engine.H3TrainMinFrames)
+	}
+	if submit > engine.H3TrainMaxFrames {
+		return fmt.Sprintf("⚠ 这一镜太长：喂给模型的有 %d 帧(%.2fs)，超过 H3 的训练上限 %d 帧(%.2fs) —— "+
+			"长片段的尾部是崩坏高发区，建议拆成两镜",
+			submit, float64(submit)/24, engine.H3TrainMaxFrames, float64(engine.H3TrainMaxFrames)/24)
+	}
+	return ""
+}
 
 // shotFrameRecord 本镜的**帧数记账**(乙6):写进清单的长度 + 给用户看的「计划 / 实际」记录。
 //

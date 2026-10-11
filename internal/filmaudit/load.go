@@ -31,7 +31,7 @@ type ProbeFn func(path string) (float64, error)
 type TrackProbeFn func(path string) (video, audio float64, ok bool)
 
 // LoadEpisode 读一集目录（形如 `data/projects/<书>/<书>·第NN集·xxx/`）。
-func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn) (Input, error) {
+func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn, luma LumaFn) (Input, error) {
 	var in Input
 	in.ID = filepath.Base(epDir)
 	raw, err := os.ReadFile(filepath.Join(epDir, "plan", "plan.json"))
@@ -50,6 +50,7 @@ func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn) (Input, error
 
 	in.Durations = make([]float64, len(plan.Shots))
 	in.ASRSpans = make([][]asr.Segment, len(plan.Shots))
+	in.Luma = make([]ShotLuma, len(plan.Shots))
 	for i, sh := range plan.Shots {
 		clip := filepath.Join(epDir, "clips", fmt.Sprintf("shot_%03d.mp4", sh.ID))
 		if _, serr := os.Stat(clip); serr != nil {
@@ -59,6 +60,13 @@ func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn) (Input, error
 		if probe != nil {
 			if d, perr := probe(clip); perr == nil && d > 0 {
 				in.Durations[i] = d
+			}
+		}
+		// 逐帧亮度（镜内闪烁 / 同场相邻镜亮度差两项判据的输入）。
+		// 量尺为 nil（没 ffmpeg）⇒ 留零值，**这两项就不判**（三态：没验过 ≠ 合格）。
+		if luma != nil {
+			if L, lerr := luma(clip); lerr == nil {
+				in.Luma[i] = L
 			}
 		}
 		if res, aerr := asr.Parse(ASRSidecarPath(clip)); aerr == nil && res != nil {

@@ -63,6 +63,32 @@ type BlackRun struct {
 // Dur 这段黑的时长。
 func (r BlackRun) Dur() float64 { return r.End - r.Start }
 
+// BlackDetectFilter blackdetect 的滤镜串（**唯一出处**）。
+//
+// 【为什么要单列（2026-10-11）】渲染期的黑闪切除（DetectBlackRuns）与成片体检的「黑场」判据
+// 必须用**同一个滤镜**：两处各写一遍，迟早一严一松 —— 于是出现「渲染时判没黑、体检却说有黑」
+// （或反过来），用户不知道该信哪一个。
+func BlackDetectFilter() string {
+	return fmt.Sprintf("blackdetect=d=%.3f:pix_th=%.2f:pic_th=%.2f", blackMinDur, blackPixTh, blackPicTh)
+}
+
+// BlackRunVerdict 这段黑在**平台口径**下算不算「渲染期会被自动剪掉的故障黑闪」；第二返回值是给人看的理由。
+//
+// 【为什么要有（2026-10-11 真机）】真机《星纪山海：我在废土养神兽》第01集 16 镜里，
+// 镜 11 开头 `black_start:0 black_end:0.541667`、镜 15 开头 0.583333s 是**纯黑**；
+// 它们都比 maxBlackRunSec（0.5s）长 ⇒ 渲染期的黑闪切除**按设计不碰**（宁可漏不可误剪），
+// 只在渲染日志里留一句 warn。而成片体检此前一处都不提这件事 —— 「开头半秒黑」只能等用户自己看见。
+// 这个函数把**同一条口径**（阈值就取自本文件）交给体检，让它如实播报并说清为什么没被剪。
+func BlackRunVerdict(r BlackRun) (bool, string) {
+	if r.Dur() < blackMinDur {
+		return false, fmt.Sprintf("短于 %.0f 毫秒的抖动，平台本来就不碰", blackMinDur*1000)
+	}
+	if r.Dur() > maxBlackRunSec {
+		return false, fmt.Sprintf("比平台自动剪的短黑闪上限（%.1f 秒）还长，所以它**留在成片里**", maxBlackRunSec)
+	}
+	return true, fmt.Sprintf("单段够短（≤%.1f 秒），渲染期平台本该剪掉它", maxBlackRunSec)
+}
+
 // blackDetectRe 解析 ffmpeg `blackdetect` 的日志行。
 var blackDetectRe = regexp.MustCompile(`black_start:([0-9.]+)\s+black_end:([0-9.]+)\s+black_duration:([0-9.]+)`)
 
@@ -128,7 +154,7 @@ func DetectBlackRuns(ctx context.Context, f *ff.FF, path string) ([]BlackRun, er
 		return nil, fmt.Errorf("ffmpeg 不可用")
 	}
 	out, err := f.Run(ctx, "-hide_banner", "-i", path,
-		"-vf", fmt.Sprintf("blackdetect=d=%.3f:pix_th=%.2f:pic_th=%.2f", blackMinDur, blackPixTh, blackPicTh),
+		"-vf", BlackDetectFilter(),
 		"-an", "-f", "null", os.DevNull)
 	if err != nil {
 		// blackdetect 只写日志，退出码非 0 也可能已经给全了日志；解析得到就不算失败。

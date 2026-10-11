@@ -28,19 +28,19 @@ func readEngineSource(t *testing.T) string {
 func TestSeamRenderLength(t *testing.T) {
 	const jobLen = 120 // 5 秒 @24fps
 
-	plain := seamRenderLength(jobLen, false)
+	plain := SeamRenderLength(jobLen, false)
 	if plain != engine.AlignLength(jobLen) {
 		t.Fatalf("非接缝时不该做补偿:%d", plain)
 	}
-	if frames := seamRenderLength(jobLen, true); frames <= plain {
+	if frames := SeamRenderLength(jobLen, true); frames <= plain {
 		t.Fatalf("接缝生效时必须把被裁掉的头补回来:%d vs %d", frames, plain)
 	}
 	// 补偿量必须恰好覆盖钉入的帧数(再多就是多渲,再少就会短)
-	if got := seamRenderLength(jobLen, true) - plain; got < seamHeadFrames {
+	if got := SeamRenderLength(jobLen, true) - plain; got < seamHeadFrames {
 		t.Errorf("补偿量 %d 帧 < 钉入的 %d 帧 —— 成片会短", got, seamHeadFrames)
 	}
 	// 降级(seamActive=false)与"从未开接缝"必须完全一致:这正是旧实现漏掉的那条路径
-	if seamRenderLength(jobLen, false) != engine.AlignLength(jobLen) {
+	if SeamRenderLength(jobLen, false) != engine.AlignLength(jobLen) {
 		t.Error("降级后的帧数必须回到普通渲染的算法")
 	}
 }
@@ -50,7 +50,7 @@ func TestSeamRenderLength(t *testing.T) {
 // 2026-09-26 渲染管线审查指出:注释原先承诺"保证成片时长不缩水",而实际成片时长会跟
 // 普通渲染差 −5 或 +12 帧(取决于 L mod 17);既有判据只断言"补偿量 >= 22",于是
 // 这类偏差既不会被测出来,也不会被人看出来。**偏差本身消不掉**(网格间距 17 < 钉入的
-// 22 帧,而提交长度必须落在 17k+5 上 —— 见 seamRenderLength 的说明),所以这里改为
+// 22 帧,而提交长度必须落在 17k+5 上 —— 见 SeamRenderLength 的说明),所以这里改为
 // 把真实算术与"提交值必须落在网格上"这条硬约束一起钉死:
 //
 //	提交长度 = AlignLength(L+22) ∈ 17k+5   ← 提交值必须合法,否则 VAE 只按更低的
@@ -69,14 +69,14 @@ func TestSeamRenderLengthStaysOnGrid(t *testing.T) {
 		{5, 39},
 	}
 	for _, c := range cases {
-		submit := seamRenderLength(c.jobLen, true)
+		submit := SeamRenderLength(c.jobLen, true)
 		if submit != c.wantSubmit {
-			t.Errorf("seamRenderLength(%d, true) = %d,期望 %d", c.jobLen, submit, c.wantSubmit)
+			t.Errorf("SeamRenderLength(%d, true) = %d,期望 %d", c.jobLen, submit, c.wantSubmit)
 		}
 		if (submit-5)%17 != 0 {
 			t.Errorf("提交给 H3 的帧数 %d 不在 17k+5 网格上 —— VAE 会按更低的网格点编码,成片反而更短", submit)
 		}
-		plain := seamRenderLength(c.jobLen, false)
+		plain := SeamRenderLength(c.jobLen, false)
 		if plain != engine.AlignLength(c.jobLen) {
 			t.Errorf("非接缝长度应恒为 AlignLength(%d)=%d,实际 %d", c.jobLen, engine.AlignLength(c.jobLen), plain)
 		}
@@ -125,7 +125,7 @@ func TestSeamHeadFramesMatchesGraph(t *testing.T) {
 // 这类"顺序错位"没有别的观测面。
 func TestSeamCompensationOrderIsBeforeCondCache(t *testing.T) {
 	raw := readEngineSource(t)
-	seam := strings.Index(raw, "seamRenderLength(job.Length")
+	seam := strings.Index(raw, "SeamRenderLength(job.Length")
 	cache := strings.Index(raw, "cacheName := condCacheName")
 	if seam < 0 || cache < 0 {
 		t.Fatal("源码里找不到判据锚点(函数被改名了?)")

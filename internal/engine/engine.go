@@ -217,6 +217,23 @@ func (r *Registry) Names() []string {
 	return out
 }
 
+// H3TrainMinFrames / H3TrainMaxFrames H3 的**训练帧数区间**（官方节点自己写的那个区间）。
+//
+// 【为什么单列这两个数（2026-10-11，用户：「渲染出来的视频很不如意」）】ComfyUI 本体里的
+// `nodes_minimax_h3.py` 把训练区间标注成 **124–362 帧（5.17–15.08 秒 @24fps）**。提交长度
+// **低于 124 帧**的镜（例如计划 4 秒 ⇒ AlignLength(96) = **107 帧 = 4.46 秒**）不在训练区间内，
+// 实测这类镜的画面在中后段更容易散（首帧正常、越走越糊/结构崩）。
+//
+// 平台**不能**把渲染窗口的下限从 4 秒抬上去：技能端旧包里有整批 4 秒镜（真产物夹具
+// `internal/project/testdata/skill-produced-plan-ep01.json` 有 35 个），抬上去等于整本拒收 ——
+// 那是契约版本级改动，要两侧同改同提交（详见 `internal/director/dialogue.go` 的说明；
+// 生成侧另有 `GenMinShotSeconds = 5` 兜着新包）。所以这条只能**如实播报**：
+// 判据与播报点见 `internal/pipeline` 的 `trainRangeNote`（用 AlignLength 算**真正提交**的帧数）。
+const (
+	H3TrainMinFrames = 124
+	H3TrainMaxFrames = 362
+)
+
 // AlignLength 将期望帧数对齐到 H3 的 17k+5 网格(Go 负数取模须归一)。
 func AlignLength(base int) int {
 	if base < 5 {

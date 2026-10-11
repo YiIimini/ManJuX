@@ -40,6 +40,9 @@ func main() {
 
 	probe := probeFn(*ffmpeg, *ffprobe)
 	tracks := trackProbeFn(*ffmpeg, *ffprobe)
+	// 逐帧亮度量尺（镜内闪烁 / 同场相邻镜亮度差）：找不到 ffmpeg ⇒ nil，
+	// 那两项就**不判**（不是"合格"，见下面的如实说明）。
+	luma := lumaFn(*ffmpeg, *ffprobe)
 	eps, err := episodes(filepath.Join(*dataDir, "projects"), *project, *ep)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "扫描项目失败：%v\n", err)
@@ -51,7 +54,7 @@ func main() {
 	}
 	anyFail := false
 	for _, dir := range eps {
-		in, inErr := filmaudit.LoadEpisode(dir, probe, tracks)
+		in, inErr := filmaudit.LoadEpisode(dir, probe, tracks, luma)
 		if inErr != nil {
 			fmt.Printf("⛔ %s：%v\n", filepath.Base(dir), inErr)
 			anyFail = true
@@ -65,6 +68,10 @@ func main() {
 				continue
 			}
 			fmt.Printf("  %s [%s] %s\n", filmaudit.LevelEmoji(f.Level), f.Where, f.Msg)
+		}
+		if len(in.Luma) == 0 {
+			// 三态纪律：没量到要**当场说一句**，别让用户以为"这集画面亮度没问题"。
+			fmt.Println("  · [luma] 画面亮度两项这次**没量**（这台机器没找到可用的 ffmpeg）—— 不算合格，也不算不合格")
 		}
 		if fail > 0 {
 			anyFail = true
@@ -97,6 +104,15 @@ func probeFn(ffmpegPath, ffprobePath string) filmaudit.ProbeFn {
 		}
 		return info.Duration, nil
 	}
+}
+
+// lumaFn 造一个"逐帧亮度"量尺（找不到 ffmpeg 就返回 nil —— 亮度那两项会跳过并**当场说明**）。
+func lumaFn(ffmpegPath, ffprobePath string) filmaudit.LumaFn {
+	f, err := ff.New(ffmpegPath, ffprobePath)
+	if err != nil || f == nil || f.Ffmpeg == "" {
+		return nil
+	}
+	return filmaudit.LumaFromFFmpeg(f.Ffmpeg)
 }
 
 // trackProbeFn 造一个"两条轨各自时长"的探针（2026-10-09 真机 P0：画面被截断、音轨完好时

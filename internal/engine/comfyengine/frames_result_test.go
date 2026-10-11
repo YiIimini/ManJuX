@@ -37,7 +37,7 @@ func TestProducedFramesMatchesSubmittedGridAndTrim(t *testing.T) {
 		{
 			name:      "计划 96 帧、接缝 → 124−22 = 102",
 			jobLength: 96, seamActive: true, want: 102,
-			why: "接缝要多渲 22 帧 pinned 头,再被 Trim 裁掉;成片因此比普通渲染短 5 帧(网格决定,见 seamRenderLength)",
+			why: "接缝要多渲 22 帧 pinned 头,再被 Trim 裁掉;成片因此比普通渲染短 5 帧(网格决定,见 SeamRenderLength)",
 		},
 		{
 			name:      "计划 120 帧、接缝 → 158−22 = 136",

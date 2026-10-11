@@ -52,6 +52,13 @@ func (c *Coordinator) auditProducedFilm(ctx context.Context, proj *project.Proje
 			}
 		}
 	}
+	// 逐帧亮度（镜内闪烁 / 同场相邻镜亮度差）：量尺来自本机 ffmpeg；没有就**不判**，并在下面如实说明。
+	lumaFn := filmaudit.LumaFn(nil)
+	if c.ff != nil && c.ff.Ffmpeg != "" {
+		lumaFn = filmaudit.LumaFromFFmpeg(c.ff.Ffmpeg)
+	}
+	var lumaMissing []int
+	in.Luma, lumaMissing = filmaudit.MeasureLuma(lumaFn, clips)
 	if res.SRTPath != "" {
 		if b, err := os.ReadFile(res.SRTPath); err == nil {
 			in.Cues = filmaudit.ParseSRT(string(b))
@@ -68,9 +75,22 @@ func (c *Coordinator) auditProducedFilm(ctx context.Context, proj *project.Proje
 
 	fs := filmaudit.Audit(in)
 	fail, warn, info := filmaudit.CountLevels(fs)
+	// **三态如实播报**（没量到 ≠ 合格）：量尺没有 ⇒ 说一句；量到了但有几镜失败 ⇒ 点名那几镜。
+	// 黑场（blackdetect）与亮度是**同一次解码**拿到的，所以"没量到"这一句把两项一起说清。
+	switch {
+	case lumaFn == nil:
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
+			"· 画面亮度与黑场这次**没量**（没有可用的 ffmpeg）—— 不算合格，也不算不合格")
+	case in.Luma == nil:
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
+			"· 画面亮度与黑场这次**没量**（%d 镜一个都没量到，通常是解码失败）—— 不算合格，也不算不合格", len(lumaMissing))
+	case len(lumaMissing) > 0:
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
+			"· 有 %d 镜的亮度与黑场没量到（这几镜的判据跳过）：%s —— 没量到不算合格", len(lumaMissing), shotIDsText(lumaMissing))
+	}
 	if fail+warn == 0 {
 		c.emit(proj.ID, PhaseAssemble, 0, "success", 100,
-			"✔ 开演前体检通过：字幕落点、说话人、接缝、结构四类都干净（%d 条如实告知）", info)
+			"✔ 开演前体检通过：字幕落点、说话人、接缝、画面亮度与黑场、结构五类都干净（%d 条如实告知）", info)
 		return
 	}
 	c.emit(proj.ID, PhaseAssemble, 0, "warn", 100,

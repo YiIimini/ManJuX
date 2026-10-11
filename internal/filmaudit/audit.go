@@ -41,6 +41,9 @@ type Input struct {
 	// Durations / ASRSpans 与 plan.Shots 同序；缺失项留零值/nil。
 	Durations []float64
 	ASRSpans  [][]asr.Segment
+	// Luma 逐镜的**亮度画像**（与 plan.Shots 同序；缺失项/没量到的留零值）——
+	// 由调用方用 filmaudit.LumaFromFFmpeg 量（这一层不自己解码，保持"读盘即可判"的形状）。
+	Luma []ShotLuma
 	// Cues 已合成时的字幕（没合过片就留空 —— 字幕检查会自动跳过并说明）。
 	Cues []Cue
 	// Transition / FadeSec 项目参数（判"这份成片是按哪种转场行为合的"）。
@@ -172,6 +175,7 @@ func Audit(in Input) []Finding {
 
 	// ── C. 接缝：同场连续动作有几处 ──────────────────────────────────────────────
 	out = append(out, seamFindings(p, in)...)
+	out = append(out, lumaFindings(in)...)
 
 	// ── D. 结构：把既有判据汇总进同一份报告 ────────────────────────────────────
 	//

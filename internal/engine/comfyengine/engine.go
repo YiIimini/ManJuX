@@ -283,7 +283,7 @@ func (e *Engine) ClearQueue(ctx context.Context) {
 	e.client().ClearPending(ctx)
 }
 
-// seamRenderLength 本次提交给引擎的帧数。
+// SeamRenderLength 本次提交给引擎的帧数。
 //
 // 接缝模式会把上一镜的尾部 22 帧钉在本镜头部,再由 MiniMaxH3MotionContextTrim
 // 裁掉 —— 所以渲染长度要**加回**这 22 帧,否则成片比计划短。
@@ -306,7 +306,7 @@ func (e *Engine) ClearQueue(ctx context.Context) {
 // 了这条公式与后果)—— 于是模型实际只按 AlignLength(L) 帧出图,再裁掉 22 帧头,
 // 成片反而更短(上例会变成 85 帧)。所以这里保持"提交值落在网格上"这一硬约束,
 // 并把差异如实记在此处,不再宣称时长不缩水;真正要对齐时长应在成片侧处理。
-func seamRenderLength(jobLength int, seamActive bool) int {
+func SeamRenderLength(jobLength int, seamActive bool) int {
 	if seamActive {
 		return engine.AlignLength(jobLength + seamHeadFrames)
 	}
@@ -327,7 +327,7 @@ const seamHeadFrames = 22
 // 上层(镜头清单、时长对账、界面)此前只能拿计划帧数当实际值,于是"云端把 4 秒抬成 5 秒"
 // 这类改写对比不出来(乙6)。这里把它做成**唯一实现**,由 Render 回填 engine.Result。
 func producedFrames(jobLength int, seamActive bool) int {
-	n := seamRenderLength(jobLength, seamActive)
+	n := SeamRenderLength(jobLength, seamActive)
 	if seamActive {
 		n -= seamHeadFrames
 	}
@@ -380,10 +380,10 @@ func (e *Engine) Render(ctx context.Context, job engine.Job) (*engine.Result, er
 		}
 	}
 	// 帧数(含接缝补偿):pinned 头(22 帧)会被 Trim 裁掉,接缝生效时须加回,
-	// 否则成片会比计划短 22 帧;**降级时必须不加**(见 seamRenderLength 的说明:
+	// 否则成片会比计划短 22 帧;**降级时必须不加**(见 SeamRenderLength 的说明:
 	// 网格量化后成片与普通渲染仍差 −5/+12 帧,那不是漏补,是 17k+5 网格决定的)。
 	seamActive := job.Seam && job.PrevShot > 0
-	length := seamRenderLength(job.Length, seamActive)
+	length := SeamRenderLength(job.Length, seamActive)
 	w, h := engine.SnapCanvas(job.Width, job.Height)
 
 	// 参考图上传(ComfyUI input 目录)
