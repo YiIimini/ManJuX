@@ -38,3 +38,6 @@ desktop.ini
 
 # 运行时状态：IM 桥插件每次运行都会重写，且含本机绝对路径
 out/pi-im-bridge/status.json
+
+# 内部编码约定（给 AI 协作用，含本机环境细节）—— 本地保留，不进公开仓库
+AGENTS.md
