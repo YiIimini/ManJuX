@@ -35,3 +35,6 @@ desktop.ini
 *.bak
 ~$*
 .pnpm-store/
+
+# 运行时状态：IM 桥插件每次运行都会重写，且含本机绝对路径
+out/pi-im-bridge/status.json
