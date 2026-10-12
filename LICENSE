@@ -1,0 +1,35 @@
+# 版权与授权声明
+
+版权所有 © 2026 **YiIimini**。保留所有权利（All rights reserved）。
+
+ManJuX（本仓库，以下简称"本项目"）的源代码在本仓库公开，**仅为查看、学习与评估之用**。
+除下面明确允许的行为外，未经作者事先书面许可，不得：
+
+- 复制、修改、再分发本项目的全部或部分源代码；
+- 将本项目或其衍生作品用于任何商业用途（含对外销售、付费服务、SaaS 托管）；
+- 以本项目为基础提供对外产品，或移除、隐藏本声明与署名。
+
+**明确允许（无需另行申请）：**
+
+- 通过 GitHub 的 Fork 功能在本平台内查看与派生，用于学习、评论、提交 Issue 或 Pull Request；
+- 克隆仓库并在本地搭建、运行、评估本项目（含个人非商业用途的研究与测试）；
+- 在文章、评测、视频、课程中引用本项目，并注明出处与本仓库链接
+  （<https://github.com/YiIimini/ManJuX>）。
+
+**第三方组件**：本仓库内 `third_party/` 下的代码与资源（如 `go-webview2`，MIT / ISC）仍遵循
+其自带许可（见各目录下的 `LICENSE` 文件），不受本声明影响。本项目依赖的第三方库、模型与
+服务（ComfyUI、MiniMax-H3、ffmpeg、DeepSeek 等）同样各自遵循其许可与服务条款。
+
+**商业授权 / 其它用途**：请通过本仓库的 Issue 联系作者。
+
+---
+
+Copyright © 2026 YiIimini. All rights reserved.
+
+This repository is published for **viewing, learning and evaluation only**. No permission is
+granted to copy, modify, redistribute, or use it commercially (including paid services or SaaS
+hosting) without the author's prior written consent, except for the explicit allowances above
+(forking on GitHub, local evaluation, and quoting with attribution).
+
+Third-party components under `third_party/` remain under their own licenses (see each
+subdirectory's `LICENSE`), and are not affected by this notice.
