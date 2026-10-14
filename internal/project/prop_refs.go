@@ -511,6 +511,21 @@ func HealPlan(plan *Plan) HealResult {
 	// 声线兜底排在并卡之后：并掉的卡不必再补嗓子（不然播报里会多出几个已不存在的名字）。
 	// 它只填空的，已有 voice 的卡一个字不动；同名同声、异名不同声（见 voice_defaults.go）。
 	voices, voiceNames := FillMissingVoices(plan)
+	// **配乐段改写必须排在补台词标签之前**（2026-10-14 真机咬出，用户「角色完全没有配音了」）：
+	// `FillMissingDialogueTags` 把补出来的 `<d>` **追加到正文末尾**，而 `non_diegetic_music:`
+	// 通常正是六段式的**最后一段** ⇒ 补出来的那几句**落进了「配乐段」里**；紧接着
+	// `EnsureMusicNA` 把配乐段**整段**换成 `N/A`（`musicSectionToNA`：段尾 = 下一个段名或正文结束），
+	// 于是**刚补的台词连同尾部一起被删掉**。
+	//
+	// 真机取证（`人间收件箱·第01集·雨夜叩门`，12 镜里 11 镜有台词）：盘上 `plan.json` 的
+	// `h3_prompt` **一个 `<d>` 都没有**，而 `HealPlan` 自称 `Dialogue=11`（补了 11 镜）——
+	// 补了又被删。提交版提示词因此同时出现「正文里有 `<d>`」与「this shot has NO spoken
+	// dialogue at all」，模型照后者办 ⇒ 成片整集**没有人声**（三镜实测 mean_volume −21.6/−27.7/−22.9 dB，
+	// 有环境声、无台词）。
+	//
+	// 顺序反过来（先改写配乐、再补台词）之后，补出来的尾巴落在最后一段**之后**，没人再动它。
+	// 判据见 heal_dialogue_tail_test.go（端到端断 `HealPlan` 之后 `<d>` 数 ≥ 计划句数）。
+	musicNA := EnsureMusicNA(plan)
 	// 台词通道：补缺标签 → 对齐到 dialogue（顺序不能反，理由见下面 HealResult 的注释）。
 	dialogueFilled := FillMissingDialogueTags(plan)
 	alignTags := AlignDialogueTags(plan)
@@ -544,7 +559,7 @@ func HealPlan(plan *Plan) HealResult {
 		Dialogue:          dialogueFilled,
 		AlignTags:         alignTags,
 		Voiceover:         FillVoiceoverAssets(plan),
-		MusicNA:           EnsureMusicNA(plan),
+		MusicNA:           musicNA,
 		SpeakerOSMarked:   osMarked,
 		SpeakerOSCleared:  osCleared,
 		// 小镜头结构回填：排在最后（它只读正文，与上面各项互不依赖），
