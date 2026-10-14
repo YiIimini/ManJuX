@@ -185,3 +185,36 @@ func isNA(s string) bool {
 	}
 	return false
 }
+
+// NormalizeFirstShotTimestamp 把首镜里那个**多余的时间戳**去掉：`[Shot 1] At 00:00.000` ⇒ `[Shot 1]`。
+//
+// 【为什么（2026-10-14 用户：「分镜脚本中的小分镜到底有没有做好？」）】官方多镜形式是
+// **首镜不带时间戳**、从 `[Shot 2]` 起才写 `At MM:SS.mmm`（判据见 `h3_format.go` 的 ②）。
+// 真机那份方案（`人间收件箱·第01集`）**11 镜全写着 `[Shot 1] At 00:00.000`** ——
+// 平台的门判出来了（`H3FormatViolations` 报 warn），但**没有任何一步去改**；
+// 而那一集渲出来的片段里内切恰好基本没出现（真机实测：镜 1 计划 2 刀只看出 1 刀、
+// 镜 2 计划 2 刀一处都没有；判据见 filmaudit/cuts.go）。
+//
+// 这是**纯机械格式**（不是散文改写，一个词都不动），所以按本仓那条纪律收在唯一读取边界：
+// 「能确定性做到的事，不要让模型自觉」—— 模型写着 `At 00:00.000` 就再也不会忘，
+// 平台在这里抹平，并**如实播报**改了几镜。
+//
+// 边界：只动 `[Shot 1]` 紧跟的那个 `At`；`[Shot 2]` 起的时间戳一个字都不碰（那是真正的切点）。
+// 幂等：首镜没有时间戳时不变。
+func NormalizeFirstShotTimestamp(p *Plan) int {
+	if p == nil {
+		return 0
+	}
+	n := 0
+	for i := range p.Shots {
+		sh := &p.Shots[i]
+		if strings.TrimSpace(sh.H3Prompt) == "" {
+			continue
+		}
+		if m := firstShotTimestampRe.FindStringSubmatch(sh.H3Prompt); m != nil {
+			sh.H3Prompt = strings.Replace(sh.H3Prompt, m[0], "[Shot 1]", 1)
+			n++
+		}
+	}
+	return n
+}

@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/YiIimini/ManJuX/internal/ff"
@@ -43,6 +44,9 @@ func main() {
 	// 逐帧亮度量尺（镜内闪烁 / 同场相邻镜亮度差）：找不到 ffmpeg ⇒ nil，
 	// 那两项就**不判**（不是"合格"，见下面的如实说明）。
 	luma := lumaFn(*ffmpeg, *ffprobe)
+	// 内容切点量尺（小分镜兑现那一条）：找不到 ffmpeg ⇒ nil，那一条就**不判**（三态，
+	// 下面会如实说一句）。
+	cuts := cutsFn(*ffmpeg, *ffprobe)
 	eps, err := episodes(filepath.Join(*dataDir, "projects"), *project, *ep)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "扫描项目失败：%v\n", err)
@@ -54,7 +58,7 @@ func main() {
 	}
 	anyFail := false
 	for _, dir := range eps {
-		in, inErr := filmaudit.LoadEpisode(dir, probe, tracks, luma)
+		in, inErr := filmaudit.LoadEpisode(dir, probe, tracks, luma, cuts)
 		if inErr != nil {
 			fmt.Printf("⛔ %s：%v\n", filepath.Base(dir), inErr)
 			anyFail = true
@@ -72,6 +76,13 @@ func main() {
 		if len(in.Luma) == 0 {
 			// 三态纪律：没量到要**当场说一句**，别让用户以为"这集画面亮度没问题"。
 			fmt.Println("  · [luma] 画面亮度两项这次**没量**（这台机器没找到可用的 ffmpeg）—— 不算合格，也不算不合格")
+		}
+		// 三态纪律同样管「小分镜兑现」：没量到要当场说一句，别让用户以为"这一集的每个内切都切出来了"。
+		if cuts == nil {
+			fmt.Println("  · [cuts] 小分镜兑现这一项这次**没量**（这台机器没找到可用的 ffmpeg）—— 不算合格，也不算不合格")
+		} else if miss := filmaudit.MissingCutShots(in); len(miss) > 0 {
+			fmt.Printf("  · [cuts] 有 %d 镜的内容切点**没量到**（这几镜的那条判据跳过）：%s —— 没量到不算合格\n",
+				len(miss), joinShotIDs(miss))
 		}
 		if fail > 0 {
 			anyFail = true
@@ -104,6 +115,24 @@ func probeFn(ffmpegPath, ffprobePath string) filmaudit.ProbeFn {
 		}
 		return info.Duration, nil
 	}
+}
+
+// cutsFn 造一个"逐片段内容切点"量尺（找不到 ffmpeg 就返回 nil —— 小分镜兑现那条会跳过并当场说明）。
+func cutsFn(ffmpegPath, ffprobePath string) filmaudit.CutFn {
+	f, err := ff.New(ffmpegPath, ffprobePath)
+	if err != nil || f == nil || f.Ffmpeg == "" {
+		return nil
+	}
+	return filmaudit.CutsFromFFmpeg(f.Ffmpeg)
+}
+
+// joinShotIDs 镜号列表 → "3、5、9"（与体检报告里的写法一致）。
+func joinShotIDs(ids []int) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.Itoa(id))
+	}
+	return strings.Join(parts, "、")
 }
 
 // lumaFn 造一个"逐帧亮度"量尺（找不到 ffmpeg 就返回 nil —— 亮度那两项会跳过并**当场说明**）。

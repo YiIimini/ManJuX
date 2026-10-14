@@ -45,7 +45,15 @@ type Input struct {
 	// 由调用方用 filmaudit.LumaFromFFmpeg 量（这一层不自己解码，保持"读盘即可判"的形状）。
 	Luma []ShotLuma
 	// Cues 已合成时的字幕（没合过片就留空 —— 字幕检查会自动跳过并说明）。
-	Cues []Cue
+	// ShotCuts 逐镜的**内容切点**（与 plan.Shots 同序；nil = 这一镜没量到）——
+	// 由调用方用 filmaudit.CutsFromFFmpeg + MeasureCuts 量（与 Luma 同一条形状：
+	// 这一层不自己解码，保持"读盘即可判"）。
+	//
+	// 【为什么要有（2026-10-14 用户：「分镜脚本中的小分镜到底有没有做好？」）】计划里的内切
+	// 有契约门全过（每刀 1.5-4 秒…），但那些判据只看**计划的时间点** —— 真机三镜实测：
+	// 计划 2 刀，片段里 0-1 刀（见 cuts.go 的文件头）。判据与口径都在 cuts.go。
+	ShotCuts [][]float64
+	Cues     []Cue
 	// Transition / FadeSec 项目参数（判"这份成片是按哪种转场行为合的"）。
 	Transition string
 	FadeSec    float64
@@ -100,6 +108,11 @@ func Audit(in Input) []Finding {
 			Msg: fmt.Sprintf("第 %s 镜找不到剪辑文件 —— 这一集合不出来（先把这几镜渲出来）",
 				joinInts(in.ClipMissing))})
 	}
+
+	// ── 0b. 逐镜的**小分镜兑现**（计划的内切有没有真的出现在片段里）─────────────
+	// 与"成片自己"同一组：它也是"计划与产物对不上"，而且**此前完全没人问过**
+	// （见 cuts.go 的文件头：契约门只看计划的时间点）。没量到的镜在判据里跳过（三态）。
+	out = append(out, cutDeliveryFindings(in)...)
 
 	// ── 0. 成片自己：画面与声音**时长对不上**（2026-10-09 真机 P0）───────────────
 	// 放在最前面：一条片子如果画面只有前几个镜、后面全是定格，那么字幕/说话人那些结论

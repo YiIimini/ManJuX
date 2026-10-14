@@ -417,6 +417,12 @@ func normalizePlan(plan *project.Plan, opt Options) {
 			opt.OnNote("给 %d 镜补上了缺失的台词标签（计划里有台词、正文里却没有对应的 <d>）——"+
 				"不补的话成片会把那几句说成听不懂的话（配音读正文的 <d>、字幕读 dialogue 字段）", hr.Dialogue)
 		}
+		if hr.FirstShotStamps > 0 {
+			opt.OnNote("抹平了 %d 镜首镜那个**多余的时间戳**（`[Shot 1] At 00:00.000` ⇒ `[Shot 1]`）—— "+
+				"官方多镜形式的首镜不带时间戳，从 `[Shot 2]` 起才写 `At MM:SS.mmm`；"+
+				"写着它模型认不出这一刀，内切就容易被忽略（真机那一集的内切实测基本没出现）",
+				hr.FirstShotStamps)
+		}
 		if hr.Voiceover > 0 {
 			opt.OnNote("补全 %d 镜的画外演出素材引用（内心镜→该角色的 Q 版、系统镜→机器人＋面板）—— "+
 				"模型漏写 id 会让契约 fail，但素材本身是按角色自动生成的，补上即对上号", hr.Voiceover)

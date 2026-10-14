@@ -420,6 +420,12 @@ type HealResult struct {
 	// marked = 说话人不在本镜、补标成画外音（os=true）；cleared = **纠正**（人在画面里亲口说，
 	// 却被标成画外音）。两件必须分开报。
 	//
+	// FirstShotStamps 首镜那个多余的时间戳被抹平了几镜（`[Shot 1] At 00:00.000` ⇒ `[Shot 1]`）。
+	//
+	// 【为什么是平台改而不是报给模型（2026-10-14）】官方多镜形式首镜**不带**时间戳；
+	// 真机那份方案 11 镜全写着，而渲出来的内切基本没出现（见 h3_format_extra.go 的说明）。
+	// 这是纯机械格式，收在唯一读取边界 + 如实播报 —— 与"补缺失台词标签"同一条政策。
+	FirstShotStamps int
 	// 【为什么"纠正"也要报（2026-10-09 真机）】《我捡的团子·第01集》**19 句台词全被模型标成
 	// os=true**（schema 里写的是 os:false）—— 用户报的「另一人说话、其它角色动嘴」正是它：
 	// 平台的"画外说话人"判据被这些 os 全部跳过，镜 5 那种真画外音反而没有"画内闭嘴"约束。
@@ -526,6 +532,10 @@ func HealPlan(plan *Plan) HealResult {
 	// 顺序反过来（先改写配乐、再补台词）之后，补出来的尾巴落在最后一段**之后**，没人再动它。
 	// 判据见 heal_dialogue_tail_test.go（端到端断 `HealPlan` 之后 `<d>` 数 ≥ 计划句数）。
 	musicNA := EnsureMusicNA(plan)
+	// **首镜时间戳归一**（2026-10-14）：官方多镜形式是首镜不带时间戳 —— 真机 11 镜全写着
+	// `[Shot 1] At 00:00.000`（门报了 warn 但没人改），而那一集渲出来的内切基本没出现。
+	// 见 NormalizeFirstShotTimestamp 的文件头。
+	firstShotStamps := NormalizeFirstShotTimestamp(plan)
 	// 台词通道：补缺标签 → 对齐到 dialogue（顺序不能反，理由见下面 HealResult 的注释）。
 	dialogueFilled := FillMissingDialogueTags(plan)
 	alignTags := AlignDialogueTags(plan)
@@ -575,5 +585,6 @@ func HealPlan(plan *Plan) HealResult {
 		BodiesCJK:       plan.FilledBodyCJK,
 		ChibiRefs:       chibiFixed,
 		ChibiRefUnknown: chibiUnknown,
+		FirstShotStamps: firstShotStamps,
 	}
 }

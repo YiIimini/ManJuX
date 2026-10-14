@@ -59,6 +59,13 @@ func (c *Coordinator) auditProducedFilm(ctx context.Context, proj *project.Proje
 	}
 	var lumaMissing []int
 	in.Luma, lumaMissing = filmaudit.MeasureLuma(lumaFn, clips)
+	// 逐镜的**内容切点**（小分镜兑现那一条）：量尺来自本机 ffmpeg；没有就不判、并如实说明。
+	cutFn := filmaudit.CutFn(nil)
+	if c.ff != nil && c.ff.Ffmpeg != "" {
+		cutFn = filmaudit.CutsFromFFmpeg(c.ff.Ffmpeg)
+	}
+	var cutMissing []int
+	in.ShotCuts, cutMissing = filmaudit.MeasureCuts(cutFn, clips)
 	if res.SRTPath != "" {
 		if b, err := os.ReadFile(res.SRTPath); err == nil {
 			in.Cues = filmaudit.ParseSRT(string(b))
@@ -87,6 +94,18 @@ func (c *Coordinator) auditProducedFilm(ctx context.Context, proj *project.Proje
 	case len(lumaMissing) > 0:
 		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
 			"· 有 %d 镜的亮度与黑场没量到（这几镜的判据跳过）：%s —— 没量到不算合格", len(lumaMissing), shotIDsText(lumaMissing))
+	}
+	// 「小分镜兑现」那一条同样三态（没量到 ≠ 合格）。
+	switch {
+	case cutFn == nil:
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
+			"· 小分镜兑现这次**没量**（没有可用的 ffmpeg）—— 不算合格，也不算不合格")
+	case len(in.ShotCuts) == 0:
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
+			"· 小分镜兑现这次**没量**（%d 镜一个都没量到，通常是解码失败）—— 不算合格，也不算不合格", len(cutMissing))
+	case len(cutMissing) > 0:
+		c.emit(proj.ID, PhaseAssemble, 0, "info", 100,
+			"· 有 %d 镜的内容切点没量到（这几镜的那条判据跳过）：%s —— 没量到不算合格", len(cutMissing), shotIDsText(cutMissing))
 	}
 	if fail+warn == 0 {
 		c.emit(proj.ID, PhaseAssemble, 0, "success", 100,

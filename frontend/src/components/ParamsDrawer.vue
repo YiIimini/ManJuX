@@ -271,7 +271,7 @@ async function save() {
             <el-button size="small" @click="form.render.width = 768; form.render.height = 768">1:1 方形</el-button>
           </div>
         </el-form-item>
-        <el-form-item label="采样步数(turbo 4-8 / 基线 20)">
+        <el-form-item label="采样步数(默认档与所挂蒸馏 LoRA 成对:4 步族 4 步 / 8 步族 ≥8 步;精修档自动 ≥20)">
           <el-input-number v-model="form.render.steps" :min="1" :max="30" style="width:100%" />
         </el-form-item>
         <el-form-item label="Seed(0=每镜随机;固定值=全片画风一致)">
@@ -283,8 +283,8 @@ async function save() {
         <el-alert v-if="cloudSeedNote" type="warning" :closable="false" :title="cloudSeedNote" />
         <el-form-item label="加速档">
           <el-select v-model="form.render.accel">
-            <el-option value="" label="Turbo 均衡（默认，官方 4 步蒸馏）" />
-            <el-option value="quality" label="质量优先（Acc-8Step，成片推荐）" />
+            <el-option value="" label="Turbo 均衡（默认；按步数自动配族：≥8 步挂 8 步蒸馏，低于 8 步挂 4 步蒸馏）" />
+            <el-option value="quality" label="质量优先（Acc-8Step；需非剪枝底座，量化底座上会回退成默认档）" />
             <el-option value="refine" label="精修（不挂蒸馏 LoRA＋完整步数；慢 2–3×，画质基线最高）" />
             <el-option value="express" label="极速预览/抽卡（TaoMate 3 步，约 2×；参考图会压过提示词，不要用于交付）" />
           </el-select>

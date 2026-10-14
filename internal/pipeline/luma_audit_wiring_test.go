@@ -44,7 +44,7 @@ func TestCLIAndAppShareTheLumaJudgement(t *testing.T) {
 	if !strings.Contains(cli, "filmaudit.LumaFromFFmpeg(") {
 		t.Error("cmd/auditfilm 没接亮度/黑场量尺 —— 命令行与 app 的结论会分叉")
 	}
-	if !strings.Contains(cli, "filmaudit.LoadEpisode(dir, probe, tracks, luma)") {
+	if !strings.Contains(cli, "filmaudit.LoadEpisode(dir, probe, tracks, luma, cuts)") {
 		t.Error("cmd/auditfilm 没把量尺交给 LoadEpisode —— 命令行那边永远量不到")
 	}
 	// 命令行也要**如实播报没量到**（不许静默跳过、更不许当成合格）。

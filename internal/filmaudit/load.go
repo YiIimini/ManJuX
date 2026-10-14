@@ -31,7 +31,7 @@ type ProbeFn func(path string) (float64, error)
 type TrackProbeFn func(path string) (video, audio float64, ok bool)
 
 // LoadEpisode 读一集目录（形如 `data/projects/<书>/<书>·第NN集·xxx/`）。
-func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn, luma LumaFn) (Input, error) {
+func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn, luma LumaFn, cuts CutFn) (Input, error) {
 	var in Input
 	in.ID = filepath.Base(epDir)
 	raw, err := os.ReadFile(filepath.Join(epDir, "plan", "plan.json"))
@@ -67,6 +67,16 @@ func LoadEpisode(epDir string, probe ProbeFn, tracks TrackProbeFn, luma LumaFn) 
 		if luma != nil {
 			if L, lerr := luma(clip); lerr == nil {
 				in.Luma[i] = L
+			}
+		}
+		// 内容切点（小分镜兑现那一条的输入）。量尺为 nil（没 ffmpeg）或单镜解码失败
+		// ⇒ 留 nil，**这一镜就不判**（三态：没验过 ≠ 合格）；调用方负责把那句话说出来。
+		if cuts != nil {
+			if ts, cerr := cuts(clip); cerr == nil {
+				if in.ShotCuts == nil {
+					in.ShotCuts = make([][]float64, len(plan.Shots))
+				}
+				in.ShotCuts[i] = ts
 			}
 		}
 		if res, aerr := asr.Parse(ASRSidecarPath(clip)); aerr == nil && res != nil {
