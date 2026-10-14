@@ -107,7 +107,13 @@ var reEmptyParens = regexp.MustCompile(`[（(]\s*[:：]?\s*[）)]`)
 //  2. **不跨行**（`[^\n]`）：对照块永远收在它那一行末尾，跨行会连下一段的英文一起吃进去。
 //
 // 【为什么整块删，而不是删掉里面的汉字】逐字删汉字同样会留符号垃圾，理由同上。
-var reCNMirror = regexp.MustCompile(`[（(]\s*中文对照\s*[:：][^\n]*[)）]`)
+// cnMirrorWord 对照块的**标记词**：判据只用它（早退）与它（正则）两处，不许再写第三份。
+const cnMirrorWord = "中文对照"
+
+var reCNMirror = regexp.MustCompile(`[（(]\s*` + cnMirrorWord + `\s*[:：][^\n]*[)）]`)
+
+// reBlankLines 连续 3 行以上的空行（摘掉对照块之后的排版清理）。
+var reBlankLines = regexp.MustCompile(`\n{3,}`)
 
 // DropHanRunes 清掉"中英对照"，**保留其余全部字符**（只摘中文，英文一个字不动）。
 //
@@ -133,6 +139,37 @@ func DropHanRunes(text string) string {
 	out = reEmptyParens.ReplaceAllString(out, " ")
 	out = reSpaceRun.ReplaceAllString(out, " ")
 	return strings.TrimSpace(out)
+}
+
+// StripCNMirror 删掉平台自己追加的**中英对照块**（`(中文对照:……)`），其余字符一字不动。
+//
+// 【为什么视频侧也必须清（2026-10-12 真机探针，用户要求按公众号那篇文章排查"画面里凭空多出字幕"）】
+// 图像侧早就统一清了（`PortraitPrompt` / `BoardImagePrompt` 都过 `DropHanRunes`），
+// 而**镜头提示词的装配点一直在往 H3 的正文里追加中英对照**。拿真机夹具走**真实装配**逐镜量（探针
+// `TestZZProbeCJKInShotPrompt`，`<d>` 外、主体名已扣除的可避免汉字）：
+//
+//	plan_real_voiceover.json       夹具原文 0  → 装配后每镜 1502（11 镜）
+//	skill-produced-plan-ep01.json  夹具原文 6  → 装配后每镜 395（35 镜）
+//
+// 而 prompts.go 里写得很清楚：这些中文半**是写给维护者看的**，而「图片模型会把它当成
+// "要画的字"整段照抄到画面上」（真机出过这一版，见 pipeline/prompts.go 里那段记录）。
+// H3 与图片模型的差别只在于它**可能**听话（正文里 ON-SCREEN TEXT 第 2 条正是在让它别画）；
+// 但平台的规则不该建立在"模型这次听话"上 —— 本文件的判据写着「`<d>` 块外的汉字 = 往画面上写字」，
+// 导入侧 >200 直接 fail（`PlanCJKFailOutsideDialogue`），平台自己却在渲染时灌 1500 字。
+//
+// 这里把对照块**整块摘掉**：英文规则一字不动、`<d>` 台词一字不动、主体名一字不动
+// —— 对照块永远是对**紧邻英文**的翻译，删掉不丢任何信息。
+// 幂等：清过的文本再清一次不变（对照块已经不存在，第一步就早退）。
+func StripCNMirror(text string) string {
+	if !strings.Contains(text, cnMirrorWord) {
+		return text
+	}
+	out := reCNMirror.ReplaceAllString(text, "")
+	// 对照块通常独占一行：整块摘掉后会留下那一行的空壳与连续空行，压一下排版。
+	// 摘掉之后**开头那个空行也要去**（对照块落在正文最前面时会留下一个前导换行）。
+	out = reBlankLines.ReplaceAllString(out, "\n\n")
+	out = strings.TrimLeft(out, "\n")
+	return strings.TrimRight(out, " \t\r\n") + "\n"
 }
 
 // StripCJK 把一段**画面提示词**里的汉字清干净，供图像模型直接使用。

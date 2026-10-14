@@ -188,6 +188,11 @@ func (c *Coordinator) runRenderPass(ctx context.Context, proj *project.Project, 
 	if note := unsupportedParamNote(caps, rp); note != "" {
 		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", note)
 	}
+	// 分辨率体检（2026-10-12）：短边低于 H3 原生 768 时提示一次。
+	// 只报不改（与亮度/黑场的政策同源），合规时一个字都不出声 —— 不制造 info 噪音。
+	if note := project.RenderResolutionNote(rp); note != "" {
+		c.emit(proj.ID, PhaseRender, 0, "warn", 0, "⚠ %s", note)
+	}
 	if rp.Seam && caps.Seam {
 		c.emit(proj.ID, PhaseRender, 0, "info", 0,
 			"镜间连续接缝已开启(仅本地引擎):%s;换场/换人/到重置点时**自动断开并重建锚点**,断开原因逐镜写在日志里"+
@@ -1282,7 +1287,10 @@ func assembleShotPrompt(proj *project.Project, plan *project.Plan, shot *project
 	prompt = EnsureTransitionCaption(prompt, plan, *shot, prevShot)
 	// ⑤ 镜头表的结构字段（机位/运镜/尾帧状态/位置/离屏）：**缺什么补什么**。这些字段此前只有门读、
 	// 渲染端零消费 —— 用户在工作台改掉它们，提示词与指纹都不动，等于没改（2026-10-06 审计 §八-13）。
-	return EnsureShotSpecClause(prompt, plan, *shot)
+	// ⑥ 中英对照块不进提交版（见 project.StripCNMirror）：ShotRenderPrompt 已经清过一遍，
+	// 但上面 ②–⑤ 每一步都可能再追加一份对照块，所以**收口这一步同样要清**。
+	// 只摘对照块，英文规则与 `<d>` 台词一字不动。
+	return project.StripCNMirror(EnsureShotSpecClause(prompt, plan, *shot))
 }
 
 // anchorPrompt 角色一致性锚定:把出场角色/场景的固定外貌描述和全局风格

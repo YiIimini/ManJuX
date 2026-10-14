@@ -149,6 +149,20 @@ func IsSystemVoiceSpeaker(speaker string) bool {
 // 免得"技能端说嘴唇闭合、平台说别的"。
 const VoiceoverClauseMarker = "lips remain completely closed"
 
+// SingleSpeakerClauseMarker 「一次只一张嘴」子句的幂等判据（改文案必须保留这个串，
+// 否则装配点每调一次就再追加一遍）。
+//
+// 【为什么要有这条（2026-10-12，按公众号那篇文章排查"抢台词"）】
+// 文章给的第一条是**硬规矩**：「别让好几个人同时处在正在说话的状态里」——
+// 模型分不清谁在出声的时候，它会自己挑一个，挑错了就是观众看到的"抢词"。
+// 而平台此前只有**画外音**那一侧有确定性约束（`VoiceoverClauseMarker`：
+// 说话人不在画面里 ⇒ 画内的人闭嘴）；**画面里有两个人在说**这一侧一条都没有 ——
+// 正文里就两句 `<Subject 1> (S1) says…` / `<Subject 2> (S2) says…`，
+// 没有任何一句交代"谁在什么时候开口、另一个人闭嘴"。
+// 判据见 `OnScreenSpeakers`（在不在画内只有一处出处），装配见
+// pipeline.EnsureSingleSpeakerClause。
+const SingleSpeakerClauseMarker = "ONE SPEAKING MOUTH AT A TIME"
+
 // Issue 一条契约问题。Level: "fail"(拒收) / "warn"(收但提示)。
 type Issue struct {
 	Level string `json:"level"`
@@ -197,7 +211,7 @@ func PlanIssuesText(issues []Issue) []string {
 	return out
 }
 
-// OffScreenSpeakers 本镜里**说话的人不在画面内**的说话人（去重，保序）。
+// speakerFrameSplit 逐条台词把说话人分成**画面外**与**画面内**两拨（各自去重、保序）。
 //
 // 【2026-09-29 用户：「镜头外的说话声音不应该镜头内人动嘴唇」】
 // `HasVoiceover` 覆盖的是"这一镜本来就是画外演出"（旁白/内心/系统音）——
@@ -222,9 +236,9 @@ func PlanIssuesText(issues []Issue) []string {
 // 根本不在本镜出场名单里（真画外音），平台却**没补**那句强制的"画内的人保持闭嘴"⇒
 // 用户看到的就是「另一人说话、其它角色动嘴」。⇒ os 从此**只影响措辞归属，不再参与跳过**：
 // 说话人在不在这一镜，是方案自己（`characters` + `offscreen` 字段）能确定性判定的事实。
-func OffScreenSpeakers(plan *Plan, sh Shot) []string {
+func speakerFrameSplit(plan *Plan, sh Shot) ([]string, []string) {
 	if plan == nil {
-		return nil
+		return nil, nil
 	}
 	onScreen := map[string]bool{}
 	add := func(s string) {
@@ -245,8 +259,15 @@ func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 			}
 		}
 	}
-	var out []string
-	seen := map[string]bool{}
+	var off, on []string
+	seenOff := map[string]bool{}
+	seenOn := map[string]bool{}
+	keep := func(dst *[]string, seen map[string]bool, name string) {
+		if !seen[name] {
+			seen[name] = true
+			*dst = append(*dst, name)
+		}
+	}
 	for _, l := range sh.Dialogue {
 		name := strings.TrimSpace(l.Speaker)
 		if name == "" || strings.TrimSpace(l.Text) == "" {
@@ -262,20 +283,42 @@ func OffScreenSpeakers(plan *Plan, sh Shot) []string {
 		// 而真正缺的那一份约束已经由**逐句声线绑定**补上了：
 		// pipeline.BindLineVoices 会把画外那句写成 "<说话人> (Sx) says off-screen in <权威声线>: "，
 		// 逐句、确定性；不依赖 vo_kind 短路后的 HasVoiceover。
-		if onScreen[strings.ToLower(name)] {
-			continue // 他就在画面里，正常对口型
+		inFrame := onScreen[strings.ToLower(name)]
+		if !inFrame {
+			// 名字带括注（「祁七（主角）」）时按基名再对一次
+			if base := strings.ToLower(strings.TrimSpace(StripBracketedName(name))); base != "" && onScreen[base] {
+				inFrame = true
+			}
 		}
-		// 名字带括注（「祁七（主角）」）时按基名再对一次
-		base := strings.ToLower(strings.TrimSpace(StripBracketedName(name)))
-		if base != "" && onScreen[base] {
-			continue
-		}
-		if !seen[name] {
-			seen[name] = true
-			out = append(out, name)
+		if inFrame {
+			keep(&on, seenOn, name) // 他就在画面里，正常对口型
+		} else {
+			keep(&off, seenOff, name)
 		}
 	}
-	return out
+	return off, on
+}
+
+// OnScreenSpeakers 本镜里**说话的人就在画面内**的说话人（去重，保序）。
+//
+// 【为什么要有它（2026-10-12，按公众号那篇文章排查"抢台词"）】文章给的第一条是**硬规矩**：
+// 「别让好几个人同时处在正在说话的状态里」—— 模型分不清谁在出声的时候，它会自己挑一个，
+// 挑错了就是观众看到的"抢词"。而平台此前只有**画外音**那一侧的确定性判定
+// （`speakerFrameSplit` 的 off 一拨 ⇒ 补"画内的人保持闭嘴"）；**画内多人**这一侧一条约束都没有：
+// 一镜里两个说话人都出场时，正文里只是两句 `<Subject 1> (S1) says…` / `<Subject 2> (S2) says…`，
+// 没有一句说"谁在什么时候开口、另一个人闭嘴"。
+// 装配点（pipeline.EnsureSingleSpeakerClause）用它决定要不要补那条"一次只一张嘴"的条款。
+//
+// 与 off 一拨**共用同一份**"在不在画内"的判据（同一个函数算出来），不另写第二套。
+func OnScreenSpeakers(plan *Plan, sh Shot) []string {
+	_, on := speakerFrameSplit(plan, sh)
+	return on
+}
+
+// OffScreenSpeakers 本镜里**说话的人不在画面内**的说话人（去重，保序）。
+func OffScreenSpeakers(plan *Plan, sh Shot) []string {
+	off, _ := speakerFrameSplit(plan, sh)
+	return off
 }
 
 // StripBracketedName 去掉名字里的括注（与 entity_refs 的基名口径一致）。

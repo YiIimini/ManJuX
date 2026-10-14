@@ -88,3 +88,22 @@ func TestPipelineDoesNotBranchOnEngineName(t *testing.T) {
 		t.Fatal("没扫到源码 —— 闸门失效")
 	}
 }
+
+// TestRenderResolutionNoteIsWired 分辨率体检**真的接到了渲染阶段**（不是只写了个函数）。
+//
+// 【为什么（2026-10-12，用户给了一篇公众号实测文）】文章的第一条经验是"分辨率别一味往下压"
+// （压到约 0.6 档以下时画面里凭空多出异常字幕/文字的概率明显上升）。平台的渲染侧此前
+// **一个字都不说**。判据：渲染阶段必须在**与既有参数能力告警并列**的位置调用
+// `project.RenderResolutionNote` 并把它发到日志 —— 有函数没接上等于没写。
+func TestRenderResolutionNoteIsWired(t *testing.T) {
+	src := string(mustRead(t, "stages_render.go"))
+	// 接线形态：只在 note 非空时出声（合规时一个字都不刷，与"不制造 info 噪音"同一条政策）。
+	const want = `if note := project.RenderResolutionNote(rp); note != "" {`
+	if n := strings.Count(src, want); n != 1 {
+		t.Errorf("渲染阶段必须恰好调用一次分辨率体检，实际 %d 次", n)
+	}
+	// 反证：口径只许有一处出处（project.H3NativeShortSide），渲染阶段不许再自己判一遍。
+	if strings.Contains(src, "H3NativeShortSide") {
+		t.Error("原生短边这个口径只许在 project 里判一次，不许在渲染阶段再写第二遍")
+	}
+}

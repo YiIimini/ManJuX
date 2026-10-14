@@ -424,6 +424,53 @@ func EnsureVoiceoverClause(plan *project.Plan, sh *project.Shot) bool {
 	return true
 }
 
+// singleSpeakerMarker 幂等判据：必须与 project.SingleSpeakerClauseMarker 同串
+// （那边是判据的登记处，这边是措辞的落地处；测试里逐字比过）。
+const singleSpeakerMarker = "ONE SPEAKING MOUTH AT A TIME"
+
+// EnsureSingleSpeakerClause 本镜**画面里有两位以上说话人**时，补一条"一次只一张嘴"的硬约束（幂等）。
+//
+// 【为什么需要它（2026-10-12，用户给了一篇公众号实测文，要求按它排查"抢台词"）】
+// 文章写的第一条是一条**硬规矩**：「别让好几个人同时处在正在说话的状态里」——
+// 因为模型分不清谁在出声的时候，它会自己挑一个，挑错了就是观众看到的"抢词"
+// （文章原话的现场是「本该男二说的话，被女主照着念了一遍，语气还挺理直气壮」）。
+// 它给的做法是"一个画面里只留一张嘴"：多人对话用正反打/反应镜，把正在说话的那一位单独拎出来。
+//
+// 平台这一侧此前是**半边**的：
+//
+//	· 画外那半边有确定性约束 —— EnsureVoiceoverClause：说话人不在画面里时"画内的人一律闭嘴"；
+//	· 画面里两个人在说这半边**一条约束都没有** —— 正文里就是
+//	  `<Subject 1> (S1) says…` / `<Subject 2> (S2) says…` 两句，
+//	  没有一句交代谁在什么时候开口、另一个人此刻是什么状态。
+//
+// 于是模型只能自己排：排错是抢词，排对也是每一版都不一样（这正是用户报的"配音老是有问题"里
+// 最难复现的那一类）。H3 的分镜本身就是"一个片段切 2-4 个小镜头"（`[Shot N] At MM:SS.mmm`），
+// 逐刀的人声位置也已经由 EnsureSpeechPlacementClause 写死；这一条只补**归属**那一层。
+//
+// 判据是 project.OnScreenSpeakers —— "说话人在不在画面里"只有那一处出处（与画外那半边
+// 共用同一个函数算出来）。**只有 ≥2 位**画内说话人才补：1 位时不存在抢词，多补只会白占注意力。
+// 幂等：判据是 marker 在不在正文里。
+func EnsureSingleSpeakerClause(prompt string, plan *project.Plan, sh *project.Shot) string {
+	if sh == nil || strings.Contains(prompt, singleSpeakerMarker) {
+		return prompt
+	}
+	speakers := project.OnScreenSpeakers(plan, *sh)
+	if len(speakers) < 2 {
+		return prompt
+	}
+	clause := singleSpeakerMarker + " (mandatory): this shot has more than one character who " +
+		"speaks while visible in frame (" + strings.Join(speakers, " and ") + "). They must NEVER " +
+		"speak at the same moment. At any single instant exactly ONE of them is talking — the one " +
+		"whose line is being delivered right then — and only that person's lips move. While the " +
+		"other is not delivering a line their mouth stays completely closed and still: they only " +
+		"react (listen, glance, breathe, shift their weight), never mouth, whisper, echo or double " +
+		"the words, and never produce a voice that is not one of the lines above. Let each line " +
+		"occupy its own continuous stretch of the shot exactly as the inner-shot breakdown above " +
+		"places it, so the two voices never overlap; and never let any third character who is " +
+		"visible in frame move their lips at all."
+	return strings.TrimRight(prompt, "\n") + "\n\n" + clause
+}
+
 // LibraryPortraitPrompt 资产库侧(不持有项目上下文的路径:抽卡 / 自定义新建 / 重抽)
 // 的定妆照提示词:**按实体类型**补上取景、忠实度与画风块。
 //
@@ -500,6 +547,14 @@ func ShotRenderPrompt(proj *project.Project, plan *project.Plan, shot *project.S
 	// 逐**小镜头**的人声位置（2026-10-08 真机实锤：模型把"每个小镜头都要说点什么"当成规则，
 	// 把台词整体前移一格、还在空出来的那格里自编了一句假中文 —— 见 EnsureSpeechPlacementClause 的文件头）。
 	promptOut = EnsureSpeechPlacementClause(promptOut, shot)
+	// 「一次只一张嘴」（2026-10-12，按公众号那篇文章排查"抢台词"）：**画面里**有两位以上
+	// 说话人时必须写明"谁在什么时候开口、另一个人此刻闭嘴"。放在逐刀清单**之后** ——
+	// 它的措辞引用上面那份逐刀归属（"as the inner-shot breakdown above places it"）。
+	promptOut = EnsureSingleSpeakerClause(promptOut, plan, shot)
+	// 平台自己追加的**中英对照块**不进提交版（见 project.StripCNMirror 的文件头：
+	// 中文半是写给维护者看的；图像侧早就清了，视频侧一直没清，真机量到每镜 1502 字）。
+	// 放在最后一步：上面每一条追加都可能带对照块。
+	promptOut = project.StripCNMirror(promptOut)
 	return promptOut
 }
 
